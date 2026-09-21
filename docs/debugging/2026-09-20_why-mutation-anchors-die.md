@@ -912,3 +912,499 @@ recorded rule, not on any measurement here.
   schedules the nine rows this track restored.  `sim:mutaudit` is the natural
   home and section 6b says it must not be wired until the `mutate_gain.sh`
   manifest question is resolved.
+
+---
+
+# 9. TRACK MUTWIRE, 2026-09-20: none of the sixty-three harnesses is scheduled, and one has been dead since the commit that created it
+
+Appended per the project rule rather than opened as a second file, because this
+is the same phenomenon one level out: sections 1-8 are about rows inside a
+harness going dead unnoticed; this section is about the harnesses themselves.
+Workstation, branch `fpga`, at `9435942`.  No hardware, no Vivado (the
+workstation lane held build 11b and the BC-250 lane held TRACK HDRCOST).
+GHDL (mcode) only.  `sim/regress.sh` was NOT edited (md5
+`91f5619ad8796867bf6e23c077906992` at both ends).
+
+## 9.1 The question
+
+> TRACK CBANCHOR restored nine dead mutation rows in `sim/mutate_matvec_cb.sh`,
+> then reported: *"`sim/mutate_matvec_cb.sh` is still wired to no gate row, so
+> nothing schedules the nine rows restored here."*  That is one harness.  **The
+> question is how many of the 63 are in the same state.**
+
+## 9.2 The answer, up front
+
+**All 63.  SCHEDULED 0, UNSCHEDULED 63, UNCERTAIN 0** (MEASURED; the method and
+its false-negative control are in 9.3).  Not one `sim/mutate_*.sh` is reachable
+from any row of `sim/regress.sh`, directly or through any script a row runs.
+The checker built to audit them, `sim/check_mutation_harness.py`, is unscheduled
+too.
+
+**And the cost of that is not hypothetical.  `sim/mutate_mv4i_desc_stale.sh`
+exits 2 having run ZERO rows -- at HEAD, and at `3ecc729`, the commit that
+CREATED it on 2026-08-30.  It has never run, in its entire twenty-one-day
+existence.**  Every prior finding in this document is a row that stopped
+working; this is a whole harness that never started, and the only reason nobody
+knew is that nothing ever invoked it.
+
+**The second result is the one that decides what to do about it, and it argues
+AGAINST wiring most of them: 48 of the 63 have no non-zero exit anywhere in
+their last 40%, and the last executable statement of 49 of them is an `echo`.**
+A gate row reads an exit code, so those 48 cannot be a gate row at all until
+someone writes them an exit contract -- and of the 15 that do exit non-zero, 8
+report only that a row failed to RUN (a dead anchor), one is a retired tombstone,
+and one fires only when the UNMUTATED control fails.  **Six harnesses in the
+whole set go red when a mutant survives that should have died, and one of the six
+is another track's untracked file.**
+
+**A 30-second sweep of all 63 then found FIFTEEN more dead rows in six other
+harnesses, plus the one dead harness above** (9.5b).  Every one of those six
+exits 0 or times out, so nothing reports them.  TRACK MUTAUDIT inventoried six
+harnesses, TRACK REANCHOR replayed five, TRACK CBANCHOR one; nobody had ever
+replayed the rest, because the manifest they shared audits the MECHANISM by
+which a harness reports a dead anchor and never whether it has one.
+
+Disposition: **2 harnesses WIRE, 60 MANUAL, 1 already a tombstone**, plus one
+non-harness row (`sim:mutaudit`, the text checker) recommended with a stated
+precondition.  Per harness, with the evidence:
+`sim/mutation_harness_wiring.tsv`.
+
+## 9.3 The procedure, and the false-negative control
+
+The naive method is `grep -n mutate sim/regress.sh`.  It returns 20 hits and
+every one is a comment, which is suggestive and proves nothing: a harness could
+be reached by a wrapper, or by a row whose name does not resemble the file's.
+
+What settles it is that **`regress.sh`'s dispatch is a closed set of four
+paths**, all inside `run_one`:
+
+```
+run_one() {
+  case "${key#*:}" in
+    seamgate_*) run_seam "$key"; return ;;          # -> tools/ref9b/seamgate.sh
+    graygate)   run_graygate "$key"; return ;;      # -> sim/gray_check.sh
+    runguard|ipsync|...|imglock) run_selfcheck ;;   # -> SELFCHECK_CMD, 21 fixed commands
+  esac
+  ... $GHDL -a / $GHDL -r ...                       # everything else
+}
+```
+
+so the enumeration is:
+
+1. **The row universe.** `bash sim/regress.sh --list` -> **218 rows, 0 matching
+   `mutate`** (MEASURED).  This is the plan the gate actually builds, not a
+   guess about what it discovers.
+2. **The command universe.** Every external command any row can run is the 21
+   `SELFCHECK_CMD` entries plus `seamgate.sh` and `gray_check.sh`.  `grep -c
+   "mutate_"` over all 23: **three hits, in `seamgate.sh` (2), `gray_check.sh`
+   (3) and `logit_compare.py` (1), and every one is a comment** (MEASURED,
+   quoted in 9.4).
+3. **Repo-wide, who EXECUTES a harness at all.** `git grep -nE
+   "(bash|sh|source|\./|exec|subprocess|check_call|run\()[^#]{0,40}mutate_[a-z0-9_]*\.sh"`
+   outside `docs/` and `sim/mutate_*`: **nine hits, all usage comments or
+   prose** (MEASURED).  `sim/check_mutation_harness.py` names two harnesses but
+   only ever reads them, through `git show`.
+4. **The empirical check, on two of the four paths, by execve trace.**
+
+**Step 4 is the part that matters, and it is a discrimination test rather than a
+smoke test**, because the harness under suspicion and its scheduled sibling live
+in the same directory.  `sim/gray_check.sh` IS scheduled (`sim:graygate`) and
+`sim/mutate_gray.sh` is the harness whose rows `gray_check.sh`'s own header
+discusses.  One trace must see the first and not the second:
+
+```
+$ strace -f -qq -s 300 -e trace=execve -o T env REGRESS_SCRATCH=... \
+      bash sim/regress.sh --only graygate
+ OVERALL     PASS 1   FAIL 0   ...
+$ grep -c gray_check T          -> 25
+$ grep -c mutate     T          -> 0
+```
+
+and the plain-bench path, for the `run_one` branch:
+
+```
+$ strace ... bash sim/regress.sh --only tb_a_job_counter
+ OVERALL     PASS 1   ...
+   distinct executables:  basename 62, ln 45, dirname 23, grep 13, awk 7,
+                          git 5, ghdl-mcode 4, ghdl 4, ...
+$ grep -c mutate T              -> 0
+```
+
+**No UNCERTAIN class arose, and that is a property of the dispatcher rather than
+of the care taken**: the four paths are exhaustive and three of them run a
+literal, enumerable command, so there is nowhere for an indirect invocation to
+hide.  Had `regress.sh` built a command from a glob or from a row name, the
+answer for every harness would have been UNCERTAIN.
+
+## 9.4 THE MEASUREMENT TRAP, AND IT PRODUCED EXACTLY THE ANSWER I EXPECTED
+
+The FIRST execve trace of `--only graygate` reported **`gray_check` 0, `mutate`
+0** -- a clean confirmation of the hypothesis, and wrong.
+
+`strace` truncates string arguments to 32 characters by default, and the repo
+path is longer than that:
+
+```
+execve("/usr/bin/env", ["env", "REGRESS_SCRATCH=/mnt/storage/fk3"..., "bash", ...])
+```
+
+so `"/home/orencollaco/GitHub/llama.v"...` never reaches the word
+`gray_check.sh`.  **The positive control was the only thing that caught it**:
+the trace was supposed to see a scheduled script and did not, which is the one
+outcome the method forbids.  With `-s 300` the same command gives 25 hits.
+
+This is `CLAUDE.md`'s "a fact about the harness reported as a fact about the
+job" in a shape that is specifically dangerous, because **the false negative
+agreed with the expected answer**.  A control that can only fail in the
+direction you are hoping for is not a control; this one worked because it was
+chosen to fail in the other direction.
+
+## 9.5 `sim/mutate_mv4i_desc_stale.sh` has never run, MEASURED at two commits
+
+```
+$ cd <shared checkout @ 9435942>
+$ bash sim/mutate_mv4i_desc_stale.sh <scratch>
+mutate_mv4i_desc_stale: M2 patch matched nothing -- the prefix file moved
+rc=2
+
+$ git worktree add --detach <wt> 3ecc729     # the commit that ADDED the harness
+$ cd <wt> && bash sim/mutate_mv4i_desc_stale.sh <scratch>
+mutate_mv4i_desc_stale: M2 patch matched nothing -- the prefix file moved
+rc=2
+```
+
+The harness reads the RTL out of git (`git show HEAD:rtl/matvec_int4_desc_axi.vhd`)
+and M2 seds
+
+```
+if go = '1' then go_p <= '1'; end if;
+```
+
+into a form that also clears `done_l`.  At `3ecc729` that file already read
+
+```
+683:        if go_now = '1' then go_p <= '1'; done_l <= '0'; end if;
+```
+
+-- the trigger renamed AND the clear already present, both by `3ecc729` itself.
+**The harness was written against the pre-fix text and committed alongside the
+fix that removed it.**  It is a hard error rather than a silent pass, exactly as
+designed, and `sim/mutation_harness_audit.tsv` records it correctly as GUARD:
+*"the two prefix patches are `cmp -s`-checked against the pre-image and a no-op
+exits 2 outright."*
+
+**TRACK MUTAUDIT's audit of this harness is TRUE and the harness is DEAD, and
+those are compatible because the audit read the MECHANISM and never ran the
+thing.**  That is the same gap as "a per-unit evidence class says nothing about
+the composition", one level up: a correct statement about how a harness would
+report a failure is not a statement that the harness runs.  Nothing in the
+manifest's shape can close it; only invoking the harness can, and nothing does.
+
+## 9.5b A 30-SECOND SWEEP OF ALL 63 FINDS FIFTEEN MORE DEAD ROWS THAT THREE TRACKS MISSED
+
+Having found one harness dead by running it, the obvious next question is how
+many of the others are.  MEASURED 2026-09-20: every `sim/mutate_*.sh` run with
+`timeout 30`, scratch on `/mnt/storage`, serial, and its output scanned for
+`ANCHOR FAILED` / `MATCHED 0 TIMES` / `BADMUT` / `NOSUB`.  Z0 and Z0_on rows are
+DELIBERATE impossible anchors (self-teeth) and are excluded.
+
+```
+harness                     rc   dead rows            since
+sim/mutate_gdn_block.sh     124  M01 M02 M03 M04 M05  (ANCHOR-FAILED printed in the VERDICT column)
+sim/mutate_gdn_scalar.sh      0  B2 B3 B4 B5          (the C-model anchor, not the RTL one)
+sim/mutate_attn_kv_axi.sh     0  B3 P1 P2             6c9aa09, 2026-08-29
+sim/mutate_async_fifo.sh      0  O1
+sim/mutate_seq_tbl_shape.sh   0  N1
+sim/mutate_matvec_core.sh   124  D3                   (LOWER BOUND, timed out)
+sim/mutate_mv4i_desc_stale.sh 2  the whole harness    3ecc729, 2026-08-30
+```
+
+**Fifteen dead rows in six harnesses, plus one harness dead outright, and every
+one of those harnesses exits 0 or times out -- so nothing anywhere says so.**
+TRACK MUTAUDIT's inventory covered six harnesses; TRACK REANCHOR's anchor replay
+covered five; TRACK CBANCHOR's covered one.  **None of the three ever replayed
+the other fifty-odd**, and the manifest they all worked from audits the
+MECHANISM by which a harness reports a dead anchor, never whether it has one.
+
+`attn_kv_axi`'s three are the cheapest to fix and the most instructive.  `6c9aa09`
+("the real KV map did not work, and `to_integer` of a 4.5 GB address is why")
+replaced `to_integer(x) mod N` with `low_bits(x, k)` throughout:
+
+```
+B3 anchors on   to4k := (4096 - (to_integer(a) mod 4096))/BEAT_B;
+today's RTL     to4k := (4096 - low_bits(a, 12))/BEAT_B;                 (:445)
+P1 anchors on   ph_ch   <= (to_integer(a0) mod BEAT_B)/CH_B;
+today's RTL     ph_ch   <= low_bits(a0, BEAT_LW)/CH_B;                   (:848)
+P2 anchors on   ar_addr <= a0 - to_unsigned(to_integer(a0) mod BEAT_B, ADDR_W);
+today's RTL     ar_addr <= a0 - to_unsigned(low_bits(a0, BEAT_LW), ADDR_W);  (:849)
+```
+
+**Three rows guarding the 4 KB burst boundary and the record-phase alignment
+have been absent for twenty-two days, killed by the commit that fixed the
+address arithmetic they exist to guard** -- which is section 4.4's `fk33_seam`
+M9 finding exactly (*"the row had been silently absent for two days, over a fix
+to the ack path itself"*), in a second place, and found only by invoking the
+script.
+
+**THE COUNT IS A LOWER BOUND AND THE SWEEP'S OWN LIMITS ARE THE REASON.**
+32 of the 63 did not finish in 30 s, so any dead row they would have printed
+later is not in this table; `matvec_core` and `gdn_block` are both in that state
+AND already showing dead rows.  One harness, `sim/mutate_a_wbase.sh`, was NOT run
+at all: it takes a snapshot directory and a scratch directory as `$1 $2`, so the
+sweep's single argument produced `line 37: 2: scratch dir` -- **a usage error
+that the first pass of this table recorded as DEAD.**  A sweep that invokes 63
+heterogeneous scripts one way will mis-call the ones that want another, and the
+mis-call looks exactly like the finding you are hunting.
+
+## 9.6 Why most of these must NOT become gate rows
+
+The obvious reading of 9.2 is "wire them".  The measurements say otherwise, and
+the decisive one is free to take:
+
+```
+$ for f in sim/mutate_*.sh; do grep -vE '^[[:space:]]*(#|$)' "$f" | tail -1; done
+
+mutate_attn_emit.sh       echo "scratch dir with every mutant and every log: $SCRATCH"
+mutate_gdn_recur.sh       echo "scratch dir with every mutant, its vectors and its log: $SCRATCH"
+mutate_seq_opdec.sh       echo "scratch dir with every mutant and every log: $SCRATCH"
+... 49 of 63 end this way ...
+mutate_rmsnorm_rs_mem.sh  exit $(( fails > 0 ))
+mutate_rmsnorm_bf_mem.sh  exit $(( fails > 0 ))
+mutate_swiglu_mem.sh      exit $(( fails > 0 ))
+mutate_rmswire.sh         exit ${RW_RC:-0}
+mutate_gain.sh            exit $RC
+```
+
+**A script whose last statement is `echo` exits 0 whatever it printed.**  Forty-
+nine of the sixty-three are in that state, and 48 have no non-zero exit in their
+last 40% at all, so for them "wire it" is not a `regress.sh` edit at all -- it is "write an exit contract, teeth-test it, then
+wire it", and the exit contract is the whole job.
+
+Of the fifteen with a late non-zero exit, **eight of them exit on a dead ANCHOR,
+not on a wrong VERDICT**.  Quoted, because the distinction is invisible from the
+exit code:
+
+```
+mutate_matvec_cb.sh:842     "=== ROWS THAT DID NOT RUN:$n ==="        ... exit 1
+mutate_llama_top_kv.sh:826  "=== ROWS THAT DID NOT RUN: $n ==="       ... exit 1
+mutate_attn_block.sh:361    "Z0 SELF-TEETH DID NOT FIRE"              ... exit 1
+mutate_attn_block.sh:366    "$NBAD row(s) BADMUT"                     ... exit 1
+mutate_normw.sh:212,216     the same two                              ... exit 1
+mutate_a_geom.sh:153,158    the same two                              ... exit 1
+mutate_attn_score_hdr.sh, mutate_attn_score_early.sh,
+mutate_attn_sweep_pipe.sh   the same two                              ... exit 1
+```
+
+against a VERDICT exit:
+
+```
+mutate_rmsnorm_rs_mem.sh:78  if [ "$exp" != UNKNOWN ] && [ "$v" != "$exp" ]; then
+                               v="$v!EXP=$exp"; fails=$((fails+1)); fi
+mutate_rmsnorm_rs_mem.sh:83  exit $(( fails > 0 ))
+```
+
+**So a gate row on `mutate_matvec_cb.sh` would catch the nine dead anchors TRACK
+CBANCHOR fixed and would NOT catch a property being lost** -- which is worth
+having, and is worth having under its own name rather than under the name
+"mutation coverage in CI".
+
+## 9.7 Measured runtimes, and the selection rule that follows
+
+MEASURED 2026-09-20, `/usr/bin/time -v`, serial, one at a time:
+
+| harness | wall | peak RSS | rc | exit contract |
+|---|---|---|---|---|
+| `mutate_ref_seq_vec_res.sh` | 1.9 s | 30,336 kB | 0 | none (ends in echo) |
+| `mutate_ref_attn_rope.sh` | 2.0 s | 35,052 kB | 0 | none |
+| `mutate_kv_map.sh` | 6.9 s | 24,596 kB | 0 | none |
+| `mutate_a_geom.sh` | 13.0 s | **2,237,328 kB** | 0 | anchor-ledger |
+| `mutate_eng_cdc.sh` | 17.8 s | 66,304 kB | 0 | none |
+| `mutate_rmsnorm_bf_mem.sh` | **46.0 s** | 18,192 kB | 0 | **verdict** |
+| `mutate_rmsnorm_rs_mem.sh` | **56.3 s** | 18,272 kB | 0 | **verdict** |
+| `mutate_swiglu_mem.sh` | 495.8 s | 18,408 kB | 0 | **verdict** |
+| `mutate_mv4i_desc_stale.sh` | 0.01 s | 5,184 kB | **2** | hard error, section 9.5 |
+| `sim/check_mutation_harness.py` | 0.02 s | 11,712 kB | **1** | see 9.8 |
+
+Two things in that table are worth reading twice.
+
+**`mutate_a_geom.sh` peaks at 2.24 GB in thirteen seconds.**  `CLAUDE.md` gives
+2.13 GiB as the figure for the FULL both-suite gate, and TRACK CBANCHOR measured
+its own three-row mutation run at 175 MB and recorded that a targeted run does
+not inherit the gate's number.  Both remain true and **a single 13-second
+harness exceeds the whole gate's peak**, so neither figure bounds an arbitrary
+harness.  Measure the one you are about to run.
+
+**`mutate_swiglu_mem.sh` is 496 s for the same contract that costs 46 s next
+door.**  It is a LANES matrix (1, 2, 4) over 19 rows; the two rmsnorm harnesses
+are one geometry over 10 and 14.  Identical shape, an order of magnitude apart,
+and nothing on the outside says so.
+
+The selection rule, stated so it can be argued with: **a harness earns a gate
+row when it has a VERDICT-derived exit code, runs in under 60 s, peaks under
+100 MB, and guards RTL that ships.**  Exactly two of the 63 satisfy all four:
+`mutate_rmsnorm_rs_mem.sh` and `mutate_rmsnorm_bf_mem.sh`.  Total 102.3 s, which
+is +2.1% on the MEASURED 82m09s full run recorded in `regress.sh`'s own
+`BASELINE_PASS` comment.
+
+The third recommended row is `sim/check_mutation_harness.py` at 0.02 s, which
+covers all 63 at the text level and is the only cheap thing that could have
+caught section 9.5 -- had it been looking for that, which it is not (9.8).
+
+## 9.8 `sim:mutaudit` STILL must not be wired, and now it FAILS on the workstation and PASSES on a clean tree
+
+Section 6b recorded this checker passing on the workstation and failing on a
+fresh clone.  Today it is the other way round, at the SAME commit:
+
+```
+$ cd <shared checkout @ 9435942> && python3 sim/check_mutation_harness.py
+FAIL R1: sim/mutate_gain.sh is not in sim/mutation_harness_audit.tsv.
+checked 63 harnesses; 1 finding(s)                                    rc 1
+
+$ git worktree add --detach <wt> 9435942 && cd <wt> && python3 sim/check_mutation_harness.py
+checked 62 harnesses; 0 finding(s)                                    rc 0
+```
+
+Same commit, same code, opposite verdict, decided entirely by whether an
+UNTRACKED file is sitting in `sim/`.  R1 builds its list with `os.listdir`.
+`sim/mutate_gain.sh` is TRACK GAINTEETH's and was being written while this ran
+(mtime 18:57 on the day).  **Deliberately not fixed here, for the reason
+sections 6b and 8.12 both give: the file belongs to a live track**, and this is
+now the third consecutive track to decline it, which is itself the finding.  The
+two exits are stated in the patch header; (b), making R1 read `git ls-files` and
+report an untracked harness as a NOTE, fixes the class rather than the day.
+
+**And note what it would NOT have caught.**  `check_mutation_harness.py` audits
+the MECHANISM by which a harness reports a zero-match anchor.  It read
+`sim/mutate_mv4i_desc_stale.sh`, classified it GUARD correctly, and has no way
+to notice that the harness exits 2 on every invocation.  **A text audit of an
+error path cannot tell you the error path is the only path.**
+
+## 9.9 Two committed gate rows are RED at HEAD, and one of them is red because of a single word in a comment
+
+Found while checking whether the rows that ARE wired exercise what they claim.
+Both reproduce in a clean detached worktree at `9435942`, so neither is another
+track's dirty working tree:
+
+```
+c4stale    rc=1  COMPOSE4_STALE hw/fk33/rtl/compose4_top.vhd differs from a fresh
+                 generation (31 diff lines)
+shapechk   rc=1  SHAPE_FAIL no generic clause on entity attn_block in rtl/attn_block.vhd
+```
+
+`c4stale` is a true staleness: `56d13e3` added `dbg_sw_ph` and `dbg_sw_aux` to
+`attn_block` and `compose4_top.vhd` was not regenerated.  It belongs to C's
+owner.
+
+**`shapechk` is not.**  `rtl/attn_block.vhd` has a perfectly good generic
+clause; the checker's entity regex is
+
+```python
+re.search(r"\bentity\s+" + entity + r"\s+is\b(.*?)\bend\b", src, re.S | re.I)
+```
+
+and `56d13e3` added a comment INSIDE the generic clause, at line 293:
+
+```
+    -- end: SCORE_EARLY moves the pass earlier, this SHORTENS it.
+```
+
+`\bend\b` matches that comment, the entity body is truncated before the generic
+clause closes, and the generic regex then finds nothing.  MEASURED both ways, in
+the clean worktree, changing ONE WORD OF ONE COMMENT and no code:
+
+```
+committed text:  SHAPE_FAIL no generic clause on entity attn_block            rc 1
+`end:` -> `:`    SHAPE_OK 13 literals agree with model_cfg_pkg (MODEL at
+                 NCARDS=1): attn 16x4 hd=256 layers=8, gdn 16/32 hd=128 ...    rc 0
+restored:        SHAPE_FAIL no generic clause on entity attn_block            rc 1
+```
+
+This is section 2's second cause -- *"a comment quoting the code inflated a
+count"* -- in a new instrument: a comment containing a VHDL keyword truncates a
+checker's parse.  **The design is correct, the row is red, and the red is
+worth exactly nothing to anyone reading it.**  Same family as `gen_pcieep.py`'s
+`\bllama_top\b` guard being satisfied by a comment, in the opposite direction:
+there a comment made a check PASS, here a comment makes one FAIL.
+
+Not fixed here: `sim/check_model_shape.py` is not this track's file and the RTL
+belongs to a live track.  The fix is to strip `--` comments BEFORE the entity
+search, which the same function already does one line later for the generic
+body.
+
+## 9.10 A row that is the identity at every geometry, not just at the default
+
+TRACK CBANCHOR found `K10a` to be literally the identity at the harness's
+default (`CB_RANKS := CB_COPIES` with `CB_COPIES=4`).  The same class, found by
+reading a SURVIVED row:
+
+`xwswap` in `sim/mutate_rmsnorm_rs_mem.sh` and `sim/mutate_rmsnorm_bf_mem.sh`
+swaps x and w across the two pipeline registers:
+
+```
+p1_xinv(k) <= resize(x_q(k) * inv32, 48);   ->   resize(w_q(k) * inv32, 48);
+p1_wm(k)   <= resize(w_q(k), 17);           ->   resize(x_q(k), 17);
+```
+
+and the very next stage is `p2_raw(k) <= resize(p1_xinv(k) * p1_wm(k), 64)`.
+`x_q` and `w_q` are BOTH `signed(15 downto 0)` (`rtl/rmsnorm_rs_mem.vhd:269`),
+so both resizes are sign extensions and both products are exact.  **The mutant
+computes `w*inv*x` where the design computes `x*inv*w`.  It is the identity by
+commutativity, at every geometry, and no bench can ever kill it.**
+
+It is NOT a defect of the harness: both rows are declared `UNKNOWN`, and line 78
+skips `UNKNOWN` rows when counting failures, so neither contributes to the exit
+code.  **It IS a defect of any kill-ratio read off the table**, which counts
+them in the denominator: `mutate_rmsnorm_rs_mem.sh` is 7 pinned rows of 10, and
+`mutate_rmsnorm_bf_mem.sh` 10 of 14.  Recorded so the three UNKNOWN and four
+UNKNOWN rows are read as the resolution floor rather than as misses.
+
+## 9.11 Measured and REJECTED -- do not retry
+
+- **Wiring all 63, or even all of the cheap ones.**  52 have no exit contract,
+  so 48 of those rows would be green forever.  The gate is 82m09s of shared cost
+  paid by every track on every run; a row that cannot go red is pure cost.
+- **Reading `grep -n mutate sim/regress.sh` as the answer.**  It gives the right
+  verdict for the wrong reason: 20 hits, all comments, and it cannot see an
+  indirect invocation.  The closed dispatch set is what proves it.
+- **Trusting an execve trace at strace's default string length** (9.4).  It
+  reported the expected answer and was wrong.  `-s 300` or better.
+- **Wiring `sim:mutaudit` today.**  It is RED on this workstation right now,
+  because of another track's untracked file, and would go red on its first CI
+  run naming a file nobody touched.  Third track to decline this; see 9.8.
+- **Fixing `sim/check_model_shape.py`'s regex here** (9.9).  It is not this
+  track's file, the gate was live for two other tracks, and the RTL that
+  triggers it belongs to a third.  Reported with the one-word discriminator so
+  the owner does not have to re-derive it.
+- **A generic anchor-liveness gate row over all 63.**  This is the thing that
+  would actually have caught 9.5 and every finding in sections 1-8, and it is
+  NOT buildable as a `regress.sh` line today: TRACK REANCHOR's stubbed replay
+  works by sed-ing each harness's own row function to `return 0`, and the
+  function is called `run_case` in one harness, `run_row` in another, `row`,
+  `run_cap`, `mrow` elsewhere.  Doing it for 63 heterogeneous harnesses is a
+  track, not a patch hunk.  Named here as the highest-value follow-on rather
+  than sketched as if it were free.
+
+## 9.12 Open, not determined
+
+- **How many dead rows the other 32 harnesses hold.**  The 30 s sweep (9.5b)
+  found fifteen, and 32 of 63 harnesses did not finish inside it, so fifteen is a
+  floor and not a count.  `sim/mutation_harness_wiring.tsv` records which is
+  which; `TIMEOUT(30s)` is NOT evidence that a harness is alive.
+- **`sim/mutate_a_wbase.sh` was never run** (9.5b).  It needs a snapshot tree
+  containing `rtl/llama_top.vhd`, which is TRACK ATTNWIRE's file today.
+- **The runtime of 54 harnesses is unmeasured.**  Nine were timed; the rest are
+  classified by the bench they drive, which is DERIVED and, as `swiglu_mem`
+  shows at 496 s against `rmsnorm_bf_mem`'s 46 s, a weak predictor.
+- **Whether the two recommended harness rows actually go red when they should.**
+  Both exit on `fails > 0` and both printed `: 0` on a clean tree, so the zero
+  branch is MEASURED and the one branch is not.  The teeth test is written into
+  the patch header and was not run here, because breaking an anchor in a shared
+  file while four tracks are live is the hazard this project has recorded.
+- **Whether `sim:c4stale` being red at HEAD is known to C's owner.**  Not
+  communicated by this track beyond this document and the WORKLOG.
+- **`sim/mutate_a_wbase.sh` takes a SNAPSHOT directory as `$1` and restores from
+  a `.basefab_pristine` file inside it that is created only `if [ ! -f ]`.**  It
+  never touches the repo, so it is safe -- but a snapshot directory reused
+  across sessions restores a stale `llama_top.vhd` into itself.  Noticed while
+  checking whether any harness writes into the working tree (none does); not
+  investigated further.

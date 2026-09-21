@@ -1,0 +1,142 @@
+TRACK MUTWIRE, 2026-09-20.  Three gate rows for the mutation harnesses.
+
+APPLY THIS IN ONE ATOMIC EDIT, AND ONLY WHEN NO GATE IS LIVE.  `sim/regress.sh`
+is executed by byte offset and re-seeks; an insertion ahead of a live
+interpreter's offset makes it resume mid-line in the TAIL, which is the summary
+and BASELINE section whose verdict someone is waiting on.  A comment-only edit
+is not exempt.
+
+Base: sim/regress.sh at 9435942, md5 91f5619ad8796867bf6e23c077906992.
+Verify that md5 before applying; if it differs, re-anchor the hunks by the
+quoted context rather than by line number.
+
+TOTAL ADDED RUNTIME: 102.3 s MEASURED (56.3 + 46.0 + 0.02), which is +2.1% on
+the MEASURED 82m09s full both-suite run at --jobs 1 recorded in this file's own
+BASELINE_PASS comment.  Peak RSS of the three, MEASURED: 18,272 kB, 18,192 kB
+and 11,712 kB -- the largest is 1/120th of that run's 3.30 GiB cgroup peak.
+
+BASELINE_PASS IS DELIBERATELY NOT TOUCHED.  Three rows that pass raise the PASS
+count, which a floor cannot fail on, and the last full run was RED (FAIL 3), so
+no floor may come off it.  Raise it from the first GREEN run that contains these
+rows, not from this patch.
+
+sim:mutrms and sim:mutbfm are added to SLOW_TBS so `--quick` skips them.
+SLOW_SET normalises with `$(echo $SLOW_TBS)`, so the recorded line-end trap does
+not apply to a whole new line; they are still put on one line of their own.
+
+PRECONDITION ON HUNK 2's mutaudit ROW -- DO NOT APPLY THAT ROW BEFORE IT HOLDS.
+MEASURED 2026-09-20, same commit, two trees:
+
+  shared checkout (63 harnesses on disk, sim/mutate_gain.sh untracked):
+      FAIL R1: sim/mutate_gain.sh is not in sim/mutation_harness_audit.tsv.
+      checked 63 harnesses; 1 finding(s)                              rc 1
+  detached git worktree at the SAME commit 9435942 (62 harnesses):
+      checked 62 harnesses; 0 finding(s)                              rc 0
+
+check_mutation_harness.py's R1 builds its harness list from a DISK GLOB
+(os.listdir), so ANY track's in-flight untracked harness turns this row red for
+every track.  Either (a) sim/mutate_gain.sh is committed and audited by its
+owner, TRACK GAINTEETH, or (b) R1 reconciles the manifest against `git ls-files`
+and reports an UNTRACKED harness as a note rather than a finding.  (b) fixes the
+class; (a) fixes today and leaves the trap armed for the next track.
+
+===========================================================================
+HUNK 1 -- SLOW_TBS, so --quick skips the two harness rows
+===========================================================================
+Context: the line `          sim:tb_llama_top_swg sim:tb_swiglu_mem_9b` inside
+SLOW_TBS (line 1484 at the base commit).  Insert ONE new line after it.
+
+          sim:tb_llama_top_swg sim:tb_swiglu_mem_9b
++         sim:mutrms sim:mutbfm
+          sim:seamgate_real sim:seamgate_stub sim:seamgate_seq
+
+===========================================================================
+HUNK 2 -- the three plan rows
+===========================================================================
+Context: immediately after
+  `printf 'shapechk\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"`
+(line 2168 at the base commit) and before the `# 1b.` banner.  Insert:
+
+# ---------------------------------------------------------------------------
+# THE MUTATION HARNESSES.  TRACK MUTWIRE, 2026-09-20.
+#
+# MEASURED: sixty-three sim/mutate_*.sh exist and NOT ONE of them was reachable
+# from any row of this gate.  The three dispatch paths are a closed set --
+# run_one runs $GHDL, run_graygate runs sim/gray_check.sh, run_seam runs
+# tools/ref9b/seamgate.sh, run_selfcheck runs SELFCHECK_CMD -- and an execve
+# trace of one row of each kind shows no mutate_*.sh in any of them.  So the
+# five harnesses TRACK MUTAUDIT fixed, the 21 rows TRACK REANCHOR re-anchored
+# and the 9 TRACK CBANCHOR restored were all protecting evidence that only ran
+# when a human typed the script's name.
+#
+# THESE THREE ROWS ARE NOT AN ATTEMPT TO SCHEDULE THE OTHER SIXTY.  Running the
+# mutants is minutes to hours and is shared cost paid by every track on every
+# run; what actually destroyed evidence three times is an anchor going dead,
+# which is a TEXT property and is nearly free to check.  sim:mutaudit is that
+# check for all 63 at once.  The two harness rows are the only two in the whole
+# set that satisfy all of: a verdict-derived exit code, under 60 s, under
+# 100 MB, and RTL that ships.  Everything else is recorded as MANUAL in
+# sim/mutation_harness_wiring.tsv with the reason and the measured cost.
+#
+#   sim:mutaudit  sim/check_mutation_harness.py -- every sim/mutate_*.sh is in
+#       sim/mutation_harness_audit.tsv and none has the zero-match-anchor
+#       defect (a mutation that did not apply reported as SURVIVED).
+#       MEASURED 2026-09-20: 0.02 s, 11,712 kB peak RSS.
+#       READ THE PRECONDITION IN THE PATCH HEADER BEFORE ENABLING THIS ROW.
+#   sim:mutrms    sim/mutate_rmsnorm_rs_mem.sh -- 10 mutants of the shipping
+#       banked RMSNorm store over three check configurations (FULL, noVAL,
+#       noVL+LT), 7 of them pinned to an expected verdict; the script exits
+#       nonzero when any verdict differs from the one written down for it, or
+#       when a sed matched nothing.  MEASURED 2026-09-20: 56.3 s, 18,272 kB.
+#   sim:mutbfm    sim/mutate_rmsnorm_bf_mem.sh -- the same shape over the bf
+#       store, 14 mutants of which 10 are pinned.  MEASURED: 46.0 s, 18,192 kB.
+#
+# WHY A SCRATCH OVERRIDE IS PASSED.  Both harnesses default their scratch to a
+# FIXED absolute path (/mnt/storage/rmsmux/mut, /mnt/storage/bfmem/mut), so two
+# gates running at once would collide there.  run_selfcheck runs its command
+# unquoted and NOT through a shell, so a `VAR=val cmd` prefix would be handed to
+# argv; `env` is a real binary and is the form that works.  $SCRATCH is the
+# gate's own scratch root and is in scope here (set at line 1460).
+printf 'mutaudit\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+printf 'mutrms\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+printf 'mutbfm\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
+===========================================================================
+HUNK 3 -- SELFCHECK_CMD entries
+===========================================================================
+Context: immediately before the closing `)` of `declare -A SELFCHECK_CMD=(`,
+i.e. after the `[qknimage]=...` line (line 2946 at the base commit).  Insert:
+
+  # See the block above section 1b for what these three guard and why the other
+  # sixty harnesses are deliberately NOT here.  TRACK MUTWIRE, 2026-09-20.
+  [mutaudit]="python3 $REPO/sim/check_mutation_harness.py"
+  [mutrms]="env RMSMUX_SCRATCH=$SCRATCH/mutrms bash $REPO/sim/mutate_rmsnorm_rs_mem.sh"
+  [mutbfm]="env BFMEM_SCRATCH=$SCRATCH/mutbfm bash $REPO/sim/mutate_rmsnorm_bf_mem.sh"
+
+===========================================================================
+HUNK 4 -- the dispatcher
+===========================================================================
+Context: the `runguard|ipsync|...|imglock) run_selfcheck "$key"; return ;;`
+line inside run_one's leading case (line 2977 at the base commit).  Append the
+three names to the alternation, so the line reads:
+
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|mutaudit|mutrms|mutbfm) run_selfcheck "$key"; return ;;
+
+===========================================================================
+AFTER APPLYING
+===========================================================================
+Confirm each row reaches its command and returns a verdict, one at a time:
+
+    bash sim/regress.sh --only mutaudit
+    bash sim/regress.sh --only mutrms
+    bash sim/regress.sh --only mutbfm
+
+Read the `OVERALL PASS n` line and confirm n is 1 on each.  `--only` takes a
+SUBSTRING, not a regex, and a pattern matching nothing still prints
+`REGRESSION: PASS` with `PASS 0`.
+
+Then teeth, because a row never shown to fail has not been shown to work.  For
+sim:mutrms, break one anchor in a COPY of the harness under your own scratch
+and point the row at the copy; the row must go red with
+`NOSUB or an unexpected verdict is a FAILURE of this script: 1`.  Do not break
+the anchor in the committed file: four tracks share this tree.

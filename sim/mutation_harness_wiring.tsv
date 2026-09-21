@@ -1,0 +1,100 @@
+# sim/mutation_harness_wiring.tsv -- TRACK MUTWIRE, 2026-09-20.
+#
+# Companion to sim/mutation_harness_audit.tsv.  That file records whether a
+# harness reports a zero-match anchor honestly.  This one records whether
+# anything ever RUNS it, what an exit code from it would mean, and what wiring
+# it as a sim/regress.sh row would cost.
+#
+# sched       SCHEDULED / UNSCHEDULED / UNCERTAIN.  MEASURED 2026-09-20 by:
+#             (1) bash sim/regress.sh --list -> 218 rows, 0 matching 'mutate';
+#             (2) regress.sh's dispatch is a closed set of four paths (run_one
+#                 -> $GHDL, run_graygate -> sim/gray_check.sh, run_seam ->
+#                 tools/ref9b/seamgate.sh, run_selfcheck -> 21 fixed commands),
+#                 and grep -c mutate_ over all 23 of those commands finds three
+#                 hits, all COMMENTS;
+#             (3) execve traces (strace -f -s 300) of one row of the run_one
+#                 kind and one of the run_graygate kind: 0 mutate execs, while
+#                 the SAME graygate trace shows 25 execs of sim/gray_check.sh.
+#                 (3) is the discrimination test; (1) and (2) alone are a grep.
+# exitcontract  VERDICT  = exits non-zero when a mutant's verdict differs from
+#                          the one written down for it.  Only these can be a
+#                          gate row that catches a lost property.
+#               ANCHOR   = exits non-zero only when a row failed to RUN (a dead
+#                          anchor) or a Z0 self-teeth row stopped firing.  Real
+#                          value, but not the value the name suggests.
+#               NONE     = the last executable statement is an echo, so the
+#                          script exits 0 whatever it printed.  52 of 63.
+#               TOMBSTONE= exits 2 unconditionally, by design.
+# runtime     MEASURED by /usr/bin/time -v, serial, one at a time; '-' = not
+#             measured.  Do NOT infer one from the bench: mutate_swiglu_mem.sh
+#             is 495.8 s and mutate_rmsnorm_bf_mem.sh 46.0 s for the same shape.
+# liveness    from a 30 s sweep, 2026-09-20.  OK = ran to its own summary;
+#             DEAD = exited non-zero having produced no table; DEADROWS = ran,
+#             but printed ANCHOR FAILED for one or more rows; TIMEOUT(30s) = did
+#             not finish in 30 s, which is NOT evidence that it is alive.
+# rec         WIRE / MANUAL / TOMBSTONE.
+#
+# harness\tsched\texitcontract\truntime\tpeakRSS_kB\tliveness\tdeadrows\trec\tnote
+sim/mutate_a_drain_wide.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_a_geom.sh	UNSCHEDULED	ANCHOR	13.0s	2237328	OK	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_async_fifo.sh	UNSCHEDULED	NONE	-	-	DEADROWS	O1	MANUAL	O1 dead
+sim/mutate_attn_block.sh	UNSCHEDULED	ANCHOR	-	-	OK	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_attn_emit.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_gate.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_kv_axi.sh	UNSCHEDULED	NONE	-	-	DEADROWS	B3,P1,P2	MANUAL	3 rows dead since 6c9aa09 (2026-08-29): to_integer(x) mod N became low_bits(x,k); mechanically repairable, and rc was 0
+sim/mutate_attn_kv_seam.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_recip.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_rescale.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_rope.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_score_early.sh	UNSCHEDULED	ANCHOR	-	-	TIMEOUT(30s)	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_attn_score_hdr.sh	UNSCHEDULED	ANCHOR	-	-	OK	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_attn_softmax.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_attn_sweep_pipe.sh	UNSCHEDULED	ANCHOR	-	-	TIMEOUT(30s)	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_attn_twiddle.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_a_wbase.sh	UNSCHEDULED	NONE	-	-	NOTRUN	-	MANUAL	NOT RUN by this track: it takes a SNAPSHOT dir and a scratch dir as $1 $2 and mutates rtl/llama_top.vhd inside the snapshot, which is TRACK ATTNWIRE's file today
+sim/mutate_axi_rd_fsm.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_axi_rd_port_dual.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_axi_rd_port.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_eng_cdc.sh	UNSCHEDULED	NONE	17.8s	66304	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_fk33_seam.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gain.sh	UNSCHEDULED	VERDICT	-	-	TIMEOUT(30s)	-	MANUAL	UNTRACKED, TRACK GAINTEETH's; not this track's to wire, and it is why sim:mutaudit is red today
+sim/mutate_gdn_block.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)+DEADROWS	M01,M02,M03,M04,M05	MANUAL	5 of its rtl rows print ANCHOR-FAILED in the VERDICT column and the run continues
+sim/mutate_gdn_conv.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_emit_chain.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_exp_capture.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_head_emit.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_recur.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_scalar.sh	UNSCHEDULED	NONE	-	-	DEADROWS	B2,B3,B4,B5	MANUAL	4 rows fail on the C-model anchor, not the RTL anchor
+sim/mutate_gdn_silu.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gdn_y_emit.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_gray.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_kv_map.sh	UNSCHEDULED	NONE	6.9s	24596	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_llama_top_kv.sh	UNSCHEDULED	ANCHOR	-	-	TIMEOUT(30s)	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_llama_top_land.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_llama_top_normuram.sh	UNSCHEDULED	TOMBSTONE	-	-	TOMBSTONE	-	TOMBSTONE	retired by TRACK REANCHOR; exits 2; successor is sim/mutate_rmswire.sh
+sim/mutate_llama_top_smp.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_matvec_cb.sh	UNSCHEDULED	ANCHOR	-	-	TIMEOUT(30s)	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_matvec_core.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)+DEADROWS	D3	MANUAL	D3 dead; count is a LOWER BOUND, the sweep timed out at 30 s
+sim/mutate_matvec_int4.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_mv4i_desc_run.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_mv4i_desc.sh	UNSCHEDULED	VERDICT	-	-	TIMEOUT(30s)	-	MANUAL	verdict exit; cost is runtime, see the runtime column
+sim/mutate_mv4i_desc_stale.sh	UNSCHEDULED	HARDERROR	0.01s	5184	DEAD	ALL	MANUAL	DEAD SINCE ITS OWN BIRTH COMMIT 3ecc729 (2026-08-30); M2 anchors on text 3ecc729 itself removed; re-anchor before anything else
+sim/mutate_normw.sh	UNSCHEDULED	ANCHOR	-	-	TIMEOUT(30s)	-	MANUAL	exit reports a dead ANCHOR only, never a lost property
+sim/mutate_ref_attn_rescale.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_ref_attn_rope.sh	UNSCHEDULED	NONE	2.0s	35052	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_ref_attn_twiddle.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_ref_seq_vec_chain.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_ref_seq_vec_res.sh	UNSCHEDULED	NONE	1.9s	30336	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_rmsnorm_bf_mem.sh	UNSCHEDULED	VERDICT	46.0s	18192	OK(full run)	-	WIRE	verdict exit, under 60 s, under 100 MB, shipping RTL: the only two meeting all four
+sim/mutate_rmsnorm_bf.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_rmsnorm_rs_mem.sh	UNSCHEDULED	VERDICT	56.3s	18272	OK(full run)	-	WIRE	verdict exit, under 60 s, under 100 MB, shipping RTL: the only two meeting all four
+sim/mutate_rmswire.sh	UNSCHEDULED	VERDICT	-	-	TIMEOUT(30s)	-	MANUAL	verdict exit but drives tb_llama_top_normw (75 s per row) over a four-column matrix
+sim/mutate_seq_desc_fetch.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_seq_opdec.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_seq_region_lock.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_seq_tbl_shape.sh	UNSCHEDULED	NONE	-	-	DEADROWS	N1	MANUAL	N1 dead; its only late exit 1 is a CONTROL guard (the unmutated run failing), not a verdict
+sim/mutate_seq_vec_issue.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_seq_vec_res.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_swg_wide.sh	UNSCHEDULED	NONE	-	-	TIMEOUT(30s)	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
+sim/mutate_swiglu_mem.sh	UNSCHEDULED	VERDICT	495.8s	18408	OK(full run)	-	MANUAL	verdict exit but 495.8 s, a LANES matrix; +10% on the gate for one unit
+sim/mutate_weight_streamer.sh	UNSCHEDULED	NONE	-	-	OK	-	MANUAL	no exit contract: last executable line is an echo, so it exits 0 whatever it printed
