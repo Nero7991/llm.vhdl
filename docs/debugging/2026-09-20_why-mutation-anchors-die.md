@@ -309,6 +309,7 @@ only thing in the bench that can see it.
 ```
 TAG    FULL          noWACT        noASRT        onlyWA        WHAT
 R5b    K:landmarks   K:landmarks   K:landmarks   K:landmarks   w STREAM, m7 hazard: the bank write address REVERSED
+R8     K:landmarks   K:landmarks   K:landmarks   K:landmarks   o STREAM: the region write address off by one against the bank read address
 ```
 
 **R5b is the row ADDED to carry the retired `normuram` U3, and it bites.**  The
@@ -316,6 +317,22 @@ m7 reversal on the form that ships is caught -- and the four-column control
 says by the pre-existing token landmarks, not by `wact_chk` and not by TRACK
 NORMURAM's `wbusy` assertion.  So retiring U3 costs no coverage: the property
 is held, and it is held by the landmarks rather than by either assertion.
+
+**R8, the last row of the track, is the same verdict and the same attribution.**
+Both `o`-stream and `w`-stream address mutants are caught, and all three
+re-anchored `rmswire` rows (R7, R8, R5b) are `K:landmarks` in every column.
+
+**THAT UNIFORMITY IS ITSELF A RESULT AND IT IS NOT A FLATTERING ONE.**  Across
+the three rows this track re-anchored, NEITHER assertion earned a single kill:
+`wact_chk` (TRACK RMSWIRE's) and the `wbusy`-at-`r_go` assertion (TRACK
+NORMURAM's) are both `assert true` in the `noASRT` column and every row still
+dies.  That is what `onlyWA` was built to expose and it is consistent with what
+`mutate_rmswire.sh`'s own header already predicted in prose -- *"it earns NO
+kill of its own"*.  It does NOT follow that either assertion is worthless:
+these three mutants are all VALUE faults, and both assertions are SCHEDULE
+checks aimed at a load race the value rows do not create.  What follows is
+narrower and should be stated as such: **no row re-anchored here discriminates
+on either assertion, so this track re-earned nothing for them.**
 
 ### 4.7 The vanished-row ledger, teeth both ways (MEASURED)
 
@@ -417,15 +434,18 @@ row and not merely to fire.
   and U3 existed to attack.  Retiring normuram does not create this hole; the
   hole arrived with `c094867` and normuram's rows had been dead since then.  It
   is now visible.  **Nobody has teeth on `CBMAP`.**
-- **Seven re-anchored rows have verified anchors and no verdict yet.**  The
+- **Six re-anchored rows have verified anchors and no verdict.**  The
   `tb_llama_top` rows cost 13 minutes or more each and the budget for this
-  track ran out: `llama_top_kv` R7, R7b, R8, VR7, VR7b, VN2 and `rmswire` R8
-  are re-anchored, replay-clean at HEAD **and** in the working tree, and have
+  track ran out: `llama_top_kv` R7, R7b, R8, VR7, VR7b and VN2 are
+  re-anchored, replay-clean at HEAD **and** in the working tree, and have
   their impossible-anchor teeth, but the row itself has not been RUN.  Their
   verdicts are DERIVED from the legend and the RTL, not MEASURED.
-  (`rmswire` R8 was still running when this was written and had already left
-  the `FULL` column, i.e. it was not a survivor; its four-column result is in
-  `/mnt/storage/fk33_builds/scratch/reanchor/rw_b.log`.)
+  (`rmswire` R8 landed after this section was first written and is MEASURED;
+  see 4.6b.)
+- **`rmswire`'s T0-T3 tap rows were never run by this track.**  They are
+  filtered out by `ONLY` and judged by a different bench
+  (`sim/tb_rmswire_loadrace.vhd`), so the `w_active` half of that harness is
+  untouched and unverified here in either direction.
 - **R7/VR7 and R7b/VR7b carry a PREDICTION that was not tested here.**  Their
   own legends, written by TRACK C1, say R7 survives on the fixed design
   (`cmp` of the clean and R7 captures is IDENTICAL at NTOK 3, 5 and 8) and
