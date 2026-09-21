@@ -1,0 +1,41 @@
+# TRACK CBRAM 2026-09-20 -- the 3D-RAM recognizer, three builds, verbatim
+# build 9  : hw/fk33/results/card_kvreg_2026-09-20/build.stdout (already in the repo)
+#            the SHIPPING bitstream, 2.46 tok/s, pre-0b34200 codebook
+# build 10 : /mnt/storage/fk33_builds/build10/build.stdout (full, 5327098 bytes, HEAD b71a6d98212ee9ebc6fdde6d5a3802154dabd232)
+#            committed here as card_build10_FAILED_2026-09-20/build.stdout.full.gz
+# build 11b: /mnt/storage/fk33_builds/build11b/build.stdout (build still running when read; read-only)
+
+## build 9, grep '8-5859' + the codebook config + the routed result
+FK33_CB_STYLE distributed
+INFO: [Synth 8-5859] Recognized 3D RAM gqbuf[0].qbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd:749]
+INFO: [Synth 8-5859] Recognized 3D RAM gkbuf[0].kbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd:760]
+INFO: [Synth 8-5859] Recognized 3D RAM cb_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/matvec_core.vhd:692]
+   distinct cb_reg indices: 1536   max: 1535   RAM32M16 rows: 3072
+INFO: [Route 35-20] Post Routing Timing Summary | WNS=0.061  | TNS=0.000  | WHS=0.009  | THS=0.000  |
+   ==> the 1,536-sink command net ROUTES CLEAN.  This is the control that
+       says a revert of 0b34200 does not reopen a measured failure.
+
+## build 10, grep -n '8-5859'
+7822:INFO: [Synth 8-5859] Recognized 3D RAM gqbuf[0].qbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd:749]
+7823:INFO: [Synth 8-5859] Recognized 3D RAM gkbuf[0].kbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/gdn_block.vhd:760]
+7989:INFO: [Synth 8-5859] Recognized 3D RAM cb_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/home/orencollaco/GitHub/llama.vhdl/rtl/matvec_core.vhd:692]
+
+## build 11b, grep -n '8-5859'
+7834:INFO: [Synth 8-5859] Recognized 3D RAM gqbuf[0].qbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/mnt/storage/fk33_builds/wt11/rtl/gdn_block.vhd:749]
+7835:INFO: [Synth 8-5859] Recognized 3D RAM gkbuf[0].kbuf_reg. This will most likely be implemented in Block/Distributed/Ultra RAMs.  [/mnt/storage/fk33_builds/wt11/rtl/gdn_block.vhd:760]
+   ==> cb_reg is ABSENT.  The two gdn_block rows are the control that did not move.
+
+## build 10, Distributed RAM Final Mapping Report, cb_reg rows (first 3 of 1536 per table, 2 tables)
+|matvec_core__GB9 | cb_reg[919][11] | User Attribute | 16 x 8 | RAM32M16 x 1 | 
+|matvec_core__GB9 | cb_reg[918][11] | User Attribute | 16 x 8 | RAM32M16 x 1 | 
+|matvec_core__GB9 | cb_reg[917][11] | User Attribute | 16 x 8 | RAM32M16 x 1 | 
+   distinct cb_reg indices: 1536   max: 1535   rows: 3072
+
+## build 11b, any mention of cb_reg or a bare 'cb' token
+   grep -c cb_reg                       : 0
+   grep -cE '[^a-zA-Z_]cb[^a-zA-Z0-9_]' : 0
+
+## build 11b, the only matvec_core row in the Distributed RAM Final Mapping Report
+|matvec_core__GB13 | xq_reg | Implied | 2 x 512 | RAM32M16 x 37 | 
+   ==> xq_reg is the in-entity control: LUTRAM inference in matvec_core still
+       works in build 11b; it is cb specifically that was refused.

@@ -1,0 +1,33 @@
+# TRACK CBRAM 2026-09-20 -- the codebook control sets, both builds, placed stage
+# report_control_sets -verbose.  Detailed table columns are:
+#   clock | enable | set/reset | Slice Load Count | Bel Load Count | Bels/Slice
+# so the register/bel count is field 6, NOT field 5.  Reading field 5 gives
+# 48 sets summing to 1,528, which is slices and is not the answer.
+
+## build 10  -- | Date : Sun Sep 20 14:40:00 2026
+   distinct control sets enabled by .../core/cbw_v[i] : 1536
+   Bel Load Count histogram (count x value):
+        1536 16
+   total bel loads: 24576
+   first and last enable net:
+     bd_i/eng/inst/eng/dut/core/cbw_v[0]
+     bd_i/eng/inst/eng/dut/core/cbw_v[1535]
+
+## build 11b  -- | Date : Sun Sep 20 20:26:05 2026
+   distinct control sets enabled by .../core/cbw_v[i] : 48
+   Bel Load Count histogram (count x value):
+          48 128
+   total bel loads: 6144
+   first and last enable net:
+     bd_i/eng/inst/eng/dut/core/cbw_v[0]
+     bd_i/eng/inst/eng/dut/core/cbw_v[47]
+
+## reading
+  build 10 : 1,536 x 16 bels = 24,576 LUTRAM bels.  16 bels is one RAM32M16
+             (14 RAMD32 + 2 RAMS32).  One private write port per copy.
+  build 11b:    48 x 128 bels = 6,144 flip-flops.  128 = 16 entries x 8 bits,
+             i.e. the whole codebook in registers, ONE BANK PER RANK.
+  The 1,536 read ports did NOT merge: MUXF8 rose by 1,536 x 8 = 12,288.
+
+  This is also the first tool COUNT of CBFANOUT's central claim on a real
+  build: distinct command-register nets 1,536 -> 48.
