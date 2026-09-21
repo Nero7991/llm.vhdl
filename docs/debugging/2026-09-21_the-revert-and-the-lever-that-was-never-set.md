@@ -441,3 +441,62 @@ form:**
    (`sha256_old=ef401b6f...`, `sha256_new=974734a7...`, both `repo_head=
    c189722`) -- but the next prepare will abort. The file belongs to
    CBOOC/CBRUN and was not edited.
+
+---
+
+## 9. ADDENDUM 2026-09-21, after `6f5c681` (TRACK CBRUN) landed: its negative result is explained, and a falsifiable prediction for TRACK CBCENSUS
+
+CBRUN's OOC A/B landed while section 8 was being written, and **its central
+negative result is exactly what finding (b) predicts.** Its words:
+
+> **THE NEGATIVE RESULT IS THE IMPORTANT ONE. Out of context, `cb` is
+> distributed RAM in BOTH arms: `cb_ram=26112` and `cb_ff=0` identically,
+> `lut_mem` delta +0, `f8` delta +0, no mux tree in either arm.** [...] So no
+> out-of-context experiment on this lever, including a `bcast` arm, can settle
+> what it does on the card. [...] **the divergence is worse than that, because
+> it is at synthesis.**
+
+**There is no divergence to explain.** The OOC harness runs at
+`CB_STYLE=distributed` -- it refuses `regs` outright, and CBRUN's own
+`cbw_*` fanout figure of **1537** confirms `CB_COPIES = 1,536` in both arms.
+Build 11b ran at `CB_STYLE=regs`, where `cb` is 48 register banks with 1,536
+lane read muxes **by construction, with or without `0b34200`**. The two
+experiments were run at different values of the generic that decides whether
+`cb` is RAM at all. **The "context effect at synthesis" is a parameter
+difference.**
+
+Three further points of agreement, each independent:
+
+1. **CBRUN's correction that `[Synth 8-5859]` did NOT decline `cb`** -- *"there
+   is no message either way"*, `grep -c '8-5859'` = 2, both `gdn_block` -- is
+   consistent with `regs`, under which nothing ever asks for the inference.
+   Section 2's table and CBRUN's correction agree and were reached
+   independently.
+2. **`f8` delta +0 out of context** is what `0b34200` should do: it changes the
+   write command path, not the read path, and the read path is where every
+   MUXF8 comes from.
+3. **CBRUN's one hit, `FF -19,345` against a registered `-19,344`**, is real and
+   is a property of `0b34200` at `distributed`. It is the only number anyone has
+   that measures this lever, and it is a saving rather than a cost. **It still
+   does not license the lever onto a card build, because nothing has drawn it at
+   `distributed` in the card's context.**
+
+### The registered prediction, before the census draws
+
+TRACK CBCENSUS holds the workstation lane and is censusing build 11b's preserved
+**synthesis** checkpoint *"to establish which primitives `core/cb` became"*.
+Written here before its result, and not to be adjusted:
+
+| quantity, build 11b synthesis checkpoint | prediction | why |
+|---|---|---|
+| distinct `cb_reg` first indices | **48**, max index 47 | `CB_COPIES = 48` at `regs` |
+| `get_cells -hier -filter {NAME =~ *cb_reg* && REF_NAME =~ RAM*}` | **0** | no `ram_style` is requested at `regs` |
+| `cb_reg` flip-flops | **6,144** = 48 x 16 x 8 | the register bank |
+| MUXF8 attributable to the `cb` read cone | **12,288** = 1,536 x 8 | one 16:1 eight-bit mux per LANE |
+| `CB_RANKS`-shaped structure of any kind | **none distinguishable** | `cb_rank_of` is the identity at `regs` |
+
+**The falsifier: if the census finds 1,536 distinct `cb_reg` indices, finding
+(b) is wrong and `CB_STYLE` was somehow `distributed` after all**, in which case
+`Parameter CB_STYLE bound to: regs` printed immediately above
+`done synthesizing module 'matvec_core'` needs explaining and nothing in this
+file survives it.
