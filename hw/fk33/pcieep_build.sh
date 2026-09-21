@@ -44,6 +44,42 @@ BD_ONLY=0
 # off the root filesystem.
 BUILD_ROOT="${BUILD_ROOT:-/mnt/storage/fk33_builds/pcieep}"
 
+# ---- WHERE THE REPORTS ARE KEPT -------------------------------------------
+#
+# THE REPORTS ARE NOT THE PROBLEM.  THEY WERE NEVER KEPT.  Vivado's own run
+# strategy has been writing bd_wrapper_utilization_placed.rpt and
+# bd_wrapper_timing_summary_routed.rpt into impl_1 on every build since the
+# flow existed; nothing copied them anywhere, and BUILD_ROOT is reused, so
+# they survived exactly until the next build.
+#
+# What that cost, MEASURED 2026-09-20:
+#
+#   - Build 9 (card_kvreg_2026-09-20) committed only `timing.txt`, holding two
+#     sentinel lines.  Its placed utilization report does not exist, so the
+#     single most quoted area comparison in this project -- build 9 against
+#     build 10 -- has never been made, and build 10's postmortem attributed
+#     its -5.819 ns failure to the levers' AREA with no control to check it
+#     against.  TRACK LEVERBOARD then found that attribution unsupported.
+#   - Build 10's reports exist only because a human copied four files by hand
+#     after the fact, into hw/fk33/results/card_build10_FAILED_2026-09-20/.
+#
+# So this directory is created BEFORE Vivado starts, is outside BUILD_ROOT so
+# a rebuild cannot take it, and is filled by two writers: the post-place hook
+# gen_pcieep.py arms (which copies the placed reports the moment place_design
+# finishes, so they survive a build that later dies in route) and the EXIT
+# trap below (which fires whether this script succeeds, fails or is
+# interrupted).  Reports are kilobytes.  Four hours are not.
+#
+# It lands in hw/fk33/results/ NEXT TO THE TREE THAT BUILT IT, which is the
+# right place whether this script was run from the repo or from a worktree on
+# /mnt/storage, and which is where every other measured result in this project
+# already lives.  Nothing here stages or commits anything: the files are
+# untracked and promoting them is the operator's decision.
+FK33_STAMP="$(date +%Y%m%d_%H%M%S)"
+FK33_TAG="${FK33_BITTAG:-$([[ "${FK33_CARD:-0}" == "1" ]] && echo card || echo eng)}"
+FK33_REPORT_DIR="${FK33_REPORT_DIR:-$FK33_DIR/results/build_${FK33_TAG}_${FK33_STAMP}}"
+export FK33_REPORT_DIR
+
 echo "=== regenerating the build script from the probe build ==="
 python3 gen_i2cprobe.py
 # The subsystem-A wrapper.  Generated, not committed-and-forgotten, because the
@@ -87,7 +123,123 @@ AUXPROBE_SELFTEST=1 tclsh tcl/aux_probe.tcl | tail -1
 AXISEL_SELFTEST=1 tclsh tcl/axi_select.tcl | tail -1
 
 mkdir -p "$BUILD_ROOT"
+# Absolute from here on.  Line 94 cds into BUILD_ROOT and never returns, and
+# the harvest trap below resolves paths under it long after that cd, so a
+# relative BUILD_ROOT would silently harvest the wrong directory or nothing.
+BUILD_ROOT="$(cd "$BUILD_ROOT" && pwd)"
 cp build_fk33_pcieep.tcl "$BUILD_ROOT/"
+
+# The post-place hook copies into this directory the moment place_design
+# finishes, so it has to exist before Vivado starts.  A --bd-only run never
+# reaches implementation and does not need it.
+(( BD_ONLY )) || mkdir -p "$FK33_REPORT_DIR"
+
+# ---- THE HARVEST ----------------------------------------------------------
+#
+# Copies the small, durable half of a build out of BUILD_ROOT.  Called from an
+# EXIT trap, so it runs on success, on failure, and on Ctrl-C, and it is
+# idempotent so calling it twice is harmless.
+#
+# EVERY COMMAND IN HERE IS `|| true`.  An EXIT trap that fails under `set -e`
+# can replace the script's exit status, which would turn a successful build
+# into a reported failure -- the "a waiter's exit code is the harness's, not
+# the job's" trap in CLAUDE.md, arriving through the back door.  A harvest
+# that half-works and says so is correct; a harvest that changes the verdict
+# is not.
+#
+# NOTHING IN HERE DELETES ANYTHING.  There is no `rm` in this function and
+# there must never be one: the project rule is that no shell variable may
+# appear anywhere in a path passed to rm, and every path here is a variable.
+fk33_harvest() {
+    local rc=$?
+    local impl="$BUILD_ROOT/fk33_pcieep/fk33_pcieep.runs/impl_1"
+    mkdir -p "$FK33_REPORT_DIR" 2>/dev/null || true
+
+    # PROVENANCE FIRST, because a results directory without a commit id is how
+    # the 2026-09-05 stale-table failure happened: a week-old area table was
+    # compared against a current routed run, `d_norm` was wrong by 9.7x in
+    # LUT, and the table passed every arithmetic self-consistency check
+    # because staleness does not break arithmetic.  Only reading the date
+    # would have caught it, and the date was in the path by luck.  Assert the
+    # tree identity; do not infer it from a filename being plausible.
+    {
+        echo "FK33_PROV date        $(date -Is)"
+        echo "FK33_PROV host        $(hostname)"
+        echo "FK33_PROV source_tree $FK33_DIR"
+        echo "FK33_PROV build_root  $BUILD_ROOT"
+        echo "FK33_PROV git_head    $(git -C "$FK33_DIR" rev-parse HEAD 2>/dev/null || echo UNKNOWN)"
+        echo "FK33_PROV git_dirty   $(git -C "$FK33_DIR" status --porcelain 2>/dev/null | wc -l) modified paths"
+        echo "FK33_PROV exit_status $rc"
+        echo "FK33_PROV bd_only     $BD_ONLY"
+        # The build's own parameters, from the environment that set them,
+        # never from the intent of whoever launched it.  Two composed runs
+        # were once compared as a one-variable experiment and differed in
+        # FIVE things, all of them recorded and none of them read.
+        env | grep -E '^FK33_' | sort | sed 's/^/FK33_PROV env /'
+    } > "$FK33_REPORT_DIR/PROVENANCE.txt" 2>/dev/null || true
+
+    # The distilled log.  The full build.stdout is megabytes; these three
+    # extracts are the part anybody ever reads, and the sentinel grep is
+    # line-anchored because Vivado echoes the sourced Tcl into the log with a
+    # "#" prefix, so an unanchored grep matches the puts statement that would
+    # print the line rather than the line.
+    if [[ -f "$BUILD_ROOT/build.log" ]]; then
+        grep -a "^FK33_" "$BUILD_ROOT/build.log" \
+            > "$FK33_REPORT_DIR/SENTINELS.txt" 2>/dev/null || true
+        grep -aE "^[a-z_]+: Time \(s\)|^Time \(s\)" "$BUILD_ROOT/build.log" \
+            > "$FK33_REPORT_DIR/PHASE_TIMES.txt" 2>/dev/null || true
+        # Post-place and per-route-iteration WNS.  NOT a result -- CLAUDE.md
+        # records phys_opt over-promising by 0.4 to 0.6 ns and inverting the
+        # verdict -- but it is how build 10 was shown to have placed HEALTHY
+        # at +0.421 and then collapsed between route iterations 1 and 2, and
+        # it is free.
+        grep -aA 12 "Intermediate Timing Summary" "$BUILD_ROOT/build.log" \
+            > "$FK33_REPORT_DIR/INTERMEDIATE_TIMING.txt" 2>/dev/null || true
+    fi
+
+    local f
+    for f in "$impl"/bd_wrapper_utilization_placed.rpt \
+             "$impl"/bd_wrapper_utilization_placed_hier.rpt \
+             "$impl"/bd_wrapper_control_sets_placed.rpt \
+             "$impl"/bd_wrapper_io_placed.rpt \
+             "$impl"/bd_wrapper_route_status.rpt \
+             "$impl"/bd_wrapper_clock_utilization_routed.rpt \
+             "$impl"/bd_wrapper_timing_summary_routed.rpt \
+             "$impl"/bd_wrapper_methodology_drc_routed.rpt \
+             "$impl"/bd_wrapper_drc_routed.rpt \
+             "$impl"/runme.log \
+             "$BUILD_ROOT"/fk33_pcieep_util.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_util_hier.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_engine_util.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_engcdc_util.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_pblock_util.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_timing.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_clkint.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_congestion.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_clkutil.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_cdc_card2eng.rpt \
+             "$BUILD_ROOT"/fk33_pcieep_cdc_eng2card.rpt
+    do
+        [[ -f "$f" ]] || continue
+        cp -f "$f" "$FK33_REPORT_DIR/" 2>/dev/null || continue
+        # bd_wrapper_timing_summary_routed.rpt is 7.5 MB on the card build
+        # (MEASURED: card_swg_2026-09-20 committed it uncompressed at
+        # 7,491,472 bytes), because the run strategy asks for
+        # -report_unconstrained.  Gzip anything that is not small; "durable
+        # and small" is the whole point of this directory.
+        if [[ $(stat -c %s "$f" 2>/dev/null || echo 0) -gt 524288 ]]; then
+            gzip -f "$FK33_REPORT_DIR/$(basename "$f")" 2>/dev/null || true
+        fi
+    done
+
+    echo "FK33_REPORTS $FK33_REPORT_DIR ($(ls -1 "$FK33_REPORT_DIR" 2>/dev/null | wc -l) files, $(du -sh "$FK33_REPORT_DIR" 2>/dev/null | cut -f1))"
+    if [[ ! -f "$FK33_REPORT_DIR/bd_wrapper_utilization_placed_hier.rpt" ]]; then
+        echo "FK33_REPORTS no placed hierarchical utilization -- read SENTINELS.txt for FK33_HIERUTIL to see whether the post-place hook armed"
+    fi
+    echo "FK33_REPORTS commit them with:  git add $FK33_REPORT_DIR"
+    return 0
+}
+trap fk33_harvest EXIT
 
 echo "=== building in $BUILD_ROOT ==="
 source /tools/Xilinx/2023.2/Vivado/2023.2/settings64.sh
@@ -286,8 +438,13 @@ echo
 # pcieep.sh prefers, so promoting a fresh build to it is a decision, not a
 # side effect.  Use ./save_bitstream.sh for that.
 if [[ -f "$BIT" ]]; then
-    _stamp="$(date +%Y%m%d_%H%M%S)"
-    _tag="${FK33_BITTAG:-$([[ "${FK33_CARD:-0}" == "1" ]] && echo card || echo eng)}"
+    # THE SAME stamp and tag the report directory uses, computed once at the
+    # top of this script rather than again here.  They used to be independent,
+    # so the bitstream and the reports of one build carried timestamps minutes
+    # apart and nothing tied them together -- which is the same class of gap
+    # as a results directory with no commit id in it.
+    _stamp="$FK33_STAMP"
+    _tag="$FK33_TAG"
     _keep="$FK33_DIR/bit/autosave/fk33_pcieep_${_tag}_${_stamp}.bit"
     mkdir -p "$FK33_DIR/bit/autosave"
     if cp "$BIT" "$_keep"; then
