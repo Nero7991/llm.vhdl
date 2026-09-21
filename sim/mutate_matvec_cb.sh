@@ -347,6 +347,15 @@ mutate() {
     [ "$m" = X ] && neut="P_CB_CHK,P_CB_MODEL"
     # P = TRACK CBFANOUT's elaboration pin neutered.  See the note in
     # patch_file: this is the attribution control for CHK_CB_RANKS.
+    #
+    # 2026-09-21, TRACK CBREVERT: CHK_CB_RANKS NO LONGER EXISTS -- 0b34200 is
+    # reverted -- so mode P now makes patch_file fail its declaration count and
+    # every row in that column lands in the DEAD_TAGS ledger with a nonzero
+    # exit.  THAT IS WHY THIS LINE IS KEPT RATHER THAN DELETED.  CBANCHOR's own
+    # recorded trap is that "an unknown mode is not an error, it is mode A": if
+    # this branch were removed, MODES="A P S" would silently run P as a second
+    # unneutered copy of A and print a plausible table.  Failing loudly is the
+    # better failure.  Do not put P in MODES on this tree.
     [ "$m" = P ] && neut="CHK_CB_RANKS"
     if [ $# -gt 0 ]; then
       patch_file "$RTL" "$mdir/matvec_core.vhd" "$neut" "$@" || {
@@ -504,12 +513,34 @@ echo "---- class K2: LATENCY -- where the write sits relative to the watch ---"
 # The body anchors are scoped "@P_CB@" rather than trusted to be unique in the
 # file.  P_CB_MODEL contains near-identical text at a different indent, and
 # mutating the ORACLE instead of the design would score as a survival.
+#
+# CORRECTION 2026-09-21, TRACK CBREVERT: 0b34200 IS REVERTED IN THE RTL AND
+# THESE NINE ROWS ARE BACK ON THEIR PRE-CHANGE ANCHORS.  Nothing above is
+# withdrawn -- it is the record of why they died and what repaired them, and
+# the loop-split cause it names is exactly what had to be undone here: K2b and
+# K3c go from TWO anchors each back to ONE spanning the write and the command
+# capture, because the two loops are one loop again.
+#
+# WHAT IS KEPT FROM CBANCHOR, DELIBERATELY, BECAUSE IT IS ORTHOGONAL TO THE
+# RTL FORM: the "@P_CB@" scopes, the DEAD_TAGS ledger, the per-process neuter
+# with its assert census, and the corrected K2b/K2c legends.  MEASURED on the
+# reverted tree: every one of the restored anchors matches exactly ONCE in the
+# whole file AND exactly once inside P_CB, so the scopes change no verdict
+# today and remain the insurance CBANCHOR wrote them to be.  But
+# "for c in 0 to CB_COPIES-1 loop" matches TWICE on this tree (P_CB and
+# P_CB_MODEL), so the hazard is real and is one careless anchor away.
+#
+# CB_RANKS, cb_rank_of, cb_ranks_f, cb_rank_chk_f and CHK_CB_RANKS DO NOT
+# EXIST on this tree (MEASURED: grep count 0 in rtl/matvec_core.vhd).  Class
+# K10 and mode P are therefore RETIRED below rather than re-anchored: their
+# subject is gone, which is the one disposition no amount of anchor repair can
+# substitute for.
 # ---------------------------------------------------------------------------
 
 mutate K2a "KILL(a): the WATCHED register moves, so P_CB_CHK sees st = S_RUN" \
   "the command capture is one cycle late (cb_we registered ahead of the gate)" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
   signal cbwe_q : std_logic := '0';" \
 "@P_CB@        if cb_we = '1' and st = S_IDLE and rst = '0' then" \
 "        if cbwe_q = '1' and st = S_IDLE and rst = '0' then" \
@@ -526,30 +557,25 @@ mutate K2a "KILL(a): the WATCHED register moves, so P_CB_CHK sees st = S_RUN" \
 # P_CB_MODEL demoted.  Measured here rather than inherited.
 mutate K2b "ORIGINAL LEGEND: SURVIVE -- a stage AFTER cbw_v moves the write without moving the watch point.  NOW EXPECT KILL in A/N and surv in S: P_CB_MODEL was added after that legend and sees the extra stage" \
   "a broadcast stage is added BELOW the command register: cbw_v/a/d are unchanged, the write is one cycle later" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
-  signal cbw_v2 : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+  signal cbw_v2 : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
   signal cbw_a2 : cba_arr := (others => (others => '0'));
   signal cbw_d2 : cbd_arr := (others => (others => '0'));" \
-"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"@P_CB@        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;" \
-"        if cbw_v2(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a2(cb_rank_of(c)))))
-            <= signed(cbw_d2(cb_rank_of(c)));
-        end if;" \
-"@P_CB@        cbw_d(r) <= cb_data;" \
-"        cbw_d(r) <= cb_data;
-        cbw_v2(r) <= cbw_v(r);
-        cbw_a2(r) <= cbw_a(r);
-        cbw_d2(r) <= cbw_d(r);"
+"        if cbw_v2(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a2(c)))) <= signed(cbw_d2(c));
+        end if;
+        cbw_v2(c) <= cbw_v(c);
+        cbw_a2(c) <= cbw_a(c);
+        cbw_d2(c) <= cbw_d(c);"
 
 mutate K2c "ORIGINAL LEGEND: SURVIVE, the write lands one cycle EARLIER, which is still legal.  NOW EXPECT KILL by P_CB_MODEL, which pins the DEPTH at CB_WR_LAT rather than only the legality of the landing cycle.  The fanout fix silently undone, in its most direct form: the port drives all CB_COPIES write enables again" \
   "the command registers are bypassed: cb is written straight from cb_addr/cb_data" \
-"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"@P_CB@        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;" \
 "        if cb_we = '1' and st = S_IDLE and rst = '0' then
           cb(c)(to_integer(unsigned(cb_addr))) <= signed(cb_data);
@@ -560,24 +586,20 @@ echo "---- class K3: LOCKSTEP -- can two replicas hold different tables ------"
 
 mutate K3a "KILL(a) in mode A.  Mode N is the question: does the lane oracle see it alone?" \
   "replica 1 skips a write whenever replica 0 takes one (the A-MUT C1 shape)" \
-"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"@P_CB@        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;" \
-"        if cbw_v(cb_rank_of(c)) = '1' and (c = 0 or cbw_v(cb_rank_of(0)) = '0') then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"        if cbw_v(c) = '1' and (c = 0 or cbw_v(0) = '0') then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;"
 
 mutate K3b "KILL in both modes: replicas 1..N never hold anything, so the lanes disagree at the output" \
   "only replica 0 is ever written; the rest keep their initialiser forever" \
-"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"@P_CB@        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;" \
-"        if cbw_v(cb_rank_of(c)) = '1' and c = 0 then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"        if cbw_v(c) = '1' and c = 0 then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;"
 
 # NOTE THE INDEX.  The split is still over COPIES and not over RANKS, and that
@@ -585,47 +607,47 @@ mutate K3b "KILL in both modes: replicas 1..N never hold anything, so the lanes 
 # no two COPIES of cb hold different tables, so the mutation that attacks it
 # must skew copies.  A skew over RANKS is a different mutation (TRACK
 # CBFANOUT's M4_rankskew) and is not this row.
+# 2026-09-21, TRACK CBREVERT: there are no ranks on this tree, so M4_rankskew
+# has no subject and the note reduces to its first sentence.  It is kept
+# because the sentence is the row's meaning and it did not change.
 mutate K3c "KILL(a) only: the divergence is TRANSIENT, so a per-cycle assertion sees it and an output oracle cannot" \
   "the upper half of the replica bank writes one cycle late -- the shape a two-level command broadcast tree produces, which is what 1,536 replicas would need" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
-  signal cbw_v2 : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+  signal cbw_v2 : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
   signal cbw_a2 : cba_arr := (others => (others => '0'));
   signal cbw_d2 : cbd_arr := (others => (others => '0'));" \
-"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));
+"@P_CB@        if cbw_v(c) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
         end if;" \
 "        if c < CB_COPIES/2 then
-          if cbw_v(cb_rank_of(c)) = '1' then
-            cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-              <= signed(cbw_d(cb_rank_of(c)));
+          if cbw_v(c) = '1' then
+            cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
           end if;
         else
-          if cbw_v2(cb_rank_of(c)) = '1' then
-            cb(c)(to_integer(unsigned(cbw_a2(cb_rank_of(c)))))
-              <= signed(cbw_d2(cb_rank_of(c)));
+          if cbw_v2(c) = '1' then
+            cb(c)(to_integer(unsigned(cbw_a2(c)))) <= signed(cbw_d2(c));
           end if;
-        end if;" \
-"@P_CB@        cbw_d(r) <= cb_data;" \
-"        cbw_d(r) <= cb_data;
-        cbw_v2(r) <= cbw_v(r);
-        cbw_a2(r) <= cbw_a(r);
-        cbw_d2(r) <= cbw_d(r);"
+        end if;
+        cbw_v2(c) <= cbw_v(c);
+        cbw_a2(c) <= cbw_a(c);
+        cbw_d2(c) <= cbw_d(c);"
 
-# K3d IS NOT TRACK CBFANOUT'S M1_collapse AND THE DIFFERENCE IS THE POINT.
-# M1_collapse rewrites cb_rank_of to return 0, so the ELABORATION PIN fires and
-# no bench ever runs.  K3d leaves the map alone and takes the address and data
-# of the write from rank 0 at the WRITE SITE, which the pin cannot see.  It is
-# therefore still the pure behavioural equivalent mutant it always was, and it
-# still measures the same thing: nothing in the functional closure can tell a
-# master/follower codebook from a replicated one.
+# K3d WAS NOT TRACK CBFANOUT'S M1_collapse, AND ON THIS TREE M1_collapse HAS
+# NO SUBJECT AT ALL.  That note read: M1_collapse rewrites cb_rank_of to return
+# 0, so the elaboration pin fires and no bench ever runs, whereas K3d leaves
+# the map alone and takes the address and data of the write from copy 0 at the
+# WRITE SITE, which the pin cannot see.  2026-09-21, TRACK CBREVERT: the map
+# and the pin are both reverted out of the RTL, so only the second half is
+# still a statement about anything.  K3d is unchanged in meaning and is the
+# pure behavioural equivalent mutant it has always been: nothing in the
+# functional closure can tell a master/follower codebook from a replicated one.
+# It is also, now, the ONLY row in this harness that models the fanout
+# collapse, K10b having been retired with the construct it mutated.
 mutate K3d "SURVIVE: a true equivalent mutant today, because every command register holds the same command.  Named so the master/follower design is not silently reachable" \
-  "every replica writes off rank 0's command registers (master/follower, the design the RTL comment rejects by construction)" \
-"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));" \
-"          cb(c)(to_integer(unsigned(cbw_a(0))))
-            <= signed(cbw_d(0));"
+  "every replica writes off replica 0's command registers (master/follower, the design the RTL comment rejects by construction)" \
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
+"          cb(c)(to_integer(unsigned(cbw_a(0)))) <= signed(cbw_d(0));"
 
 echo
 echo "---- class K4: INTERLOCK -- cb_we in S_IDLE is not a start edge --------"
@@ -672,17 +694,13 @@ echo "---- class K7: ADDRESS -- which entry a command writes ------------------"
 # opinion about what the table should contain.
 mutate K7a "KILL(v) on M ONLY (measured; predicted C too): a table wrong the same way every time is invisible to a relational bench" \
   "the write address is taken LIVE from cb_addr instead of the registered cbw_a" \
-"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));" \
-"          cb(c)(to_integer(unsigned(cb_addr)))
-            <= signed(cbw_d(cb_rank_of(c)));"
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
+"          cb(c)(to_integer(unsigned(cb_addr))) <= signed(cbw_d(c));"
 
 mutate K7b "KILL(v) on M only: C and L are relational and cannot see a table that is wrong the same way every time" \
   "the write data is taken LIVE from cb_data instead of the registered cbw_d" \
-"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cbw_d(cb_rank_of(c)));" \
-"          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
-            <= signed(cb_data);"
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
+"          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cb_data);"
 
 echo
 echo "---- class K8: THE REPLICA SELECT -- protected by coherency, by nothing else"
@@ -720,7 +738,28 @@ mutate K9a "KILL(v) in BOTH modes on C: the lane-equality oracle localises to th
               end if;"
 
 echo
-echo "---- class K10: THE COPY-TO-RANK MAP -- pinned at elaboration only -----"
+echo "---- class K10: RETIRED 2026-09-21 -- ITS SUBJECT IS REVERTED OUT ------"
+echo "     TRACK CBREVERT: 0b34200 is reverted in rtl/matvec_core.vhd, so"
+echo "     CB_RANKS, cb_rank_of, cb_ranks_f, cb_rank_chk_f and CHK_CB_RANKS do"
+echo "     NOT EXIST on this tree (MEASURED: grep count 0).  K10a and K10b"
+echo "     mutate a constant declaration that is gone, and mode P neuters a"
+echo "     pin that is gone.  RETIRE is the only honest disposition: an anchor"
+echo "     cannot be repaired onto a construct that was deleted, and leaving"
+echo "     the rows in would put two dead-anchor lines in the ledger on every"
+echo "     run -- loud, but permanently loud, which trains a reader to ignore"
+echo "     the ledger.  (The failure strings themselves are deliberately NOT"
+echo "     spelled out in this narrative: a log that contains the needle a"
+echo "     reader greps for is this project's recorded self-match trap.)"
+echo "     They are commented out below WITH THEIR ANCHORS"
+echo "     VERBATIM: if the per-row codebook is ever rebuilt, uncommenting"
+echo "     them is the whole of the repair."
+echo "     WHAT IS LOST BY RETIRING THEM, STATED RATHER THAN ABSORBED: the"
+echo "     only instrument that could see the copy-to-rank map at all.  K3d"
+echo "     remains and models the collapse at the write site instead, and it"
+echo "     SURVIVES -- which is the same resolution floor reported from the"
+echo "     other side.  Nothing in this harness now scores a fanout lever."
+echo
+echo "     THE RETIRED NARRATIVE, KEPT BECAUSE THE FLOOR IT DESCRIBES IS REAL:"
 echo "     TRACK CBFANOUT (0b34200) replicated the write COMMAND per ROW"
 echo "     instead of per COPY, cutting max fanout per command bit 1,536 -> 48"
 echo "     on the net that carried all ten worst paths of the FAILED build 10."
@@ -749,15 +788,20 @@ echo "     conclude the pin has no teeth.  It has teeth at the geometry that"
 echo "     ships (CB_COPIES=1,536), and CBSTYLE=distributed is the nearest"
 echo "     reachable proxy for it."
 
-mutate K10a "ABRT(pin) in A and S, surv in P: the pin is the sole witness.  This is CBFANOUT's M2_percopy, verified independently  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs this mutation is the IDENTITY and SURVIVES -- see the class note." \
-  "CB_RANKS forced back to CB_COPIES -- the fanout fix undone, i.e. exactly the structure build 10 built and failed at WNS -5.819 ns" \
-"  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
-"  constant CB_RANKS : positive := CB_COPIES;"
-
-mutate K10b "ABRT(pin) in A and S, surv in P: same as K10a at the other extreme.  This is CBFANOUT's M1_collapse, and it is K3d expressed in the map rather than at the write site  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs CB_RANKS=1 is inside the fanout bound and SURVIVES -- see the class note." \
-  "CB_RANKS forced to 1 -- one command register for all CB_COPIES copies, max fanout 1,536 again from the other end" \
-"  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
-"  constant CB_RANKS : positive := 1;"
+# RETIRED 2026-09-21 BY TRACK CBREVERT.  Verbatim, anchors included.  Both
+# rows were MEASURED green by TRACK CBANCHOR at CBSTYLE=distributed
+# (ABRT(pin) in A, N and S; SURVIVE all three benches in P), so what follows
+# is a working pair of rows waiting for its RTL, not a draft.
+#
+# mutate K10a "ABRT(pin) in A and S, surv in P: the pin is the sole witness.  This is CBFANOUT's M2_percopy, verified independently  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs this mutation is the IDENTITY and SURVIVES -- see the class note." \
+#   "CB_RANKS forced back to CB_COPIES -- the fanout fix undone, i.e. exactly the structure build 10 built and failed at WNS -5.819 ns" \
+# "  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
+# "  constant CB_RANKS : positive := CB_COPIES;"
+#
+# mutate K10b "ABRT(pin) in A and S, surv in P: same as K10a at the other extreme.  This is CBFANOUT's M1_collapse, and it is K3d expressed in the map rather than at the write site  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs CB_RANKS=1 is inside the fanout bound and SURVIVES -- see the class note." \
+#   "CB_RANKS forced to 1 -- one command register for all CB_COPIES copies, max fanout 1,536 again from the other end" \
+# "  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
+# "  constant CB_RANKS : positive := 1;"
 
 echo
 echo "---- CANNOT BITE YET -- becomes live only under the LUTRAM fallback ----"
