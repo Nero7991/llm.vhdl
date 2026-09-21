@@ -1,0 +1,113 @@
+INFO: [Route 35-449] Initial Estimated Congestion
+ ________________________________________________________________________
+|           | Global Congestion | Long Congestion   | Short Congestion  |
+|           |___________________|___________________|___________________|
+| Direction | Size   | % Tiles  | Size   | % Tiles  | Size   | % Tiles  |
+|___________|________|__________|________|__________|________|__________|
+|      NORTH|   32x32|      4.81|   16x16|      5.22|   32x32|     14.10|
+|___________|________|__________|________|__________|________|__________|
+|      SOUTH|   64x64|     14.46|   64x64|     20.76|   32x32|     15.68|
+|___________|________|__________|________|__________|________|__________|
+|       EAST|   64x64|     17.36|   64x64|     16.59|   64x64|     27.62|
+|___________|________|__________|________|__________|________|__________|
+|       WEST|   32x32|     15.42|   64x64|     16.06|   64x64|     24.24|
+|___________|________|__________|________|__________|________|__________|
+Congestion Report
+GLOBAL Congestion bounded by tiles (Lower Left Tile -> Upper Right Tile):
+NORTH
+	INT_X3Y2->INT_X18Y33 (CLEM_X3Y2->CLEL_R_X18Y33)
+	INT_X1Y14->INT_X16Y29 (CLEM_X1Y14->CLEL_R_X16Y29)
+	INT_X1Y13->INT_X16Y28 (CLEM_X1Y13->CLEL_R_X16Y28)
+	INT_X1Y12->INT_X16Y27 (CLEM_X1Y12->CLEL_R_X16Y27)
+	INT_X1Y11->INT_X16Y26 (CLEM_X1Y11->CLEL_R_X16Y26)
+SOUTH
+	INT_X78Y34->INT_X109Y97 (CLEM_X78Y34->CLEL_R_X109Y97)
+	INT_X75Y56->INT_X106Y87 (CLEM_X75Y56->DSP_X106Y85)
+	INT_X75Y55->INT_X106Y86 (CLEM_X75Y55->DSP_X106Y85)
+	INT_X75Y54->INT_X106Y85 (CLEM_X75Y54->DSP_X106Y85)
+	INT_X75Y53->INT_X106Y84 (CLEM_X75Y53->DSP_X106Y80)
+EAST
+	INT_X75Y82->INT_X106Y177 (CLEM_X75Y82->DSP_X106Y175)
+	INT_X32Y4->INT_X63Y35 (CLEM_X32Y4->CLEL_R_X63Y35)
+	INT_X32Y3->INT_X63Y34 (CLEM_X32Y3->CLEL_R_X63Y34)
+	INT_X32Y2->INT_X63Y33 (CLEM_X32Y2->CLEL_R_X63Y33)
+	INT_X32Y1->INT_X63Y32 (CLEM_X32Y1->CLEL_R_X63Y32)
+WEST
+	INT_X64Y1->INT_X127Y16 (CLEM_X64Y1->CLEL_R_X127Y16)
+	INT_X64Y0->INT_X95Y27 (CLEM_X64Y0->DSP_X95Y25)
+	INT_X64Y0->INT_X95Y26 (CLEM_X64Y0->DSP_X95Y25)
+	INT_X64Y0->INT_X95Y25 (CLEM_X64Y0->DSP_X95Y25)
+	INT_X65Y0->INT_X96Y29 (URAM_URAM_FT_X64Y0->CLEL_R_X96Y29)
+LONG Congestion bounded by tiles (Lower Left Tile -> Upper Right Tile):
+NORTH
+	INT_X8Y6->INT_X23Y29 (PCIE4C_PCIE4C_FT_X7Y0->CLEL_R_X23Y29)
+	INT_X2Y13->INT_X17Y28 (CLEM_X2Y13->DSP_X17Y25)
+	INT_X2Y12->INT_X17Y27 (CLEM_X2Y12->DSP_X17Y25)
+	INT_X2Y11->INT_X17Y26 (CLEM_X2Y11->DSP_X17Y25)
+	INT_X2Y10->INT_X17Y25 (CLEM_X2Y10->DSP_X17Y25)
+SOUTH
+	INT_X33Y32->INT_X96Y127 (CLEM_X33Y32->CLEL_R_X96Y127)
+	INT_X30Y48->INT_X93Y111 (CLEM_X30Y48->CLEL_R_X93Y111)
+	INT_X30Y47->INT_X93Y110 (CLEM_X30Y47->CLEL_R_X93Y110)
+	INT_X30Y46->INT_X93Y109 (CLEM_X30Y46->CLEL_R_X93Y109)
+	INT_X30Y45->INT_X93Y108 (CLEM_X30Y45->CLEL_R_X93Y108)
+EAST
+	INT_X71Y73->INT_X102Y168 (BRAM_X71Y70->CLEL_R_X102Y168)
+	INT_X32Y2->INT_X63Y33 (CLEM_X32Y2->CLEL_R_X63Y33)
+	INT_X0Y1->INT_X31Y32 (GTY_L_X0Y0->CLEL_R_X31Y32)
+	INT_X32Y1->INT_X63Y32 (CLEM_X32Y1->CLEL_R_X63Y32)
+	INT_X0Y0->INT_X31Y31 (GTY_L_X0Y0->CLEL_R_X31Y31)
+WEST
+	INT_X53Y1->INT_X116Y32 (CLEM_X53Y1->CLEL_R_X116Y32)
+	INT_X64Y14->INT_X95Y45 (CLEM_X64Y14->DSP_X95Y45)
+	INT_X64Y13->INT_X95Y44 (CLEM_X64Y13->DSP_X95Y40)
+	INT_X64Y12->INT_X95Y43 (CLEM_X64Y12->DSP_X95Y40)
+	INT_X64Y11->INT_X95Y42 (CLEM_X64Y11->DSP_X95Y40)
+SHORT Congestion bounded by tiles (Lower Left Tile -> Upper Right Tile):
+NORTH
+	INT_X7Y46->INT_X22Y109 (CLEM_X7Y46->DSP_X22Y105)
+	INT_X16Y14->INT_X31Y29 (CLEL_L_X16Y14->CLEL_R_X31Y29)
+	INT_X16Y13->INT_X31Y28 (CLEL_L_X16Y13->CLEL_R_X31Y28)
+	INT_X0Y12->INT_X15Y27 (GTY_L_X0Y0->CLEL_R_X15Y27)
+	INT_X16Y12->INT_X31Y27 (CLEL_L_X16Y12->CLEL_R_X31Y27)
+SOUTH
+	INT_X82Y40->INT_X113Y87 (CLEM_X82Y40->CLEL_R_X113Y87)
+	INT_X84Y47->INT_X115Y78 (CLEL_L_X84Y47->CLEL_R_X115Y78)
+	INT_X84Y46->INT_X115Y77 (CLEL_L_X84Y46->CLEL_R_X115Y77)
+	INT_X84Y45->INT_X115Y76 (CLEL_L_X84Y45->CLEL_R_X115Y76)
+	INT_X84Y44->INT_X115Y75 (CLEL_L_X84Y44->CLEL_R_X115Y75)
+EAST
+	INT_X5Y5->INT_X68Y100 (CLEM_X5Y5->CLEL_R_X68Y100)
+	INT_X8Y0->INT_X71Y52 (PCIE4C_PCIE4C_FT_X7Y0->CLEL_R_X71Y52)
+	INT_X8Y0->INT_X71Y51 (PCIE4C_PCIE4C_FT_X7Y0->CLEL_R_X71Y51)
+	INT_X9Y0->INT_X72Y63 (CLEM_X9Y0->DSP_X72Y60)
+	INT_X9Y0->INT_X72Y62 (CLEM_X9Y0->DSP_X72Y60)
+WEST
+	INT_X4Y53->INT_X35Y116 (CLEM_X4Y53->CLEL_R_X35Y116)
+	INT_X3Y80->INT_X34Y111 (CLEM_X3Y80->CLEL_R_X34Y111)
+	INT_X3Y79->INT_X34Y110 (CLEM_X3Y79->CLEL_R_X34Y110)
+	INT_X3Y78->INT_X34Y109 (CLEM_X3Y78->CLEL_R_X34Y109)
+	INT_X3Y77->INT_X34Y108 (CLEM_X3Y77->CLEL_R_X34Y108)
+
+INFO: [Route 35-448] Estimated Global/Short routing congestion is level 6 (64x64). Congestion levels of 5 and greater can reduce routability and impact timing closure.
+
+INFO: [Route 35-581] Estimated Timing congestion is level 6 (64x64). Congestion levels of 5 and greater may impact timing closure.
+
+Phase 4 Rip-up And Reroute
+
+Phase 4.1 Global Iteration 0
+
+Phase 4.1.1 Update Timing
+Phase 4.1.1 Update Timing | Checksum: 24e5eba98
+
+Time (s): cpu = 00:15:08 ; elapsed = 00:08:32 . Memory (MB): peak = 15012.328 ; gain = 0.000 ; free physical = 1407 ; free virtual = 33249
+WARNING: [Route 35-447] Congestion is preventing the router from routing all nets. The router will prioritize the successful completion of routing all nets over timing optimizations.
+Phase 4.1 Global Iteration 0 | Checksum: 207adbb2a
+
+Time (s): cpu = 00:17:28 ; elapsed = 00:09:51 . Memory (MB): peak = 15012.328 ; gain = 0.000 ; free physical = 395 ; free virtual = 31320
+
+Phase 4.2 Global Iteration 1
+ Number of Nodes with overlaps = 1042825
+ Number of Nodes with overlaps = 580623
+ Number of Nodes with overlaps = 370803
+ Number of Nodes with overlaps = 268939
