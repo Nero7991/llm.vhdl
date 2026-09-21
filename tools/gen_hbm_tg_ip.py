@@ -29,7 +29,11 @@ is how an off-by-one in one lane's index gets into a bitstream and is then
 diagnosed on hardware, so they are generated and the mapping exists in exactly
 one place.
 """
+import os
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import genstamp
 
 NPORT  = int(sys.argv[1]) if len(sys.argv) > 1 else 16
 AXI_DW = 256
@@ -44,7 +48,16 @@ h.append("-- which is")
 h.append("-- what Vivado's block designer needs in order to see them as AXI at all.")
 h.append("-- All logic, and every counter, lives in hbm_tg; this file is wiring.")
 h.append("--")
-h.append("-- Regenerate with:  python3 tools/gen_hbm_tg_ip.py %d" % NPORT)
+# The "Regenerate with" line above was this tree's ONLY record of a
+# generator's out-of-band input, and it is the reason NPORT=30 was
+# recoverable at all (MEASURED 2026-09-20: that command reproduces the
+# committed file byte-for-byte; the default NPORT=16 deletes 1,025 lines).
+# It is now emitted in the uniform GENSTAMP shape so every such file reads
+# the same way.  See tools/genstamp.py.
+h.append(genstamp.stamp(
+    ["python3", "tools/gen_hbm_tg_ip.py", str(NPORT)],
+    [("argv", "NPORT", NPORT)],
+    comment="--").rstrip("\n"))
 h.append("library ieee;")
 h.append("use ieee.std_logic_1164.all;")
 h.append("use ieee.numeric_std.all;")

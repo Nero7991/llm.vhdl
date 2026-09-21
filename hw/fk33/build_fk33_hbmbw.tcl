@@ -2,7 +2,19 @@
 # -- do not hand-edit; regenerate so first-light fixes are not lost.
 # See that script's header for the four changes and what is deliberately
 # left alone.
-set tgRoot /home/orencollaco/GitHub/llama.vhdl
+# GENSTAMP -- the out-of-band inputs that produced THIS file, and
+# the only record of them.  This generator's output DEPENDS on the
+# values below: regenerating with different ones changes the
+# CONFIGURATION, not the formatting, and the diff looks like
+# ordinary drift.  Reproduce this exact file with
+#     python3 hw/fk33/gen_hbmbw.py 30 300
+# inputs ((unset) means the generator's own default was taken):
+#     argv FCLK_MHZ = 300
+#     argv NPORT    = 30
+set tgRoot [file normalize [file join [file dirname [info script]] .. ..]]
+if {![file exists $tgRoot/rtl/util_pkg.vhd]} {
+    error "tgRoot: derived repo root '$tgRoot' does not contain rtl/util_pkg.vhd."
+}
 # GENERATED from SQRL_FK33/projects/fk33_example.tcl by hw/fk33/gen_firstlight.py
 # -- do not hand-edit; regenerate so upstream fixes are not lost.
 #

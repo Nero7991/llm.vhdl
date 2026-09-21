@@ -8136,3 +8136,75 @@ AXI-Lite slave that accepts the adapter's descriptor writes and responds, plus a
 y-beat producer whose numbers match what `ga_real` computes, since the identity
 claim is that both arms agree. That is bench engineering, not a generic flip.
 
+
+## 2026-09-20 TRACK GENSTAMP: A GENERATED FILE NOW RECORDS THE INPUTS THAT MADE IT
+
+CLAUDE.md says to check line 2 of any generated file before editing it, and that
+rule is performable by reading the file in front of you. TRACK BUILDREPORT found
+the shape it does not cover: `hw/fk33/build_fk33_pcieep.tcl`'s line 2 is present
+and correct, and it says nothing about the NINE environment variables that decide
+what the generator emits. The prescribed remedy -- regenerate and diff -- is the
+action that destroys the evidence, silently, with a plausible-looking diff.
+
+**MEASURED: two generators read the environment, seven committed generated files
+depend on out-of-band input, and exactly ONE has ever recorded it.**
+
+That one is the argument for the whole idea. `rtl/hbm_tg_ip.vhd` has always
+carried `Regenerate with: python3 tools/gen_hbm_tg_ip.py 30` in its own header,
+and that command reproduces the committed file **byte-for-byte**, while the
+generator's default (`16`) deletes **1,025 of 1,028 lines**. Its sibling
+`hw/fk33/build_fk33_hbmbw.tcl` records nothing; recovering its `30 300` took
+three attempts and produced one false positive on the way.
+
+`tools/genstamp.py` emits a uniform `GENSTAMP` block: every out-of-band input,
+its value (`(unset)` where a default was taken), and the command that reproduces
+the file. **Deterministic by construction** -- no time, no user, no host, no
+working directory, and the rows sorted -- because five gate rows regenerate a
+file and compare it against the committed bytes, and a timestamp would turn all
+five red on every machine. (`rtl/ooc_cattnadapt_top.vhd` is this tree's recorded
+counter-example: its "Regenerate with" line embeds a `/tmp/claude-.../scratchpad`
+path from the session that wrote it.)
+
+Stamped and regenerated: `hw/fk33/rtl/fk33_card.vhd` and `fk33_bc_grant.vhd`
+(env `FK33_C_KV_BLOCK`, `FK33_A_ROWS_IF`), `rtl/hbm_tg_ip.vhd` (argv `NPORT=30`),
+`hw/fk33/build_fk33_hbmbw.tcl` (argv `NPORT=30 FCLK_MHZ=300`).
+
+MEASURED, after the change: three consecutive regenerations byte-identical by
+`sha256sum` in every case; gate rows `sim:fk33card` PASS 1, `sim:c4stale` +
+`sim:gdnstale` PASS 2, `sim:ipsync` PASS 1, `sim:runguard` PASS 1,
+`sim:shapemirror` PASS 1, `--only cardtop` PASS 3 -- nine rows, zero failures at
+`--jobs 1` -- and `check_kv_map: 40 rows, 0 refused`.
+
+TEETH: at `FK33_C_KV_BLOCK=16` the stamp changes in two lines and the body in one
+(`C_KV_BLOCK => 32` becomes `16`), and `--check` under the default environment
+reports STALE rc=1. On `rtl/hbm_tg_ip.vhd` the default regeneration now names its
+own cause in **line 12 of the diff** instead of hiding it in the prose of line 4
+above 1,025 deleted ports.
+
+**The trap this task created, and it fired.** The first version built ONE
+reproduce command for both of `gen_fk33_card.py`'s outputs, from the process
+environment. `fk33_bc_grant.vhd` does not depend on `FK33_*` and is stamped
+`inputs: NONE` -- yet under `FK33_C_KV_BLOCK=16` it grew by exactly 19 bytes, the
+width of the `FK33_C_KV_BLOCK=16 ` prefix. **A stamp that claims no dependence
+while varying with the environment is worse than no stamp**, because it is a
+false negative in the one place someone would look. The command is now DERIVED
+from the same list the rows are printed from.
+
+**NOT stamped, by ownership:** `hw/fk33/gen_pcieep.py` (TRACK BUILDREPORT owns it
+tonight; the patch is in the debugging file) and `hw/fk33/rtl/compose4_top.vhd`
+(TRACK GATERED; 13 argv switches, and `sim:c4stale` checks it against the
+DEFAULTS only, so whether the committed file was made with `--wire --mem` is
+still open).
+
+**Reported, not fixed, each having an owner:** `hw/fk33/pcieep_build.sh:89` runs
+`gen_pcieep.py` unconditionally before every build, so the committed
+`build_fk33_pcieep.tcl` is never the file that builds and its only consumer is
+the human the missing stamp misled; `fk33_card.vhd`'s banner names
+`tools/gen_bd_wrapper.py`, the library, not `hw/fk33/gen_fk33_card.py`, the
+driver, so following the banner cannot reproduce the file; and this commit's
+`build_fk33_hbmbw.tcl` carries one hunk that is not the stamp, `3219cb0`'s
+derived-`tgRoot` fix landing eight hours late.
+
+Full record, including the two traps where an unwritten file compared equal to
+itself and read as a perfect reproduction:
+`docs/debugging/2026-09-20_generated-files-record-their-inputs.md`.

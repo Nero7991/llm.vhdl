@@ -6,7 +6,14 @@
 -- what Vivado's block designer needs in order to see them as AXI at all.
 -- All logic, and every counter, lives in hbm_tg; this file is wiring.
 --
--- Regenerate with:  python3 tools/gen_hbm_tg_ip.py 30
+-- GENSTAMP -- the out-of-band inputs that produced THIS file, and
+-- the only record of them.  This generator's output DEPENDS on the
+-- values below: regenerating with different ones changes the
+-- CONFIGURATION, not the formatting, and the diff looks like
+-- ordinary drift.  Reproduce this exact file with
+--     python3 tools/gen_hbm_tg_ip.py 30
+-- inputs ((unset) means the generator's own default was taken):
+--     argv NPORT = 30
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

@@ -52,6 +52,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "tools"))
+import genstamp  # noqa: E402  (needs REPO, which is computed above)
 OUT = os.path.join(HERE, "rtl", "fk33_card.vhd")
 SRC = os.path.join(REPO, "rtl", "fk33_llama_top.vhd")
 # THE REAL NORM GAIN IMAGE, 65 x 4096 entries at NORM_W_EXP = 12, written by
@@ -487,6 +489,39 @@ for _k in TRIMMABLE:
     if _hit != 1:
         sys.exit("FK33_%s: expected exactly 1 generic to override, matched %d"
                  % (_k, _hit))
+# THE STAMP.  The banner two lines into the generated file says it is
+# GENERATED; it does not say WITH WHAT, and this generator's output depends on
+# the environment above.  MEASURED 2026-09-20 (TRACK BUILDREPORT), on the
+# sibling case `hw/fk33/build_fk33_pcieep.tcl`: regenerating an env-dependent
+# file with the DEFAULT environment -- the remedy the banner invites -- changed
+# its configuration by 497 deletions and destroyed the only record of what it
+# had been.  So the file now carries its own inputs.  See tools/genstamp.py.
+#
+# Only the TRIMMABLE variables appear: they are the complete set this generator
+# reads (`grep -n 'os.environ' hw/fk33/gen_fk33_card.py`), and an input that is
+# not read cannot change the output.  An UNSET one is stamped rather than
+# omitted, so the reader learns the knob exists.
+STAMP_INPUTS = [("env", "FK33_" + _k, os.environ.get("FK33_" + _k) or None)
+                for _k in TRIMMABLE]
+
+
+def stamp_cmd(inputs):
+    """The reproduce line, DERIVED FROM `inputs` and from nothing else.
+
+    MEASURED while writing this, and it is the trap this whole track is about
+    in miniature.  The first version built ONE command for both outputs, from
+    the process environment.  `fk33_bc_grant.vhd` does not depend on FK33_*
+    and is stamped `inputs: NONE` -- yet under FK33_C_KV_BLOCK=16 it grew by
+    exactly 19 bytes, the width of the `FK33_C_KV_BLOCK=16 ` prefix, because
+    the stamp itself had smuggled the environment into a file that is supposed
+    to be independent of it.  A stamp that claims no dependence while varying
+    with the environment is worse than no stamp: it is a false negative in the
+    one place someone would look.  Deriving the command from the same list the
+    rows are printed from makes the claim and the evidence the same object.
+    """
+    return (["%s=%s" % (n, v) for (_, n, v) in sorted(inputs) if v]
+            + ["python3", "hw/fk33/gen_fk33_card.py"])
+
 if _trims:
     sys.stderr.write(
         "\n*** FK33 CARD TRIM ACTIVE: %s ***\n"
@@ -546,13 +581,32 @@ def _canon_hexpaths(text):
     return HEXPATH_RE.sub(sub, text), sorted(seen)
 
 
-def one(out, args, label, source):
+def one(out, args, label, source, inputs):
     check = "--check" in sys.argv
     tmp = out + (".check" if check else "")
     text = render(tmp, args)
     if text is None:
         print("FK33_CARD_CHECK: GENERATOR FAILED for %s" % label)
         return 1
+    # STAMPED HERE, NOT IN gen_bd_wrapper.py, because the inputs are THIS
+    # generator's.  gen_bd_wrapper is a library with several callers and knows
+    # nothing about FK33_*; a stamp written there would either be empty or be
+    # a claim it cannot support.
+    #
+    # `inputs` is per-output and NOT the same list for both files: only
+    # fk33_card.vhd carries the trimmable generics, so stamping fk33_bc_grant
+    # with them would assert a dependence that does not exist.  It gets the
+    # empty stamp, which says so positively.
+    #
+    # DETERMINISM: the block is built from `inputs` alone, never from sys.argv
+    # and never from the process environment directly, so a `--check` run and
+    # a write run produce identical bytes.  That is what keeps gate row
+    # sim:fk33card able to compare them.
+    text = genstamp.insert_after(
+        text, "DO NOT HAND-EDIT",
+        genstamp.stamp(stamp_cmd(inputs), inputs, comment="--"))
+    if not check:
+        open(tmp, "w").write(text)
     if check:
         try:
             cur = open(out).read()
@@ -582,8 +636,9 @@ def one(out, args, label, source):
 
 
 def main():
-    rc = one(OUT, ARGS, "fk33_card", "rtl/fk33_llama_top.vhd")
-    rc |= one(GRANT_OUT, GRANT_ARGS, "fk33_bc_grant", "rtl/bc_port_grant.vhd")
+    rc = one(OUT, ARGS, "fk33_card", "rtl/fk33_llama_top.vhd", STAMP_INPUTS)
+    rc |= one(GRANT_OUT, GRANT_ARGS, "fk33_bc_grant", "rtl/bc_port_grant.vhd",
+              [])
     return rc
 
 
