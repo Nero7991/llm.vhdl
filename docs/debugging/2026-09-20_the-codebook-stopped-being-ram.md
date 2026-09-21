@@ -1086,3 +1086,61 @@ appear.
    comparable to a routed number and are not quoted as one.
 7. **Nothing here is a silicon measurement.** The card was live and serving
    throughout and was not touched.
+
+### CORRECTION to the CBRUN section above, 2026-09-21, same day: THE CARD BUILD RAN A DIFFERENT CONFIGURATION, SO MY "CONTEXT EFFECT" WAS NEVER A CONTEXT EFFECT
+
+`24fd4cc` landed while these four arms were drawing, and it MEASURES that
+**build 11b ran at `FK33_CB_STYLE=regs`**: the anchored `^FK33_CB_STYLE`
+sentinel reads 1/1/0 for builds 9/10/11b, and Vivado's own
+`Parameter CB_STYLE bound to` reads `distributed x4 / distributed x4 / regs x4`.
+At `regs`, `matvec_core` sets `dont_touch = true` and `ram_style = registers` on
+`cb`, so the design FORBIDS its own RAM inference, and `CB_COPIES` is 48, making
+`cb_rank_of` the identity. **`0b34200` was the identity function in build 11b
+and did nothing.**
+
+Two things in my section above are therefore WITHDRAWN.
+
+1. **Open item 1, "what actually differs between the card context and OOC", and
+   its whole candidate list** (`-mode out_of_context`, the enclosing hierarchy,
+   the card's directive and flattening, 92% occupancy). **WITHDRAWN.** Nothing
+   differed about the CONTEXT. My four arms ran at `distributed` and the card
+   build ran at `regs`. I reached for this project's genuine recorded
+   "the parts do not sum across synthesis contexts" finding to explain a plain
+   configuration difference, and citing a real phenomenon is exactly what made
+   the explanation feel grounded. `24fd4cc` withdraws the same error on its own
+   side and names it better than I can.
+2. **"The revert is still right, and now rests only on card-level evidence",
+   where the second of the two facts was build 11b's route failure with 38 of 40
+   overlap nets in `core/cb`. WITHDRAWN as evidence about `0b34200`.** At `regs`
+   that commit is inert, so build 11b's codebook congestion cannot be evidence
+   about it. Naming the object bounds WHERE, never WHY. What survives is only
+   the first fact: build 9 carries the pre-change codebook at `distributed` and
+   routes at WNS +0.061 / TNS 0.000. **The case for reverting `0b34200` is now
+   materially weaker than my section stated, and build 12 -- HEAD at
+   `FK33_CB_STYLE=distributed` with the other four levers off -- is the control
+   that decides it, not this run.**
+
+**What my four arms contribute AFTER the correction is more useful than what
+they contributed before, and it bears on the build now in flight.** They are the
+first synthesis evidence of HEAD's codebook at `CB_STYLE=distributed`, which is
+build 12's configuration: **`cb` infers as 1,536 `RAM32M16` with `MUXF8 = 0`,
+identically to the pre-change RTL, at the card's geometry.** So build 12 should
+NOT carry the 12,288 `MUXF8` tree, and if it does, the cause is not `0b34200`.
+That is a falsifiable prediction registered here before build 12 lands, and my
+section's null result is exactly what `24fd4cc` predicts rather than a surprise.
+
+**An independent cross-check the two runs did not plan.** `24fd4cc` decomposes
+the card DCP's `xq_reg` as 518 `RAMD32` + 74 `RAMS32` = 37 x 16 children of 37
+macros. My OOC census, on a different box and a different netlist, gives
+`RAMD32 = 22,022` and `RAMS32 = 3,146` in all four arms, and
+`22,022 - 1,536 x 14 = 518` with `3,146 - 1,536 x 2 = 74`. **Both residuals match
+to the unit.** Two unrelated measurements agreeing on the leftover after the
+codebook is subtracted is a real check on both censuses.
+
+**And it confirms `REF_NAME =~ RAM*` over-counts, which my own `cb_ram` column
+uses.** `24fd4cc` measures the over-count at 17.6x for `xq_reg`. My
+`cb_ram = 26,112` is `1,536 x 17` = macro plus its sixteen bels per copy, which
+I decomposed above rather than quoting as a macro count -- but the honest macro
+figure is **1,536**, from `RAM32M16 = 1,573` less `xq_reg`'s 37, and that is the
+number to quote. Read the `cb_ram` column as "macro plus children", never as
+copies.

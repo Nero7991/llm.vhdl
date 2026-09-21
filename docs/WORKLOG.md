@@ -8482,3 +8482,39 @@ Full record, predictions scored unadjusted, and the CORRECTION: the dated TRACK
 CBRUN section of
 `docs/debugging/2026-09-20_the-codebook-stopped-being-ram.md`. Captures and
 drivers: `hw/fk33/results/cbrun_2026-09-21/`.
+
+### CORRECTION to the TRACK CBRUN entry above, same day
+
+`24fd4cc` landed while the four arms were drawing and MEASURES that **build 11b
+ran at `FK33_CB_STYLE=regs`** (`Parameter CB_STYLE bound to` reads
+`distributed x4 / distributed x4 / regs x4` for builds 9/10/11b), where
+`matvec_core` forbids its own RAM inference and `cb_rank_of` is the identity.
+**`0b34200` did nothing in build 11b.** Two claims in my entry are withdrawn:
+
+- **"What differs between the card context and OOC" is not a context question at
+  all.** My arms ran at `distributed`, the card at `regs`. I invoked this
+  project's real "parts do not sum across synthesis contexts" finding to explain
+  a plain configuration difference, and the citation is what made it feel
+  grounded. WITHDRAWN.
+- **Build 11b's route failure is NOT evidence about `0b34200`**, because that
+  commit is inert at `regs`. Naming the object bounds WHERE, never WHY. So "the
+  revert is still right" now rests on ONE fact, build 9 routing clean at
+  `distributed`, and is materially weaker than I wrote. Build 12 is the control.
+
+**What the arms are worth after the correction, and it bears on the build in
+flight:** they are the first synthesis evidence of HEAD's codebook at
+`CB_STYLE=distributed`, which IS build 12's configuration, and it infers as
+1,536 `RAM32M16` with `MUXF8 = 0`, identical to the pre-change RTL.
+**REGISTERED before build 12 lands: build 12 should not carry the 12,288 `MUXF8`
+tree, and if it does, the cause is not `0b34200`.**
+
+**Unplanned cross-check between the two runs:** `24fd4cc` decomposes the card
+DCP's `xq_reg` as 518 `RAMD32` + 74 `RAMS32`; my OOC census gives
+`RAMD32 = 22,022` and `RAMS32 = 3,146` in all four arms, and
+`22,022 - 1,536 x 14 = 518`, `3,146 - 1,536 x 2 = 74`. Both residuals match to
+the unit, on different boxes and different netlists.
+
+**And `REF_NAME =~ RAM*` over-counts, which my own `cb_ram` column uses.** My
+`cb_ram = 26,112` is `1,536 x 17`, macro plus its sixteen bels; the honest macro
+count is **1,536**, from `RAM32M16 = 1,573` less `xq_reg`'s 37. Read that column
+as "macro plus children", never as copies.
