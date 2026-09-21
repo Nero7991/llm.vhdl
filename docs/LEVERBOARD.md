@@ -1113,3 +1113,124 @@ CORRECTION (`a3cb844`); `docs/debugging/2026-09-20_cbooc-the-codebook-has-never-
 (`7502fdd`); `docs/WORKLOG.md:5454` (TRACK LEVERC48, `a4828ab`);
 `rtl/matvec_core.vhd:258-334, 423-480, 795-830` read but not modified;
 `hw/fk33/gen_pcieep.py` (`952e70a`).
+
+---
+
+## CORRECTION 3, 2026-09-21: **CORRECTION 2 IS WITHDRAWN. THE +44,073 LUT WAS `CB_STYLE=regs`, AND L-CB WAS THE IDENTITY FUNCTION IN THE BUILD THAT MEASURED IT.**
+
+Appended, not edited. CORRECTION 2 said L-CB "was believed free and it is the
+most expensive row on the board", at **+44,073 CLB LUT**. **That figure does not
+belong to L-CB.**
+
+### C3.1 What actually happened
+
+MEASURED, two instruments across three card builds (TRACK CBREVERT `1cc7cbf`):
+the anchored `^FK33_CB_STYLE` sentinel reads **1 / 1 / 0** for builds 9 / 10 /
+11b, and Vivado's own `Parameter CB_STYLE bound to` reads `distributed` x4,
+`distributed` x4, **`regs` x4**. `hw/fk33/pcieep_build.sh` never sets
+`FK33_CB_STYLE` and `hw/fk33/gen_pcieep.py` defaults it to `regs`.
+
+**At `regs`, `CB_COPIES` is 48 rather than 1,536, so `CB_RANKS = min(48,48) = 48`
+and `cb_rank_of(c) = c`: `0b34200` is the IDENTITY.** Build 11b, the only card
+build that has ever contained the commit, did not exercise the lever at all.
+
+What the +44,073 LUT actually was: at `regs` the RTL sets `dont_touch = "true"`
+and `ram_style = "registers"` on `cb`, so the codebook became **6,144 FDRE read
+through 24,576 MUXF7 + 12,288 MUXF8** (MEASURED from the netlist, TRACK CBCENSUS
+`e240fbb`, filter validated exactly against `report_utilization`).
+
+**The prediction that settles it was registered before the report existed and
+then confirmed.** At `distributed`, HEAD's codebook must infer as 1,536
+RAM32M16 with MUXF8 = 0, so build 12b must not carry the tree. MEASURED in build
+12b's synthesis utilization: **F8 muxes 18,315 -> 5,979 (-12,336)** and
+**LUT-as-Distributed-RAM 54,650 -> 67,286 (+12,636)**, with DSP identical at
+2,087 in both. The two halves of the same swap, and the 12,288 tree is gone.
+
+### C3.2 L-CB's real cost, MEASURED at a matched `CB_STYLE`
+
+TRACK CBOOC and TRACK CBRUN, two targets, both arms at `distributed`:
+
+| target | LUT delta | FF delta | max cmd-net fanout |
+|---|---|---|---|
+| `matvec_int4_desc_axi` | **+1,456** | **-19,345** | 1,537 -> 109 |
+| `matvec_core` | **-623** | -19,337 | 1,537 -> 129 |
+
+So the LUT term is small and **does not agree in sign between targets**, and the
+registered "LUT delta 0" missed both ways. The FF saving is real and structural:
+`13 x (1536 - 48) = 19,344` exactly, `cbw_ff 19,968 -> 624`.
+
+**The row's headline should read: L-CB costs on the order of a thousand LUT
+either way and saves about 19,344 FF. It is not the most expensive row on the
+board; that verdict was a measurement of a different design.**
+
+Also withdrawn: CBRAM's mechanism. `cb` infers as distributed RAM in **all four**
+of CBRUN's arms, identical to the digit, so the write statement's FORM does not
+gate the inference in either direction, and the registered `MUXF8 0 -> 12,288`
+measured **0 -> 0** at `distributed`.
+
+### C3.3 AND THE L-CB ROW'S OWN TIMING CELL IS NOW SUPPORTED, WHICH CUTS THE OTHER WAY
+
+The row at line 65 says the lever targets "the net carrying all ten of build
+10's worst paths". **TRACK B10WHY (`bcdf8bb`) confirms that from build 10's own
+routed reports, and it is stronger than the row claims:**
+
+Build 10's entire **-5.819 WNS is ONE NET** -- `cb_addr[2]`, fanout **1,536**,
+**0 logic levels**, **18.857 ns of pure route = 141.4% of the 13.333 ns period**,
+driver at `SLICE_X177Y27` with its worst sinks 240-302 CLB away. Build 10 ran at
+the correct 75 MHz, in the correct floorplan, at `CB_STYLE=distributed`, with
+directives identical to build 9's.
+
+**So the lever this board just downgraded targets exactly the net that owns the
+only unexplained card failure** -- and it has still never been drawn at
+`distributed` on a card.
+
+**But it is not the whole failure, and the board must not swing the other way
+either.** Also MEASURED by B10WHY from the same build:
+
+- `bd_wrapper_methodology_drc_routed.rpt` carries **1,000 TIMING-16 violations,
+  all of them in `gcr.gkvaxi.u_kv`**, -1.000 to -2.131 ns, and
+  `grep -c 'cbw_a\|cb_addr'` on that report is **0**. That module is the WNS
+  owner in **both builds that CLOSED** (+0.452, +0.299) and its path is a
+  34-level, 17-deep CARRY8 chain that no fanout fix touches.
+- A **second clock domain** failed: `fk33_dmabram` at 250 MHz, **-0.109 on 54
+  endpoints**, against +0.054 and +0.049 in the builds that closed. Nothing in
+  that domain changed, and its endpoint count moved by five in 202,658.
+- DERIVED: `-14,026.255 / 17,194 = -0.816 ns mean`. The 17,194 failing endpoints
+  are a long tail, not 17,194 paths at -5.8.
+
+**Expect a codebook fanout fix to MOVE build 10's WNS, not to close the design.**
+
+### C3.4 The area story is now refuted with a control, not merely unsupported
+
+Line 337 says "do not quote build 10 failed by adding area". B10WHY supplies the
+control that settles it: **`card_seqrst_bfnorm` CLOSED at +0.452 while being
+LARGER than build 10 in every CLB metric** -- 54,839 CLB / 367,685 CLB LUTs /
+308,140 FF against build 10's 54,751 / 361,361 / 308,213. Build 10 is the
+smallest of the three and the only failure.
+
+### C3.5 Two framings on this board that are wrong
+
+- **"Build 10 = build 9 + four levers" is false.** MEASURED:
+  `git diff --name-only 3180646 b71a6d9` over RTL returns **19 files, six in
+  subsystem A**. Build 9 is identified as `3180646` (07:33:23, build started
+  07:37:34) but it read the LIVE tree and wrote no HEAD file, so its exact input
+  is unrecoverable -- as is build 10's, for the same reason.
+- **Open item 12's premise stands but its baseline does not.** Build 9 vs build
+  10 IS a directive-controlled comparison (both ran `AltSpreadLogic_high` /
+  `AggressiveExplore` / `AlternateCLBRouting`, as did `card_seqrst_bfnorm`).
+  Build 11b ran three different directives, so build 11b versus anything never
+  was one.
+
+### C3.6 Queued, needs a lane, cheap
+
+`open_checkpoint /mnt/storage/fk33_builds/KEEP_build10_dcp/build10_routed_bd_wrapper.dcp`
+then `report_timing -setup -max_paths 20000 -slack_lesser_than 0 -group
+clk_out3_bd_clk_wiz_0_0`. **~10 minutes, ~8 GB, read-only, no re-implementation**,
+and it apportions all 17,194 endpoints between the codebook net and `u_kv`. That
+is the measurement that decides whether re-applying L-CB is worth a build. It is
+queued behind build 12b because the rule is ONE Vivado per box, not one per
+track.
+
+Note for anyone reading the earlier records: build 10's **routed** DCP and full
+report set DO survive at `/mnt/storage/fk33_builds/build10/root`. Two READMEs
+said otherwise, including a brief of mine, and B10WHY corrected them.
