@@ -1,0 +1,510 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Sep 21 11:23:30 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing_summary -delay_type max -max_paths 5 -file /home/labuser/attndraw/out/tsum_coff.rpt
+| Design            : attn_block
+| Device            : xcvu33p-fsvh2104
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Summary Report
+
+------------------------------------------------------------------------------------------------
+| Timer Settings
+| --------------
+------------------------------------------------------------------------------------------------
+
+  Enable Multi Corner Analysis               :  Yes
+  Enable Pessimism Removal                   :  Yes
+  Pessimism Removal Resolution               :  Nearest Common Node
+  Enable Input Delay Default Clock           :  No
+  Enable Preset / Clear Arcs                 :  No
+  Disable Flight Delays                      :  No
+  Ignore I/O Paths                           :  No
+  Timing Early Launch at Borrowing Latches   :  No
+  Borrow Time for Max Delay Exceptions       :  Yes
+  Merge Timing Exceptions                    :  Yes
+  Inter-SLR Compensation                     :  Conservative
+
+  Corner  Analyze    Analyze    
+  Name    Max Paths  Min Paths  
+  ------  ---------  ---------  
+  Slow    Yes        Yes        
+  Fast    Yes        Yes        
+
+
+------------------------------------------------------------------------------------------------
+| Report Methodology
+| ------------------
+------------------------------------------------------------------------------------------------
+
+No report available as report_methodology has not been run prior. Run report_methodology on the current design for the summary of methodology violations.
+
+
+
+check_timing report
+
+Table of Contents
+-----------------
+1. checking no_clock (0)
+2. checking constant_clock (0)
+3. checking pulse_width_clock (0)
+4. checking unconstrained_internal_endpoints (0)
+5. checking no_input_delay (8966)
+6. checking no_output_delay (505)
+7. checking multiple_clock (0)
+8. checking generated_clocks (0)
+9. checking loops (0)
+10. checking partial_input_delay (0)
+11. checking partial_output_delay (0)
+12. checking latch_loops (0)
+
+1. checking no_clock (0)
+------------------------
+ There are 0 register/latch pins with no clock.
+
+
+2. checking constant_clock (0)
+------------------------------
+ There are 0 register/latch pins with constant_clock.
+
+
+3. checking pulse_width_clock (0)
+---------------------------------
+ There are 0 register/latch pins which need pulse_width check
+
+
+4. checking unconstrained_internal_endpoints (0)
+------------------------------------------------
+ There are 0 pins that are not constrained for maximum delay.
+
+ There are 0 pins that are not constrained for maximum delay due to constant clock.
+
+
+5. checking no_input_delay (8966)
+---------------------------------
+ There are 8966 input ports with no input delay specified. (HIGH)
+
+ There are 0 input ports with no input delay but user has a false path constraint.
+
+
+6. checking no_output_delay (505)
+---------------------------------
+ There are 505 ports with no output delay specified. (HIGH)
+
+ There are 0 ports with no output delay but user has a false path constraint
+
+ There are 0 ports with no output delay but with a timing clock defined on it or propagating through it
+
+
+7. checking multiple_clock (0)
+------------------------------
+ There are 0 register/latch pins with multiple clocks.
+
+
+8. checking generated_clocks (0)
+--------------------------------
+ There are 0 generated clocks that are not connected to a clock source.
+
+
+9. checking loops (0)
+---------------------
+ There are 0 combinational loops in the design.
+
+
+10. checking partial_input_delay (0)
+------------------------------------
+ There are 0 input ports with partial input delay specified.
+
+
+11. checking partial_output_delay (0)
+-------------------------------------
+ There are 0 ports with partial output delay specified.
+
+
+12. checking latch_loops (0)
+----------------------------
+ There are 0 combinational latch loops in the design through latch input
+
+
+
+------------------------------------------------------------------------------------------------
+| Design Timing Summary
+| ---------------------
+------------------------------------------------------------------------------------------------
+
+    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
+    -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
+      2.356        0.000                      0               250250        6.124        0.000                       0                101570  
+
+
+All user specified timing constraints are met.
+
+
+------------------------------------------------------------------------------------------------
+| Clock Summary
+| -------------
+------------------------------------------------------------------------------------------------
+
+Clock  Waveform(ns)       Period(ns)      Frequency(MHz)
+-----  ------------       ----------      --------------
+clk    {0.000 6.667}      13.333          75.002          
+
+
+------------------------------------------------------------------------------------------------
+| Intra Clock Table
+| -----------------
+------------------------------------------------------------------------------------------------
+
+Clock             WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
+-----             -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
+clk                 2.356        0.000                      0               250250        6.124        0.000                       0                101570  
+
+
+------------------------------------------------------------------------------------------------
+| Inter Clock Table
+| -----------------
+------------------------------------------------------------------------------------------------
+
+From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints  
+----------    --------          -------      -------  ---------------------  -------------------  
+
+
+------------------------------------------------------------------------------------------------
+| Other Path Groups Table
+| -----------------------
+------------------------------------------------------------------------------------------------
+
+Path Group    From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints  
+----------    ----------    --------          -------      -------  ---------------------  -------------------  
+
+
+------------------------------------------------------------------------------------------------
+| Timing Details
+| --------------
+------------------------------------------------------------------------------------------------
+
+
+---------------------------------------------------------------------------------------------------
+From Clock:  clk
+  To Clock:  clk
+
+Setup :            0  Failing Endpoints,  Worst Slack        2.356ns,  Total Violation        0.000ns
+Hold  :           NA  Failing Endpoints,  Worst Slack           NA  ,  Total Violation           NA
+PW    :            0  Failing Endpoints,  Worst Slack        6.124ns,  Total Violation        0.000ns
+---------------------------------------------------------------------------------------------------
+
+
+Max Delay Paths
+--------------------------------------------------------------------------------------
+Slack (MET) :             2.356ns  (required time - arrival time)
+  Source:                 ar_rsb_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Destination:            u_arr/p_reg_reg[6]0/DSP_A_B_DATA_INST/A[7]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Path Group:             clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            13.333ns  (clk rise@13.333ns - clk rise@0.000ns)
+  Data Path Delay:        10.699ns  (logic 0.324ns (3.028%)  route 10.375ns (96.972%))
+  Logic Levels:           3  (LUT6=2 MUXF7=1)
+  Clock Path Skew:        0.013ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    0.043ns = ( 13.376 - 13.333 ) 
+    Source Clock Delay      (SCD):    0.030ns
+    Clock Pessimism Removal (CPR):    0.000ns
+  Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  clk (IN)
+                         net (fo=103195, unset)       0.030     0.030    clk
+    SLICE_X97Y148        FDRE                                         r  ar_rsb_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X97Y148        FDRE (Prop_GFF2_SLICEM_C_Q)
+                                                      0.079     0.109 r  ar_rsb_reg[1]/Q
+                         net (fo=9176, routed)        9.530     9.639    u_arr/rs_blk[1]
+    SLICE_X146Y31        LUT6 (Prop_G6LUT_SLICEM_I2_O)
+                                                      0.090     9.729 r  u_arr/p_reg_reg[6]0_i_63/O
+                         net (fo=1, routed)           0.017     9.746    u_arr/p_reg_reg[6]0_i_63_n_0
+    SLICE_X146Y31        MUXF7 (Prop_F7MUX_GH_SLICEM_I1_O)
+                                                      0.067     9.813 r  u_arr/p_reg_reg[6]0_i_44/O
+                         net (fo=1, routed)           0.276    10.089    u_arr/p_reg_reg[6]0_i_44_n_0
+    SLICE_X146Y31        LUT6 (Prop_C6LUT_SLICEM_I1_O)
+                                                      0.088    10.177 r  u_arr/p_reg_reg[6]0_i_23/O
+                         net (fo=1, routed)           0.552    10.729    u_arr/p_reg_reg[6]0/A[7]
+    DSP48E2_X19Y10       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[6]0/DSP_A_B_DATA_INST/A[7]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk rise edge)       13.333    13.333 r  
+                                                      0.000    13.333 r  clk (IN)
+                         net (fo=103195, unset)       0.043    13.376    u_arr/p_reg_reg[6]0/CLK
+    DSP48E2_X19Y10       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[6]0/DSP_A_B_DATA_INST/CLK
+                         clock pessimism              0.000    13.376    
+                         clock uncertainty           -0.035    13.341    
+    DSP48E2_X19Y10       DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[7])
+                                                     -0.256    13.085    u_arr/p_reg_reg[6]0/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                         13.085    
+                         arrival time                         -10.729    
+  -------------------------------------------------------------------
+                         slack                                  2.356    
+
+Slack (MET) :             2.410ns  (required time - arrival time)
+  Source:                 ar_rsb_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Destination:            u_arr/p_reg_reg[73]0/DSP_A_B_DATA_INST/A[0]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Path Group:             clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            13.333ns  (clk rise@13.333ns - clk rise@0.000ns)
+  Data Path Delay:        10.603ns  (logic 0.347ns (3.273%)  route 10.256ns (96.727%))
+  Logic Levels:           3  (LUT6=2 MUXF7=1)
+  Clock Path Skew:        0.013ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    0.043ns = ( 13.376 - 13.333 ) 
+    Source Clock Delay      (SCD):    0.030ns
+    Clock Pessimism Removal (CPR):    0.000ns
+  Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  clk (IN)
+                         net (fo=103195, unset)       0.030     0.030    clk
+    SLICE_X97Y148        FDRE                                         r  ar_rsb_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X97Y148        FDRE (Prop_GFF2_SLICEM_C_Q)
+                                                      0.079     0.109 r  ar_rsb_reg[1]/Q
+                         net (fo=9176, routed)        9.718     9.827    u_arr/rs_blk[1]
+    SLICE_X162Y32        LUT6 (Prop_A6LUT_SLICEM_I2_O)
+                                                      0.150     9.977 r  u_arr/p_reg_reg[73]0_i_81/O
+                         net (fo=1, routed)           0.011     9.988    u_arr/p_reg_reg[73]0_i_81_n_0
+    SLICE_X162Y32        MUXF7 (Prop_F7MUX_AB_SLICEM_I1_O)
+                                                      0.065    10.053 r  u_arr/p_reg_reg[73]0_i_47/O
+                         net (fo=1, routed)           0.179    10.232    u_arr/p_reg_reg[73]0_i_47_n_0
+    SLICE_X162Y30        LUT6 (Prop_H6LUT_SLICEM_I1_O)
+                                                      0.053    10.285 r  u_arr/p_reg_reg[73]0_i_30/O
+                         net (fo=1, routed)           0.348    10.633    u_arr/p_reg_reg[73]0/A[0]
+    DSP48E2_X23Y10       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[73]0/DSP_A_B_DATA_INST/A[0]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk rise edge)       13.333    13.333 r  
+                                                      0.000    13.333 r  clk (IN)
+                         net (fo=103195, unset)       0.043    13.376    u_arr/p_reg_reg[73]0/CLK
+    DSP48E2_X23Y10       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[73]0/DSP_A_B_DATA_INST/CLK
+                         clock pessimism              0.000    13.376    
+                         clock uncertainty           -0.035    13.341    
+    DSP48E2_X23Y10       DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[0])
+                                                     -0.297    13.044    u_arr/p_reg_reg[73]0/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                         13.044    
+                         arrival time                         -10.633    
+  -------------------------------------------------------------------
+                         slack                                  2.410    
+
+Slack (MET) :             2.565ns  (required time - arrival time)
+  Source:                 ar_rsb_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Destination:            u_arr/p_reg_reg[7]0/DSP_A_B_DATA_INST/A[7]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Path Group:             clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            13.333ns  (clk rise@13.333ns - clk rise@0.000ns)
+  Data Path Delay:        10.489ns  (logic 0.343ns (3.270%)  route 10.146ns (96.730%))
+  Logic Levels:           3  (LUT6=2 MUXF7=1)
+  Clock Path Skew:        0.013ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    0.043ns = ( 13.376 - 13.333 ) 
+    Source Clock Delay      (SCD):    0.030ns
+    Clock Pessimism Removal (CPR):    0.000ns
+  Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  clk (IN)
+                         net (fo=103195, unset)       0.030     0.030    clk
+    SLICE_X97Y148        FDRE                                         r  ar_rsb_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X97Y148        FDRE (Prop_GFF2_SLICEM_C_Q)
+                                                      0.079     0.109 r  ar_rsb_reg[1]/Q
+                         net (fo=9176, routed)        9.702     9.811    u_arr/rs_blk[1]
+    SLICE_X147Y30        LUT6 (Prop_A6LUT_SLICEL_I2_O)
+                                                      0.149     9.960 r  u_arr/p_reg_reg[7]0_i_67/O
+                         net (fo=1, routed)           0.009     9.969    u_arr/p_reg_reg[7]0_i_67_n_0
+    SLICE_X147Y30        MUXF7 (Prop_F7MUX_AB_SLICEL_I1_O)
+                                                      0.064    10.033 r  u_arr/p_reg_reg[7]0_i_40/O
+                         net (fo=1, routed)           0.245    10.278    u_arr/p_reg_reg[7]0_i_40_n_0
+    SLICE_X147Y30        LUT6 (Prop_H6LUT_SLICEL_I1_O)
+                                                      0.051    10.329 r  u_arr/p_reg_reg[7]0_i_23/O
+                         net (fo=1, routed)           0.190    10.519    u_arr/p_reg_reg[7]0/A[7]
+    DSP48E2_X19Y6        DSP_A_B_DATA                                 r  u_arr/p_reg_reg[7]0/DSP_A_B_DATA_INST/A[7]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk rise edge)       13.333    13.333 r  
+                                                      0.000    13.333 r  clk (IN)
+                         net (fo=103195, unset)       0.043    13.376    u_arr/p_reg_reg[7]0/CLK
+    DSP48E2_X19Y6        DSP_A_B_DATA                                 r  u_arr/p_reg_reg[7]0/DSP_A_B_DATA_INST/CLK
+                         clock pessimism              0.000    13.376    
+                         clock uncertainty           -0.035    13.341    
+    DSP48E2_X19Y6        DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[7])
+                                                     -0.256    13.085    u_arr/p_reg_reg[7]0/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                         13.085    
+                         arrival time                         -10.519    
+  -------------------------------------------------------------------
+                         slack                                  2.565    
+
+Slack (MET) :             2.643ns  (required time - arrival time)
+  Source:                 ar_rsb_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Destination:            u_arr/p_reg_reg[103]0/DSP_A_B_DATA_INST/A[7]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Path Group:             clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            13.333ns  (clk rise@13.333ns - clk rise@0.000ns)
+  Data Path Delay:        10.412ns  (logic 0.343ns (3.294%)  route 10.069ns (96.706%))
+  Logic Levels:           3  (LUT6=2 MUXF7=1)
+  Clock Path Skew:        0.013ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    0.043ns = ( 13.376 - 13.333 ) 
+    Source Clock Delay      (SCD):    0.030ns
+    Clock Pessimism Removal (CPR):    0.000ns
+  Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  clk (IN)
+                         net (fo=103195, unset)       0.030     0.030    clk
+    SLICE_X97Y148        FDRE                                         r  ar_rsb_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X97Y148        FDRE (Prop_GFF2_SLICEM_C_Q)
+                                                      0.079     0.109 r  ar_rsb_reg[1]/Q
+                         net (fo=9176, routed)        9.517     9.626    u_arr/rs_blk[1]
+    SLICE_X147Y33        LUT6 (Prop_A6LUT_SLICEL_I2_O)
+                                                      0.149     9.775 r  u_arr/p_reg_reg[103]0_i_67/O
+                         net (fo=1, routed)           0.009     9.784    u_arr/p_reg_reg[103]0_i_67_n_0
+    SLICE_X147Y33        MUXF7 (Prop_F7MUX_AB_SLICEL_I1_O)
+                                                      0.064     9.848 r  u_arr/p_reg_reg[103]0_i_40/O
+                         net (fo=1, routed)           0.245    10.093    u_arr/p_reg_reg[103]0_i_40_n_0
+    SLICE_X147Y33        LUT6 (Prop_H6LUT_SLICEL_I4_O)
+                                                      0.051    10.144 r  u_arr/p_reg_reg[103]0_i_23/O
+                         net (fo=1, routed)           0.298    10.442    u_arr/p_reg_reg[103]0/A[7]
+    DSP48E2_X19Y8        DSP_A_B_DATA                                 r  u_arr/p_reg_reg[103]0/DSP_A_B_DATA_INST/A[7]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk rise edge)       13.333    13.333 r  
+                                                      0.000    13.333 r  clk (IN)
+                         net (fo=103195, unset)       0.043    13.376    u_arr/p_reg_reg[103]0/CLK
+    DSP48E2_X19Y8        DSP_A_B_DATA                                 r  u_arr/p_reg_reg[103]0/DSP_A_B_DATA_INST/CLK
+                         clock pessimism              0.000    13.376    
+                         clock uncertainty           -0.035    13.341    
+    DSP48E2_X19Y8        DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[7])
+                                                     -0.256    13.085    u_arr/p_reg_reg[103]0/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                         13.085    
+                         arrival time                         -10.442    
+  -------------------------------------------------------------------
+                         slack                                  2.643    
+
+Slack (MET) :             2.702ns  (required time - arrival time)
+  Source:                 ar_rsb_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Destination:            u_arr/p_reg_reg[5]0/DSP_A_B_DATA_INST/A[14]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk  {rise@0.000ns fall@6.667ns period=13.333ns})
+  Path Group:             clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            13.333ns  (clk rise@13.333ns - clk rise@0.000ns)
+  Data Path Delay:        10.344ns  (logic 0.149ns (1.440%)  route 10.195ns (98.560%))
+  Logic Levels:           2  (LUT6=2)
+  Clock Path Skew:        0.013ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    0.043ns = ( 13.376 - 13.333 ) 
+    Source Clock Delay      (SCD):    0.030ns
+    Clock Pessimism Removal (CPR):    0.000ns
+  Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  clk (IN)
+                         net (fo=103195, unset)       0.030     0.030    clk
+    SLICE_X97Y148        FDRE                                         r  ar_rsb_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X97Y148        FDRE (Prop_GFF2_SLICEM_C_Q)
+                                                      0.079     0.109 r  ar_rsb_reg[1]/Q
+                         net (fo=9176, routed)        9.677     9.786    u_arr/rs_blk[1]
+    SLICE_X148Y39        LUT6 (Prop_A6LUT_SLICEL_I2_O)
+                                                      0.035     9.821 f  u_arr/p_reg_reg[5]0_i_36/O
+                         net (fo=1, routed)           0.040     9.861    u_arr/p_reg_reg[5]0_i_36_n_0
+    SLICE_X148Y39        LUT6 (Prop_C6LUT_SLICEL_I5_O)
+                                                      0.035     9.896 r  u_arr/p_reg_reg[5]0_i_16/O
+                         net (fo=1, routed)           0.478    10.374    u_arr/p_reg_reg[5]0/A[14]
+    DSP48E2_X19Y14       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[5]0/DSP_A_B_DATA_INST/A[14]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk rise edge)       13.333    13.333 r  
+                                                      0.000    13.333 r  clk (IN)
+                         net (fo=103195, unset)       0.043    13.376    u_arr/p_reg_reg[5]0/CLK
+    DSP48E2_X19Y14       DSP_A_B_DATA                                 r  u_arr/p_reg_reg[5]0/DSP_A_B_DATA_INST/CLK
+                         clock pessimism              0.000    13.376    
+                         clock uncertainty           -0.035    13.341    
+    DSP48E2_X19Y14       DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[14])
+                                                     -0.264    13.077    u_arr/p_reg_reg[5]0/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                         13.077    
+                         arrival time                         -10.374    
+  -------------------------------------------------------------------
+                         slack                                  2.702    
+
+
+
+
+
+Pulse Width Checks
+--------------------------------------------------------------------------------------
+Clock Name:         clk
+Waveform(ns):       { 0.000 6.667 }
+Period(ns):         13.333
+Sources:            { clk }
+
+Check Type        Corner  Lib Pin             Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location      Pin
+Min Period        n/a     RAMB36E2/CLKARDCLK  n/a            1.569         13.333      11.764     RAMB36_X6Y32  ypre_reg_bram_0/CLKARDCLK
+Min Period        n/a     RAMB36E2/CLKARDCLK  n/a            1.569         13.333      11.764     RAMB36_X6Y33  ypre_reg_bram_1/CLKARDCLK
+Min Period        n/a     RAMB36E2/CLKARDCLK  n/a            1.569         13.333      11.764     RAMB36_X5Y32  ypre_reg_bram_2/CLKARDCLK
+Min Period        n/a     RAMB36E2/CLKBWRCLK  n/a            1.355         13.333      11.978     RAMB36_X6Y32  ypre_reg_bram_0/CLKBWRCLK
+Min Period        n/a     RAMB36E2/CLKBWRCLK  n/a            1.355         13.333      11.978     RAMB36_X6Y33  ypre_reg_bram_1/CLKBWRCLK
+Low Pulse Width   Slow    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKARDCLK
+Low Pulse Width   Fast    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKARDCLK
+Low Pulse Width   Slow    RAMB36E2/CLKBWRCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKBWRCLK
+Low Pulse Width   Fast    RAMB36E2/CLKBWRCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKBWRCLK
+Low Pulse Width   Slow    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y33  ypre_reg_bram_1/CLKARDCLK
+High Pulse Width  Slow    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKARDCLK
+High Pulse Width  Fast    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKARDCLK
+High Pulse Width  Slow    RAMB36E2/CLKBWRCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKBWRCLK
+High Pulse Width  Fast    RAMB36E2/CLKBWRCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y32  ypre_reg_bram_0/CLKBWRCLK
+High Pulse Width  Slow    RAMB36E2/CLKARDCLK  n/a            0.542         6.667       6.125      RAMB36_X6Y33  ypre_reg_bram_1/CLKARDCLK
+
+
+

@@ -1,0 +1,40 @@
+--- /home/orencollaco/GitHub/llama.vhdl/sim/ooc_scorehdr_run.sh	2026-09-20 20:10:12.803666699 -0600
++++ /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/attndraw_2026-09-21/run_attndraw.sh	2026-09-21 08:43:56.202860297 -0600
+@@ -44,7 +44,7 @@
+ # NO HARDWARE.  synth/opt/place/route/report only.
+ 
+ set -u
+-ROOT="${SH_ROOT:-$HOME/hdrcost}"
++ROOT="${SH_ROOT:-$HOME/attndraw}"
+ OUT="${SH_OUTDIR:-$ROOT/out}"
+ VIV="${SH_VIVADO:-/tools/Xilinx/2023.2/Vivado/2023.2/settings64.sh}"
+ CAP="${SH_CAP:-11G}"
+@@ -64,6 +64,9 @@
+ 
+ arm_gen() {
+   case "$1" in
++    coff)  echo "$CGEN SWEEP_PIPE=false SCORE_EARLY=false SCORE_HDR_TREE=0";;
++    con)   echo "$CGEN SWEEP_PIPE=true  SCORE_EARLY=true  SCORE_HDR_TREE=0";;
++    spon)  echo "$CGEN SWEEP_PIPE=true  SCORE_EARLY=false SCORE_HDR_TREE=0";;
+     base)  echo "$CGEN SWEEP_PIPE=true SCORE_EARLY=false SCORE_HDR_TREE=0";;
+     tree)  echo "$CGEN SWEEP_PIPE=true SCORE_EARLY=false SCORE_HDR_TREE=1";;
+     early) echo "$CGEN SWEEP_PIPE=true SCORE_EARLY=true  SCORE_HDR_TREE=0";;
+@@ -141,6 +144,18 @@
+     if [ -z "$cgdir" ] && [ -s "$OUT/cgroup_${phase}_$tag.txt" ]; then
+       cgdir="/sys/fs/cgroup$(sed -n 's/^0::\(.*\)$/\1/p' "$OUT/cgroup_${phase}_$tag.txt")"
+     fi
++    if [ -n "$cgdir" ] && [ -r "$cgdir/memory.high" ] && [ ! -s "$OUT/high_${phase}_$tag.txt" ]; then
++      # THE CAP, READ BACK OUT OF THE SCOPE'S OWN CGROUP.  Two measured
++      # failures this guards: `systemd-run --user` silently doing nothing when
++      # the ssh session carries no XDG_RUNTIME_DIR, so Vivado runs UNCAPPED;
++      # and a readback written as `systemd-run ... bash -c '... $cg ...'` whose
++      # $cg was eaten by systemd's own command-line expansion, so it read
++      # /sys/fs/cgroup/memory.high, said "No such file", and exited 0.
++      # Here $cgdir is resolved by THIS shell from the cgroup path the payload
++      # itself wrote, and the value is recorded rather than asserted.
++      echo "cgdir=$cgdir memory.high=$(cat "$cgdir/memory.high")" > "$OUT/high_${phase}_$tag.txt"
++      cat "$OUT/high_${phase}_$tag.txt"
++    fi
+     if [ -n "$cgdir" ] && [ -r "$cgdir/memory.peak" ]; then
+       cgpeak=$(cat "$cgdir/memory.peak")
+       # memory.swap.current is a LEVEL and the kernel offers no

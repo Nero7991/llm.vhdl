@@ -1,0 +1,142 @@
+HDRCOST_ENV host=cachyos-bc250 root=/home/labuser/attndraw out=/home/labuser/attndraw/out cap=11G period=13.333
+HDRCOST_TREE_SHA 3e344a2df412713434a618815b8e6177bc245799
+HDRCOST_MANIFEST 188ea744beb0389ac510113543795feaad77c635bfed42ff395796fb14a668e7
+HDRCOST_CGROUP systemd-run --user scope available, cap 11G
+phase=synth tag=coff peak_rss_gb=12.71 cgroup_peak_mb=11266 cgroup_swap_mb=6416 at_cap=YES wall_s=960 rc=0
+HDRCOST_OK synth coff rc=0 cgroup_peak=11266MB swap=6416MB at_cap=YES wall=960s
+SCOREHDR_BEGIN tag=coff target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=coff gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=false SCORE_EARLY=false SCORE_HDR_TREE=0"
+SCOREHDR_READ tag=coff files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=coff /home/labuser/attndraw/out/clk_coff.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=coff 834
+SCOREHDR_CENSUS stage=synth tag=coff dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=94978 lut1=2235 lut2=8916 lut3=9154 lut4=6512 lut5=14184 lut6=53977 ff=101221 fdre=100538 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16374 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=coff total=5408 lut=3464 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=synth tag=coff CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=12 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=coff 74
+SCOREHDR_CENSUS stage=opt tag=coff dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=94976 lut1=2230 lut2=8919 lut3=9154 lut4=6512 lut5=14184 lut6=53977 ff=101221 fdre=100538 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16374 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=coff total=5404 lut=3460 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=opt tag=coff CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=8 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101221 report=101221 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2741 report=2741 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16374 report=16374 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=coff wildcard/exact = 9.0000
+SCOREHDR_DCP tag=coff /home/labuser/attndraw/out/post_opt_coff.dcp
+SCOREHDR_SRESULT tag=coff lut_sites=86827 lut_logic=86734 lut_mem=93 ff=101221 carry8=2741 f7=16374 f8=2992 bram=11 dsp=298 synth_s=834 opt_s=74
+SCOREHDR_SDONE coff
+HDRCOST_LOGMSG synth coff synth_8-10226=1 synth_8-7186=1
+phase=pnr tag=coff peak_rss_gb=5.64 cgroup_peak_mb=6292 cgroup_swap_mb=0 at_cap=no wall_s=1412 rc=0
+HDRCOST_OK pnr coff rc=0 cgroup_peak=6292MB swap=0MB at_cap=no wall=1412s
+SCOREHDR_PBEGIN tag=coff dcp=/home/labuser/attndraw/out/post_opt_coff.dcp period=13.333
+SCOREHDR_POPENED tag=coff cells=221245
+SCOREHDR_PRMCLK clk : invalid command name "remove_clock"
+SCOREHDR_PCLK tag=coff period=13.333
+SCOREHDR_PLACE_SECONDS tag=coff 512
+SCOREHDR_PLACED_WNS tag=coff wns=4.558 levels=6
+SCOREHDR_ROUTE_SECONDS tag=coff 723
+SCOREHDR_ROUTESTATUS tag=coff nets=479859 unrouted=NA
+SCOREHDR_INTRA tag=coff clk=clk wns=2.356 tns=0.000 failing=0 endpoints=250250
+SCOREHDR_WORST_GLOBAL tag=coff wns=2.356 levels=3 datapath=10.699 start=ar_rsb_reg[1]/C end=u_arr/p_reg_reg[6]0/DSP_A_B_DATA_INST/A[7]
+SCOREHDR_CONE tag=coff cone=score_all cells=1780
+SCOREHDR_CONE_TO   tag=coff cone=score_all wns=10.385 levels=4 datapath=2.844 start=gen_head[0].u_sq/blk_reg[2]/C end=gen_head[0].u_sq/e_min_reg[3]/CE
+SCOREHDR_CONE_FROM tag=coff cone=score_all wns=9.568 levels=5 datapath=3.659 start=gen_head[0].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__24/CE
+SCOREHDR_CONE tag=coff cone=score_emin cells=32
+SCOREHDR_CONE_TO   tag=coff cone=score_emin wns=10.385 levels=4 datapath=2.844 start=gen_head[0].u_sq/blk_reg[2]/C end=gen_head[0].u_sq/e_min_reg[3]/CE
+SCOREHDR_CONE_FROM tag=coff cone=score_emin wns=11.121 levels=3 datapath=2.106 start=gen_head[0].u_sq/e_min_reg[0]/C end=gen_head[0].u_sq/e_min_reg[3]/CE
+SCOREHDR_CONE tag=coff cone=score_shb cells=192
+SCOREHDR_CONE_TO   tag=coff cone=score_shb wns=10.810 levels=4 datapath=2.506 start=gen_head[2].u_sq/blk_reg[2]/C end=gen_head[2].u_sq/shb_reg[2][5]/D
+SCOREHDR_CONE_FROM tag=coff cone=score_shb wns=12.550 levels=2 datapath=0.764 start=gen_head[2].u_sq/shb_reg[0][2]/C end=gen_head[2].u_sq/c1_sh_reg[2]/D
+SCOREHDR_CONE tag=coff cone=score_tv cells=0 to=NONE from=NONE (no sequential cell matches *u_sq*tv_reg* in this arm)
+SCOREHDR_CONE tag=coff cone=score_st cells=40
+SCOREHDR_CONE_TO   tag=coff cone=score_st wns=11.209 levels=2 datapath=2.018 start=sq_hdrv_reg/C end=gen_head[2].u_sq/FSM_onehot_state_reg[6]/CE
+SCOREHDR_CONE_FROM tag=coff cone=score_st wns=9.459 levels=5 datapath=3.769 start=gen_head[3].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__24/CE
+SCOREHDR_PATHS tag=coff n=200
+SCOREHDR_CONESHARE tag=coff top=200 in_score_cone=0
+SCOREHDR_PRESULT tag=coff clb=20162 lut_sites=NA lut_logic=86025 lut_mem=85 ff=101221 carry8=2741 f7=16374 f8=2992 bram=11 dsp=298 place_s=512 route_s=723
+SCOREHDR_PDONE coff
+HDRCOST_LOGMSG pnr coff synth_8-10226=0 synth_8-7186=0
+phase=synth tag=con peak_rss_gb=12.87 cgroup_peak_mb=11267 cgroup_swap_mb=6572 at_cap=YES wall_s=975 rc=0
+HDRCOST_OK synth con rc=0 cgroup_peak=11267MB swap=6572MB at_cap=YES wall=975s
+SCOREHDR_BEGIN tag=con target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=con gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true  SCORE_EARLY=true  SCORE_HDR_TREE=0"
+SCOREHDR_READ tag=con files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=con /home/labuser/attndraw/out/clk_con.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=con 844
+SCOREHDR_CENSUS stage=synth tag=con dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95063 lut1=2235 lut2=8928 lut3=9176 lut4=6525 lut5=14194 lut6=54005 ff=101244 fdre=100561 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=con total=5408 lut=3464 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=synth tag=con CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=12 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=con 75
+SCOREHDR_CENSUS stage=opt tag=con dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95061 lut1=2230 lut2=8931 lut3=9176 lut4=6525 lut5=14194 lut6=54005 ff=101244 fdre=100561 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=con total=5404 lut=3460 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=opt tag=con CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=8 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101244 report=101244 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2741 report=2741 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16375 report=16375 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=con wildcard/exact = 9.0000
+SCOREHDR_DCP tag=con /home/labuser/attndraw/out/post_opt_con.dcp
+SCOREHDR_SRESULT tag=con lut_sites=86896 lut_logic=86803 lut_mem=93 ff=101244 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 synth_s=844 opt_s=75
+SCOREHDR_SDONE con
+HDRCOST_LOGMSG synth con synth_8-10226=1 synth_8-7186=1
+phase=pnr tag=con peak_rss_gb=5.60 cgroup_peak_mb=6427 cgroup_swap_mb=134 at_cap=no wall_s=1443 rc=0
+HDRCOST_OK pnr con rc=0 cgroup_peak=6427MB swap=134MB at_cap=no wall=1443s
+SCOREHDR_PBEGIN tag=con dcp=/home/labuser/attndraw/out/post_opt_con.dcp period=13.333
+SCOREHDR_POPENED tag=con cells=221354
+SCOREHDR_PRMCLK clk : invalid command name "remove_clock"
+SCOREHDR_PCLK tag=con period=13.333
+SCOREHDR_PLACE_SECONDS tag=con 501
+SCOREHDR_PLACED_WNS tag=con wns=3.774 levels=6
+SCOREHDR_ROUTE_SECONDS tag=con 769
+SCOREHDR_ROUTESTATUS tag=con nets=479965 unrouted=NA
+SCOREHDR_INTRA tag=con clk=clk wns=2.735 tns=0.000 failing=0 endpoints=250285
+SCOREHDR_WORST_GLOBAL tag=con wns=2.735 levels=6 datapath=10.578 start=u_quant/raddr_r_reg[0]/C end=vs2_q_reg[15]/D
+SCOREHDR_CONE tag=con cone=score_all cells=1780
+SCOREHDR_CONE_TO   tag=con cone=score_all wns=9.514 levels=1 datapath=3.714 start=u_arr/pv_r_reg/C end=gen_head[1].u_sq/c1_p_reg[0]/CE
+SCOREHDR_CONE_FROM tag=con cone=score_all wns=9.334 levels=2 datapath=3.894 start=gen_head[0].u_sq/p_rdy_reg/C end=opb_reg[2]_rep__14/CE
+SCOREHDR_CONE tag=con cone=score_emin cells=32
+SCOREHDR_CONE_TO   tag=con cone=score_emin wns=10.006 levels=5 datapath=3.225 start=gen_head[2].u_sq/blk_reg[2]/C end=gen_head[2].u_sq/e_min_reg[0]/CE
+SCOREHDR_CONE_FROM tag=con cone=score_emin wns=10.983 levels=4 datapath=2.246 start=gen_head[2].u_sq/e_min_reg[5]/C end=gen_head[2].u_sq/e_min_reg[0]/CE
+SCOREHDR_CONE tag=con cone=score_shb cells=192
+SCOREHDR_CONE_TO   tag=con cone=score_shb wns=9.931 levels=5 datapath=3.385 start=gen_head[2].u_sq/blk_reg[0]/C end=gen_head[2].u_sq/shb_reg[0][4]/D
+SCOREHDR_CONE_FROM tag=con cone=score_shb wns=12.439 levels=2 datapath=0.875 start=gen_head[3].u_sq/shb_reg[1][1]/C end=gen_head[3].u_sq/c1_sh_reg[1]/D
+SCOREHDR_CONE tag=con cone=score_tv cells=0 to=NONE from=NONE (no sequential cell matches *u_sq*tv_reg* in this arm)
+SCOREHDR_CONE tag=con cone=score_st cells=40
+SCOREHDR_CONE_TO   tag=con cone=score_st wns=10.878 levels=2 datapath=2.350 start=sq_hdrv_reg/C end=gen_head[3].u_sq/FSM_onehot_state_reg[2]/CE
+SCOREHDR_CONE_FROM tag=con cone=score_st wns=9.551 levels=4 datapath=3.678 start=gen_head[2].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]/CE
+SCOREHDR_PATHS tag=con n=200
+SCOREHDR_CONESHARE tag=con top=200 in_score_cone=0
+SCOREHDR_PRESULT tag=con clb=20276 lut_sites=NA lut_logic=86086 lut_mem=85 ff=101244 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 place_s=501 route_s=769
+SCOREHDR_PDONE con
+HDRCOST_LOGMSG pnr con synth_8-10226=0 synth_8-7186=0
+phase=synth tag=spon peak_rss_gb=12.33 cgroup_peak_mb=11267 cgroup_swap_mb=6760 at_cap=YES wall_s=972 rc=0
+HDRCOST_OK synth spon rc=0 cgroup_peak=11267MB swap=6760MB at_cap=YES wall=972s
+SCOREHDR_BEGIN tag=spon target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=spon gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true  SCORE_EARLY=false SCORE_HDR_TREE=0"
+SCOREHDR_READ tag=spon files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=spon /home/labuser/attndraw/out/clk_spon.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=spon 844
+SCOREHDR_CENSUS stage=synth tag=spon dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95057 lut1=2235 lut2=8928 lut3=9175 lut4=6523 lut5=14192 lut6=54004 ff=101242 fdre=100559 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=spon total=5408 lut=3464 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=synth tag=spon CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=12 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=spon 74
+SCOREHDR_CENSUS stage=opt tag=spon dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95055 lut1=2230 lut2=8931 lut3=9175 lut4=6523 lut5=14192 lut6=54004 ff=101242 fdre=100559 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=spon total=5404 lut=3460 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=opt tag=spon CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=8 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101242 report=101242 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2741 report=2741 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16375 report=16375 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=spon wildcard/exact = 9.0000
+SCOREHDR_DCP tag=spon /home/labuser/attndraw/out/post_opt_spon.dcp
+SCOREHDR_SRESULT tag=spon lut_sites=86891 lut_logic=86798 lut_mem=93 ff=101242 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 synth_s=844 opt_s=74
+SCOREHDR_SDONE spon
+HDRCOST_LOGMSG synth spon synth_8-10226=1 synth_8-7186=1

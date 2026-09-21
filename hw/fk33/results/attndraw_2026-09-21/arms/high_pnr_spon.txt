@@ -1,0 +1,1 @@
+cgdir=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/hc_pnr_spon_2995035.scope memory.high=11811160064

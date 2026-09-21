@@ -1,0 +1,24 @@
+# HDRCOST census stage=synth tag=coff (get_cells -hier by REF_NAME)
+## dsp48_exact 298
+## dsp_wildcard 2682
+## uram288 0
+## ramb36 3
+## ramb18 16
+## lutram 133
+## lut_all 94978
+## lut1 2235
+## lut2 8916
+## lut3 9154
+## lut4 6512
+## lut5 14184
+## lut6 53977
+## ff 101221
+## fdre 100538
+## fdse 683
+## fdce 0
+## fdpe 0
+## carry8 2741
+## f7 16374
+## f8 2992
+## f9 0
+## srl 29

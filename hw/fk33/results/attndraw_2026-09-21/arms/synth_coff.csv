@@ -1,0 +1,2 @@
+tag,gen,lut_sites,lut_logic,lut_mem,ff,carry8,f7,f8,bram,dsp,synth_s,opt_s,census
+coff,"HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=false SCORE_EARLY=false SCORE_HDR_TREE=0",86827,86734,93,101221,2741,16374,2992,11,298,834,74,"dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=94976 lut1=2230 lut2=8919 lut3=9154 lut4=6512 lut5=14184 lut6=53977 ff=101221 fdre=100538 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16374 f8=2992 f9=0 srl=29"
