@@ -93,3 +93,49 @@ does not bear on build 10's unexplained -5.819, which had NWIDE on.
 - `SWEEP_PIPE` and `SCORE_EARLY` have never been in any card build, and by the
   WORKLOG rule against building RTL no synthesiser has drawn, they need an OOC
   draw before they go on one.
+
+---
+
+# CORRECTION 2026-09-21: build 12 was KILLED, and the claim about the attention levers was wrong
+
+**Build 12 was killed at 08:43 after 24 minutes.** It silently requested
+`CLKOUT3_REQUESTED_OUT_FREQ {200.000}`, because `FK33_ENG_CORE_MHZ` defaults to
+200 at `hw/fk33/gen_pcieep.py:515`, `pcieep_build.sh` never sets it, and this
+launch set `FK33_CB_STYLE` but not the clock. The card has never closed above
+75 MHz. It was therefore not the control described above and could not have
+answered the question it was launched for.
+
+**Build 12b** (`hw/fk33/results/card_build12b_2026-09-21/`, launched 08:44 from
+worktree `wt12b` at `3e344a2`) is the same composition with BOTH levers stated,
+verified from the emitted Tcl rather than from `--setenv`:
+`CLKOUT3_REQUESTED_OUT_FREQ {75.000}` and `CONFIG.CB_STYLE` count 3, matching
+build 10 exactly where build 11b had 200.000 and 0. The composition table, the
+patch, the md5s and the gate results above all still describe build 12b, which
+applies the identical `build12_levers_off.patch`.
+
+**WITHDRAWN: the "Open" item saying `SWEEP_PIPE` and `SCORE_EARLY` "have never
+been in any card build, and by the WORKLOG rule against building RTL no
+synthesiser has drawn, they need an OOC draw before they go on one."** The first
+clause is true. The second is wrong: **they have already been drawn, and they
+routed.**
+
+MEASURED by TRACK ATTNDRAW from TRACK HDRCOST's existing `early` arm
+(2026-09-20, tree `cc5f92f`), which is generic-identical to HEAD's setting
+(`SWEEP_PIPE=true SCORE_EARLY=true` on `attn_block` at the card's 9B generics):
+it synthesised, placed AND routed at **WNS 2.735 ns on a 13.333 ns clock, 0
+failing endpoints of 250,285, 0 routing errors**, 86,896 LUT sites and 101,244
+FF. So the WORKLOG rule is already satisfied for these two levers, and out of
+context they close with 2.7 ns to spare.
+
+What is genuinely missing is the OTHER side of the pair: **no arm anywhere has
+ever drawn `SWEEP_PIPE=false`.** Every HDRCOST arm pins it true
+(`sim/ooc_scorehdr_run.sh:67-70`), so there is no same-tree baseline and no pair
+delta, and `rtl/ooc_cattnadapt_top.vhd` instantiates `attn_block` while passing
+neither generic. ATTNDRAW is drawing three arms (`coff`, `con`, `spon`) on the
+BC-250 to supply it.
+
+Relatedly, **LEVERBOARD's quoted `+69 LUT / +25 FF` for these levers is not a
+measurement of one thing.** MEASURED by ATTNDRAW: it sums LEVERCOST's `+64`
+(tree `bc4156f`, synthesis-only, zero `route_design`) with HDRCOST's `+5` (tree
+`cc5f92f`), and the cross-harness gap on the SAME configuration is **167 LUT,
+2.6x one of the addends**. Do not quote it.

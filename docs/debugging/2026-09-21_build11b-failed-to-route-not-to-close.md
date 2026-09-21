@@ -419,8 +419,12 @@ by three separate tracks, including by me.
 ## Status
 
 Build 12 was launched at 08:19 and **was also at 200.000**, because I set
-`FK33_CB_STYLE` and not `FK33_ENG_CORE_MHZ`. It was killed at ~09:05 after ~46
-minutes rather than spending 3.5 more hours on an uninterpretable result. Build
+`FK33_CB_STYLE` and not `FK33_ENG_CORE_MHZ`. It was killed at **08:43 after 24
+minutes** rather than spending 4 more hours on an uninterpretable result. (An
+earlier draft of this paragraph said "~09:05 after ~46 minutes"; both figures
+were wrong, read from memory rather than from the logs. The guard log's own first
+and last lines are `08:19:20` and `08:43:20 unit ended`, and build 12b's first is
+`08:44:27`. A stopwatch figure is a recorded parameter too.) Build
 12b relaunched from worktree `wt12b` at `3e344a2` with BOTH stated, verified from
 the emitted Tcl: `CLKOUT3_REQUESTED_OUT_FREQ {75.000}` and `CONFIG.CB_STYLE`
 count 3, matching build 10 exactly where build 11b had 200.000 and 0.
