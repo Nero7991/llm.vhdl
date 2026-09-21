@@ -30,7 +30,7 @@
 -- Instances, and the generics each carries:
 --   a_eng    fk33_engine      866 ports, 863 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
---   c_attn   attn_block        68 ports,  66 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
+--   c_attn   attn_block        70 ports,  68 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
 --   d_opdec  seq_opdec         43 ports,  41 exported   (defaults)
 --   d_lock   seq_region_lock   32 ports,  30 exported   (defaults)
@@ -1060,6 +1060,8 @@ entity compose4_top is
     c_attn_z_sat           : out   std_logic;
     c_attn_rescale_max     : out   unsigned(15 downto 0);
     c_attn_dbg_ep_lost     : out   std_logic;
+    c_attn_dbg_sw_ph       : out   std_logic_vector(4 downto 0);
+    c_attn_dbg_sw_aux      : out   std_logic_vector(3 downto 0);
 
     d_fetch_go             : in    std_logic;
     d_fetch_tbl_len        : in    unsigned((11)-1 downto 0);
@@ -2303,7 +2305,9 @@ begin
       y_sat => c_attn_y_sat,
       z_sat => c_attn_z_sat,
       rescale_max => c_attn_rescale_max,
-      dbg_ep_lost => c_attn_dbg_ep_lost
+      dbg_ep_lost => c_attn_dbg_ep_lost,
+      dbg_sw_ph => c_attn_dbg_sw_ph,
+      dbg_sw_aux => c_attn_dbg_sw_aux
     );
 
   -- d_fetch : seq_desc_fetch  (all generics at their file defaults)
