@@ -293,3 +293,44 @@ guard.
 Build 11b was launched from this session. The `--setenv=FK33_CB_STYLE=distributed`
 line that builds 9 and 10 carried was not in its unit. Build 12 carries it and
 verifies the binding from the log rather than trusting `--setenv`.
+
+---
+
+# CORRECTION 2, 2026-09-21: THE PER-CLOCK TABLE'S PERIOD IS WRONG. BUILD 11b RAN AT 200 MHz.
+
+**WITHDRAWN: the Intra Clock Table row giving `clk_out3` a period of 13.333 ns,
+and every comparison of this build's WNS or TNS with build 9's or build 10's.**
+
+MEASURED by TRACK CBGUARD (`3e344a2`) from each build's own generated Tcl and its
+own routed Clock Summary:
+
+```
+build 10   CLKOUT3_REQUESTED_OUT_FREQ {75.000}    Clock Summary: 13.333  75.000
+build 11b  CLKOUT3_REQUESTED_OUT_FREQ {200.000}   Clock Summary:  5.000 200.000
+```
+
+`FK33_ENG_CORE_MHZ` defaults to `200.000` (`hw/fk33/gen_pcieep.py:515`) and
+`pcieep_build.sh` never sets it. The card has never closed above 75 MHz, and 7
+of the 7 recorded runs that produced a bitstream were at 75. **Build 11b is the
+sole outlier, by a default nobody chose.**
+
+DERIVED: WNS -9.762 against a 5.000 ns requirement puts the path near 14.762 ns,
+which against the real 13.333 ns period is roughly **-1.4 ns**, not -9.8.
+Approximate, since clock uncertainty is not strictly period-independent, but the
+order of magnitude is the point: **this build's timing was an over-constraint,
+not a collapse.**
+
+The period in the table above was taken from what this card's clock is supposed
+to be, rather than from the run's own Clock Summary sitting in the same report.
+The requirement is a recorded parameter like any other.
+
+**The routing failure is now LESS settled, not more.** CORRECTION 1's
+`CB_STYLE=regs` mux tree is measured in the netlist and is not in doubt, but a
+200 MHz target at 99.75% CLB occupancy is an independent first-order congestion
+mechanism, and the two are not separable from the evidence that exists. A 75 MHz
+control needs a fresh synthesis; the preserved checkpoint was synthesised at 200.
+
+Also: `CLKOUT2_DIVIDE 16 -> 6`, which CBCENSUS listed as an unexplained fourth
+parameter and which three tracks published as ordinary drift, **was this
+retarget**. DERIVED: VCO = 250/5 x 24 = 1200, and 1200/16 = 75 against
+1200/6 = 200 exactly.

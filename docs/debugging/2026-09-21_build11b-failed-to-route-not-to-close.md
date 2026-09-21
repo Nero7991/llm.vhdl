@@ -337,3 +337,94 @@ At `CB_STYLE=distributed`, HEAD's codebook infers as 1,536 RAM32M16 with
 12,288-MUXF8 tree. **If it does, the cause is not `0b34200` and not `CB_STYLE`,
 and this whole line of attribution fails.** Recorded here before the report
 exists.
+
+---
+
+# CORRECTION 3, 2026-09-21: BUILD 11b ALSO RAN AT 200 MHz. ITS TIMING NUMBERS ARE AGAINST A 5.000 ns PERIOD, NOT 13.333.
+
+Appended in place. This is the third correction to this document and the second
+to find a silent default nobody chose.
+
+**WITHDRAWN: the Intra Clock Table section's statement that `clk_out3` had a
+period of 13.333 ns in build 11b, and every comparison of build 11b's WNS or TNS
+against build 9's or build 10's.**
+
+MEASURED by TRACK CBGUARD (`3e344a2`), from each build's own generated Tcl and
+its own routed report:
+
+```
+build 10   CLKOUT3_REQUESTED_OUT_FREQ {75.000}    Clock Summary: 13.333  75.000
+build 11b  CLKOUT3_REQUESTED_OUT_FREQ {200.000}   Clock Summary:  5.000 200.000
+build 11   CLKOUT3_REQUESTED_OUT_FREQ {200.000}
+```
+
+`FK33_ENG_CORE_MHZ` defaults to `200.000` at `hw/fk33/gen_pcieep.py:515`, and
+`hw/fk33/pcieep_build.sh` never sets it. **The card has never closed above
+75 MHz.** Ground truth across the twelve recorded implementation runs: 7 of 7
+that produced a bitstream ran at 75 MHz, and build 11b is the sole outlier.
+
+So build 11b was retargeted to a clock **2.67x faster** than the design has ever
+met, by a default, silently.
+
+DERIVED, and it changes the magnitude entirely: WNS -9.762 against a 5.000 ns
+requirement puts the failing path at about 14.762 ns. Against the real 13.333 ns
+period that is a WNS of roughly **-1.4 ns**, not -9.8. (Approximate: clock
+uncertainty and skew are not strictly period-independent. The point is the order
+of magnitude, not the digit.) **Build 11b's timing was never the catastrophe this
+document reported. It was an over-constraint.**
+
+## And this is now the SECOND candidate cause of the routing failure
+
+CORRECTION 1 established `CB_STYLE=regs` and a 12,288-MUXF8 mux tree, measured
+in the netlist by CBCENSUS, which is not in doubt. But a **200 MHz target at
+99.75% CLB occupancy is a first-order congestion mechanism in its own right**:
+the placer packs for timing, and the router said outright that it was abandoning
+timing to route at all. No document had considered it, including CORRECTION 1.
+
+**So why build 11b failed to route is LESS settled than it was this morning, not
+more.** Two silent defaults, both first-order, both plausible, and they are not
+separable from the evidence that exists. A 75 MHz control needs a fresh
+synthesis, because the preserved checkpoint was synthesised at 200.
+
+## The parameter that three tracks published as noise
+
+CBCENSUS listed build 11b's parameter diff as four entries and called
+`CLKOUT2_DIVIDE 16 -> 6` unexplained. **That WAS the retarget.** DERIVED:
+`250 / DIVCLK 5 = 50`, `x MULT 24 = VCO 1200`, and `1200/16 = 75` against
+`1200/6 = 200`, exactly. The number was printed, sorted, and published as drift
+by three separate tracks, including by me.
+
+## Measured and REJECTED, added
+
+- **Do not read a WNS without reading the REQUIREMENT it was measured against.**
+  This document's per-clock table carried a period taken from what the card's
+  clock is SUPPOSED to be, not from the run's own Clock Summary, which was in
+  the same report and said 5.000. The requirement is a recorded parameter like
+  any other.
+- **Two silent defaults in one launch are not twice as easy to find as one -
+  they are harder, because the first one found explains the symptom well enough
+  to stop the search.** `CB_STYLE=regs` produced a measured, netlist-visible,
+  arithmetically exact mux tree. It was a satisfying answer and it ended the
+  investigation with a second, equally silent, equally first-order variable
+  still in place.
+- **A configuration is not diffable from the commits, the RTL, OR the generated
+  file.** MEASURED by CBGUARD, and this is the most damning number in the whole
+  episode: under the pre-change generator, an explicit
+  `FK33_CB_STYLE=regs FK33_ENG_CORE_MHZ=200` and stating NOTHING AT ALL emit Tcl
+  differing in **8 lines, all of them inside the GENSTAMP comment** - and build
+  11b has no GENSTAMP at all, because `wt11` predates `952e70a` by 78 minutes.
+  **Every byte Vivado executed was identical.** No diff of any artefact could
+  have found this. Only a refusal at launch could, which is what now exists.
+
+## Status
+
+Build 12 was launched at 08:19 and **was also at 200.000**, because I set
+`FK33_CB_STYLE` and not `FK33_ENG_CORE_MHZ`. It was killed at ~09:05 after ~46
+minutes rather than spending 3.5 more hours on an uninterpretable result. Build
+12b relaunched from worktree `wt12b` at `3e344a2` with BOTH stated, verified from
+the emitted Tcl: `CLKOUT3_REQUESTED_OUT_FREQ {75.000}` and `CONFIG.CB_STYLE`
+count 3, matching build 10 exactly where build 11b had 200.000 and 0.
+
+CBGUARD's refusal was teeth-tested on the real path and **would have refused
+build 12's original launch**: omitting `FK33_ENG_CORE_MHZ` gives rc=1 naming
+that lever, omitting both gives rc=1 naming two, and stating both gives rc=0.
