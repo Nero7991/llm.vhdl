@@ -573,3 +573,51 @@ right now, and they are easy to miss in a timing summary.
 | L-AD A_DRAIN_WIDE | `docs/2026-09-20_d-side-vector-traffic.md` sections 10.1-10.4 |
 | the cycle model | `docs/debugging/2026-09-20_token-cost-grows-2793-cycles-per-position.md` |
 | the placed report | `hw/fk33/results/card_swg_2026-09-20/bd_wrapper_utilization_placed.rpt`; `hw/fk33/results/card_build10_FAILED_2026-09-20/utilization_placed.rpt` |
+
+---
+
+## CORRECTION, 2026-09-20 22:15, TRACK HDRCOST: L-C3's two open items are closed
+
+Appended rather than edited in place, per this project's correction rule.
+Nothing above is withdrawn; two items it lists as PENDING have landed.
+
+**Open item 1, "HDRCOST's `treefix` routed timing", is CLOSED.**
+`arms/synth_treefix.csv` and `arms/pnr_treefix.csv` now exist. MEASURED:
+**routed CLB 20,519 against base's 20,377, and routed WNS 3.101 against
+base's 3.101 -- identical to three decimals**, 0 failing endpoints of
+250,542, fully routed (177,416 of 177,416 routable, 0 routing errors).
+`treefix`'s own deepest new path, `gen_head[0].u_sq/tl0_reg/C` ->
+`e_min_reg[1]/D`, routes at **5 logic levels with 10.292 ns of slack**, 7.19 ns
+more margin than the block's critical path. So the L-C3 row's timing cell
+should read **MEASURED, no movement**, not HOLE.
+
+**Open item 2, "the one-line fix is not in the repository", is CLOSED.**
+`rtl/attn_score_q12.vhd` reads `for i in 0 to TW-1` at the fold as of commit
+`e1d5898`. `SCORE_HDR_TREE=1` no longer kills `synth_design`. The gate after
+the fix: `tb_attn_score_q12` PASS 1, `tb_attn` PASS 16 / NOCHECK 1 /
+SKIPPED 4, `tb_csweep_rate` PASS 1, `cardtop` PASS 3, FAIL 0 everywhere; the
+fix is simulation-identical at 20 of 20 points of SCOREHDR's grid and
+teeth-tested with attribution controls.
+
+**THE BOARD'S RECOMMENDATION DOES NOT CHANGE, AND THE ROUTED ARM STRENGTHENS
+IT.** `SCORE_HDR_TREE` stays excluded. The two levers are cycle-equivalent
+(231.11 against 231.17) and **102x apart in LUT and 68x in flip-flops**
+(`SCORE_EARLY` +5 / +2 against the fixed tree's +512 / +136). Section 4's
+cliff arithmetic already placed +512 inside the 702 LUT the 106 free CLBs
+absorb, so it was never an area refusal -- it is that 0.06 cycles does not
+buy 507 LUT.
+
+**ONE CAUTION ON L-C1 + L-C2's "+69 LUT and +25 FF MEASURED".** That sums
+LEVERCOST's `SWEEP_PIPE` +64 (tree `bc4156f`, `create_clock` AFTER
+`synth_design`) with HDRCOST's `SCORE_EARLY` +5 (tree `cc5f92f`, clock read
+BEFORE it). **MEASURED, the uncontrolled term is larger than one of the
+addends:** LEVERCOST's `cswp_on` and HDRCOST's `base` are the SAME
+configuration and read **86,724 against 86,891, a 167 LUT gap**, 2.6x the +64
+being quoted. Each pair is sound inside its own harness; the SUM is not a
+same-tree measurement and should not carry the MEASURED label. **The order of
+magnitude is not in doubt and recommendation (1) does not turn on it** -- both
+figures are far inside the cliff -- but a same-tree pair would need one
+harness to draw `SWEEP_PIPE` off as well, which no arm did.
+
+Evidence: `hw/fk33/results/hdrcost_2026-09-20/README.md` and
+`docs/debugging/2026-09-20_the-header-tree-does-not-synthesise.md`.
