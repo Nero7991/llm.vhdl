@@ -621,3 +621,495 @@ harness to draw `SWEEP_PIPE` off as well, which no arm did.
 
 Evidence: `hw/fk33/results/hdrcost_2026-09-20/README.md` and
 `docs/debugging/2026-09-20_the-header-tree-does-not-synthesise.md`.
+
+---
+
+## CORRECTION 2, 2026-09-20 21:45, TRACK LEVERBOARD2: **L-CB WAS BELIEVED FREE AND IT IS THE MOST EXPENSIVE ROW ON THE BOARD**
+
+Appended, not edited. Nothing above this line is deleted, including the
+claims this section withdraws: the point of leaving them is that a reader can
+see that L-CB was recorded as "0 cycles, LUT UNKNOWN, HIGH that it is safe"
+and was then measured at **+44,073 CLB LUT**.
+
+**No hardware, no Vivado, no GHDL was run by this track either.** Everything
+below is read back from a committed report, a commit, or arithmetic shown in
+place.
+
+### C2.0 What landed between CORRECTION 1 and this one
+
+| event | commit / source | effect on this board |
+|---|---|---|
+| build 11b's **placed** utilization report committed | `7743d6b` | L-CB's area cell is no longer UNKNOWN |
+| TRACK PLACEDIFF's analysis | `0b7a457`, `hw/fk33/results/card_build11b_2026-09-20/README.md` | +44,073 LUT, and the 99.81% / 106-free provenance correction |
+| TRACK CBOOC's harness and pre-registration | `7502fdd`, `docs/debugging/2026-09-20_cbooc-the-codebook-has-never-met-a-synthesiser.md` | names `CB_STYLE=regs` in LEVERCOST's `FAST_POP` draw as a wrong-configuration risk |
+| TRACK BUILDREPORT | `952e70a` | **closes open item 4** below: `report_utilization -hierarchical` and report retention are now in `gen_pcieep.py` / `pcieep_build.sh`. Build 11b predates it and does not have it |
+| TRACK HDRCOST | `e1d5898`, `f58a075` | CORRECTION 1 above |
+
+### C2.1 L-CB, corrected: the cost is +44,073 CLB LUT, and it buys zero cycles
+
+**WITHDRAWN from the L-CB row:** the area cell's *"LUT delta UNKNOWN, not
+drawn"* and the scope cell's *"no synthesis at all"*. Both were true when
+written and are now superseded. **The confidence cell's "HIGH that it is safe"
+is NOT withdrawn** -- it was a statement about VALUES (464+343 oracle values, 0
+mismatches, four configurations) and nothing here touches it. What is withdrawn
+is any reading of the row as a free change.
+
+**MEASURED**, `hw/fk33/results/card_build11b_2026-09-20/utilization_placed.rpt`
+against `hw/fk33/results/card_build10_FAILED_2026-09-20/utilization_placed.rpt`,
+both `Design State: Fully Placed`, same Vivado 2023.2 build, same part:
+
+| resource | build 10 | build 11b | delta |
+|---|---:|---:|---:|
+| CLB LUTs | 361,361 (82.19%) | **405,434 (92.21%)** | **+44,073** |
+| LUT as Distributed RAM | 64,478 | 52,174 | **-12,304** |
+| MUXF7 | 28,422 | 53,022 | **+24,600** |
+| MUXF8 | 6,027 | 18,315 | **+12,288** |
+| CLB Registers | 308,213 | 296,396 | -11,817 |
+| CLB | 54,751 (99.62%) | 54,822 (99.75%) | **+71** |
+
+`MUXF8 +12,288 = 1,536 x 8` exactly, where 1,536 is `CB_COPIES` at the card
+geometry. The growth is a **synthesis** result, not a placement one: build
+11b's own `utilization_synth.rpt` already carries the identical
+`MUXF8 = 18,315`, so the differing placer directive cannot reach it.
+
+**CBFANOUT's `delta LUT = 0` is falsified by its own registered falsifier**
+(`docs/WORKLOG.md:19`, *"If LUT moves, the folding argument is wrong"*).
+
+#### C2.1a A lead the board can state cheaply: build 11b's codebook signature IS the `CB_STYLE=regs` signature
+
+**DERIVED.** TRACK LEVERC48 (`a4828ab`, 2026-08-30) measured `matvec_core` OOC
+at `ROWS_IF = 48`, `regs` against `distributed`, and that table is reproduced
+in `docs/WORKLOG.md:5454`. Set it beside build 11b minus build 10:
+
+| resource | LEVERC48, `regs` minus `distributed` (OOC `matvec_core`, `a4828ab`) | build 11b minus build 10 (card, placed) | agreement |
+|---|---:|---:|---:|
+| CLB LUT | +42,633 | +44,073 | 3.4% |
+| MUXF7 | +24,583 | +24,600 | 0.07% |
+| **MUXF8** | **+12,288** | **+12,288** | **exact** |
+| LUT as memory | -12,288 | -12,304 | 0.13% |
+| CLB FF | -13,195 | -11,817 | 10.4% |
+
+**Every sign agrees; four of five magnitudes agree to better than 3.4%; MUXF8
+agrees to the unit.** The one that does not, FF, is the resource build 11b's
+pair cannot isolate anyway, because that pair carries seven RTL changes.
+
+**The leading mechanism, ESTIMATE, and it is TRACK CBRAM's to settle, not
+mine.** At `CB_STYLE = "distributed"`, `rtl/matvec_core.vhd:465` sets
+`dont_touch of cb` to **"false"** (`cb_dt_f` returns "false" for distributed,
+because a `dont_touch` signal is not a RAM-inference candidate), while
+`cbw_v/a/d` stay `dont_touch = "true"`. Before `0b34200`, `cb(c)` was written
+from `cbw_a(c)` -- **1,536 distinct undeletable drivers**, so the 1,536 `cb`
+copies could not be merged. After it, `cb(c)` is written from
+`cbw_a(cb_rank_of(c))` -- **48 drivers, 32 copies sharing each**, and 32 arrays
+with byte-identical write ports and no `dont_touch` are mergeable. What
+replaces a per-lane RAM32M16 read port is a per-lane 16:1 read mux, which is
+4 LUT6 + 2 MUXF7 + 1 MUXF8 per bit, 1,536 x 8 times over. **That is the `regs`
+netlist, and the table above is what it looks like.**
+
+It also upgrades PLACEDIFF's FF reconciliation. That file offers
+`-19,344 + 6,144 = -13,200` as *"arithmetic that fits, not evidence ... one
+free parameter and one data point"*. It is no longer one data point:
+**LEVERC48 independently MEASURED +13,195 for the same decomposition at the
+same geometry** (its own note records the DERIVED +13,200 with a residual of
+-5). Two independent routes to 13,200 is corroboration, not a fit.
+
+**THE FALSIFIER, REGISTERED HERE BEFORE ANY SYNTHESISER RUNS.** TRACK CBOOC's
+harness at `CBO_TARGET=matvec_core`, `CB_STYLE=distributed`, `0b34200^`
+against HEAD, at the card geometry: **if the NEW arm does not show
+`MUXF8 0 -> 12,288` and `LUT as memory -12,288`, this signature match is a
+coincidence and section C2.1a is withdrawn in full.** The measured L-CB cost
+in C2.1 does not depend on it; only the mechanism does. **TRACK CBRAM owns
+`rtl/matvec_core.vhd` and
+`docs/debugging/2026-09-20_the-codebook-stopped-being-ram.md` tonight; when
+that file lands, cite it here and treat it as the authority over this
+subsection.**
+
+#### C2.1b What the per-row codebook is being traded against
+
+**DERIVED, and it is the reason this row cannot be left in the tree by
+default.** LEVERC48's `distributed` is worth **-42,633 CLB LUT** against
+`regs` at this geometry, and it is the reason `FK33_CB_STYLE=distributed` is
+set on every card build. If C2.1a is right, the per-row codebook **gives that
+entire lever back**. It would be the most expensive change ever made to this
+design for a cycle saving of zero.
+
+**REFUSAL, and it is the one this project has already paid for: I am NOT
+netting 44,073 against 42,633.** The two numbers come from different synthesis
+contexts (an OOC `matvec_core` draw 264 commits old, and a card placed report),
+and *the parts do not sum across synthesis contexts*. They are a **signature
+match**, which is a statement about SHAPE, and they are not an accounting
+identity.
+
+### C2.2 L-C3, corrected: see CORRECTION 1, plus one withdrawal it did not make
+
+CORRECTION 1 (TRACK HDRCOST, `f58a075`) already closes both of L-C3's open
+items and already records the **+512 CLB LUT sites / +136 FF** for the fixed
+tree against `SCORE_EARLY`'s **+5 / +2**. The L-C3 row and CORRECTION 1
+together are accurate and this track changes neither.
+
+**The one thing neither says in so many words:** SCOREHDR recommended
+`SCORE_HDR_TREE` over `SCORE_EARLY` as *"the smaller change"*. That is **true
+in cycles** (231.11 against 231.17 beside `SWEEP_PIPE`, a difference of 0.06
+cycles per position per job) and **102x false in LUT and 68x false in FF**.
+**"The smaller change" is WITHDRAWN as a recommendation.** The lever it
+recommended against is the cheaper one by two orders of magnitude on the
+resource that is binding.
+
+Also note, because it is the same defect class as L-CB: L-C3 **as committed**
+had never met a synthesiser either, and the first Vivado ever pointed at it
+killed `synth_design` in 49 s. That is now two levers in one day whose scope
+cell read "no synthesis" and whose first synthesis was a surprise. See C2.6.
+
+### C2.3 The binding constraint, re-derived on a report that belongs to this design
+
+**PROVENANCE CORRECTION, MEASURED by TRACK PLACEDIFF.** Section 4.1's
+`99.81% CLB, 106 free, 76,585 free LUT sites` is
+**`card_swg_2026-09-20`'s figure, not build 9's.** Section 8 item 1 of this
+board attributes it correctly; section 4.1 does not say whose it is, and
+downstream briefs collapsed it onto build 9. **Build 9 has no placed report of
+any kind** (`hw/fk33/results/card_kvreg_2026-09-20/` holds no `.rpt`;
+`grep -c 'CLB LUTs' build.stdout` = 0). Section 4.1's table is not wrong; it is
+`card_swg`'s, and it must be labelled that way wherever it is quoted.
+
+**The two card placed reports that DO belong to the levers under discussion**,
+MEASURED, with the derived packing arithmetic shown once:
+
+| | build 10 (codebook OUT) | build 11b (codebook IN) |
+|---|---:|---:|
+| CLB LUTs | 361,361 | 405,434 |
+| LUT occupancy | 82.19% | **92.21%** |
+| CLB | 54,751 (99.62%) | 54,822 (99.75%) |
+| free CLB tiles | 209 | **138** |
+| LUT per occupied CLB | 6.6001 of 8 | **7.3955 of 8** |
+| free LUT sites in occupied CLBs | 76,647 | 33,142 |
+| free LUT sites in free CLBs | 1,672 | 1,104 |
+| **total free LUT sites** | **78,319** | **34,246** |
+| LUTs the free CLBs absorb at that density | 1,379 | 1,021 |
+
+DERIVED, and each column closes: `54,751*8 - 361,361 = 76,647` and
+`76,647 + 209*8 = 78,319 = 439,680 - 361,361`; `54,822*8 - 405,434 = 33,142`
+and `33,142 + 138*8 = 34,246 = 439,680 - 405,434`.
+
+**The cliff moved, and the codebook moved it.** Section 4.1's lever table,
+re-derived against both:
+
+| lever | +LUT | % of 78,319 (codebook out) | % of 34,246 (codebook in) |
+|---|---:|---:|---:|
+| L-A FAST_POP | 1 | 0.00% | 0.00% |
+| L-C2 SCORE_EARLY | 5 | 0.01% | 0.01% |
+| L-C1 SWEEP_PIPE | 64 | 0.08% | 0.19% |
+| L-C1 + L-C2 | 69 | 0.09% | 0.20% |
+| L-C3 HDR_TREE (fixed) | 512 | 0.65% | 1.50% |
+| **L-B B_RECUR_LANES=16** | **7,688** | **9.82%** | **22.45%** |
+| **L-S8 SWG_LANES=8** (ESTIMATE) | ~16,000 | ~20.4% | ~46.7% |
+| **L-CB per-row codebook** | **44,073 MEASURED** | **56.27%** | **128.70%** |
+
+**L-CB alone is 128.70% of the free LUT sites build 11b has left.** It is
+larger than every other lever on this board added together, and it is the only
+one that buys nothing.
+
+**Section 4.2's bound is not withdrawn as arithmetic and IS withdrawn as
+guidance.** "0 to 1,209 CLBs freed" was a correct bound on the **FF term**.
+The measured value is **-71 CLBs, i.e. 71 consumed**, outside the interval on
+the low side, because **the FF term was never the whole change**: a bound
+derived from one resource says nothing once a second resource moves by 44,073.
+This is the board's own recorded lesson (*an exact relationship for one
+resource is not a licence to scale a different resource*) arriving from the
+direction nobody watched -- the bound was not used to scale anything, it was
+used to reason about a change whose largest term had not been measured.
+
+The `+71` itself is confounded (three implementation directives differ between
+the two builds). **The 92.21% LUT, the 138 free tiles and the 7.3955 density
+are not confounded in the way that matters**, and the primitive census is a
+synthesis result that the directives cannot reach at all.
+
+**One further MEASURED fact about build 11b, read from its own live log**
+(`.../impl_1/runme.log`, read-only, nothing written into that tree):
+`[Route 35-448] Estimated Global/Short routing congestion is level 6 (64x64)`
+and `[Route 35-581] Estimated Timing congestion is level 6`, with
+`[Route 35-445] at least 1610 CLBs have high pin utilization`. Vivado's own
+text is that *"congestion levels of 5 and greater can reduce routability and
+impact timing closure."* That is what 92.21% LUT at 99.75% CLB looks like from
+inside the router.
+
+### C2.4 The compositions, re-derived once, with the arithmetic shown
+
+The **cycle** model is unchanged and this track re-derived it rather than
+copying it. From section 3.1, MEASURED on silicon:
+
+```
+token_cycles(p) = 30,115,217 + 2,793.4 * p        core cycles at 75 MHz
+tok/s(p)        = 75,000,000 / token_cycles(p)
+```
+
+Intercept levers, subtracted from 30,115,217 (DERIVED, section 1):
+
+```
+L-A  FAST_POP              -2,593,664   ->  27,521,553
+L-S1 SWG_WIDE, LANES=1       -393,280   ->  27,128,273
+L-B  B_RECUR_LANES=16      -2,362,128   ->  24,766,145
+L-AD A_DRAIN_WIDE          -1,248,576   ->  23,517,569
+L-S8 SWG_LANES=8, extra    -1,376,224   ->  22,141,345   (1,769,504 - 393,280)
+L-CB per-row codebook               0   ->  unchanged
+```
+
+Slopes, by the **absolute-subtraction** conversion of section 3.3 (the smaller
+claim; the ratio method is 0.9 to 1.1% more optimistic and this track does not
+pick between them either):
+
+```
+none                  2,793.4
+SWEEP_PIPE + SCORE_EARLY              1,801.4
+all three C levers (HDR_TREE fixed)   1,711.0
+```
+
+**The one thing that changes is which rows are legitimate.** `B11b` is not a
+baseline: it is a build that has not closed timing. Every composition below is
+re-stated against **build 9** and with the codebook **reverted**, because a
+composition that carries L-CB carries +44,073 LUT for no cycles.
+
+| composition | codebook | intercept | slope | p=0 | p=512 | p=2,048 | p=8,192 | p=32,768 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| **B0** build 9, shipping (2.46 MEASURED on silicon) | out | 30,115,217 | 2,793.4 | **2.490** | 2.378 | 2.093 | 1.415 | 0.617 |
+| **B11b** as actually built, **DOES NOT CLOSE** | **in** | 27,521,553 | 2,793.4 | 2.725 | 2.591 | 2.256 | 1.488 | 0.630 |
+| **N1** build 9 + FAST_POP, codebook REVERTED | out | 27,521,553 | 2,793.4 | 2.725 | 2.591 | 2.256 | 1.488 | 0.630 |
+| | | | | +9.4% | +9.0% | +7.8% | +5.1% | +2.2% |
+| **N2** N1 + SWEEP_PIPE + SCORE_EARLY | out | 27,521,553 | 1,801.4 | 2.725 | 2.637 | 2.403 | 1.774 | 0.867 |
+| | | | | +9.4% | +10.9% | +14.8% | +25.4% | +40.6% |
+| **N3** N2 + SWG_WIDE (LANES=1) | out | 27,128,273 | 1,801.4 | 2.765 | 2.674 | 2.434 | 1.791 | 0.871 |
+| | | | | +11.0% | +12.5% | +16.3% | +26.5% | +41.2% |
+| **N4** N3 + B_RECUR_LANES=16 | out | 24,766,145 | 1,801.4 | 3.028 | 2.920 | 2.636 | 1.898 | 0.895 |
+| | | | | +21.6% | +22.8% | +25.9% | +34.1% | +45.2% |
+| **N5** N4 + A_DRAIN_WIDE + SWG_LANES=8 + HDR_TREE | out | 22,141,345 | 1,711.0 | 3.387 | 3.258 | 2.924 | 2.074 | 0.959 |
+| | | | | +36.0% | +37.1% | +39.7% | +46.6% | +55.5% |
+
+Every figure reproduces section 3.4's to the digit, which is the check that
+this track re-derived rather than transcribed. **`B11b` and `N1` are the same
+row in cycles**, and that is the whole finding: the codebook contributes
+nothing to any column of this table and 128.70% of build 11b's remaining LUT
+headroom.
+
+**The shape argument from section 3.4 stands and is worth repeating, because
+it is what makes a single headline wrong.** N1's intercept win over B0 is +9.4% at
+p=0 and decays to +2.2% by p=32,768. N2's slope win **over N1** is +0.0% at
+p=0 and grows without bound. **DERIVED: the two are equal at p = 2,431**
+(+7.56% each); below that the intercept lever is worth more, above it the
+slope pair is, and by p=8,192 the slope pair is worth +19.2% against the
+intercept lever's +5.1%. A composition chosen on the p=0 column is chosen on
+the wrong column for any real chat.
+
+**One number this board should stop quoting without a caveat:** the model says
+2.490 tok/s at p=0 and the silicon figure is **2.46**, a 1.2% gap. The 2.46 was
+measured at a position nobody recorded, so the gap is unattributed. Every "+x%"
+above is model-against-model and is therefore internally consistent; **none of
+them is a prediction of what a wall clock will show.**
+
+### C2.5 What is UNBUILT and UNMEASURED, stated plainly
+
+**NO LEVER ON THIS BOARD HAS LANDED ON SILICON. The shipping bitstream is
+still build 9 at 2.46 tok/s, and every row of section 1's "cycles/token saved"
+column is a number from a bench or a model.**
+
+| build | contents | outcome | MEASURED |
+|---|---|---|---|
+| build 9 `card_kvreg` | baseline | **SHIPPING** | routed WNS +0.061, 2.46 tok/s |
+| build 10 | KV seam reg + PIPE/WIDE/MAXOUT8/NWIDE | **FAILED** | placed +0.421, routed **-5.819**, 17,248 failing endpoints |
+| build 11b | FAST_POP + per-row codebook | **FAILING, in flight** | placed **-5.136 / TNS -236,998**; router at Phase 4.2 with intermediate **-4.491**, congestion level 6 |
+
+Three builds today. One shipping bitstream, from yesterday. **Build 11b's
+placed WNS is worse than build 10's ROUTED WNS was**, and build 10 is the one
+this project calls a failure.
+
+This board must not be read as though six levers are ready. What each lever
+actually has:
+
+| lever | value oracle | synthesised | placed | routed | on the card |
+|---|---|---|---|---|---|
+| L-A FAST_POP | benches, but **none at `FAST_POP=true`** | yes, at `CB_STYLE=regs` | no | no | build 11b, unfinished |
+| L-CB codebook | yes, 4 configurations | **first time tonight, and it cost 44,073 LUT** | yes | no | build 11b, unfinished |
+| L-C1 SWEEP_PIPE | yes | yes | no | no | no |
+| L-C2 SCORE_EARLY | yes | yes | yes | **yes** | no |
+| L-C3 HDR_TREE (fixed) | yes, 20/20 grid | yes (after `e1d5898`) | yes | **yes** | no |
+| L-S1 SWG_WIDE | GHDL only | **never** | no | no | no |
+| L-S8 SWG_LANES=8 | GHDL only | **never** | no | no | no |
+| L-B B_RECUR_LANES=16 | yes | yes | no | no | no |
+| L-AD A_DRAIN_WIDE | GHDL only | **never, and no harness can** | no | no | no |
+
+### C2.6 What build 12 should carry, and what it must not
+
+#### The rule tonight actually produced
+
+**DO NOT PUT RTL ON A CARD BUILD THAT NO SYNTHESISER HAS EVER DRAWN.**
+
+Two levers had a scope cell reading "no synthesis at all" this morning. The
+first Vivado pointed at **L-C3** killed `synth_design` in 49 seconds. The first
+Vivado pointed at **L-CB** produced +44,073 LUT that every document about it
+said could not exist. Two for two, in one day, and in both cases every value
+oracle, every mutation suite and every gate row was green while it happened.
+
+This is not "compose fewer levers". Build 10 composed five and failed; build
+11b composed two and is failing. **The discriminator that separates tonight's
+two failures from L-C2, which routed cleanly, is not the count -- it is
+whether a synthesiser had ever seen the RTL.** That rule excludes L-S1, L-S8
+and L-AD from build 12 outright, and would have excluded L-CB.
+
+#### Build 12, recommended
+
+**MANDATORY, whichever levers are chosen: revert the per-row codebook.**
+`rtl/matvec_core.vhd` at HEAD carries `0b34200` / `5dc3ee5` / `9435942`, so
+**a card build started from HEAD today builds the +44,073 LUT netlist by
+default.** This is not a lever to decline; it is a change to take out. It costs
+44,073 LUT and 0 cycles, and on the C2.1a lead it gives back lever C's entire
+-42,633. `CB_RANKS` is a derived constant (`matvec_core.vhd:324`), not a
+generic, so **the revert is an RTL change and not a `--generic`** -- which is
+TRACK CBRAM's file, not this track's.
+
+What reverting restores is build 9's exact codebook netlist, including the
+1,536-sink command net that carried all ten of build 10's worst paths. **Build
+9 closed at +0.061 with that net**, so it is a known-good configuration and
+not a known-bad one. The fanout of 1,536 is a real defect with a real fix
+available; the fix that was written is not it.
+
+**CONTENTS: revert L-CB, plus L-A `FAST_POP`, plus L-C1 `SWEEP_PIPE` and L-C2
+`SCORE_EARLY`.** That is row **N2**: 2.725 tok/s at p=0 (+9.4%), 2.403 at
+p=2,048 (+14.8%), 1.774 at p=8,192 (+25.4%).
+
+* **Area: ESTIMATE +70 LUT**, against build 10's 78,319 free LUT sites
+  (0.09%). **Not MEASURED**, and CORRECTION 1 is why: the +64 and the +5 come
+  from two harnesses whose same-configuration points differ by 167 LUT, which
+  is larger than the +64 addend. The order of magnitude is not in doubt.
+* **All three have been synthesised.** L-C2 has been **routed**, twice, with a
+  published ~0.4 ns noise floor. L-C1 and L-C2 are already at HEAD
+  (`rtl/llama_top.vhd:6997`), so they need no `--generic`.
+* **The three cones are disjoint** (A's read path; `attn_block`'s sweep FSM;
+  `attn_score_q12`), so a failure is attributable, which is the property build
+  10 and build 11b both lacked.
+* **It moves the slope**, the axis no build has ever touched and the only one
+  that grows with use.
+
+**Considered and rejected: a single-lever build (revert + `FAST_POP` only,
+row N1).** It is the most conservative thing available and it is the wrong
+trade here, because the +70 LUT of the C pair is 0.09% of the headroom and the
+pair is better evidenced than `FAST_POP` is -- `SCORE_EARLY` has a routed
+number and `FAST_POP` has no bench at the arm the card ships. Dropping the C
+pair would cost the entire slope win to buy 0.09% of a budget. **If Oren
+prefers the single-lever build anyway, take N1 -- the argument above is a
+judgement, not a measurement, and the mandatory part of this recommendation is
+the revert, not the composition.**
+
+#### What build 12 must NOT carry, with the argument
+
+| excluded | argument |
+|---|---|
+| **L-CB per-row codebook, as written** | +44,073 LUT MEASURED, 0 cycles, 128.70% of build 11b's remaining LUT headroom. Revert it. |
+| **L-S1 `SWG_WIDE`** | **No synthesiser has ever seen this RTL**, and the write-up gives two different FF figures for it (160 and 365). Exactly L-CB's evidence class. 393,280 cycles is not worth repeating tonight's experiment. One OOC draw of `llama_top` promotes it; nothing else does. |
+| **L-S8 `SWG_LANES=8`** | Same, and its area is unknown to a factor of 2 by its own authors. |
+| **L-AD `A_DRAIN_WIDE`** | Same, and **worse**: its logic is in an architecture body, so **no harness that exists can draw it**. It also collides with `SWG_WIDE` on `wgmux` and the pair has never been elaborated together. |
+| **L-B `B_RECUR_LANES=16`** | **NOT excluded on evidence** -- it is MEASURED in the card's own configuration, and it is the largest intercept lever on the board. Excluded on **size**: 7,688 LUT is 9.82% of build 10's free LUT sites and needs the packer to raise average density. **Take it alone, in build 13**, which is what LEVERCOST and GDNSYNTH both concluded independently. If it is composed with the C pair and fails, the 7,688 and the 70 are indistinguishable in the postmortem, and that is exactly how build 10 spent a place-and-route. |
+| **L-C3 `SCORE_HDR_TREE=1`** | Unchanged from CORRECTION 1: cycle-equivalent to `SCORE_EARLY` (231.11 against 231.17) at 102x the LUT. Not an area refusal; 0.06 cycles does not buy 507 LUT. |
+
+#### One setup item that is not a lever and is now free
+
+TRACK BUILDREPORT (`952e70a`) put `report_utilization -hierarchical` and
+report retention into `gen_pcieep.py` and `pcieep_build.sh`. **Build 11b
+predates it.** Build 12 gets a per-subsystem area table and keeps its reports
+at zero marginal cost, which closes open item 4 below and is the single
+cheapest thing on this board. Three attribution questions failed this evening
+on exactly that missing evidence.
+
+### C2.7 Refusals to project: the eight kept, and four added
+
+All eight refusals in section 6 are kept. Refusal 4 ("I did not convert
+-19,344 FF into freed CLBs") turned out to be the right call for the wrong
+reason: the bound was sound and the quantity it bounded was not the one that
+mattered. That is recorded, not celebrated.
+
+Four added:
+
+9. **I did not net +44,073 against LEVERC48's -42,633.** They agree in shape
+   and they are different synthesis contexts 264 commits apart. C2.1b says so
+   at the point of temptation.
+10. **I did not predict build 11b's routed WNS from its placed -5.136 or from
+    its intermediate -4.491.** This file already records that nothing before
+    `route_design` orders two runs correctly, and that a placed WNS can have
+    the opposite sign from the routed one. Build 10 placed at +0.421 and routed
+    at -5.819. **The direction of that error is the flattering one, which is
+    why a bad placed number is not reassuring either.** Build 11b's outcome is
+    an open item, not a forecast.
+11. **I did not scale the C pair's +69 LUT to the card.** It is an ESTIMATE
+    drawn in `attn_block`, and CORRECTION 1 measured a 167 LUT gap between the
+    two harnesses that contributed its addends. The recommendation does not
+    turn on the value, only on its order of magnitude, and that is said in
+    place rather than left implied.
+12. **I did not convert the `-5.136` placed WNS into an attribution.** That
+    +44,073 LUT caused it is a plausible mechanism and nothing more. **Build 10
+    failed at -5.819 with 82.19% LUT occupancy**, which is direct evidence that
+    this design can fail timing badly with no LUT explosion at all.
+
+### C2.8 Evidence on this board that comes from a configuration the card does not build
+
+The brief asked for this explicitly, after three tracks found the same defect
+class in three different places today (GDNSYNTH's flat arm, SHAPEAUDIT's
+`FAST_POP`, KVGEOM's `C_KV_BLOCK`). One board row is affected and one is not.
+
+1. **L-A `FAST_POP`'s area cell is drawn at `CB_STYLE=regs`, and the card
+   builds `distributed`.** MEASURED: `sim/ooc_levercost_run.sh:107`'s `AGEN`
+   carries `CB_STYLE=regs`; the card build runs
+   `FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75`. At `regs`,
+   `CB_COPIES = 48`; at `distributed`, **1,536**. So the entity the `+1 CLB
+   LUT` was drawn in contains **one thirty-second** of the card's codebook
+   structure. TRACK CBOOC states it in its own words: *"LEVERCOST's `+1 CLB
+   LUT` is a `regs` number and the contexts do not sum."*
+   **What survives:** the +1 is a one-variable A/B inside its own arm and is
+   sound as that. **What does not:** it is not a card figure and it was never
+   drawn in the netlist the card builds. Given that the SAME generic is what
+   C2.1a says collapsed, this is not a hypothetical concern.
+2. **L-A also still has no bench at the arm the card ships**, section 4.4,
+   MEASURED by SHAPEAUDIT and unchanged. It is the cheapest open item here.
+3. **L-B's `-7,545` flat-arm LUT figure must never be quoted**; only the tier
+   row. The board already says this and it is restated because the LUT delta
+   **inverts sign** between the arms.
+4. **KVGEOM's `C_KV_BLOCK` split: CHECKED, and no row on this board rests on
+   it.** No lever here is parameterised by `KV_BLOCK`, and KVGEOM MEASURED
+   that no setter for `FK33_C_KV_BLOCK` exists anywhere in the tree. Recorded
+   as checked rather than assumed.
+
+### C2.9 Open, not determined (superseding section 7's list where noted)
+
+**CLOSED since section 7 was written:** items 1 and 2 (by CORRECTION 1),
+item 4 (by `952e70a`), and the *area* half of item 5 -- the codebook's cost is
+now MEASURED at +44,073 LUT and `FAST_POP`'s is not separable from it.
+
+**STILL OPEN, unchanged:** 3 (build 9 has no placed report, and it is still the
+control that would settle the most), 6, 7, 8, 9, 10, 11, 12.
+
+**NEWLY OPEN:**
+
+13. **Build 11b's routed outcome.** In flight at Phase 4.2, intermediate
+    -4.491 from a placed -5.136, congestion level 6. Not forecast here.
+14. **Why `cb` stopped inferring as RAM.** C2.1a is a lead with a registered
+    falsifier and a named owner (TRACK CBRAM); it is not a measurement. One OOC
+    `matvec_core` draw at `distributed`, `0b34200^` against HEAD, settles it in
+    minutes.
+15. **Where the 196,608 bits of codebook content live in build 11b.** Not
+    flip-flops (FF fell), not the LUTRAM that vanished. C2.1a predicts a
+    merged `48 x 16 x 8 = 6,144` flops, which a `get_cells` census on
+    `cb_reg*` in the placed checkpoint would confirm or kill.
+16. **Whether reverting the codebook is sufficient**, or whether build 11b's
+    -5.136 has a second cause. Nothing separates them today.
+17. **Whether the 1,536-sink command net needs fixing at all.** Build 9 closed
+    at +0.061 with it. The build-10 postmortem's CORRECTION already withdrew
+    the claim that area displaced it, and *why that net became unroutable in
+    build 10 and not in build 9 is NOT DETERMINED.* **The fix that was built
+    for a problem whose cause is undetermined turned out to cost 44,073 LUT.**
+18. **The 2.46 against 2.490 gap at p=0**, because the position at which 2.46
+    was measured was never recorded.
+19. **`BUFGCE 15 -> 16` in build 11b.** Unexplained, inherited from PLACEDIFF.
+
+**Sources added by this correction:**
+`hw/fk33/results/card_build11b_2026-09-20/README.md` (`0b7a457`, `7743d6b`);
+`hw/fk33/results/card_build10_FAILED_2026-09-20/README.md` including its
+CORRECTION (`a3cb844`); `docs/debugging/2026-09-20_cbooc-the-codebook-has-never-met-a-synthesiser.md`
+(`7502fdd`); `docs/WORKLOG.md:5454` (TRACK LEVERC48, `a4828ab`);
+`rtl/matvec_core.vhd:258-334, 423-480, 795-830` read but not modified;
+`hw/fk33/gen_pcieep.py` (`952e70a`).
