@@ -1056,9 +1056,14 @@ connect_bd_net [get_bd_pins fk33_therm_0/host_canary] [get_bd_pins fk33_thermc/g
 # address truncation.
 create_bd_cell -type module -reference fk33_engine eng
 
-# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a
-# generic as a CONFIG property; `-generic` on synth_design would reach
-# only the top and never this instance (fk33_engine.vhd:67).
+# LEVER C, FK33_CB_STYLE.  A module-reference cell takes a generic as a
+# CONFIG property; `-generic` on synth_design would reach only the top
+# and never this instance (fk33_engine.vhd:67).
+#
+# SET EVEN WHEN IT MATCHES THE VHDL DEFAULT, deliberately.  Omitting it
+# left the value to fk33_engine.vhd's own default -- a SECOND default in
+# series with this generator's -- and left the sentinel below absent,
+# which is how card build 11b spent 4 h 25 m at a CB_STYLE nobody chose.
 set_property CONFIG.CB_STYLE {distributed} [get_bd_cells eng]
 # READ BACK.  Vivado silently ignores a set_property whose target did
 # not match, and this file already does this for every other CONFIG it
@@ -1236,6 +1241,17 @@ connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29
 connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
 # ---- end subsystem A ------------------------------------------------------
+
+# THE CORE CLOCK THIS BUILD ASKED FOR (FK33_ENG_CORE_MHZ).  Printed
+# here, at block-design time, because ^FK33_ENGI is only reached by a
+# build that ROUTES: card build 11b ran 4 h 25 m at 200.000 MHz with
+# nothing in its log saying so, against 75.000 in every card build
+# that has ever produced a bitstream.
+set _cm [get_property CONFIG.CLKOUT3_REQUESTED_OUT_FREQ [get_bd_cells clk_wiz_0]]
+if {$_cm ne "75.000"} {
+    error "FK33_CORE_MHZ FAIL: CLKOUT3_REQUESTED_OUT_FREQ is \"$_cm\", not 75.000"
+}
+puts "FK33_CORE_MHZ $_cm requested on clk_wiz_0/clk_out3"
 
 # ---- THE HOST SEAM (gen_pcieep.py) ----------------------------------------
 # rtl/fk33_seam.vhd, TRACK DSEAM.  Read the long note above SEAM_BLOCK in

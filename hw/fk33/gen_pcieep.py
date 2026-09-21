@@ -602,6 +602,109 @@ ENG_CB_STYLE   = os.environ.get("FK33_CB_STYLE", "regs")
 if ENG_CB_STYLE not in ("regs", "distributed"):
     raise SystemExit("FK33_CB_STYLE must be regs or distributed, got %r"
                      % ENG_CB_STYLE)
+
+# ---- THE CARD LEVERS THAT MUST BE STATED, NEVER DEFAULTED ------------------
+#
+# MEASURED 2026-09-21 (TRACK CBGUARD).  Card build 11b ran 4 h 25 m and failed
+# to route, and TWO of the levers that decided what it built were never set by
+# whoever launched it.  Its systemd unit carried `BUILD_ROOT` and `FK33_CARD=1`
+# and nothing else:
+#
+#   FK33_CB_STYLE     unstated -> "regs"     every card build that ROUTED bound
+#                                            "distributed" (8 of 8 with a log)
+#   FK33_ENG_CORE_MHZ unstated -> 200.000    every card build that ROUTED ran
+#                                            clk_out3 at 75.000 MHz (7 of 7
+#                                            with the ^FK33_ENGI sentinel)
+#
+# MEASURED from this generator, no Vivado: `FK33_CARD=1 python3 gen_pcieep.py`
+# against the committed file's own stamped environment differs in exactly two
+# functional places -- `CLKOUT3_REQUESTED_OUT_FREQ` 75.000 -> 200.000, and the
+# whole thirteen-line LEVER C block (the set_property, its readback and the
+# ^FK33_CB_STYLE sentinel) DELETED.  Both are visible in build 11b's own
+# BUILD_ROOT copy of the Tcl: `grep -c CONFIG.CB_STYLE` = 0 and CLKOUT3 at
+# {200.000}, against build 10's 3 and {75.000}.  And build 11b's routed timing
+# report confirms the second one landed in silicon terms:
+# `clk_out3_bd_clk_wiz_0_0 ... 5.000 200.000`, where build 10's says
+# `13.333 75.000`.
+#
+# WHY A REFUSAL AND NOT A DIFFERENT DEFAULT.  Changing a default silently
+# alters the meaning of every launch command already written down, including
+# the engine-only builds, for which "regs" and 200 MHz ARE correct and have
+# produced bitstreams (and the byte-for-byte reproducibility of the shipping
+# shell+A bitstream is the stated reason the 200.000 default exists at all, 90
+# lines above).  A refusal changes the meaning of nothing: every command that
+# already states its values keeps working unchanged, and the only command that
+# stops working is the one nobody could read.
+#
+# WHY HERE AND NOT IN pcieep_build.sh.  This generator is the only thing that
+# turns these variables into Tcl, it runs unconditionally at
+# pcieep_build.sh:111 before any Vivado starts, and `set -euo pipefail` at
+# pcieep_build.sh:40 makes a non-zero exit here abort the build.  A guard in
+# the shell would also be bypassed by the GENSTAMP's own reproduce command,
+# which invokes this file directly.
+#
+# WHY CARD-ONLY.  `FK33_ENG`, `FK33_FLATTEN`, `FK33_SYNTH_JOBS` and
+# `FK33_SYNTH_THREADS` already have CARD-AWARE defaults in this file
+# (`"1" if CARD_ON else "4"` and friends).  That is the pattern these two were
+# missing, and the refusal is its equivalent for a value whose card default
+# nobody wants this file to choose.
+CARD_MUST_STATE = (
+    ("FK33_CB_STYLE", "distributed",
+     "the default 'regs' makes the IQ4_NL codebook 6,144 FDRE read through "
+     "12,288 MUXF8, which build 11b MEASURED at 146,948 nets in resource "
+     "conflict"),
+    ("FK33_ENG_CORE_MHZ", "75",
+     "the default 200.000 retargets the whole card design to a clock no card "
+     "build has ever met; build 9 closed at 75.000 with WNS +0.061"),
+)
+
+
+def card_lever_refusal(env):
+    """The refusal text for a card build that leaves a lever unstated, or None.
+
+    Takes `env` rather than reading os.environ, so --selftest can construct a
+    REAL alternative environment and go down THIS code path rather than a
+    second expression that could agree with the check while disagreeing with
+    the build.  Same reason `_stamp_inputs` takes one.
+
+    An EMPTY value counts as unstated, matching `_stamp_inputs`'s
+    `env.get(n) or None`: a stamp that reads `(unset)` and a build that took
+    the default are the same event, and the guard must agree with the record.
+    """
+    if env.get("FK33_CARD", "") != "1":
+        return None
+    missing = [row for row in CARD_MUST_STATE if not env.get(row[0])]
+    if not missing:
+        return None
+    out = ["ABORT: FK33_CARD=1 with %d lever(s) unstated.  A card build must "
+           "STATE these or be refused." % len(missing), ""]
+    for name, shipped, why in missing:
+        out.append("  %-18s unstated -- the generator default would be taken"
+                   % name)
+        out.append("      %s" % why)
+        out.append("      every card build that routed used %s=%s"
+                   % (name, shipped))
+    out += ["",
+            "  Re-launch stating them, at minimum:",
+            "      FK33_CARD=1 %s python3 hw/fk33/gen_pcieep.py"
+            % " ".join("%s=%s" % (n, v) for (n, v, _) in CARD_MUST_STATE),
+            "      (or the same prefix on hw/fk33/pcieep_build.sh, which runs "
+            "this generator at :111)",
+            "",
+            "  This is a refusal, NOT a changed default.  Nothing that already "
+            "states these",
+            "  values behaves differently, and stating one AT the generator "
+            "default is",
+            "  accepted -- it is then recorded in the GENSTAMP and announced "
+            "by the",
+            "  build's own ^FK33_CB_STYLE / ^FK33_CORE_MHZ sentinel, so "
+            "'chosen' and",
+            "  'defaulted' stop looking identical in the log.",
+            "",
+            "  docs/debugging/2026-09-21_the-card-levers-nobody-stated.md"]
+    return "\n".join(out)
+
+
 # WHERE THE ENGINE TAKES x_exp FROM.  `fk33_engine`'s USE_XEXP_PORT, forwarded
 # to matvec_int4_desc_axi.  Read here rather than from CARD_ON because
 # ENGINE_BLOCK is rendered before CARD_ON is defined; the two are the same
@@ -1154,23 +1257,49 @@ def _eng_block():
     a("# wiring: the thermal halt, the activation write port and the 40 -> 33 bit")
     a("# address truncation.")
     a("create_bd_cell -type module -reference fk33_engine %s" % ENG_CELL)
-    if ENG_CB_STYLE != "regs":
-        a("")
-        a("# LEVER C, opt-in via FK33_CB_STYLE.  A module-reference cell takes a")
-        a("# generic as a CONFIG property; `-generic` on synth_design would reach")
-        a("# only the top and never this instance (fk33_engine.vhd:67).")
-        a("set_property CONFIG.CB_STYLE {%s} [get_bd_cells %s]"
-          % (ENG_CB_STYLE, ENG_CELL))
-        a("# READ BACK.  Vivado silently ignores a set_property whose target did")
-        a("# not match, and this file already does this for every other CONFIG it")
-        a("# sets.  A lever that was quietly not applied looks exactly like a")
-        a("# lever that did not work.")
-        a("set _cb [get_property CONFIG.CB_STYLE [get_bd_cells %s]]" % ENG_CELL)
-        a("if {$_cb ne \"%s\"} {" % ENG_CB_STYLE)
-        a("    error \"FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \\\"$_cb\\\", not %s\""
-          % ENG_CB_STYLE)
-        a("}")
-        a("puts \"FK33_CB_STYLE $_cb\"")
+    # LEVER C, AND IT IS EMITTED UNCONDITIONALLY, INCLUDING AT "regs".
+    #
+    # It used to be emitted only when ENG_CB_STYLE != "regs", and that is the
+    # defect, not an economy.  Two consequences, both MEASURED 2026-09-21
+    # (TRACK CBGUARD):
+    #
+    # 1. THE VALUE THAT REACHED THE NETLIST CAME FROM A DIFFERENT FILE.  With
+    #    no set_property the cell keeps `fk33_engine.vhd`'s own VHDL default,
+    #    which is also "regs".  So there were TWO independent defaults in
+    #    series and the one that bound build 11b's generic was the VHDL one --
+    #    this generator's default merely decided that nothing overrode it.
+    #    Confirmed from build 11b's own BUILD_ROOT Tcl: `grep -c
+    #    CONFIG.CB_STYLE` = 0, and `Parameter CB_STYLE bound to: regs` x4 in
+    #    its log.  Had the two defaults ever been made to disagree, an
+    #    EXPLICIT FK33_CB_STYLE=regs would have silently produced whatever the
+    #    VHDL said.
+    # 2. THE SENTINEL COULD NOT DISTINGUISH "regs" FROM "nobody chose".
+    #    `grep -c '^FK33_CB_STYLE'` was 1 for builds 9 and 10 and 0 for 11b,
+    #    and an ABSENCE is the weakest signal there is: three separate tracks
+    #    read these two logs and none noticed the missing line.  Emitted
+    #    always, the count is 1 for every build and the line NAMES the value,
+    #    so a reader compares two strings instead of noticing a hole.
+    a("")
+    a("# LEVER C, FK33_CB_STYLE.  A module-reference cell takes a generic as a")
+    a("# CONFIG property; `-generic` on synth_design would reach only the top")
+    a("# and never this instance (fk33_engine.vhd:67).")
+    a("#")
+    a("# SET EVEN WHEN IT MATCHES THE VHDL DEFAULT, deliberately.  Omitting it")
+    a("# left the value to fk33_engine.vhd's own default -- a SECOND default in")
+    a("# series with this generator's -- and left the sentinel below absent,")
+    a("# which is how card build 11b spent 4 h 25 m at a CB_STYLE nobody chose.")
+    a("set_property CONFIG.CB_STYLE {%s} [get_bd_cells %s]"
+      % (ENG_CB_STYLE, ENG_CELL))
+    a("# READ BACK.  Vivado silently ignores a set_property whose target did")
+    a("# not match, and this file already does this for every other CONFIG it")
+    a("# sets.  A lever that was quietly not applied looks exactly like a")
+    a("# lever that did not work.")
+    a("set _cb [get_property CONFIG.CB_STYLE [get_bd_cells %s]]" % ENG_CELL)
+    a("if {$_cb ne \"%s\"} {" % ENG_CB_STYLE)
+    a("    error \"FK33_CB_STYLE FAIL: CONFIG.CB_STYLE is \\\"$_cb\\\", not %s\""
+      % ENG_CB_STYLE)
+    a("}")
+    a("puts \"FK33_CB_STYLE $_cb\"")
     if ENG_XEXP_PORT:
         a("")
         a("# x_exp FROM THE PORT, not the descriptor (FK33_CARD).  Same mechanism as")
@@ -1258,7 +1387,48 @@ def _eng_block():
     return "\n".join(L)
 
 
-ENGINE_BLOCK = _eng_block() if ENG_ON else _noeng_core_block()
+def _core_clk_sentinel():
+    """The core clock this build ASKED FOR, announced at block-design time.
+
+    THE EXISTING INSTRUMENT ONLY FIRES ON SUCCESS, WHICH IS THE WRONG HALF.
+    MEASURED 2026-09-21 (TRACK CBGUARD) over the card builds in
+    hw/fk33/results: `^FK33_ENGI clock clk_out3_... period N ns (M MHz)` is
+    present in 7 of 7 that produced a bitstream -- all of them 13.333 ns,
+    75.00 MHz -- and in 0 of the 2 that failed to route, build 11b among them.
+    So the run whose clock nobody checked is exactly the run the instrument is
+    silent for, and the silence is indistinguishable from the sentinel not
+    existing.
+
+    This one is a readback of what the clocking wizard was actually asked for,
+    printed within the first minute of the build.  Same idiom and same reason
+    as the CB_STYLE readback: a `set_property` whose target did not match is
+    silent, so the value is read back from the object rather than echoed from
+    the variable that was supposed to have set it.
+
+    OUTSIDE _eng_block DELIBERATELY.  The clock exists whether or not
+    subsystem A is in the design, and an FK33_ENG=0 card build needs the line
+    just as much -- it is the same clock that carries B, C and D.
+    """
+    return "\n".join([
+        "",
+        "# THE CORE CLOCK THIS BUILD ASKED FOR (FK33_ENG_CORE_MHZ).  Printed",
+        "# here, at block-design time, because ^FK33_ENGI is only reached by a",
+        "# build that ROUTES: card build 11b ran 4 h 25 m at 200.000 MHz with",
+        "# nothing in its log saying so, against 75.000 in every card build",
+        "# that has ever produced a bitstream.",
+        "set _cm [get_property CONFIG.CLKOUT3_REQUESTED_OUT_FREQ "
+        "[get_bd_cells clk_wiz_0]]",
+        "if {$_cm ne \"%.3f\"} {" % ENG_CORE_MHZ,
+        "    error \"FK33_CORE_MHZ FAIL: CLKOUT3_REQUESTED_OUT_FREQ is "
+        "\\\"$_cm\\\", not %.3f\"" % ENG_CORE_MHZ,
+        "}",
+        "puts \"FK33_CORE_MHZ $_cm requested on clk_wiz_0/clk_out3\"",
+        "",
+    ])
+
+
+ENGINE_BLOCK = ((_eng_block() if ENG_ON else _noeng_core_block())
+                + _core_clk_sentinel())
 
 # ============================================================================
 # THE CARD CELL (subsystems B, C, D) AND THE B/C GRANT.  gen_pcieep.py
@@ -4089,6 +4259,188 @@ def _env_names_read_by(src):
     return set(re.findall(r'os\.environ\.get\("(FK33_[A-Z0-9_]*)"', src))
 
 
+def card_lever_teeth():
+    """Teeth for card_lever_refusal, with the mutant built from the THING.
+
+    THE MUTANT IS A REAL ENVIRONMENT, NOT A STRING THE CHECK LOOKS FOR.  Every
+    row below is an actual mapping handed to the same function main() calls,
+    and the three most load-bearing rows are actual SUBPROCESS runs of this
+    generator under that environment, graded on the process's exit status and
+    on the bytes it emitted.  This tree's recorded `seam_tieoff_teeth` failure
+    was a check and a mutant wrong in the same direction -- both built the
+    state "subsystem D is present" as a COMMENT -- so all four rows agreed with
+    each other while the build was dead.  A dict is a real environment; a
+    subprocess is a real refusal.
+
+    THE ATTRIBUTION CONTROL IS THE `regs` ROW.  Before this change the
+    generator emitted the LEVER C block only when the value was not "regs", so
+    an explicit FK33_CB_STYLE=regs produced a Tcl with no set_property, no
+    readback and no sentinel -- byte-for-byte what a build that stated nothing
+    produced.  Row P2 asserts both sentinels are present in a `regs` build,
+    which is the property that did not hold before and the only one that makes
+    the sentinel a positive signal rather than an absence.
+
+    ROWS THAT DELIBERATELY DO NOT BITE are printed under their own names.  They
+    are the resolution floor: this guard checks that a value was STATED, never
+    that it was WISE, and M1/M2 say so out loud.  A guard that also refused
+    200 MHz on a card would be refusing a decision, and the project's own
+    record is that whether a card build runs at `distributed` or `regs` "is a
+    DECISION, not a finding"."""
+    import subprocess
+    import tempfile
+    print("-" * 62)
+    print("CARDLEVER guarded: %s"
+          % " ".join("%s(ship %s)" % (n, v) for (n, v, _) in CARD_MUST_STATE))
+
+    B9 = {"FK33_CARD": "1", "FK33_CB_STYLE": "distributed",
+          "FK33_ENG_CORE_MHZ": "75"}       # builds 9, 10 and 12
+    B11B = {"FK33_CARD": "1"}              # build 11b, verbatim from its unit
+
+    # ---- in-process rows.  Same function main() calls, real mappings.
+    rows = [
+        ("P1 builds 9/10/12, both stated", B9, None),
+        ("P2 both stated AT the defaults", dict(FK33_CARD="1",
+                                                FK33_CB_STYLE="regs",
+                                                FK33_ENG_CORE_MHZ="200"), None),
+        ("P3 engine-only, no FK33_CARD at all", {}, None),
+        ("P4 FK33_CARD=0, explicitly off", {"FK33_CARD": "0"}, None),
+        ("P5 FK33_CARD=1 not the string 1", {"FK33_CARD": "true"}, None),
+        ("N1 build 11b verbatim", B11B,
+         ("FK33_CB_STYLE", "FK33_ENG_CORE_MHZ")),
+        ("N2 CB stated, clock not", {"FK33_CARD": "1",
+                                     "FK33_CB_STYLE": "distributed"},
+         ("FK33_ENG_CORE_MHZ",)),
+        ("N3 clock stated, CB not", {"FK33_CARD": "1",
+                                     "FK33_ENG_CORE_MHZ": "75"},
+         ("FK33_CB_STYLE",)),
+        ("N4 present but EMPTY is unstated", {"FK33_CARD": "1",
+                                              "FK33_CB_STYLE": "",
+                                              "FK33_ENG_CORE_MHZ": ""},
+         ("FK33_CB_STYLE", "FK33_ENG_CORE_MHZ")),
+    ]
+    for label, env, want in rows:
+        got = card_lever_refusal(env)
+        if want is None:
+            if got is not None:
+                sys.exit("SELFTEST FAIL: %s was REFUSED and must be accepted:\n%s"
+                         % (label, got))
+            print("CARDLEVER ACCEPT  %s" % label)
+            continue
+        if got is None:
+            sys.exit("SELFTEST FAIL: %s was ACCEPTED and must be refused. "
+                     "The guard has no teeth against the condition that cost "
+                     "4 h 25 m." % label)
+        # ANCHORED ON THE PER-LEVER LINE, not on the bare name.  The refusal
+        # always ends with a re-launch command naming EVERY guarded lever, so
+        # `name in text` is true for all of them in every refusal and would
+        # have made this row agree with itself whatever the guard did.  Caught
+        # by running it: N2 reported both levers named.  Same shape as the
+        # self-match trap -- the haystack contains the needle.
+        named = tuple(n for (n, _, _) in CARD_MUST_STATE
+                      if ("%-18s unstated" % n) in got)
+        if named != tuple(want):
+            sys.exit("SELFTEST FAIL: %s refused but named %r, expected %r. A "
+                     "refusal that names the wrong lever sends the reader to "
+                     "the wrong variable." % (label, named, want))
+        for n, v, _ in CARD_MUST_STATE:
+            if ("%s=%s" % (n, v)) not in got:
+                sys.exit("SELFTEST FAIL: %s refused without stating the "
+                         "value every routed card build used for %s, so the "
+                         "message does not say what to do." % (label, n))
+        print("CARDLEVER REFUSE  %s -> names %s" % (label, ",".join(named)))
+
+    # ---- THE ROWS THAT DO NOT BITE.  Reported, never discarded.
+    #
+    # M1 and M2 are the resolution floor: statedness is not wisdom.  M3 is the
+    # scope boundary -- the other seven stamped variables are NOT guarded
+    # because MEASURED 2026-09-21 their defaults ARE what every routed card
+    # build used (FK33_ENG on, FK33_FLATTEN none, FK33_SYNTH_JOBS 1,
+    # FK33_SYNTH_THREADS 2 are all card-aware already; FK33_ENG_SPLIT_CLK and
+    # FK33_ENG_FAST_MHZ are inert while the split is off).  Guarding them would
+    # add refusals with no measured failure behind them.
+    floor = [
+        ("M1 card at 200 MHz, STATED", dict(FK33_CARD="1",
+                                            FK33_CB_STYLE="distributed",
+                                            FK33_ENG_CORE_MHZ="200"),
+         "a stated value is accepted however unwise; this guard is not a "
+         "reviewer"),
+        ("M2 card at regs, STATED", dict(FK33_CARD="1",
+                                         FK33_CB_STYLE="regs",
+                                         FK33_ENG_CORE_MHZ="75"),
+         "same: build 11b's mapping, chosen on purpose, is a decision"),
+        ("M3 the other seven unstated", dict(B9),
+         "FK33_ENG/FLATTEN/SYNTH_*/SPLIT_CLK/FAST_MHZ defaults equal the "
+         "shipped values, so an unstated one is not a defect"),
+    ]
+    for label, env, why in floor:
+        if card_lever_refusal(env) is not None:
+            sys.exit("SELFTEST FAIL: %s was refused; the guard has grown "
+                     "beyond statedness." % label)
+        print("CARDLEVER NO-BITE %s -- %s" % (label, why))
+
+    # ---- THREE REAL SUBPROCESS RUNS.  A dict cannot prove main() calls the
+    # ---- refusal, nor that the emitted Tcl carries the sentinels.
+    me = os.path.abspath(__file__)
+
+    def _run(env, tmp):
+        e = {k: v for k, v in os.environ.items()
+             if k not in STAMP_ENV_NAMES}
+        e.update(env)
+        return subprocess.run([sys.executable, me, "--emit-to", tmp],
+                              env=e, stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT)
+
+    tmp = tempfile.mkdtemp(prefix="cardlever_")
+    r = _run(B11B, tmp)
+    out = r.stdout.decode("utf-8", "replace")
+    if r.returncode == 0:
+        sys.exit("SELFTEST FAIL: the generator EXITED 0 under build 11b's own "
+                 "environment.  card_lever_refusal is not wired into main(), "
+                 "so the check is decoration.")
+    for n, _, _ in CARD_MUST_STATE:
+        if n not in out:
+            sys.exit("SELFTEST FAIL: the refusal did not name %s on stderr; "
+                     "rc=%d output:\n%s" % (n, r.returncode, out))
+    print("CARDLEVER SUBPROC refused build 11b's environment, rc=%d, both "
+          "levers named" % r.returncode)
+
+    # Both accept-rows must emit BOTH sentinels.  Anchored on `puts "NAME `
+    # rather than on the bare name, because the emitted Tcl also carries the
+    # name in a comment and in the error string -- the haystack holds the
+    # needle otherwise, which is the trap this file records four times.
+    for label, env, want_cb, want_mhz in (
+            ("distributed/75", B9, "distributed", "75.000"),
+            ("regs/200", dict(FK33_CARD="1", FK33_CB_STYLE="regs",
+                              FK33_ENG_CORE_MHZ="200"), "regs", "200.000")):
+        d = tempfile.mkdtemp(prefix="cardlever_ok_")
+        r = _run(env, d)
+        if r.returncode != 0:
+            sys.exit("SELFTEST FAIL: the generator refused %s, which is a "
+                     "fully stated card build.  rc=%d:\n%s"
+                     % (label, r.returncode,
+                        r.stdout.decode("utf-8", "replace")))
+        text = open(os.path.join(d, os.path.basename(DST))).read()
+        n_cb = len(re.findall(r'^puts "FK33_CB_STYLE ', text, re.M))
+        n_mhz = len(re.findall(r'^puts "FK33_CORE_MHZ ', text, re.M))
+        if n_cb != 1 or n_mhz != 1:
+            sys.exit("SELFTEST FAIL: %s emitted %d CB_STYLE and %d CORE_MHZ "
+                     "sentinels, expected 1 and 1.  A build whose value is "
+                     "the default must still ANNOUNCE it, or an absent line "
+                     "means both 'defaulted' and 'chosen' -- which is how "
+                     "three tracks read build 11b's logs and missed it."
+                     % (label, n_cb, n_mhz))
+        if ('set_property CONFIG.CB_STYLE {%s}' % want_cb) not in text:
+            sys.exit("SELFTEST FAIL: %s did not set CONFIG.CB_STYLE to %s, so "
+                     "the cell keeps fk33_engine.vhd's own default and there "
+                     "are two defaults in series again." % (label, want_cb))
+        if ('CONFIG.CLKOUT3_REQUESTED_OUT_FREQ {%s}' % want_mhz) not in text:
+            sys.exit("SELFTEST FAIL: %s did not request clk_out3 at %s"
+                     % (label, want_mhz))
+        print("CARDLEVER SUBPROC accepted %-16s sentinels cb=%d mhz=%d, "
+              "CB_STYLE={%s} CLKOUT3={%s}"
+              % (label, n_cb, n_mhz, want_cb, want_mhz))
+
+
 def genstamp_teeth():
     """Two properties, each with its mutant built from the THING.
 
@@ -4405,6 +4757,7 @@ def selftest():
     cdc_pins_teeth()
     split_gate_teeth(built)
     genstamp_teeth()
+    card_lever_teeth()
 
     print("SELFTEST PASS")
 
@@ -6020,6 +6373,24 @@ def assemble_script():
 
 
 def main():
+    # THE REFUSAL COMES FIRST IN main(), SO NOTHING IS WRITTEN.  A card build
+    # that has not stated its levers must not get as far as producing a Tcl
+    # that looks perfectly well formed; see CARD_MUST_STATE above for what
+    # build 11b cost.  os.environ is passed explicitly so this call and the
+    # selftest's calls are the same code path.
+    #
+    # NOT AT MODULE LEVEL, DELIBERATELY, AND THAT IS WHY TWO ^FK33_CARDPINS /
+    # ^FK33_CARDCLOSURE LINES ARE PRINTED BEFORE IT.  hw/fk33/gen_fk33_regs.py
+    # IMPORTS this file as a module to read the BAR map, so a module-level
+    # `sys.exit` would make `gen_fk33_regs.py --check` (and any other
+    # importer) die whenever FK33_CARD=1 happened to be exported in the
+    # ambient shell -- a gate row turning red for a reason unrelated to what
+    # it checks, which this file already records happening once to
+    # sim:runguard.  MEASURED 2026-09-21: with the refusal in main(),
+    # `FK33_CARD=1 python3 hw/fk33/gen_fk33_regs.py --check` is rc=0.
+    _refusal = card_lever_refusal(os.environ)
+    if _refusal:
+        sys.exit(_refusal)
     if not os.path.exists(SRC):
         sys.exit(f"ABORT: probe build script not found: {SRC}\n"
                  "Run gen_i2cprobe.py first.")
