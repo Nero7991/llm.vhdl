@@ -1,0 +1,10 @@
+B10AP_OPENED
+B10AP_CLOCK name=clk_out3_bd_clk_wiz_0_0 period=13.333
+B10AP_ROUTESTATUS_WRITTEN
+B10AP_NPATHS 17194
+B10AP_BUCKET u_kv           count=  11643 worst=  -2.772
+B10AP_BUCKET c_attn         count=   5220 worst=  -2.858
+B10AP_BUCKET codebook_cmd   count=    267 worst=  -5.819
+B10AP_BUCKET other          count=      7 worst=  -0.172
+B10AP_BUCKET a_core_other   count=     57 worst=  -2.457
+B10AP_DONE
