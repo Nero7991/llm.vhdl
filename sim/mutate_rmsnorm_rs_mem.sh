@@ -29,7 +29,33 @@ MUTS=(
 "raskew|s@  ram_ra <= std_logic_vector(to_unsigned(idx, AB)) when idx < NB@  ram_ra <= std_logic_vector(to_unsigned(idx + 1, AB)) when idx + 1 < NB@|the element-pass read address advanced by one, i.e. the fetch register absorbing a DIFFERENT amount of latency than the one cycle the RAM has|BITE"
 "wbank|s@w_bwe(k) <= w_we when unsigned(w_waddr(LB-1 downto 0)) = k else '0';@w_bwe(k) <= w_we when unsigned(x_waddr(LB-1 downto 0)) = k else '0';@|w bank enable driven from x_waddr (copy-paste class)|BITE"
 "owe_norst|s@o_we <= '1' when (rst = '0' and state = S_EMIT and v3 = '1' and idx3 < NB)@o_we <= '1' when (state = S_EMIT and v3 = '1' and idx3 < NB)@|TRACK WRITEDEC's rst term dropped from the output write guard|UNKNOWN"
-"xwswap|s@              p1_xinv(k) <= resize(x_q(k) \* inv32, 48);@              p1_xinv(k) <= resize(w_q(k) * inv32, 48);@;s@              p1_wm(k)   <= resize(w_q(k), 17);@              p1_wm(k)   <= resize(x_q(k), 17);@|x and w exchanged in the emit multiply|UNKNOWN"
+# RETIRED 2026-09-20, TRACK GATERED.  `xwswap` -- "x and w exchanged in the
+# emit multiply" -- WAS THE IDENTITY, at every geometry, and it was sitting in
+# the denominator of this table's kill ratio as though it measured something.
+# Found by TRACK MUTWIRE, which observed it survive everywhere; DERIVED here
+# from the RTL rather than inferred from the survival, because "survives at
+# every geometry" is also what a real fault the bench cannot see looks like:
+#
+#   rtl/rmsnorm_rs_mem.vhd:269   signal x_q, w_q : s16a
+#   s16a is an array of signed(15 downto 0), so BOTH operands are s16.
+#   :718   p1_xinv(k) <= resize(x_q(k) * inv32, 48);   s16*s32 IS 48 bits,
+#                                                      so the resize is a no-op
+#   :719   p1_wm(k)   <= resize(w_q(k), 17);           s16 -> s17 widens, no-op
+#   :724   p2_raw(k)  <= resize(p1_xinv(k) * p1_wm(k), 64);
+#
+# Exchanging x and w gives w*inv*x for x*inv*w.  Multiplication commutes, no
+# resize on either path truncates, and the 65-bit product at :724 truncates to
+# the same 64 bits either way, so the mutated design is bit-identical to the
+# baseline.  It is not a fault that the bench tolerates; it is not a fault.
+# No check anywhere could kill it, so it could never have been re-anchored,
+# only removed.
+#
+# REPLACED, NOT WEAKENED, by `xwhalf` below: the same site, the same operand
+# confusion, but only ONE of the two lines substituted.  A full swap of two
+# commuting operands is no fault at all; the HALF swap is the copy-paste slip
+# that site is actually exposed to, and it is a strictly harder target than the
+# retired row rather than an easier one, because it has to be caught on values.
+"xwhalf|s@              p1_xinv(k) <= resize(x_q(k) \* inv32, 48);@              p1_xinv(k) <= resize(w_q(k) * inv32, 48);@|the x operand of the emit multiply replaced by w, so the stage computes w*inv*w for x*inv*w.  The non-degenerate half of the retired xwswap, at the same site|BITE"
 "obank_hi|s@               raddr => o_raddr(clog2(N)-1 downto LB),@               raddr => o_raddr(clog2(N)-LB-1 downto 0),@|output READ uses the low bits as the RAM address, i.e. bank and offset transposed on the read side ONLY|BITE"
 "doneearly|s@ and v3 = .0. then@ then@|done fires one cycle EARLY.  Values are untouched, because the last bank write is combinational and still lands on the same edge, so this is a SCHEDULE-ONLY fault planted to show the done-cycle check discriminates|BITE"
 "transpose_all|s@waddr => x_waddr(clog2(N)-1 downto LB),@waddr => x_waddr(clog2(N)-LB-1 downto 0),@;s@waddr => w_waddr(clog2(N)-1 downto LB),@waddr => w_waddr(clog2(N)-LB-1 downto 0),@;s@x_bwe(k) <= x_we when unsigned(x_waddr(LB-1 downto 0)) = k else '0';@x_bwe(k) <= x_we when unsigned(x_waddr(clog2(N)-1 downto clog2(N)-LB)) = k else '0';@;s@w_bwe(k) <= w_we when unsigned(w_waddr(LB-1 downto 0)) = k else '0';@w_bwe(k) <= w_we when unsigned(w_waddr(clog2(N)-1 downto clog2(N)-LB)) = k else '0';@;s@               raddr => o_raddr(clog2(N)-1 downto LB),@               raddr => o_raddr(clog2(N)-LB-1 downto 0),@;s@o_rsel <= std_logic_vector(resize(unsigned(o_raddr(LB-1 downto 0)),@o_rsel <= std_logic_vector(resize(unsigned(o_raddr(clog2(N)-1 downto clog2(N)-LB)),@|bank and offset transposed CONSISTENTLY on x, w and o|UNKNOWN"
