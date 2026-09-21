@@ -393,3 +393,35 @@ Note for whoever does it: the W1 write loop and the W0 capture loop are now
 6. **`CB_ROWS_PER_COPY > 1` is untested by this track.** The pin admits it
    (`CB_COPIES < ROWS_IF`, so `CB_RANKS = CB_COPIES` and the map is the
    identity, exactly as today) but no bench was run at that setting.
+
+## CORRECTION, 2026-09-20, appended in place
+
+**Open item 5 above ("the executable gate rows were NOT RUN") is WITHDRAWN.
+They were run, after memory recovered, and all of them pass.** The claim was
+committed at `0b34200` before the headroom returned; it is corrected here
+rather than deleted, and the WORKLOG entry carries the same correction.
+
+MEASURED, `sim/regress.sh` against the committed RTL (`rtl/matvec_core.vhd`
+md5 `c3325ea1f418dcbcaa85f33e47e8c901` throughout), four invocations, each with
+its own per-run `REGRESS_SCRATCH` under
+`/mnt/storage/fk33_builds/scratch/cbfanout/`:
+
+    --only tb_matvec_cb    OVERALL PASS 2  FAIL 0  NOVERDICT 0  BUILD-ERROR 0
+    --only tb_matvec_axi   OVERALL PASS 1  FAIL 0  NOVERDICT 0  BUILD-ERROR 0
+    --only tb_matvec_int4  OVERALL PASS 2  FAIL 0  NOVERDICT 0  BUILD-ERROR 0
+    --only tb_matvec_core  OVERALL PASS 2  FAIL 0  NOVERDICT 0  BUILD-ERROR 0
+
+Seven rows, 0 FAIL. **Every `PASS n` is non-zero**, which is the check that
+matters: `--only` takes a SUBSTRING, and a pattern matching nothing still
+prints `REGRESSION: PASS` with `PASS 0`.
+
+`sim/tb_matvec_fk33*` were deliberately NOT run: they are the ROWS_IF=48
+geometry with a 200 ms stop-time, they are optional rows needing a `.mv4i`
+that a clean checkout does not get, and build 11's Vivado was still holding
+23-25 GB of swap. **That remains open.**
+
+md5 at both ends of the gate window: `sim/tb_matvec_cb_contract.vhd`
+`be5fc1e8`, `sim/tb_matvec_cb_lockstep.vhd` `877fb15b`, `sim/tb_matvec_core.vhd`
+`5522a105` -- all three identical to the values taken before any tool ran, so
+no bench changed under a running gate. `sim/regress.sh` was never edited by
+this track (`91f5619a`).
