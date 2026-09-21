@@ -181,3 +181,71 @@ nobody passed `-hierarchical`, and a placed report build 9 never committed.
 Both are kilobytes, produced at zero marginal cost by a build that already
 ran four hours. TRACK BUILDREPORT is making every `FK33_CARD=1` build emit
 and commit them.
+
+---
+
+## CORRECTION 2026-09-21, appended in place: THE FAILURE IS SPREAD, AND THE CODEBOOK IS NOT THE WHOLE ACCOUNT
+
+Full write-up and procedure:
+`docs/debugging/2026-09-21_build10-is-spread-not-the-codebook.md` (TRACK B10WHY,
+no Vivado run).
+
+This file says "**The failure is NOT in the blocks the levers touched**" and
+that the codebook fanout "**accounts for nearly the whole failure**". The first
+half stands. The second is **WITHDRAWN**: the codebook owns the WNS and is not
+the whole failure.
+
+MEASURED, from artefacts that already existed:
+
+* `bd_wrapper_methodology_drc_routed.rpt`, written from the SAME fully-routed
+  design two minutes before the timing summary, lists **1,000 TIMING-16
+  violations of which all 1,000 are in `bd_i/card/inst/u/gcr.gkvaxi.u_kv`**
+  (subsystem C), from ONE source pin `GEN_RD[1].ph_ch_reg[0]/C`, at -1.000 to
+  -2.131 ns. `grep -c 'cbw_a\|cb_addr'` on that file is **0**. That module is
+  the WNS owner in BOTH card builds that closed (+0.452 and +0.299) and its
+  path is a **34-level, 17-deep CARRY8 chain**, not a fanout problem. Extract
+  committed here as `timing16_violations.tsv`.
+* A **second clock domain** failed: `fk33_dmabram_BRAM_PORTA_CLK` (250 MHz) is
+  **-0.109 ns on 54 endpoints** against **+0.054** and **+0.049** in the two
+  builds that closed -- with its endpoint count **202,652 against 202,657 and
+  202,658**, a difference of five in 202,658. Nothing in that domain changed.
+* DERIVED: `TNS -14,026.255 / 17,194 = -0.816 ns mean violation`. The 17,194 are
+  a long tail, not 17,194 paths at -5.8.
+
+**The area claim is now refuted with a SECOND control, not merely unsupported.**
+`card_seqrst_bfnorm_2026-09-19` closed at **+0.452** with **54,839 CLB /
+367,685 CLB LUTs / 308,140 FF**, all larger than build 10's 54,751 / 361,361 /
+308,213. Two larger builds closed on the **same three directives**
+(`AltSpreadLogic_high` / `AggressiveExplore` / `AlternateCLBRouting`, MEASURED
+identical in build 9, build 10 and seqrst) at the same 75 MHz.
+
+**"Build 10 = build 9 + four levers" is also wrong.** Build 9 is `3180646`
+(DERIVED from a commit 4 minutes before its 07:37:34 start; build 9 read the
+LIVE tree and recorded no HEAD, so this is an identification, not its input).
+`git diff --name-only 3180646 b71a6d9 -- 'rtl/*.vhd' 'hw/fk33/rtl/*.vhd'`
+returns **19 files**, six of them in subsystem A. `rtl/matvec_core.vhd` is
+indeed unchanged; `rtl/matvec_int4.vhd` gains an unconditional `dbg_sstarve`
+output and `async_fifo`/`stream_fifo` restructure their pop condition.
+
+**AND THE ROUTED DCP EXISTS.** This file and `KEEP_build10_dcp/README.txt` both
+imply only synth and placed checkpoints survive. The whole build tree at
+`/mnt/storage/fk33_builds/build10/root` survived, routed DCP, bitstream and all
+reports included; the bitstream's md5 matches this build's `FK33_AUTOSAVE`
+sentinel. The routed DCP is now preserved as
+`KEEP_build10_dcp/build10_routed_bd_wrapper.dcp`.
+
+Also committed here, from that tree: `fk33_pcieep_congestion.rpt` (the pressure
+is `gcr.u_attn/u_arr` at 31-74% of every level-5/6/7 window with `RAMB 100%`),
+`fk33_pcieep_pblock_util.rpt`, `fk33_pcieep_engine_util.rpt`, `route_status.rpt`
+(0 nets with routing errors).
+
+### What the evidence now supports
+
+The failure is **SPREAD**: three independent structures in three subsystems and
+two clock domains, one of whose contents provably did not change. The common
+factor is placement/routing pressure -- build 10's timing congestion is
+**level 6 (64x64)** against build 9's **level 5 (32x32)**, route time 1.88x, and
+the intermediate WNS collapsed -1.372 -> -10.110 in one global iteration where
+build 9 recovered monotonically. **Which of the nineteen commits caused that is
+still NOT DETERMINED**, and on this evidence fixing the codebook fanout should
+be expected to move the WNS rather than to close the design.
