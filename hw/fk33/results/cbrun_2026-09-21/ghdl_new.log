@@ -1,0 +1,5 @@
+rtl/matvec_core.vhd:763:7:@0ms:(report note): matvec_core: LEVER C ACTIVE  CB_STYLE=distributed  CB_COPIES=1536  CB_LANES_PER_COPY=1  CB_RANKS=48  CB_WR_LAT=1
+/usr/bin/ghdl-mcode:error: overflow detected
+in process .matvec_core(rtl).P7
+  from: process work.matvec_core(rtl).P7 at matvec_core.vhd:1446
+/usr/bin/ghdl-mcode:error: simulation failed

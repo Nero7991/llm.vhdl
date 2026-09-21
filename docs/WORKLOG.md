@@ -8401,3 +8401,84 @@ derived-`tgRoot` fix landing eight hours late.
 Full record, including the two traps where an unwritten file compared equal to
 itself and read as a perfect reproduction:
 `docs/debugging/2026-09-20_generated-files-record-their-inputs.md`.
+
+## 2026-09-21 TRACK CBRUN: THE FOUR CODEBOOK ARMS DREW, AND THE OOC SAYS THE PER-ROW CHANGE DOES NOT BREAK THE INFERENCE AT ALL
+
+Four arms, `CBO_TARGET=matvec_core`, `CB_STYLE=distributed`, at the card's
+geometry, all on the BC-250 under a cap read back out of the running cgroup. No
+hardware. No Vivado on the workstation. `rtl/matvec_core.vhd` NOT edited in the
+repo (TRACK CBREVERT owns it); every arm is a tree under
+`/mnt/storage/fk33_builds/scratch/cbrun`.
+
+**MEASURED: `cb` is distributed RAM in ALL FOUR arms, identical to the digit.**
+`cb_ram=26112 cb_ff=0 RAM32M16=1573 RAMD32=22022 RAMS32=3146 MUXF8=0` in `old`,
+`new`, `bcast` and `fan` alike, 3,072 mapping-report rows and 1,536 distinct
+`cb_reg` indices in each. `26,112 = 1,536 x 17` decomposes exactly as
+14 RAMD32 + 2 RAMS32 + 1 RAM32M16 per copy.
+
+**That is CBRAM's own falsifier 2 and it fired: the mechanism is NOT confirmed.**
+The write statement's form does not gate the inference at this level in either
+direction. The main session reached the same verdict independently at
+`matvec_int4_desc_axi` the same morning, so it is not an artefact of the target.
+
+**`[Synth 8-5859]` is refuted as an instrument.** Anchored count **0** in all
+four arms, in runs where the mapping report names 1,536 `RAM32M16` copies. An
+absent `8-5859` is compatible with a fully successful inference, measured four
+times. The claim that the recognizer DECLINED `cb` in build 11b is WITHDRAWN in a
+dated CORRECTION; build 10's positive message stands as a message that was really
+printed. `gdn_block` is not in `matvec_core`'s closure, so the positive control
+that specification relied on does not exist at this target even in principle.
+
+**Option R3a is struck: `fan` IS `new`.** Identical cells/nets/pins
+(171,716 / 2,046,259 / 4,708,060) and `cbx_any=0` -- the combinational aliases do
+not exist in the netlist. R3a can never differ from `new`, so it could not have
+restored anything. Same shape as CBOOC's `CB_STYLE=regs` null: two arms that are
+secretly one, printing a full result row.
+
+**The netlist facts that DO stand** (opt stage, same tree, controls `lut_mem`
+13,414 / DSP 1,584 / BRAM 21.5 / SRL 830 unmoved in all four):
+`cbw_ff` 19,968 -> 624, exactly **-19,344 = 13 x (1536-48)**; total FF
+73,463 -> 54,126 = **-19,337**, so 7 flops reappear elsewhere; LUT
+78,183 -> 77,560 = **-623**; `bcast` +629 FF over `old` and max command-net
+fanout **32**.
+
+**REGISTERED PREDICTIONS THAT MISSED, under their own names:** CBOOC's LUT delta
+0 measured **-623** here and **+1,456** at `desc_axi` (wrong in both, opposite
+directions); CBOOC's max fanout `1,537 -> 49` measured `1,537 -> 129`; CBRAM's
+`MUXF8 0 -> 12,288` measured `0 -> 0`; CBRAM's `8-5859 fires for old` measured
+absent. HITS: the 13-net control held exactly, `cbw_ff` -19,344 exact, `bcast`
++624 FF to within 5.
+
+**The outlier fanout net is NAMED.** Twelve of thirteen command bits are
+top-level ports (`cb_addr[0..3]`, `cb_data[0..7]`) and fall to exactly
+`CB_RANKS = 48` with `to_other=0`. The thirteenth is the VALID bit, and it is the
+outlier because its net is SHARED: 48 of its 128 loads are `cbw_v` flops and
+**80 are pins elsewhere in the core**. In `old` the same net had 1,536 loads and
+`to_other=0`. That is why the number is context-dependent -- 108 loads at
+`desc_axi`, 128 here, and never 48.
+
+**The revert is still right, and now rests only on card-level evidence:** build
+9's pre-change codebook routes at WNS +0.061 / TNS 0.000, and build 11b failed to
+ROUTE with 38 of 40 named contending nets being `core/cb[][][]`. It was never
+contingent on the `8-5859` story, which is the only reason it survives.
+
+**NEW OPEN ITEM, and it is not small: the codebook change may be a bystander.**
+Both OOC levels now say the RTL difference alone does not cause the mux tree.
+What differs between the card context and OOC is unseparated: the
+`-mode out_of_context` flag, the enclosing hierarchy, the card's synthesis
+directive and flattening, and 92% LUT occupancy. **Do not put `bcast` or `fan` on
+a card build on the strength of this run.**
+
+**Traps hit, mine included.** My own message greps were UNANCHORED and the log
+contains the tcl source line that raises those limits: `8-7186` read 24,577
+against a true **24,576 = 1,536 x 16**, and `8-10226` read 1 against a true 0.
+The cap readback I added to avoid ELABCLASS's trap had the same bug shape itself
+-- systemd ate the `$cg` in `bash -c`, so it read `/sys/fs/cgroup/memory.high`,
+got "No such file", and exited 0; only a deliberate teeth test on a throwaway
+scope found it, and the fix is to write the wrapper to a file. All four arms hit
+the 8G cap, so every `memory.peak` here is the cap and none is a footprint.
+
+Full record, predictions scored unadjusted, and the CORRECTION: the dated TRACK
+CBRUN section of
+`docs/debugging/2026-09-20_the-codebook-stopped-being-ram.md`. Captures and
+drivers: `hw/fk33/results/cbrun_2026-09-21/`.

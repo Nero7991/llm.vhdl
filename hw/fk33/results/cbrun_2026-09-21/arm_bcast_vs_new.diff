@@ -1,0 +1,100 @@
+--- /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/new/rtl/matvec_core.vhd	2026-09-20 23:25:42.000000000 -0600
++++ /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/bcast/rtl/matvec_core.vhd	2026-09-21 06:47:29.354821593 -0600
+@@ -387,12 +387,22 @@
+   --
+   -- Cost: one cycle of write latency, spent in S_IDLE where the spec already
+   -- confines codebook writes.  Zero cycles anywhere in the multiply path.
+-  type cba_arr is array(0 to CB_RANKS-1) of std_logic_vector(3 downto 0);
+-  type cbd_arr is array(0 to CB_RANKS-1) of std_logic_vector(7 downto 0);
+-  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
++  -- TRACK CBRUN arm `bcast` (CBRAM option R3b).  cbw_* are per-COPY again, so
++  -- the RAM write statement is byte-identical to the pre-0b34200 one.
++  type cba_arr is array(0 to CB_COPIES-1) of std_logic_vector(3 downto 0);
++  type cbd_arr is array(0 to CB_COPIES-1) of std_logic_vector(7 downto 0);
++  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+   signal cbw_a : cba_arr := (others => (others => '0'));
+   signal cbw_d : cbd_arr := (others => (others => '0'));
+ 
++  -- the NEW rank stage, between the ports and cbw_*.  This is what keeps
++  -- cb_addr's fanout at CB_RANKS rather than CB_COPIES.
++  type cbr_a_arr is array(0 to CB_RANKS-1) of std_logic_vector(3 downto 0);
++  type cbr_d_arr is array(0 to CB_RANKS-1) of std_logic_vector(7 downto 0);
++  signal cbr_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
++  signal cbr_a : cbr_a_arr := (others => (others => '0'));
++  signal cbr_d : cbr_d_arr := (others => (others => '0'));
++
+   -- THE DECLARED WRITE LATENCY, AND THE FIX FOR K2b.
+   --
+   -- Cycles from the edge that accepts cb_we to the edge on which cb changes.
+@@ -418,7 +428,10 @@
+   -- it is a synthesis-timing fix and nothing has been synthesised.  Adding it
+   -- is now a two-line change plus CB_WR_LAT := 2, and it is SAFE to add
+   -- precisely because of the paragraph above.
+-  constant CB_WR_LAT : positive := 1;
++  -- TRACK CBRUN arm `bcast`: TWO command stages, so TWO cycles.  This is the
++  -- cost of R3b and the reason CBRAM puts a drain state between S_CB and
++  -- S_START in rtl/matvec_int4_desc_axi.vhd on the shelf beside it.
++  constant CB_WR_LAT : positive := 2;
+ 
+   -- dont_touch is what stops Vivado merging the replicas back into one table,
+   -- and it is required for "regs".  It is WRONG for "distributed": a signal
+@@ -466,6 +479,9 @@
+   attribute dont_touch of cbw_v : signal is "true";
+   attribute dont_touch of cbw_a : signal is "true";
+   attribute dont_touch of cbw_d : signal is "true";
++  attribute dont_touch of cbr_v : signal is "true";
++  attribute dont_touch of cbr_a : signal is "true";
++  attribute dont_touch of cbr_d : signal is "true";
+ 
+   -- ybuf holds a whole tile per word, so all ROWS_IF rows are written together
+   -- at row-end and read together at emit.  FLAT, not an array of arrays: a
+@@ -765,6 +781,7 @@
+            & "  CB_LANES_PER_COPY=" & integer'image(CB_LANES_PER_COPY)
+            & "  CB_RANKS=" & integer'image(CB_RANKS)
+            & "  CB_WR_LAT=" & integer'image(CB_WR_LAT)
++           & "  CBRUN_ARM=bcast"
+         severity note;
+     end if;
+     wait;
+@@ -802,27 +819,34 @@
+       -- Every rank holds the same command (see CB_RANKS above), so this is the
+       -- same edge and the same value for every copy.
+       for c in 0 to CB_COPIES-1 loop
+-        if cbw_v(cb_rank_of(c)) = '1' then
+-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+-            <= signed(cbw_d(cb_rank_of(c)));
++        if cbw_v(c) = '1' then
++          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+         end if;
+       end loop;
++      -- stage W0b: fan the RANK command out to the per-copy command
++      -- registers.  The function call lives HERE, one stage above the RAM.
++      for c in 0 to CB_COPIES-1 loop
++        cbw_v(c) <= cbr_v(cb_rank_of(c));
++        cbw_a(c) <= cbr_a(cb_rank_of(c));
++        cbw_d(c) <= cbr_d(cb_rank_of(c));
++      end loop;
+       -- stage W0: capture the command, one register per RANK.  No term in
+       -- this loop depends on r, which is what makes the ranks peers.
+       for r in 0 to CB_RANKS-1 loop
+         if cb_we = '1' and st = S_IDLE and rst = '0' then
+-          cbw_v(r) <= '1';
++          cbr_v(r) <= '1';
+         else
+-          cbw_v(r) <= '0';
++          cbr_v(r) <= '0';
+         end if;
+-        cbw_a(r) <= cb_addr;
+-        cbw_d(r) <= cb_data;
++        cbr_a(r) <= cb_addr;
++        cbr_d(r) <= cb_data;
+       end loop;
+       -- rst kills a command in flight but deliberately does NOT clear cb: the
+       -- codebook is loaded once and outlives a reset, which is the behaviour
+       -- the previous single-copy version had.
+       if rst = '1' then
+         cbw_v <= (others => '0');
++        cbr_v <= (others => '0');
+       end if;
+     end if;
+   end process;

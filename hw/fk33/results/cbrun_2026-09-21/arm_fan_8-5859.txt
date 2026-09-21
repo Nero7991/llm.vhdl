@@ -1,0 +1,2 @@
+--- anchored counts ---
+8-5859_total=0 8-5859_cb_reg=0 8-7186=24576 8-10226=0 cb_reg_RAM32M16_rows=3072 xq_reg_rows=2 distinct_cb_idx=1536

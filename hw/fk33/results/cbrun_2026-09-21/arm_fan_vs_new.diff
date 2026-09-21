@@ -1,0 +1,55 @@
+--- /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/new/rtl/matvec_core.vhd	2026-09-20 23:25:42.000000000 -0600
++++ /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/fan/rtl/matvec_core.vhd	2026-09-21 06:47:29.350821428 -0600
+@@ -393,6 +393,16 @@
+   signal cbw_a : cba_arr := (others => (others => '0'));
+   signal cbw_d : cbd_arr := (others => (others => '0'));
+ 
++  -- TRACK CBRUN arm `fan` (CBRAM option R3a).  Per-COPY combinational aliases
++  -- of this copy's rank command.  WIRES, not registers: no dont_touch, no
++  -- clocked process drives them, so they cost nothing and the command net's
++  -- fanout profile is identical to `new`'s.
++  type cbx_a_arr is array(0 to CB_COPIES-1) of std_logic_vector(3 downto 0);
++  type cbx_d_arr is array(0 to CB_COPIES-1) of std_logic_vector(7 downto 0);
++  signal cbx_v : std_logic_vector(CB_COPIES-1 downto 0);
++  signal cbx_a : cbx_a_arr;
++  signal cbx_d : cbx_d_arr;
++
+   -- THE DECLARED WRITE LATENCY, AND THE FIX FOR K2b.
+   --
+   -- Cycles from the edge that accepts cb_we to the edge on which cb changes.
+@@ -735,6 +745,15 @@
+   signal inflight: std_logic;
+ begin
+ 
++  -- TRACK CBRUN arm `fan`: the rank-to-copy fan, CONCURRENT and outside P_CB.
++  -- The function call lives here, in a wire assignment, and NOT in the RAM's
++  -- address/data/enable expressions.
++  gen_cbfan : for c in 0 to CB_COPIES-1 generate
++    cbx_v(c) <= cbw_v(cb_rank_of(c));
++    cbx_a(c) <= cbw_a(cb_rank_of(c));
++    cbx_d(c) <= cbw_d(cb_rank_of(c));
++  end generate;
++
+   -- LEVER C IS SILENT WHEN IT IS OFF AND LOUD WHEN IT IS ON.
+   --
+   -- CB_STYLE reaches this entity through matvec_int4_desc_axi -> matvec_int4,
+@@ -765,6 +784,7 @@
+            & "  CB_LANES_PER_COPY=" & integer'image(CB_LANES_PER_COPY)
+            & "  CB_RANKS=" & integer'image(CB_RANKS)
+            & "  CB_WR_LAT=" & integer'image(CB_WR_LAT)
++           & "  CBRUN_ARM=fan"
+         severity note;
+     end if;
+     wait;
+@@ -802,9 +822,8 @@
+       -- Every rank holds the same command (see CB_RANKS above), so this is the
+       -- same edge and the same value for every copy.
+       for c in 0 to CB_COPIES-1 loop
+-        if cbw_v(cb_rank_of(c)) = '1' then
+-          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+-            <= signed(cbw_d(cb_rank_of(c)));
++        if cbx_v(c) = '1' then
++          cb(c)(to_integer(unsigned(cbx_a(c)))) <= signed(cbx_d(c));
+         end if;
+       end loop;
+       -- stage W0: capture the command, one register per RANK.  No term in

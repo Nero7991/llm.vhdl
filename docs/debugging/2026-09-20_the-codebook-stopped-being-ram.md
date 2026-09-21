@@ -686,3 +686,403 @@ only.
 Nothing was written inside `/mnt/storage/fk33_builds/build11b/`. Scratch on
 `/mnt/storage/fk33_builds/scratch/cbram`, never `/tmp`. No Vivado started. No
 hardware.
+
+---
+
+## 2026-09-21 -- TRACK CBRUN ran the four arms. FALSIFIER 2 FIRED: the effect does not exist out of context, the mechanism above is NOT confirmed, and option R3a is not an option at all
+
+TRACK CBRUN. Four arms, `CBO_TARGET=matvec_core`, `CB_STYLE=distributed`, on the
+BC-250, all capped and verified. **No hardware. No Vivado on the workstation** --
+that lane was claimed by the main session for a `matvec_int4_desc_axi` draw.
+**`rtl/matvec_core.vhd` was NOT edited in the repository**: every arm is a tree
+under `/mnt/storage/fk33_builds/scratch/cbrun`, and TRACK CBREVERT owns the repo
+file. Captures and drivers: `hw/fk33/results/cbrun_2026-09-21/`.
+
+### The question, verbatim
+
+> `CBO_TARGET=matvec_core`, `CBO_GEN="BLK=32 ROWS_IF=48 MAXCOLS=17408
+> MAXROWS_BFP=17408 CB_ROWS_PER_COPY=1 CB_STYLE=distributed"`, four arms.
+> `bcast` is the attribution control and the row that matters most: its write
+> statement is byte-identical to `old`'s. If restoring it does not restore the
+> inference, CBRAM's mechanism is wrong and must be redone rather than patched.
+> `fan` against `bcast` separates syntactic from semantic.
+
+### The answer, up front
+
+**There is nothing to separate. `cb` infers as distributed RAM in ALL FOUR arms,
+to the same primitive count, at the card's geometry.** MEASURED from each arm's
+post-`opt_design` checkpoint by `get_cells`:
+
+    arm     cb_ram   cb_ff   RAM32M16   RAMD32   RAMS32   MUXF8
+    old      26112      0      1573      22022     3146      0
+    new      26112      0      1573      22022     3146      0
+    bcast    26112      0      1573      22022     3146      0
+    fan      26112      0      1573      22022     3146      0
+
+Identical to the digit in every column, in every arm. `26,112 = 1,536 x 17`,
+and the 17 decomposes exactly: **14 `RAMD32` + 2 `RAMS32` + 1 `RAM32M16` per
+copy**, i.e. one `RAM32M16` macro and its sixteen bels. `1,573 = 1,536` for `cb`
+plus the `37` of `xq_reg`, matching the `RAM32M16 x 37` row the card build's own
+mapping report gives for `xq_reg`.
+
+**This is falsifier 2 of the specification above -- "`new` shows `cb_ram > 0`:
+the effect does not reproduce one level down, so it is not a property of
+`matvec_core` alone and this whole diagnosis falls" -- and it has fired.** The
+same verdict was reached concurrently and independently at
+`CBO_TARGET=matvec_int4_desc_axi` by the main session (`cb_ram = 26112` in both
+arms, `f8` delta `+0`, `lut_mem` delta `+0`), so it is not an artefact of
+choosing `matvec_core`.
+
+**So the mechanism this file proposes is NOT CONFIRMED.** The write statement's
+form does not gate the inference at this level, in either direction:
+`cbw_a(cb_rank_of(c))` infers exactly as `cbw_a(c)` does. The
+syntactic-versus-semantic question left open above is answered *neither*: the
+form is not a gate here at all.
+
+**AND THE INSTRUMENT IS REFUTED, which is the more reusable half.**
+`[Synth 8-5859]` names `cb_reg` in **none of the four arms** -- anchored count
+**0** in each -- in runs whose Distributed RAM mapping reports name 1,536
+`cb_reg` copies as `RAM32M16` and whose censuses agree. **An absent `8-5859` is
+compatible with a fully successful inference, measured directly, four times.**
+The diagnosis above rests on that absence in build 11b and it cannot bear the
+weight. See the CORRECTION at the end of this section.
+
+**Option R3a (`fan`) is not a repair option. It is the same netlist as `new`.**
+MEASURED: `fan` and `new` agree on all twenty summary fields *and* on the total
+cell, net and pin counts of the checkpoint, and `cbx_any = 0` -- the
+combinational aliases do not exist in the netlist at all.
+
+    arm     cells    nets       pins       cbx_any
+    new    171716   2046259    4708060       0
+    fan    171716   2046259    4708060       0
+    old    191787   2066173    4806825       0
+    bcast  191921   2066115    4809766       0
+
+The alias folds away completely, so R3a cannot differ from `new` in any way, and
+it could never have restored anything `new` lost. **This is CBOOC's
+`CB_STYLE=regs` finding in a second place: two arms that are secretly one, which
+would have printed a full result row and read as a careful negative.** Strike
+R3a from the shelf.
+
+**Is the revert still the right fix? Yes, and nothing here weakens it -- but it
+now rests entirely on two CARD-level facts and not on this mechanism.** (1) Build
+9 carries the pre-change codebook at the same `CB_STYLE=distributed` and routes
+at WNS +0.061 / TNS 0.000, measured in this file from an already-committed log.
+(2) Build 11b did not fail on timing, it failed to ROUTE, and 38 of the 40 nets
+in its top-10 signal-overlap table are `bd_i/eng/inst/eng/dut/core/cb[][][]`
+(MEASURED by the main session). **The revert was never contingent on the
+`8-5859` story, and that is the only reason the recommendation survives the
+mechanism falling.**
+
+### The procedure, in order, and what each step isolates
+
+1. **Prepare `old` and `new` where git lives**, with CBOOC's
+   `sim/ooc_cbooc_run.sh` in `CBO_PREPARE_ONLY=1` mode -- the mode that exists
+   for exactly this. Its provenance assertion passed, so `0b34200^` IS
+   HEAD-minus-the-four-hunks and `old` is build 10's file rather than an
+   imitation of the change. `MANIFEST.txt` carries the sha256s because the
+   BC-250 sync copies no `.git`, so sha256 is the only form of the check that
+   survives the crossing. All four recomputed identically on the far side.
+2. **Build `fan` and `bcast` from `new`, not from `old`**, by anchored
+   substitutions each asserted to match exactly once. From `old` they would have
+   reintroduced all four hunks and been unattributable. `bcast`'s write statement
+   is byte-identical to `old`'s (md5 `0e6469929f647e84414589a72db95817` of the
+   extracted line in both) while its write LOOP is `new`'s split loop with only
+   the index expressions changed -- a discriminator the specification did not
+   have, separating the loop split from the index expression.
+3. **Gate all four on GHDL elaboration before shipping.** All four print their
+   announcement, then fail identically at time 0 with `overflow detected`
+   (CBOOC's documented property of `matvec_core` as a TOP with `integer` ports at
+   `integer'left`; `overflow_lines=1` and `assert_failures=0` in each). A
+   `CBRUN_ARM=` field was added to `fan` and `bcast` because the gate keys on
+   `CB_COPIES` and `CB_RANKS`, identical in `new`, `fan` and `bcast`; without it
+   a mixed-up arm would have looked like a result.
+4. **Verify the cap from inside the cgroup before exec'ing Vivado**, never from
+   `systemd-run`'s exit status. This caught a real failure (trap 2 below).
+5. **Draw all four through the same unedited `sim/ooc_cbooc.tcl`**, one Vivado at
+   a time, so no harness difference lies on the same axis as the RTL difference.
+6. **Check falsifier 1 after the first arm, before spending three more draws.**
+   `old` gave `cb_ram = 26112`, so the geometry was right and the run admissible.
+7. **Read the mapping report and the census, not the log's opinion.** This is
+   what turned the expected result over, and it had to be done FIRST rather than
+   as a confirmation step -- see trap 3.
+8. **Re-open each arm's post-`opt_design` checkpoint** to name the command nets
+   and count total cells, rather than re-synthesising. Same netlist, so the
+   answer is exact rather than equivalent, and it costs ~80 s per arm.
+
+### The evidence, as raw output
+
+#### The recognizer, ANCHORED, all four arms
+
+    arm     8-5859 total   8-5859 naming cb_reg   cb_reg RAM32M16 mapping rows   distinct cb_reg indices
+    old          0                  0                      3072                         1536
+    new          0                  0                      3072                         1536
+    bcast        0                  0                      3072                         1536
+    fan          0                  0                      3072                         1536
+
+3,072 is 1,536 rows in each of the preliminary and final mapping reports;
+`xq_reg` appears twice in each arm for the same reason.
+
+**The greps MUST be line-anchored, and unanchored they are wrong in this exact
+log.** `grep -c 'Synth 8-7186'` returns **24,577**; anchored on
+`^WARNING: \[Synth 8-7186\]` it is **24,576 = 1,536 x 16 exactly**, once per
+LUTRAM bel. `grep -c 'Synth 8-10226'` returns **1**; anchored it is **0**. Both
+over-counts are the SAME single line: `sim/ooc_cbooc.tcl` echoes its own source
+into the log, including the line that raises those two message limits:
+
+    # foreach mid {{Synth 8-7186} {Synth 8-10226}} {
+
+And every object the 24,576 warnings name is a `RAM32M16` in the same run's
+mapping report -- CLAUDE.md's recorded `cb[0][0]` lie, reproduced verbatim and
+now with an exact count:
+
+    WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is
+    ignored, object 'cb[0][0]' is not inferred as ram due to incorrect usage
+    [.../old/rtl/matvec_core.vhd:264]
+
+    |matvec_core__GB10 | cb_reg[1023][11] | User Attribute | 16 x 8 | RAM32M16 x 1 |
+
+#### The codebook census, `opt` stage, all four arms
+
+    arm     cb_ram   cb_ff   cbw_ff   cbr_ff   cbx_any   cbwv_ff  cbwa_ff  cbwd_ff
+    old      26112      0     19968       0        0       1536     6144    12288
+    new      26112      0       624       0        0         48      192      384
+    bcast    26112      0     19968     624        0       1536     6144    12288
+    fan      26112      0       624       0        0         48      192      384
+
+`cbw_ff` `19,968 -> 624` is exactly `13 x 1,536 -> 13 x 48`, delta **-19,344**,
+structural and exact. `bcast` restores 19,968 and adds its own 624 `cbr_*` stage,
+giving 20,592 command flops in total -- **but note the filter: `cbr_*` does not
+match `NAME =~ *cbw_*`, so the specification's registered `cbw_ff = 20,592` for
+`bcast` reads as 19,968 in that column by construction of the name, not by a
+disagreement about the design.**
+
+#### Utilization and primitive census, `opt` STAGE ONLY, never mixed with synth
+
+    arm     lut     lut_logic  lut_mem   ff      MUXF7  MUXF8   DSP    BRAM   CARRY8  SRL
+    old    78183     64769      13414   73463      3      0     1584   21.5    5866   830
+    new    77560     64146      13414   54126      0      0     1584   21.5    5895   830
+    bcast  77745     64331      13414   74092     10      0     1584   21.5    5808   830
+    fan    77560     64146      13414   54126      0      0     1584   21.5    5895   830
+
+Controls that did NOT move, which is what makes the rest attributable:
+`lut_mem` 13,414, `DSP` 1,584, `BRAM` 21.5, `SRL` 830, `RAMD32` 22,022,
+`RAMS32` 3,146, `RAM32M16` 1,573 -- identical in all four arms.
+
+#### The command-net fanout, by NAME, from the checkpoints
+
+    arm     distinct D nets   max FLAT_PIN_COUNT   histogram
+    old            13               1537           1537x1 1536x12
+    new            13                129            129x1   48x12
+    fan            13                129            129x1   48x12
+    bcast         624                 33             33x624
+
+`FLAT_PIN_COUNT` counts the driver when the driver is a cell pin and not when it
+is a top-level port, which is why the twelve port-driven nets read one lower
+than the internally-driven valid net for the same load count.
+
+#### WHICH of the thirteen is the outlier, and why -- the question the histogram cannot answer
+
+    CBN_NET tag=cb_old   flat_pin_count=1537 loads=1536 to_cbw_v=1536 to_other=0  drivers=1 ports=0 name=cbw_v_reg0
+    CBN_NET tag=cb_new   flat_pin_count=129  loads=128  to_cbw_v=48   to_other=80 drivers=1 ports=0 name=cbw_v_reg1
+    CBN_NET tag=cb_fan   flat_pin_count=129  loads=128  to_cbw_v=48   to_other=80 drivers=1 ports=0 name=cbw_v_reg1
+    CBN_NET tag=cb_bcast flat_pin_count=33   loads=32   to_cbw_v=32   to_other=0  drivers=1 ports=0 name=cbr_v[0..47]
+
+    the other twelve, every arm:  cb_addr[0..3] and cb_data[0..7], ports=1,
+    drivers=0, loads = exactly CB_RANKS (48) in new/fan and CB_COPIES (1536) in
+    old, to_other=0 in every case.
+
+**MEASURED: the outlier is the VALID bit, and it is the outlier because its net
+is SHARED. 48 of its 128 loads are the `cbw_v` flops -- exactly `CB_RANKS`, as
+registered -- and the other 80 are pins elsewhere in the core.** The twelve
+address and data bits fell to exactly `CB_RANKS` because they are top-level
+PORTS that drive nothing but the command registers; the thirteenth is an
+internal logic net (the `cb_we and st = S_IDLE and rst = '0'` term) that also
+feeds 80 unrelated sinks. In `old` the same net has `to_other = 0` and exactly
+1,536 `cbw_v` loads.
+
+**ESTIMATE for the mechanism, stated as an estimate:** at 1,536 loads Vivado
+isolated that term onto its own replica, and at 48 loads it no longer did, so
+the command net stayed merged with the shared decode. What is MEASURED is the
+`48 + 80` split and the `1,536 + 0` split; the reason Vivado replicated in one
+case and not the other is not established here. **This also predicts the
+number is context-dependent, and it is: the main session measured 108 loads for
+the same net at `matvec_int4_desc_axi` against 128 here.** So `109` and `129`
+are the same finding in two contexts, and neither is `49`.
+
+#### Memory, per arm -- and EVERY arm hit the cap
+
+    arm     cgroup_peak_mb  at_cap  cgroup_swap_mb  summed_vmrss_gb  wall_s
+    old         8195         YES         8635            9.64         1488
+    new         8195         YES         8372            9.28         1258
+    bcast       8195         YES         8432            9.58         1380
+    fan         8195         YES         8066            9.60         1259
+
+**All four `memory.peak` figures are the CAP, not the appetite**, and must not
+be quoted as footprints: `MemoryHigh` forces reclaim rather than failing, so RSS
+sits at the cap and `memory.peak` records the cap. The only honest size figure
+from this run is Vivado's own accounting, `Memory (MB): peak = 3,941` for `old`
+at its largest synthesis phase. The ~8.5 GB `cgroup_swap_mb` is the price of an
+8G cap on a job whose cgroup charge includes its page cache; box swap in use
+peaked around 6 GB of 48 GB and the swap guard (kill at 20 GB) never fired. The
+cap was held at 8G for all four arms rather than raised to reduce the thrash,
+because wall time is not a result this experiment needs and changing a cap
+mid-experiment adds an unforced variable.
+
+#### How the cap was verified, and the trap the verification caught
+
+Never from `systemd-run`'s exit status. The wrapper reads `memory.high` out of
+its OWN cgroup and refuses to `exec vivado` if it is `max` or unreadable. The
+first form tried was `systemd-run ... bash -c '... $cg ...'`, and **systemd
+expanded the `$cg` in its own command line before bash ever saw it**:
+
+    Referenced but unset environment variable evaluates to an empty string: cg
+    cgroup=/user.slice/.../cbrun_captest_2570525.scope
+    memory.high=cat: /sys/fs/cgroup/memory.high: No such file or directory
+    systemd_run_rc=0
+
+A correctly named scope, a cap that WAS really applied, an `rc=0`, and a cap
+check that verified nothing. Writing the wrapper to a FILE so no `$` reaches
+systemd's command line fixes it, and the live runs then carried:
+
+    CBRUN_CAP_READBACK cgroup=/user.slice/.../cbrun_old_2570677.scope memory.high=8589934592 memory.max=11811160064
+    CBN_CAP_READBACK   cgroup=/user.slice/.../cbn_old_2985399.scope   memory.high=8589934592
+
+`MemoryHigh=8G` throttles and `MemoryMax=11G` is a hard in-cgroup kill line, so
+neither reaches the 11G ceiling that a 12G cap crossed when it made this box
+unreachable.
+
+### Registered predictions against results, unadjusted
+
+| registered by | prediction | measured at `matvec_core` | verdict |
+|---|---|---|---|
+| CBOOC | `cbw_*` command flops `19,968 -> 624`, delta **-19,344** | 19,968 -> 624, **-19,344** | **HIT, exact** |
+| CBOOC | total FF delta **-19,344** | **-19,337** (73,463 -> 54,126) | **near miss: 7 flops reappear elsewhere** |
+| CBOOC | LUT delta **0** | **-623** (78,183 -> 77,560) | **MISS.** The main session measured **+1,456** at `desc_axi`: wrong in both runs, in opposite directions |
+| CBOOC | 13 `cbw_*` command nets in BOTH arms, as a control | 13 in both | **HIT, and it is the control that makes the fanout row attributable** |
+| CBOOC | max command-net fanout `1,537 -> 49` | `1,537 -> 129` | **MISS on the max.** Twelve of thirteen fell to exactly 48; the thirteenth is shared (above) |
+| CBOOC | LUTRAM / DSP / RAMB36 / CARRY8 / MUXF7 / MUXF8 delta 0 | `lut_mem` 0, DSP 0, BRAM 0, SRL 0; **CARRY8 +29, MUXF7 -3** | partly MISS, small |
+| CBRAM | `[Synth 8-5859] Recognized 3D RAM cb_reg` **fires for `old`**, absent for `new` | **absent for `old` too** | **MISS, and it refutes the instrument** |
+| CBRAM | `MUXF8` `0 -> 12,288` on the `matvec_core` draw | **0 -> 0** | **MISS** |
+| CBRAM | `old`/`fan`/`bcast` `cb_ram > 0` with `cb_ff = 0`; `new` `cb_ram = 0` with `cb_ff = 6,144` | `cb_ram = 26,112`, `cb_ff = 0`, in **all four** | **MISS on `new`: this is falsifier 2** |
+| CBRAM | `bcast` gives back `+624 FF` over `old` | `74,092 - 73,463 = +629` | **HIT to 5 flops** |
+| CBRAM | `bcast` fanout max 48, strictly better than R3a | max **32** on the 624 `cbr_*` nets, 48 on the port side | **HIT** |
+| CBRAM | R3a keeps the whole `-19,344` flop saving | it does, because **it is the same netlist as `new`** | HIT, and vacuous |
+
+### Measured and REJECTED -- do not retry
+
+- **`[Synth 8-5859]` as the instrument for whether `cb` inferred.** MEASURED:
+  absent in all four arms, including two in which 1,536 `RAM32M16` copies are
+  named by the mapping report and counted by `get_cells`. It is also unavailable
+  as a differential at this target for a second, independent reason: the positive
+  control the section above relies on is `gdn_block`'s `qbuf`/`kbuf` rows, and
+  **`gdn_block` is not in `matvec_core`'s closure at all**, so there is no
+  control here even in principle. Use the Distributed RAM mapping report, which
+  names the object, with the `get_cells` census as the cross-check.
+- **Reproducing the card's mux tree out of context, at EITHER level.** MEASURED
+  at `matvec_core` (`MUXF8 = 0` in all four arms) and at `matvec_int4_desc_axi`
+  (`f8` delta `+0`, `cb_ram = 26112` both arms). The card's `+12,288 MUXF8` and
+  `-12,304 LUT-as-Distributed-RAM` have no OOC counterpart at any level tried.
+  **An OOC draw cannot answer what `cb` becomes on the card.** This is the
+  recorded "the parts do not sum across synthesis contexts" rule landing on the
+  codebook.
+- **Option R3a, the combinational per-copy alias.** REJECTED with a proof rather
+  than an opinion: `cbx_any = 0`, and identical cell, net and pin totals to
+  `new`. It is the same netlist. Do not draw it again.
+- **Treating the four arms' agreement on inference as four confirmations.** It is
+  one null control counted four times. All four agree BECAUSE all four infer,
+  which is exactly the state in which the arms cannot discriminate.
+- **`CB_STYLE=regs` for this question.** Not retried; the reason stands.
+- **Quoting any `memory.peak` from this run as a footprint.** All four are the
+  8G cap.
+
+### Measurement traps hit, including mine
+
+1. **I wrote my own message greps UNANCHORED, in a project that has recorded
+   this trap three times.** `8-7186` read 24,577 against a true 24,576, and
+   `8-10226` read 1 against a true 0 -- both over-counts being the SAME line of
+   the tcl's own source, echoed into the log by the very command that raises
+   those message limits. The damage would have been precisely on the numbers
+   whose exactness (`1,536 x 16`) was the reason for reading them.
+2. **The cap readback I added to avoid ELABCLASS's trap had the same shape of
+   bug itself**, and only a deliberate teeth test on a throwaway scope found it:
+   systemd ate the `$cg` in the command line, so the check read
+   `/sys/fs/cgroup/memory.high`, got "No such file", and exited 0. **Adding a
+   verification step is not the same as verifying it**; the check had to be run
+   against a state I had measured before I believed either it or the cap.
+3. **My first reading of the live `old` log was "8-5859 = 0, so falsifier 1 has
+   fired and the geometry is wrong".** It had not. The mapping report in the SAME
+   log already named 1,536 `RAM32M16` copies. I reached for the message before
+   the report because the message was the instrument the specification named --
+   the recorded "read the census FIRST, not as a confirmation step after forming
+   a theory", walked into from the other direction.
+4. **My `CBN_RAMIN` histogram of the RAM cells' input nets is not trustworthy and
+   I am not quoting its values.** It reports 24,577 distinct nets all with
+   `FLAT_PIN_COUNT = 443,140`, which cannot be true of distinct nets; a batched
+   `get_property` over ~10^5 nets appears to have mis-bound values to objects.
+   It is used ONLY as a string-equality check between `fan` and `new`, which
+   survives whatever the mis-binding is because the same mis-binding on the same
+   netlist gives the same string. **A number that cannot be true is not a small
+   error, it is a broken instrument**, and the tell was that it was not a round
+   multiple of anything nor consistent with `CBOOC_FANOUT_TOP`'s single largest
+   net.
+5. **`summed_vmrss_gb` of 9.28-9.64 GB looks like the job's footprint and is
+   not.** It sums Vivado's parallel-synthesis workers, which inherit the
+   parent's argv, next to a cgroup pinned at 8G.
+6. **`bcast`'s registered `cbw_ff = 20,592` reads as 19,968** because the census
+   filter is `NAME =~ *cbw_*` and the new stage is named `cbr_*`. The arithmetic
+   was right and the name was not in the filter. A prediction has to be written
+   in the instrument's own terms or it scores as a miss it did not earn.
+
+### CORRECTION, 2026-09-21: the claim that the recognizer DECLINED `cb` is WITHDRAWN
+
+The section above states, as its answer up front, *"Vivado's `[Synth 8-5859]`
+3D-RAM recognizer accepted `cb` in build 10 and declined it in build 11b. That
+single message is the gate; everything downstream follows from it."*
+
+**The first half stands as a positive observation** -- build 10's log does
+contain `8-5859 ... Recognized 3D RAM cb_reg ... matvec_core.vhd:692`, and that
+is a message that was really printed. **The second half is WITHDRAWN.** Build
+11b's log carries no `8-5859` about `cb` in either direction, and MEASURED here
+four times, an absent `8-5859` is compatible with a fully successful inference.
+"Declined" was read off an absence. The section's own open item 2 asked whether
+`8-5859` is *sufficient*; the answer is that it is not even *necessary*.
+
+**What is NOT withdrawn:** the placed-stage census in the section above --
+`RAMD32 -21,528 = 1,536 x 14`, `MUXF8 +12,288 = 1,536 x 8`, the control sets
+going `1,536 x 16` LUTRAM bels to `48 x 128` flip-flops, and `RAMD64E`,
+`DSP48E2` and `SRL16E` unchanged to the digit. Those are object-level
+measurements on the real builds and they still say `cb` became a mux tree on the
+card. **What has fallen is the explanation of WHY, and with it both shelf
+repairs**, because neither can be tested in a context where the defect does not
+appear.
+
+### Open, not determined
+
+1. **What actually differs between the card context and OOC**, such that `cb`
+   becomes 1,536 mux trees there and 1,536 `RAM32M16` here, at the same
+   generics, from the same RTL. Nothing in this run isolates it. The candidates
+   nobody has separated are the `-mode out_of_context` flag itself, the enclosing
+   hierarchy (`matvec_int4` -> `matvec_int4_desc_axi` -> `fk33_engine` ->
+   `fk33_card` -> `bd_wrapper`), the card build's synthesis directive and
+   `-flatten_hierarchy` setting, and device occupancy pressure at 92% LUT.
+2. **Whether the card-context effect is a function of `0b34200` at all.** Both
+   OOC levels now say the RTL difference alone does not cause it. The card
+   evidence is two builds that differ in seven things. **This is not a small
+   open item: it is the possibility that the codebook change is a bystander.**
+   The revert is still right on the build-9 and build-11b-route evidence, but
+   "L-CB caused the mux tree" is now less supported than it was this morning,
+   not more.
+3. **What the 80 non-`cbw_v` sinks of the shared valid net are.** MEASURED as
+   80; not identified. One more checkpoint query would name them.
+4. **Why Vivado replicated that term at 1,536 loads and not at 48.** ESTIMATE
+   only, above.
+5. **Whether `bcast` helps on the card.** Untestable here by construction, and
+   its `+629 FF` and max-32 fanout are its cost, not a benefit. **Do not put it
+   on a card build on the strength of this run.**
+6. **Nothing here is a timing or routing result.** `synth_design` + `opt_design`
+   only, no place, no route; the OOC WNS figures (+10.005, +10.015, +9.725,
+   +10.015 at a 13.333 ns period, 0 failing endpoints in every arm) are not
+   comparable to a routed number and are not quoted as one.
+7. **Nothing here is a silicon measurement.** The card was live and serving
+   throughout and was not touched.

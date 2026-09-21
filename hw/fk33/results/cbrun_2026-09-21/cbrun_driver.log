@@ -1,0 +1,103 @@
+CBRUN 2026-09-21T08:50:56-04:00 HOST=cachyos-bc250 run=/home/orencollaco/cbrun_scratch/run_20260921_064527_1460266 cap=8G arms='old new bcast fan'
+               total        used        free      shared  buff/cache   available
+Mem:           15204        1938       11830           7        1773       13265
+Swap:          47971        1082       46889
+CBRUN 2026-09-21T08:50:56-04:00 PROV arm=old sha256=ef401b6ff079e055 ok
+CBRUN 2026-09-21T08:50:56-04:00 PROV arm=new sha256=974734a743f73201 ok
+CBRUN 2026-09-21T08:50:56-04:00 PROV arm=bcast sha256=6f0c687c1bf5e756 ok
+CBRUN 2026-09-21T08:50:56-04:00 PROV arm=fan sha256=1e801942f6a8d666 ok
+CBRUN 2026-09-21T08:50:56-04:00 PROV tcl sha256=afe4d0de963485ad ok
+CBRUN 2026-09-21T08:50:57-04:00 === draw arm=old tag=cb_old begin ===
+arm=old tag=cb_old peak_rss_gb=9.64 cgroup_peak_mb=8195 cgroup_swap_mb=8635 at_cap=YES wall_s=1488 rc=0
+CBRUN_CAP_READBACK cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/cbrun_old_2570677.scope memory.high=8589934592 memory.max=11811160064
+CBRUN 2026-09-21T09:15:45-04:00 RECOG arm=old ---8-5859 lines, verbatim---
+CBRUN 2026-09-21T09:15:45-04:00 RECOG arm=old cb_reg_rows=0 gdn_rows=0 total_8-5859=0
+CBRUN 2026-09-21T09:15:45-04:00 LOGMSG arm=old 8-10226=1 8-7186=24577
+CBOOC_GENERICS tag=cb_old gen="BLK=32 ROWS_IF=48 MAXCOLS=17408 MAXROWS_BFP=17408 CB_ROWS_PER_COPY=1 CB_STYLE=distributed"
+CBOOC_ARM_MD5 tag=cb_old b616c7822f93154b08200f9418489012  /home/orencollaco/cbrun_scratch/run_20260921_064527_1460266/old/rtl/matvec_core.vhd
+CBOOC_CENSUS stage=synth tag=cb_old dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=70715 lut1=1724 lut2=28680 lut3=12930 lut4=2533 lut5=11445 lut6=13403 ff=73463 carry8=5866 f7=3 f8=0 f9=0 srl=830
+CBOOC_CB stage=synth tag=cb_old cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19969 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=synth tag=cb_old nets=2103503 max_flat_pin_count=455124 file=fanout_top_synth_cb_old.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_old cbw_ffs=19968 distinct_d_nets=13 max_flat_pin_count=1537 max_sinks=1536 hist="1537x1 1536x12"
+CBOOC_CENSUS stage=opt tag=cb_old dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=70600 lut1=1807 lut2=28482 lut3=12930 lut4=2533 lut5=11445 lut6=13403 ff=73463 carry8=5866 f7=3 f8=0 f9=0 srl=830
+CBOOC_CB stage=opt tag=cb_old cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19969 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=opt tag=cb_old nets=2066173 max_flat_pin_count=443140 file=fanout_top_opt_cb_old.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_old cbw_ffs=19968 distinct_d_nets=13 max_flat_pin_count=1537 max_sinks=1536 hist="1537x1 1536x12"
+CBOOC_INTRA tag=cb_old clk=clk wns=10.005 tns=0.000 failing=0 endpoints=437409
+CBOOC_WORST_GLOBAL tag=cb_old wns=10.005 levels=2 datapath=3.090 start=st_reg[2]/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_WORST_CLK tag=cb_old clk=clk period=13.333 wns=10.005 levels=2 datapath=3.090 start=st_reg[2]/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_CBW_PATH tag=cb_old paths=20 wns=12.591 levels=2 datapath=0.724 start=st_reg[0]/C end=cbw_v_reg[0]/D
+CBOOC_RESULT tag=cb_old lut=78183 lut_logic=64769 lut_mem=13414 ff=73463 bram=21.5 ramb36=21 ramb18=1 uram=0 dsp=1584 carry8=5866 f7=3 f8=0 synth_s=861 opt_s=200 timing="clk:10.005" cbw_worst=12.591
+CBOOC_SYNTH_VS_OPT tag=cb_old synth_lut=78298 opt_lut=78183 synth_ff=73463 opt_ff=73463 synth_bram=21.5 opt_bram=21.5 synth_dsp=1584 opt_dsp=1584 synth_uram=0 opt_uram=0
+CBRUN 2026-09-21T09:15:45-04:00 OK arm=old rc=0 peak_rss=9.64GB cgroup_peak=8195MB swap=8635MB at_cap=YES wall=1488s
+CBRUN 2026-09-21T09:15:45-04:00 FALSIFIER1 old :: CBOOC_CB stage=opt tag=cb_old cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19969 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBRUN 2026-09-21T09:15:45-04:00 === draw arm=new tag=cb_new begin ===
+arm=new tag=cb_new peak_rss_gb=9.28 cgroup_peak_mb=8195 cgroup_swap_mb=8372 at_cap=YES wall_s=1258 rc=0
+CBRUN_CAP_READBACK cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/cbrun_new_2570677.scope memory.high=8589934592 memory.max=11811160064
+CBRUN 2026-09-21T09:36:43-04:00 RECOG arm=new ---8-5859 lines, verbatim---
+CBRUN 2026-09-21T09:36:43-04:00 RECOG arm=new cb_reg_rows=0 gdn_rows=0 total_8-5859=0
+CBRUN 2026-09-21T09:36:43-04:00 LOGMSG arm=new 8-10226=1 8-7186=24577
+CBOOC_GENERICS tag=cb_new gen="BLK=32 ROWS_IF=48 MAXCOLS=17408 MAXROWS_BFP=17408 CB_ROWS_PER_COPY=1 CB_STYLE=distributed"
+CBOOC_ARM_MD5 tag=cb_new c3325ea1f418dcbcaa85f33e47e8c901  /home/orencollaco/cbrun_scratch/run_20260921_064527_1460266/new/rtl/matvec_core.vhd
+CBOOC_CENSUS stage=synth tag=cb_new dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=69956 lut1=1066 lut2=28603 lut3=13382 lut4=2343 lut5=11805 lut6=12757 ff=54126 carry8=5895 f7=0 f8=0 f9=0 srl=830
+CBOOC_CB stage=synth tag=cb_new cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=synth tag=cb_new nets=2083727 max_flat_pin_count=437527 file=fanout_top_synth_cb_new.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_new cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=129 max_sinks=128 hist="129x1 48x12"
+CBOOC_CENSUS stage=opt tag=cb_new dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=69840 lut1=1149 lut2=28404 lut3=13382 lut4=2343 lut5=11805 lut6=12757 ff=54126 carry8=5895 f7=0 f8=0 f9=0 srl=830
+CBOOC_CB stage=opt tag=cb_new cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=opt tag=cb_new nets=2046259 max_flat_pin_count=425487 file=fanout_top_opt_cb_new.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_new cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=129 max_sinks=128 hist="129x1 48x12"
+CBOOC_INTRA tag=cb_new clk=clk wns=10.015 tns=0.000 failing=0 endpoints=436025
+CBOOC_WORST_GLOBAL tag=cb_new wns=10.015 levels=2 datapath=3.080 start=st_reg[2]_rep__0/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_WORST_CLK tag=cb_new clk=clk period=13.333 wns=10.015 levels=2 datapath=3.080 start=st_reg[2]_rep__0/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_CBW_PATH tag=cb_new paths=20 wns=12.913 levels=1 datapath=0.402 start=st_reg[0]_rep/C end=cbw_v_reg[0]/D
+CBOOC_RESULT tag=cb_new lut=77560 lut_logic=64146 lut_mem=13414 ff=54126 bram=21.5 ramb36=21 ramb18=1 uram=0 dsp=1584 carry8=5895 f7=0 f8=0 synth_s=694 opt_s=195 timing="clk:10.015" cbw_worst=12.913
+CBOOC_SYNTH_VS_OPT tag=cb_new synth_lut=77676 opt_lut=77560 synth_ff=54126 opt_ff=54126 synth_bram=21.5 opt_bram=21.5 synth_dsp=1584 opt_dsp=1584 synth_uram=0 opt_uram=0
+CBRUN 2026-09-21T09:36:44-04:00 OK arm=new rc=0 peak_rss=9.28GB cgroup_peak=8195MB swap=8372MB at_cap=YES wall=1258s
+CBRUN 2026-09-21T09:36:44-04:00 === draw arm=bcast tag=cb_bcast begin ===
+arm=bcast tag=cb_bcast peak_rss_gb=9.58 cgroup_peak_mb=8195 cgroup_swap_mb=8432 at_cap=YES wall_s=1380 rc=0
+CBRUN_CAP_READBACK cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/cbrun_bcast_2570677.scope memory.high=8589934592 memory.max=11811160064
+CBRUN 2026-09-21T09:59:44-04:00 RECOG arm=bcast ---8-5859 lines, verbatim---
+CBRUN 2026-09-21T09:59:44-04:00 RECOG arm=bcast cb_reg_rows=0 gdn_rows=0 total_8-5859=0
+CBRUN 2026-09-21T09:59:44-04:00 LOGMSG arm=bcast 8-10226=1 8-7186=24577
+CBOOC_GENERICS tag=cb_bcast gen="BLK=32 ROWS_IF=48 MAXCOLS=17408 MAXROWS_BFP=17408 CB_ROWS_PER_COPY=1 CB_STYLE=distributed"
+CBOOC_ARM_MD5 tag=cb_bcast 38f3191a58c4604da5602cd4a59f3678  /home/orencollaco/cbrun_scratch/run_20260921_064527_1460266/bcast/rtl/matvec_core.vhd
+CBOOC_CENSUS stage=synth tag=cb_bcast dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=70218 lut1=773 lut2=28545 lut3=12722 lut4=2246 lut5=12916 lut6=13016 ff=74092 carry8=5808 f7=10 f8=0 f9=0 srl=830
+CBOOC_CB stage=synth tag=cb_bcast cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19968 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=synth tag=cb_bcast nets=2102961 max_flat_pin_count=455216 file=fanout_top_synth_cb_bcast.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_bcast cbw_ffs=19968 distinct_d_nets=624 max_flat_pin_count=33 max_sinks=32 hist="33x624"
+CBOOC_CENSUS stage=opt tag=cb_bcast dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=70156 lut1=818 lut2=28438 lut3=12722 lut4=2246 lut5=12916 lut6=13016 ff=74092 carry8=5808 f7=10 f8=0 f9=0 srl=830
+CBOOC_CB stage=opt tag=cb_bcast cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19968 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=opt tag=cb_bcast nets=2066115 max_flat_pin_count=443400 file=fanout_top_opt_cb_bcast.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_bcast cbw_ffs=19968 distinct_d_nets=624 max_flat_pin_count=33 max_sinks=32 hist="33x624"
+CBOOC_INTRA tag=cb_bcast clk=clk wns=9.725 tns=0.000 failing=0 endpoints=456078
+CBOOC_WORST_GLOBAL tag=cb_bcast wns=9.725 levels=3 datapath=3.370 start=st_reg[2]_rep/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_WORST_CLK tag=cb_bcast clk=clk period=13.333 wns=9.725 levels=3 datapath=3.370 start=st_reg[2]_rep/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_CBW_PATH tag=cb_bcast paths=20 wns=12.993 levels=0 datapath=0.322 start=cbr_a_reg[0][0]/C end=cbw_a_reg[0][0]/D
+CBOOC_RESULT tag=cb_bcast lut=77745 lut_logic=64331 lut_mem=13414 ff=74092 bram=21.5 ramb36=21 ramb18=1 uram=0 dsp=1584 carry8=5808 f7=10 f8=0 synth_s=759 opt_s=200 timing="clk:9.725" cbw_worst=12.993
+CBOOC_SYNTH_VS_OPT tag=cb_bcast synth_lut=77807 opt_lut=77745 synth_ff=74092 opt_ff=74092 synth_bram=21.5 opt_bram=21.5 synth_dsp=1584 opt_dsp=1584 synth_uram=0 opt_uram=0
+CBRUN 2026-09-21T09:59:44-04:00 OK arm=bcast rc=0 peak_rss=9.58GB cgroup_peak=8195MB swap=8432MB at_cap=YES wall=1380s
+CBRUN 2026-09-21T09:59:44-04:00 === draw arm=fan tag=cb_fan begin ===
+arm=fan tag=cb_fan peak_rss_gb=9.60 cgroup_peak_mb=8195 cgroup_swap_mb=8066 at_cap=YES wall_s=1259 rc=0
+CBRUN_CAP_READBACK cgroup=/user.slice/user-1000.slice/user@1000.service/app.slice/cbrun_fan_2570677.scope memory.high=8589934592 memory.max=11811160064
+CBRUN 2026-09-21T10:20:43-04:00 RECOG arm=fan ---8-5859 lines, verbatim---
+CBRUN 2026-09-21T10:20:43-04:00 RECOG arm=fan cb_reg_rows=0 gdn_rows=0 total_8-5859=0
+CBRUN 2026-09-21T10:20:43-04:00 LOGMSG arm=fan 8-10226=1 8-7186=24577
+CBOOC_GENERICS tag=cb_fan gen="BLK=32 ROWS_IF=48 MAXCOLS=17408 MAXROWS_BFP=17408 CB_ROWS_PER_COPY=1 CB_STYLE=distributed"
+CBOOC_ARM_MD5 tag=cb_fan 44784474121b791c985df0759fcce751  /home/orencollaco/cbrun_scratch/run_20260921_064527_1460266/fan/rtl/matvec_core.vhd
+CBOOC_CENSUS stage=synth tag=cb_fan dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=69956 lut1=1066 lut2=28603 lut3=13382 lut4=2343 lut5=11805 lut6=12757 ff=54126 carry8=5895 f7=0 f8=0 f9=0 srl=830
+CBOOC_CB stage=synth tag=cb_fan cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=synth tag=cb_fan nets=2083727 max_flat_pin_count=437527 file=fanout_top_synth_cb_fan.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_fan cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=129 max_sinks=128 hist="129x1 48x12"
+CBOOC_CENSUS stage=opt tag=cb_fan dsp48=1584 uram288=0 ramb36=21 ramb18=1 lutram=26741 lut=69840 lut1=1149 lut2=28404 lut3=13382 lut4=2343 lut5=11805 lut6=12757 ff=54126 carry8=5895 f7=0 f8=0 f9=0 srl=830
+CBOOC_CB stage=opt tag=cb_fan cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=opt tag=cb_fan nets=2046259 max_flat_pin_count=425487 file=fanout_top_opt_cb_fan.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_fan cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=129 max_sinks=128 hist="129x1 48x12"
+CBOOC_INTRA tag=cb_fan clk=clk wns=10.015 tns=0.000 failing=0 endpoints=436025
+CBOOC_WORST_GLOBAL tag=cb_fan wns=10.015 levels=2 datapath=3.080 start=st_reg[2]_rep__0/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_WORST_CLK tag=cb_fan clk=clk period=13.333 wns=10.015 levels=2 datapath=3.080 start=st_reg[2]_rep__0/C end=tr_reg[0][0]/DSP_OUTPUT_INST/CEP
+CBOOC_CBW_PATH tag=cb_fan paths=20 wns=12.913 levels=1 datapath=0.402 start=st_reg[0]_rep/C end=cbw_v_reg[0]/D
+CBOOC_RESULT tag=cb_fan lut=77560 lut_logic=64146 lut_mem=13414 ff=54126 bram=21.5 ramb36=21 ramb18=1 uram=0 dsp=1584 carry8=5895 f7=0 f8=0 synth_s=695 opt_s=193 timing="clk:10.015" cbw_worst=12.913
+CBOOC_SYNTH_VS_OPT tag=cb_fan synth_lut=77676 opt_lut=77560 synth_ff=54126 opt_ff=54126 synth_bram=21.5 opt_bram=21.5 synth_dsp=1584 opt_dsp=1584 synth_uram=0 opt_uram=0
+CBRUN 2026-09-21T10:20:43-04:00 OK arm=fan rc=0 peak_rss=9.60GB cgroup_peak=8195MB swap=8066MB at_cap=YES wall=1259s
+CBRUN 2026-09-21T10:20:43-04:00 ALLDONE rc=0 run=/home/orencollaco/cbrun_scratch/run_20260921_064527_1460266

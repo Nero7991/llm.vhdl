@@ -1,0 +1,175 @@
+--- /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/old/rtl/matvec_core.vhd	2026-09-21 06:45:27.082769283 -0600
++++ /mnt/storage/fk33_builds/scratch/cbrun/run_20260921_064527_1460266/new/rtl/matvec_core.vhd	2026-09-20 23:25:42.000000000 -0600
+@@ -259,6 +259,117 @@
+     cb_lpc_f(CB_STYLE, CB_ROWS_PER_COPY, BLK);
+   constant CB_COPIES : positive :=
+     (ROWS_IF*BLK + CB_LANES_PER_COPY - 1) / CB_LANES_PER_COPY;
++
++  -- THE WRITE COMMAND IS REPLICATED PER ROW, NOT PER COPY, AND THAT IS THE
++  -- WHOLE OF TRACK CBFANOUT.
++  --
++  -- Build 10 (hw/fk33/results/card_build10_FAILED_2026-09-20/) failed routed
++  -- timing at WNS -5.819 ns with 17,194 failing endpoints, and every one of
++  -- the ten worst paths was cb_addr_reg[i]/C -> cbw_a_reg[c][i]/D: register
++  -- to register with NO LOGIC BETWEEN, so all 5.819 ns of it was net delay.
++  -- At CB_LANES_PER_COPY = 1 the command register was replicated per COPY,
++  -- so each of the 13 command bits (1 valid + 4 address + 8 data) drove
++  -- CB_COPIES = 1,536 flop D-inputs from one source: 19,968 endpoints against
++  -- 17,194 that failed.
++  --
++  -- The fix is to replicate the command per ROW.  Fanout per bit, as a
++  -- function of the rank count NR, is max(NR, CB_COPIES/NR), minimised at
++  -- sqrt(1536) = 39.2; ROWS_IF = 48 is the nearest value that is also a
++  -- PHYSICAL cluster, and it is a cluster for a reason that has nothing to do
++  -- with the codebook -- the BLK lanes of a row feed a shared adder tree, so
++  -- the placer keeps them together whether or not we ask.  That is the same
++  -- defence fe0d3c8 gave for replicating cb itself per row.
++  --
++  --   NR = 1     every copy reads rank 0        max fanout 1,536
++  --   NR = 48    per ROW, this design           max fanout    48
++  --   NR = 1,536 per COPY, what build 10 built  max fanout 1,536
++  --
++  -- WHY THIS IS NOT THE CB_BCAST NAMED BELOW.  CB_BCAST inserts a rank
++  -- BETWEEN the port and cbw_*, keeps 1,536 command registers, and takes
++  -- CB_WR_LAT to 2.  This REPLACES the per-copy register with a per-row one:
++  -- the same two fanout numbers, CB_WR_LAT UNCHANGED at 1, and 19,344 FEWER
++  -- flops rather than 624 more.  The latency matters because
++  -- matvec_int4_desc_axi.vhd's S_CB -> S_START -> S_WAIT gives the core
++  -- `start` exactly two cycles after the last cb_we, and core_start is a
++  -- ONE-CYCLE PULSE (its `core_start <= '0'` default at :733), so a deeper
++  -- write path would land the write on the very edge that leaves S_IDLE with
++  -- zero margin, and any interlock that deferred the pulse would drop it.
++  --
++  -- THE SAME-CYCLE INVARIANT IS PRESERVED BY THE SAME ARGUMENT AS BEFORE, NOT
++  -- A WEAKER ONE.  Every cbw_*(r) is assigned in one loop from one expression
++  -- of the PORTS and of st/rst; no term depends on r; all share clk and one
++  -- initialiser.  So all ranks hold identical values at every instant, the
++  -- predicate "copy c writes at this edge" is independent of c, and every copy
++  -- writes the same address and value on the same edge.  The proof never used
++  -- the cardinality of the register set nor the injectivity of the map, which
++  -- is exactly why it survives coarsening it.  The registers remain an
++  -- ANTICHAIN -- no cbw_*(r) feeds any cbw_*(r'), no cb(c) feeds anything --
++  -- so the depth from the port to EVERY copy is exactly 1, identically, which
++  -- is what "ONE command that reaches all of them in the SAME cycle" means.
++  --
++  -- MEASURED, and it is the same claim from the other side:
++  -- sim/mutate_matvec_cb.sh row K3d is NR = 1, the extreme of this change, and
++  -- it SURVIVES all nine columns at CBSTYLE=distributed -- "a true equivalent
++  -- mutant today, because every command register holds the same command".
++  -- K3d is rejected here on FANOUT alone, not on values.
++  --
++  -- The corollary is a resolution floor and it is stated rather than hidden:
++  -- because all ranks hold the same command, ANY surjection copy -> rank is
++  -- functionally identical, so NO simulation can score the map.  What the map
++  -- must satisfy is structural, so it is pinned at ELABORATION below.
++  function cb_ranks_f(copies, rows : positive) return positive is
++  begin
++    if copies < rows then return copies; else return rows; end if;
++  end function;
++  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);
++
++  -- Copy c serves lanes [c*L, (c+1)*L) with L = CB_LANES_PER_COPY, so the row
++  -- of its first lane is c*L/BLK.  With CB_RANKS = ROWS_IF and CB_COPIES =
++  -- ROWS_IF*BLK/L, (c*CB_RANKS)/CB_COPIES = c*L/BLK identically, so this IS
++  -- the row and not a re-parameterisation that happens to agree.  At
++  -- CB_COPIES <= ROWS_IF it is the identity and the netlist is the one that
++  -- shipped.
++  function cb_rank_of(c : natural) return natural is
++  begin
++    return (c * CB_RANKS) / CB_COPIES;
++  end function;
++
++  -- THE PIN, and it is the only instrument that can see this change at all.
++  -- An out-of-range `natural` and NOT `assert ... severity failure`, for the
++  -- reason CHK_CB_STYLE gives above: Vivado silently ignores the latter in
++  -- synthesis and stops on the former.  It requires the map to start at 0,
++  -- end at CB_RANKS-1, and be monotone with no rank skipped -- i.e. to be an
++  -- onto map with contiguous groups.  A wrong CB_RANKS fires it; a map that
++  -- collapses to rank 0 (which is K3d, and which no bench can see) fires it;
++  -- a map that runs off the end fires it.  Without this, a regression to
++  -- NR = 1,536 or NR = 1 is invisible to every test in the project, which is
++  -- this codebase's standing failure class: a lever that does nothing and
++  -- looks like it worked.
++  function cb_rank_chk_f return integer is
++    variable prev, r : integer := 0;
++  begin
++    if cb_rank_of(0) /= 0 then return -1; end if;
++    for c in 1 to CB_COPIES-1 loop
++      r := cb_rank_of(c);
++      if r < prev or r > prev + 1 then return -1; end if;
++      prev := r;
++    end loop;
++    if prev /= CB_RANKS-1 then return -1; end if;
++    -- THE FANOUT BOUND, and this half guards the CHANGE rather than the map.
++    -- MEASURED by mutation: BOTH regressions are legal onto maps, so the half
++    -- above passes over either of them.  NR = CB_COPIES is the identity, which
++    -- is exactly what build 10 built; NR = 1 is K3d.  What separates them from
++    -- this design is the two fanout numbers, so those are what is pinned:
++    -- CB_RANKS is the port-side fanout and CB_COPIES/CB_RANKS the rank-side
++    -- one, and neither may exceed the cluster the adder tree already makes.
++    -- At the card both hold with equality (48 and 32), which is the design
++    -- point rather than slack.
++    if CB_RANKS > ROWS_IF then return -1; end if;
++    if CB_COPIES / CB_RANKS > BLK then return -1; end if;
++    return 0;
++  end function;
++  constant CHK_CB_RANKS : natural := cb_rank_chk_f;
++
+   type cb_t is array(0 to 15) of signed(7 downto 0);
+   type cb_bank_t is array(0 to CB_COPIES-1) of cb_t;
+   signal cb : cb_bank_t := (others => (others => (others => '0')));
+@@ -276,9 +387,9 @@
+   --
+   -- Cost: one cycle of write latency, spent in S_IDLE where the spec already
+   -- confines codebook writes.  Zero cycles anywhere in the multiply path.
+-  type cba_arr is array(0 to CB_COPIES-1) of std_logic_vector(3 downto 0);
+-  type cbd_arr is array(0 to CB_COPIES-1) of std_logic_vector(7 downto 0);
+-  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
++  type cba_arr is array(0 to CB_RANKS-1) of std_logic_vector(3 downto 0);
++  type cbd_arr is array(0 to CB_RANKS-1) of std_logic_vector(7 downto 0);
++  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+   signal cbw_a : cba_arr := (others => (others => '0'));
+   signal cbw_d : cbd_arr := (others => (others => '0'));
+ 
+@@ -652,6 +763,7 @@
+       report "matvec_core: LEVER C ACTIVE  CB_STYLE=" & CB_STYLE
+            & "  CB_COPIES=" & integer'image(CB_COPIES)
+            & "  CB_LANES_PER_COPY=" & integer'image(CB_LANES_PER_COPY)
++           & "  CB_RANKS=" & integer'image(CB_RANKS)
+            & "  CB_WR_LAT=" & integer'image(CB_WR_LAT)
+         severity note;
+     end if;
+@@ -686,19 +798,25 @@
+   P_CB : process(clk)
+   begin
+     if rising_edge(clk) then
++      -- stage W1: the write, off the command register of this copy's RANK.
++      -- Every rank holds the same command (see CB_RANKS above), so this is the
++      -- same edge and the same value for every copy.
+       for c in 0 to CB_COPIES-1 loop
+-        -- stage W1: the write, off this copy's OWN command register
+-        if cbw_v(c) = '1' then
+-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
++        if cbw_v(cb_rank_of(c)) = '1' then
++          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
++            <= signed(cbw_d(cb_rank_of(c)));
+         end if;
+-        -- stage W0: capture the command, one register per copy
++      end loop;
++      -- stage W0: capture the command, one register per RANK.  No term in
++      -- this loop depends on r, which is what makes the ranks peers.
++      for r in 0 to CB_RANKS-1 loop
+         if cb_we = '1' and st = S_IDLE and rst = '0' then
+-          cbw_v(c) <= '1';
++          cbw_v(r) <= '1';
+         else
+-          cbw_v(c) <= '0';
++          cbw_v(r) <= '0';
+         end if;
+-        cbw_a(c) <= cb_addr;
+-        cbw_d(c) <= cb_data;
++        cbw_a(r) <= cb_addr;
++        cbw_d(r) <= cb_data;
+       end loop;
+       -- rst kills a command in flight but deliberately does NOT clear cb: the
+       -- codebook is loaded once and outlives a reset, which is the behaviour
