@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_hdrcost2.sh -- TRACK HDRCOST batch 2, RUNS ON THE BC-250.
+# sim/ooc_scorehdr_run2.sh (run as run_hdrcost2.sh on the BC-250) -- TRACK HDRCOST batch 2, RUNS ON THE BC-250.
 #
 # Chained behind batch 1.  Two jobs:
 #

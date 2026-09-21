@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run_hdrcost.sh -- TRACK HDRCOST, 2026-09-20.  RUNS ON THE BC-250.
+# sim/ooc_scorehdr_run.sh (run as run_hdrcost.sh on the BC-250) -- TRACK HDRCOST, 2026-09-20.  RUNS ON THE BC-250.
 #
 # THREE ARMS OF `attn_block` AT THE CARD'S 9B GENERICS, each drawn twice:
 # phase 1 synth+opt+census+DCP, phase 2 place+route+cone timing, in SEPARATE
