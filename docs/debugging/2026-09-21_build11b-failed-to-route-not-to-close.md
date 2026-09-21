@@ -271,3 +271,69 @@ congested" to "the codebook commit did it".
   lever state at current HEAD plus `FK33_CB_STYLE=distributed`, with NWIDE,
   FAST_POP, SWEEP_PIPE and SCORE_EARLY all OFF, to re-establish that HEAD routes
   at all before any lever is charged for a failure.
+
+---
+
+# CORRECTION 2, 2026-09-21: `[Synth 8-5859]` IS NOT AN INSTRUMENT, AND MY OWN CORRECTION REASONED FROM ITS ABSENCE
+
+Appended in place. This corrects CORRECTION 1 above, not the original text.
+
+CORRECTION 1 says build 11b "lacks it because at `regs` no inference was ever
+ATTEMPTED". **The conclusion is right and the reason given for it is not
+supported**, and it is the same error CORRECTION 1 was written to fix: drawing
+an inference from the absence of a message.
+
+MEASURED by TRACK CBRUN (`e89ca12`), four OOC arms at `CB_STYLE=distributed`
+and the card's geometry: the anchored count of `8-5859` naming `cb_reg` is
+**0 in all four arms**, while the same runs' mapping reports name **1,536
+RAM32M16 copies** in each and `get_cells` gives `cb_ram=26112, cb_ff=0`
+identically. So **the recognizer message is absent in runs where the inference
+DEMONSTRABLY SUCCEEDED.** Its absence is compatible with success, with refusal
+and with non-attempt alike, measured four times.
+
+`26,112 = 1,536 x 17` = 14 RAMD32 + 2 RAMS32 + 1 RAM32M16 per copy (DERIVED).
+
+**What still stands, on different evidence:** that `cb` is registers-plus-mux
+in build 11b. That rests on TRACK CBCENSUS's object-level census of the
+preserved synthesis checkpoint (6,144 FDRE, 24,576 MUXF7, 12,288 MUXF8, and a
+distributed-RAM count anchored exactly against `report_utilization`), not on any
+message being present or absent. The census was always the load-bearing
+evidence; the sentence about 8-5859 was decoration that asserted a mechanism.
+
+**The rule: `[Synth 8-5859]` may be quoted as evidence only when PRESENT, and
+never as evidence when absent.** CLAUDE.md already records that Vivado's
+inference log lies in both directions and that only the mapping report and an
+object-level census are authoritative. This is that rule applying to a message
+this project had started treating as a reliable negative.
+
+## Also measured and worth keeping
+
+- **CBRAM's mechanism is REFUTED.** The codebook's write-statement FORM does not
+  gate the RAM inference in either direction: `old`, `new`, `bcast` and `fan`
+  all infer identically to the digit. The registered `MUXF8 0 -> 12,288`
+  measured **0 -> 0** at `distributed`, which is itself confirmation that the
+  12,288 belonged to `regs`.
+- **Two arms were secretly one.** `fan` is byte-equivalent to `new` in the
+  netlist: identical cells, nets and pins (171,716 / 2,046,259 / 4,708,060) and
+  `cbx_any=0`, so its aliases do not exist after elaboration. Same shape as the
+  `regs` null where two arms are provably the same design, and the same lesson:
+  **an arm that cannot differ is not a control.**
+- **The outlier command net is the VALID bit, and it is outlying because it is
+  SHARED.** Of its 128 loads at `matvec_core`, exactly 48 (`= CB_RANKS`) are
+  `cbw_v` flops and **80 are pins elsewhere in the core**; the twelve
+  address/data bits are top-level ports with `to_other=0` and fall to exactly
+  48 as predicted. That is why the measured figure is context-dependent -- 108
+  at `matvec_int4_desc_axi`, 128 at `matvec_core`, never the registered 49.
+  **The prediction was not wrong about the mechanism, it was wrong to assume
+  the net had only the loads the lever creates.**
+- **All four arms HIT their 8G cap** (`cgroup_peak=8195 MB`, `at_cap=YES`), so
+  none of their `memory.peak` figures is a footprint. Vivado's own accounting
+  gives 3,941 MB for `old`.
+
+## Registered before build 12 lands
+
+At `CB_STYLE=distributed`, HEAD's codebook infers as 1,536 RAM32M16 with
+**MUXF8 = 0** in the codebook. So build 12's synthesis should NOT carry the
+12,288-MUXF8 tree. **If it does, the cause is not `0b34200` and not `CB_STYLE`,
+and this whole line of attribution fails.** Recorded here before the report
+exists.

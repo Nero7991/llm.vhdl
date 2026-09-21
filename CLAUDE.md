@@ -1013,6 +1013,37 @@ any amount of additional structural checking.**
   and the step from one to the other was taken silently. This file's rule that
   a naming report beats an argument about a total still holds -- it establishes
   location, not mechanism.
+- **`[Synth 8-5859]` MAY BE QUOTED WHEN PRESENT AND NEVER WHEN ABSENT.**
+  MEASURED 2026-09-21 by TRACK CBRUN across four OOC arms at
+  `CB_STYLE=distributed`: the anchored count of `8-5859` naming `cb_reg` is
+  **0 in all four**, while the same runs' mapping reports name **1,536
+  RAM32M16** copies each and `get_cells` gives `cb_ram=26112, cb_ff=0`
+  identically. The message is absent in runs where the inference DEMONSTRABLY
+  SUCCEEDED, so its absence distinguishes success, refusal and non-attempt not
+  at all. This dispatcher used its absence twice in one day: once to claim the
+  log "says nothing either way", and then, in the correction to that, to assert
+  that "no inference was attempted". The second was the same error as the first.
+  The netlist census is the load-bearing evidence in both directions.
+- **AN ARM THAT CANNOT DIFFER IS NOT A CONTROL, AND THIS HAS NOW HAPPENED
+  TWICE.** MEASURED 2026-09-21: CBRUN's `fan` arm is byte-equivalent to its
+  `new` arm in the netlist -- identical cells, nets and pins
+  (171,716 / 2,046,259 / 4,708,060) and `cbx_any=0`, because the aliases it
+  introduced do not survive elaboration. The same harness separately REFUSES
+  `CB_STYLE=regs` precisely because two arms are provably one design there and
+  a naive run would print a zero delta that is a fact about the generic.
+  **Before drawing an arm, state what in the netlist must differ, then check
+  that it did.** A zero delta and an identical netlist look the same in a
+  results table.
+- **A CAP-VERIFICATION CHECK CAN PASS FOR THE WRONG REASON THROUGH
+  `systemd-run`'s OWN COMMAND-LINE EXPANSION.** MEASURED 2026-09-21: a readback
+  written as `systemd-run ... bash -c '... $cg ...'` had `$cg` consumed by
+  systemd before bash ever saw it, so the check read `/sys/fs/cgroup/memory.high`
+  instead of the scope's file, got "No such file", **and exited 0.** Write the
+  wrapper to a FILE and run the file. This matters because the readback is
+  itself the guard against `systemd-run --user` silently doing nothing when
+  `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` are absent over ssh -- so a
+  readback that passes for the wrong reason removes the only protection against
+  an uncapped Vivado on a 14 GB box with no WoL watchdog.
 - **A SENTINEL NOTHING REFUSES ON IS DECORATION.** The `^FK33_CB_STYLE` line
   that would have caught the above ALREADY EXISTED, was already anchored, and
   already read count 0 for that build, printed into a log nobody gated on. Two
