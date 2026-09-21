@@ -40,6 +40,19 @@ owner, TRACK GAINTEETH, or (b) R1 reconciles the manifest against `git ls-files`
 and reports an UNTRACKED harness as a note rather than a finding.  (b) fixes the
 class; (a) fixes today and leaves the trap armed for the next track.
 
+UPDATE, 2026-09-20 same evening: (a) HAPPENED.  TRACK GAINTEETH committed
+sim/mutate_gain.sh and its manifest row in 1632012.  MEASURED in a fresh
+detached worktree at 634cc29:
+
+      $ ls sim/mutate_*.sh | wc -l  ->  63
+      $ python3 sim/check_mutation_harness.py
+      checked 63 harnesses; 0 finding(s)                              rc 0
+
+so THE PRECONDITION IS SATISFIED and the mutaudit row may be applied with the
+other two.  The underlying os.listdir defect is untouched, so the next track
+that starts a harness will redden this row for everybody; that is an argument
+for (b), not a reason to hold the row.
+
 ===========================================================================
 HUNK 1 -- SLOW_TBS, so --quick skips the two harness rows
 ===========================================================================

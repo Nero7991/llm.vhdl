@@ -1279,6 +1279,31 @@ the MECHANISM by which a harness reports a zero-match anchor.  It read
 to notice that the harness exits 2 on every invocation.  **A text audit of an
 error path cannot tell you the error path is the only path.**
 
+### CORRECTION, 2026-09-20, same evening: the precondition WAS satisfied, by its owner, while this track ran
+
+TRACK GAINTEETH committed `sim/mutate_gain.sh` and its manifest row in
+`1632012`, which landed between this track's first measurement and its last.
+**The blocker above is withdrawn as a blocker and kept as the record of why it
+existed.**  MEASURED in a fresh detached worktree at `634cc29`:
+
+```
+$ ls sim/mutate_*.sh | wc -l        -> 63
+$ python3 sim/check_mutation_harness.py
+checked 63 harnesses; 0 finding(s)                                    rc 0
+wall 0.02 s   peak RSS 11,520 kB
+```
+
+`sim:mutaudit` is wirable today, on a clean tree and on this workstation.
+
+**What is NOT withdrawn is the defect that made it red**: R1 still builds its
+list with `os.listdir`, so the row's verdict still depends on what happens to be
+sitting in `sim/` rather than on what is committed, and **the next track that
+starts a harness will redden it for everybody again.**  Three tracks in a row
+declined to fix that because the offending file always belongs to someone else;
+it has now been resolved three times by the owner committing, which fixes each
+day and never the class.  The class fix is R1 reconciling against `git ls-files`
+and reporting an untracked harness as a NOTE.
+
 ## 9.9 Two committed gate rows are RED at HEAD, and one of them is red because of a single word in a comment
 
 Found while checking whether the rows that ARE wired exercise what they claim.
