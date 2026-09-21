@@ -119,6 +119,15 @@ mkdir -p "$SCRATCH"
 
 NKILL=0; NABORT=0; NSURV=0; NTOT=0
 SURV_TAGS=""
+# THE LEDGER.  TRACK CBANCHOR, 2026-09-20.  Before this, a dead anchor printed
+# one loud line and the script still exited 0 -- so the only arithmetic tell
+# was that KILLED + ABORTED + SURVIVED did not add up to the total, which
+# nobody computes.  MEASURED at 0b34200: nine rows printed ANCHOR FAILED and
+# `kill ratio: 0 KILLED + 0 ABORTED = 0 of 20;  11 SURVIVED` was the summary,
+# rc 0.  TRACK REANCHOR fixed the same shape in two other harnesses; this one
+# was NOT among them.  A row that did not run is now named in a block of its
+# own and the script exits nonzero.
+DEAD_TAGS=""
 ONLY_ASSERT_TAGS=""
 MODEL_EARNED_TAGS=""
 
@@ -128,26 +137,97 @@ MODEL_EARNED_TAGS=""
 #    `--neuter` additionally demotes P_CB_CHK's assertions, and it is applied
 #    to a region located by its process name rather than by line number.
 # ---------------------------------------------------------------------------
-patch_file() {  # patch_file <src> <dst> <neuter-process-list> [old new]...
+patch_file() {  # patch_file <src> <dst> <neuter-list> [old new]...
   python3 - "$@" <<'PY'
 import sys
 src, dst, neuter = sys.argv[1], sys.argv[2], sys.argv[3]
 pairs = sys.argv[4:]
 s = open(src).read()
+
+# ---------------------------------------------------------------------------
+# SCOPES, STATED IN CODE.  TRACK CBANCHOR, 2026-09-20.
+#
+# TRACK REANCHOR MEASURED that five of its 27 dead rows died with NOTHING
+# INSIDE THE ANCHOR EDITED: a second, textually identical copy of a block
+# appeared elsewhere in the file and a once-unique anchor became ambiguous.
+# Uniqueness is a property of the FILE, not of the anchor, so an anchor that
+# is unique today buys nothing tomorrow.
+#
+# This file already carries that hazard, MEASURED 2026-09-20:
+#
+#   "for c in 0 to CB_COPIES-1 loop"                  matches TWICE
+#       (P_CB's write loop, and P_CB_MODEL's compare loop)
+#   "if cb_we = '1' and st = S_IDLE and rst = '0' then"
+#       appears in P_CB at 8 spaces of indent and in P_CB_MODEL at 6.
+#       The ONLY discriminator is whitespace, which is exactly as fragile as
+#       REANCHOR's discriminating comment -- and mutating P_CB_MODEL's copy
+#       would edit the ORACLE rather than the design under test, which scores
+#       as a survival for the worst possible reason.
+#
+# So an anchor may be prefixed "@SCOPE@" to require uniqueness INSIDE a named
+# region rather than in the whole file.  A scope is two CODE landmarks: a
+# process header, which must match exactly once in the file, and the first
+# "end process;" after it.  Nothing here depends on a comment.
+SCOPES = {
+    "P_CB":       "  P_CB : process(clk)",
+    "P_CB_CHK":   "  P_CB_CHK : process(clk)",
+    "P_CB_MODEL": "  P_CB_MODEL : process(clk)",
+}
+SCOPE_END = "\n  end process;"
+
+def scope_span(s, name):
+    head = SCOPES[name]
+    n = s.count(head)
+    if n != 1:
+        sys.stderr.write("SCOPE %s HEAD MATCHED %d TIMES, expected 1\n" % (name, n))
+        sys.exit(2)
+    a = s.index(head)
+    b = s.find(SCOPE_END, a + len(head))
+    if b < 0:
+        sys.stderr.write("SCOPE %s HAS NO end process; AFTER ITS HEAD\n" % name)
+        sys.exit(2)
+    return a, b + len(SCOPE_END)
+
 for i in range(0, len(pairs), 2):
     old, new = pairs[i], pairs[i+1]
-    n = s.count(old)
+    scope = None
+    if old.startswith("@"):
+        j = old.index("@", 1)
+        scope, old = old[1:j], old[j+1:]
+        if scope not in SCOPES:
+            sys.stderr.write("ANCHOR %d NAMES UNKNOWN SCOPE %s\n" % (i // 2, scope))
+            sys.exit(2)
+    lo, hi = scope_span(s, scope) if scope else (0, len(s))
+    region = s[lo:hi]
+    n = region.count(old)
     if n != 1:
-        sys.stderr.write("ANCHOR %d MATCHED %d TIMES, expected 1\n" % (i // 2, n))
+        sys.stderr.write("ANCHOR %d MATCHED %d TIMES%s, expected 1\n"
+                         % (i // 2, n, (" IN SCOPE " + scope) if scope else ""))
         sys.exit(2)
-    s = s.replace(old, new)
+    s = s[:lo] + region.replace(old, new) + s[hi:]
 # NEUTER is now a comma-separated list of PROCESS NAMES, not a flag, because
 # there are two independent checkers in this file and the whole point of the
 # attribution control is to disable exactly one of them at a time.  Each name
 # carries the number of asserts it is expected to contain: a region that has
 # grown or shrunk is a hard error, never a silent partial neuter.
 EXPECT = {"P_CB_CHK": 3, "P_CB_MODEL": 3}
+# THE PIN IS NOT A PROCESS, so it is neutered by substitution rather than by
+# demoting a severity.  CHK_CB_RANKS is an out-of-range `natural` constant --
+# the idiom this project uses BECAUSE Vivado silently ignores
+# `assert ... severity failure` in synthesis -- so it fires at ELABORATION and
+# there is no severity to demote.  Mode P sets it to a constant 0, which is
+# the design exactly as it stood before TRACK CBFANOUT added the pin.  This is
+# THE ATTRIBUTION CONTROL for the pin: a row KILLED in A and surv in P is a
+# kill the pin earned and that nothing older in the project can see.
+PIN_DECL = "  constant CHK_CB_RANKS : natural := cb_rank_chk_f;"
+PIN_OFF  = "  constant CHK_CB_RANKS : natural := 0;"
 for name in [x for x in neuter.split(",") if x]:
+    if name == "CHK_CB_RANKS":
+        if s.count(PIN_DECL) != 1:
+            sys.stderr.write("NEUTER: CHK_CB_RANKS declaration matched %d times\n"
+                             % s.count(PIN_DECL)); sys.exit(2)
+        s = s.replace(PIN_DECL, PIN_OFF)
+        continue
     if name not in EXPECT:
         sys.stderr.write("NEUTER: unknown process %s\n" % name); sys.exit(2)
     a = s.index("%s : process(clk)" % name)
@@ -265,13 +345,18 @@ mutate() {
     [ "$m" = N ] && neut="P_CB_CHK"
     [ "$m" = S ] && neut="P_CB_MODEL"
     [ "$m" = X ] && neut="P_CB_CHK,P_CB_MODEL"
+    # P = TRACK CBFANOUT's elaboration pin neutered.  See the note in
+    # patch_file: this is the attribution control for CHK_CB_RANKS.
+    [ "$m" = P ] && neut="CHK_CB_RANKS"
     if [ $# -gt 0 ]; then
       patch_file "$RTL" "$mdir/matvec_core.vhd" "$neut" "$@" || {
         printf '%-6s ANCHOR FAILED -- tested nothing -- %s\n' "$tag" "$desc"
+        DEAD_TAGS="$DEAD_TAGS $tag"
         return; }
     else
       patch_file "$RTL" "$mdir/matvec_core.vhd" "$neut" || {
         printf '%-6s NEUTER FAILED -- tested nothing -- %s\n' "$tag" "$desc"
+        DEAD_TAGS="$DEAD_TAGS $tag"
         return; }
     fi
     local f ok=1
@@ -283,6 +368,7 @@ mutate() {
     if [ "$ok" = 0 ]; then
       printf '%-6s DID NOT ANALYZE -- a mutation that will not compile has tested nothing -- %s\n' \
         "$tag" "$desc"
+      DEAD_TAGS="$DEAD_TAGS $tag"
       sed -n 1,3p "$mdir/analyze.log"; return
     fi
     local b top
@@ -399,38 +485,71 @@ mutate K1d "KILL(v) on C: this is K1b with the redundancy removed, and it is wha
 echo
 echo "---- class K2: LATENCY -- where the write sits relative to the watch ---"
 
+# ---------------------------------------------------------------------------
+# RE-ANCHORED 2026-09-20 BY TRACK CBANCHOR, after TRACK CBFANOUT (0b34200)
+# replicated the write COMMAND per ROW (CB_RANKS) instead of per COPY.  Three
+# things moved and all nine rows of classes K2, K3 and K7 died on them:
+#
+#   1. the command registers are now CB_RANKS wide, not CB_COPIES wide, so
+#      every anchor naming "CB_COPIES-1 downto 0" in their declaration died;
+#   2. the write reads cbw_*(cb_rank_of(c)), not cbw_*(c);
+#   3. THE ONE THAT IS NOT MECHANICAL: the single loop that both WROTE cb and
+#      CAPTURED the command was split into two loops with different bounds and
+#      different induction variables (c over copies, r over ranks).  Any
+#      mutation that added a pipeline stage used to put the stage's own
+#      assignments next to the write, in one anchor.  That anchor no longer
+#      exists in any form, so K2b and K3c are re-anchored in TWO places each:
+#      the write, and the tail of the W0 rank loop.
+#
+# The body anchors are scoped "@P_CB@" rather than trusted to be unique in the
+# file.  P_CB_MODEL contains near-identical text at a different indent, and
+# mutating the ORACLE instead of the design would score as a survival.
+# ---------------------------------------------------------------------------
+
 mutate K2a "KILL(a): the WATCHED register moves, so P_CB_CHK sees st = S_RUN" \
   "the command capture is one cycle late (cb_we registered ahead of the gate)" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
   signal cbwe_q : std_logic := '0';" \
-"        if cb_we = '1' and st = S_IDLE and rst = '0' then" \
+"@P_CB@        if cb_we = '1' and st = S_IDLE and rst = '0' then" \
 "        if cbwe_q = '1' and st = S_IDLE and rst = '0' then" \
-"      -- rst kills a command in flight but deliberately does NOT clear cb: the" \
+"@P_CB@      -- rst kills a command in flight but deliberately does NOT clear cb: the" \
 "      cbwe_q <= cb_we;
       -- rst kills a command in flight but deliberately does NOT clear cb: the"
 
-mutate K2b "SURVIVE -- and that is the finding.  A stage AFTER cbw_v moves the write without moving the watch point" \
+# The EXPECTED verdict changed with the re-anchor and the change is recorded
+# rather than absorbed.  The legend below is the original one; P_CB_MODEL did
+# not exist when it was written, and an extra stage below cbw_v is exactly
+# what an independent model of the write path built from the PORTS can see.
+# TRACK CBFANOUT measured the same mutation at the new structure under the
+# name M5_deepen and reports KILL in A, KILL with the pin off, SURVIVE with
+# P_CB_MODEL demoted.  Measured here rather than inherited.
+mutate K2b "ORIGINAL LEGEND: SURVIVE -- a stage AFTER cbw_v moves the write without moving the watch point.  NOW EXPECT KILL in A/N and surv in S: P_CB_MODEL was added after that legend and sees the extra stage" \
   "a broadcast stage is added BELOW the command register: cbw_v/a/d are unchanged, the write is one cycle later" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
-  signal cbw_v2 : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+  signal cbw_v2 : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
   signal cbw_a2 : cba_arr := (others => (others => '0'));
   signal cbw_d2 : cbd_arr := (others => (others => '0'));" \
-"        if cbw_v(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;" \
-"        if cbw_v2(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a2(c)))) <= signed(cbw_d2(c));
-        end if;
-        cbw_v2(c) <= cbw_v(c);
-        cbw_a2(c) <= cbw_a(c);
-        cbw_d2(c) <= cbw_d(c);"
+"        if cbw_v2(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a2(cb_rank_of(c)))))
+            <= signed(cbw_d2(cb_rank_of(c)));
+        end if;" \
+"@P_CB@        cbw_d(r) <= cb_data;" \
+"        cbw_d(r) <= cb_data;
+        cbw_v2(r) <= cbw_v(r);
+        cbw_a2(r) <= cbw_a(r);
+        cbw_d2(r) <= cbw_d(r);"
 
-mutate K2c "SURVIVE: the write lands one cycle EARLIER, which is still legal.  The fanout fix silently undone" \
+mutate K2c "ORIGINAL LEGEND: SURVIVE, the write lands one cycle EARLIER, which is still legal.  NOW EXPECT KILL by P_CB_MODEL, which pins the DEPTH at CB_WR_LAT rather than only the legality of the landing cycle.  The fanout fix silently undone, in its most direct form: the port drives all CB_COPIES write enables again" \
   "the command registers are bypassed: cb is written straight from cb_addr/cb_data" \
-"        if cbw_v(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;" \
 "        if cb_we = '1' and st = S_IDLE and rst = '0' then
           cb(c)(to_integer(unsigned(cb_addr))) <= signed(cb_data);
@@ -441,49 +560,72 @@ echo "---- class K3: LOCKSTEP -- can two replicas hold different tables ------"
 
 mutate K3a "KILL(a) in mode A.  Mode N is the question: does the lane oracle see it alone?" \
   "replica 1 skips a write whenever replica 0 takes one (the A-MUT C1 shape)" \
-"        if cbw_v(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;" \
-"        if cbw_v(c) = '1' and (c = 0 or cbw_v(0) = '0') then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"        if cbw_v(cb_rank_of(c)) = '1' and (c = 0 or cbw_v(cb_rank_of(0)) = '0') then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;"
 
 mutate K3b "KILL in both modes: replicas 1..N never hold anything, so the lanes disagree at the output" \
   "only replica 0 is ever written; the rest keep their initialiser forever" \
-"        if cbw_v(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;" \
-"        if cbw_v(c) = '1' and c = 0 then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"        if cbw_v(cb_rank_of(c)) = '1' and c = 0 then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;"
 
+# NOTE THE INDEX.  The split is still over COPIES and not over RANKS, and that
+# is the row's meaning rather than an oversight: what P_CB_CHK guards is that
+# no two COPIES of cb hold different tables, so the mutation that attacks it
+# must skew copies.  A skew over RANKS is a different mutation (TRACK
+# CBFANOUT's M4_rankskew) and is not this row.
 mutate K3c "KILL(a) only: the divergence is TRANSIENT, so a per-cycle assertion sees it and an output oracle cannot" \
   "the upper half of the replica bank writes one cycle late -- the shape a two-level command broadcast tree produces, which is what 1,536 replicas would need" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');" \
-"  signal cbw_v : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
-  signal cbw_v2 : std_logic_vector(CB_COPIES-1 downto 0) := (others => '0');
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');" \
+"  signal cbw_v : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
+  signal cbw_v2 : std_logic_vector(CB_RANKS-1 downto 0) := (others => '0');
   signal cbw_a2 : cba_arr := (others => (others => '0'));
   signal cbw_d2 : cbd_arr := (others => (others => '0'));" \
-"        if cbw_v(c) = '1' then
-          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+"@P_CB@        if cbw_v(cb_rank_of(c)) = '1' then
+          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));
         end if;" \
 "        if c < CB_COPIES/2 then
-          if cbw_v(c) = '1' then
-            cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));
+          if cbw_v(cb_rank_of(c)) = '1' then
+            cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+              <= signed(cbw_d(cb_rank_of(c)));
           end if;
         else
-          if cbw_v2(c) = '1' then
-            cb(c)(to_integer(unsigned(cbw_a2(c)))) <= signed(cbw_d2(c));
+          if cbw_v2(cb_rank_of(c)) = '1' then
+            cb(c)(to_integer(unsigned(cbw_a2(cb_rank_of(c)))))
+              <= signed(cbw_d2(cb_rank_of(c)));
           end if;
-        end if;
-        cbw_v2(c) <= cbw_v(c);
-        cbw_a2(c) <= cbw_a(c);
-        cbw_d2(c) <= cbw_d(c);"
+        end if;" \
+"@P_CB@        cbw_d(r) <= cb_data;" \
+"        cbw_d(r) <= cb_data;
+        cbw_v2(r) <= cbw_v(r);
+        cbw_a2(r) <= cbw_a(r);
+        cbw_d2(r) <= cbw_d(r);"
 
+# K3d IS NOT TRACK CBFANOUT'S M1_collapse AND THE DIFFERENCE IS THE POINT.
+# M1_collapse rewrites cb_rank_of to return 0, so the ELABORATION PIN fires and
+# no bench ever runs.  K3d leaves the map alone and takes the address and data
+# of the write from rank 0 at the WRITE SITE, which the pin cannot see.  It is
+# therefore still the pure behavioural equivalent mutant it always was, and it
+# still measures the same thing: nothing in the functional closure can tell a
+# master/follower codebook from a replicated one.
 mutate K3d "SURVIVE: a true equivalent mutant today, because every command register holds the same command.  Named so the master/follower design is not silently reachable" \
-  "every replica writes off replica 0's command registers (master/follower, the design the RTL comment rejects by construction)" \
-"          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
-"          cb(c)(to_integer(unsigned(cbw_a(0)))) <= signed(cbw_d(0));"
+  "every replica writes off rank 0's command registers (master/follower, the design the RTL comment rejects by construction)" \
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));" \
+"          cb(c)(to_integer(unsigned(cbw_a(0))))
+            <= signed(cbw_d(0));"
 
 echo
 echo "---- class K4: INTERLOCK -- cb_we in S_IDLE is not a start edge --------"
@@ -530,13 +672,17 @@ echo "---- class K7: ADDRESS -- which entry a command writes ------------------"
 # opinion about what the table should contain.
 mutate K7a "KILL(v) on M ONLY (measured; predicted C too): a table wrong the same way every time is invisible to a relational bench" \
   "the write address is taken LIVE from cb_addr instead of the registered cbw_a" \
-"          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
-"          cb(c)(to_integer(unsigned(cb_addr))) <= signed(cbw_d(c));"
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));" \
+"          cb(c)(to_integer(unsigned(cb_addr)))
+            <= signed(cbw_d(cb_rank_of(c)));"
 
 mutate K7b "KILL(v) on M only: C and L are relational and cannot see a table that is wrong the same way every time" \
   "the write data is taken LIVE from cb_data instead of the registered cbw_d" \
-"          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cbw_d(c));" \
-"          cb(c)(to_integer(unsigned(cbw_a(c)))) <= signed(cb_data);"
+"@P_CB@          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cbw_d(cb_rank_of(c)));" \
+"          cb(c)(to_integer(unsigned(cbw_a(cb_rank_of(c)))))
+            <= signed(cb_data);"
 
 echo
 echo "---- class K8: THE REPLICA SELECT -- protected by coherency, by nothing else"
@@ -572,6 +718,46 @@ mutate K9a "KILL(v) in BOTH modes on C: the lane-equality oracle localises to th
                 tr(0)(rr*BLK + j) <=
                   resize(cb((rr*BLK + j) / CB_LANES_PER_COPY)(idx) * xw, 28);
               end if;"
+
+echo
+echo "---- class K10: THE COPY-TO-RANK MAP -- pinned at elaboration only -----"
+echo "     TRACK CBFANOUT (0b34200) replicated the write COMMAND per ROW"
+echo "     instead of per COPY, cutting max fanout per command bit 1,536 -> 48"
+echo "     on the net that carried all ten worst paths of the FAILED build 10."
+echo "     Because every rank holds the SAME command, any surjection copy ->"
+echo "     rank is functionally identical, so NO simulation can score the map."
+echo "     That is a resolution floor, and it is exactly the condition this"
+echo "     project calls its standing failure class: a lever that does nothing"
+echo "     and looks like it worked.  The only instrument is the elaboration"
+echo "     pin CHK_CB_RANKS, and mode P is its attribution control."
+echo "     THESE ROWS EXIST BECAUSE CBFANOUT'S OWN TEETH TABLE WAS NOT"
+echo "     REPRODUCIBLE FROM THE REPO: its M-rows lived in a scratch harness"
+echo "     that was never committed.  Run with MODES=\"A P S\"."
+echo
+echo "     THEY BITE ONLY AT CBSTYLE=distributed, AND THE REASON IS THE BENCH"
+echo "     GEOMETRY RATHER THAN THE PIN.  MEASURED 2026-09-20, TRACK CBANCHOR:"
+echo "     at CBSTYLE=regs both rows SURVIVE all twelve columns.  tb_matvec_core"
+echo "     runs ROWS_IF=4 BLK=32, so regs gives CB_LANES_PER_COPY=32 and"
+echo "     CB_COPIES=4 -- and then CB_RANKS is already 4, so K10a is LITERALLY"
+echo "     THE IDENTITY, and CB_RANKS=1 still satisfies both halves of the"
+echo "     fanout bound (1 <= ROWS_IF=4 and 4/1 <= BLK=32), so K10b is a legal"
+echo "     configuration rather than a defect.  That is the pin behaving"
+echo "     correctly: at four copies there is no fanout problem to have.  It is"
+echo "     recorded because the harness DEFAULTS to CBSTYLE=regs, so a reader"
+echo "     running it with no environment set sees two SURVIVED rows and could"
+echo "     conclude the pin has no teeth.  It has teeth at the geometry that"
+echo "     ships (CB_COPIES=1,536), and CBSTYLE=distributed is the nearest"
+echo "     reachable proxy for it."
+
+mutate K10a "ABRT(pin) in A and S, surv in P: the pin is the sole witness.  This is CBFANOUT's M2_percopy, verified independently  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs this mutation is the IDENTITY and SURVIVES -- see the class note." \
+  "CB_RANKS forced back to CB_COPIES -- the fanout fix undone, i.e. exactly the structure build 10 built and failed at WNS -5.819 ns" \
+"  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
+"  constant CB_RANKS : positive := CB_COPIES;"
+
+mutate K10b "ABRT(pin) in A and S, surv in P: same as K10a at the other extreme.  This is CBFANOUT's M1_collapse, and it is K3d expressed in the map rather than at the write site  MEASURED at CBSTYLE=distributed (CB_COPIES=64).  At CBSTYLE=regs CB_RANKS=1 is inside the fanout bound and SURVIVES -- see the class note." \
+  "CB_RANKS forced to 1 -- one command register for all CB_COPIES copies, max fanout 1,536 again from the other end" \
+"  constant CB_RANKS : positive := cb_ranks_f(CB_COPIES, ROWS_IF);" \
+"  constant CB_RANKS : positive := 1;"
 
 echo
 echo "---- CANNOT BITE YET -- becomes live only under the LUTRAM fallback ----"
@@ -642,3 +828,17 @@ echo "ATTRIBUTION CONTROL -- killed in A and NOT in S, so P_CB_MODEL earned it"
 echo "  and nothing that existed before it would have caught it:$MODEL_EARNED_TAGS"
 echo "scratch dir with every mutant and all four logs: $SCRATCH"
 echo "======================================================================="
+
+# THE LEDGER, PRINTED AND ENFORCED.  A row that did not run is not a pass and
+# is not a survival; it is missing evidence, and it must be impossible to read
+# this output and not see it.
+if [ -n "$DEAD_TAGS" ]; then
+  echo
+  echo "=== ROWS THAT DID NOT RUN:$(set -- $DEAD_TAGS; echo $#) ==="
+  echo "   $DEAD_TAGS"
+  echo "Each printed ANCHOR FAILED / NEUTER FAILED / DID NOT ANALYZE above and"
+  echo "tested NOTHING.  They are counted in the total and in no verdict, so"
+  echo "the tallies above do not add up and that is deliberate.  Exiting 1."
+  exit 1
+fi
+echo "=== every anchor matched; no row was skipped ==="

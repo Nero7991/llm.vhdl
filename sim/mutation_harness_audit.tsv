@@ -56,7 +56,7 @@ sim/mutate_llama_top_kv.sh	GUARD	DERIVED	2026-09-20	every call site that passes 
 sim/mutate_llama_top_land.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
 sim/mutate_llama_top_normuram.sh	RETIRED	MEASURED	2026-09-20	RETIRED by TRACK REANCHOR: 9 of its 10 rows had a dead anchor (U1 U2 U3 U4 U6 U6x U6b U6bx U7) because 47c9d9c, c094867 and 21db25b replaced the store it tests.  The file is a tombstone that exits 2 and carries the per-row successor map; sim/mutate_rmswire.sh is the successor.  It was GUARD class while it ran (the `&&` chain skipped a row whose anchor count was wrong)
 sim/mutate_llama_top_smp.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  MUTATION DID NOT APPLY"
-sim/mutate_matvec_cb.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_matvec_cb.sh	GUARD	MEASURED	2026-09-20	TRACK CBANCHOR ran it with an impossible anchor on K2b, K3c, K7a and K10a, one at a time: "ANCHOR 0 MATCHED 0 TIMES IN SCOPE P_CB, expected 1" then "K7a    ANCHOR FAILED -- tested nothing", then "=== ROWS THAT DID NOT RUN:1 ===  K7a" and rc 1.  Clean tree prints "=== every anchor matched; no row was skipped ===" and rc 0
 sim/mutate_matvec_core.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
 sim/mutate_matvec_int4.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
 sim/mutate_mv4i_desc.sh	GUARD	DERIVED	2026-09-20	sim/mv4i_desc_mutations.py --apply exits 3 on a zero-match anchor; `if ! python3 ... --apply` prints an ANCHOR row and continues

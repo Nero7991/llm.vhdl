@@ -529,3 +529,386 @@ possible first failure for a new gate.
   weaker than disabling the credited check and re-running, which is what would
   settle whether an OLDER property would have caught the mutant anyway.  It was
   not done for any row here.
+
+---
+
+# 8. TRACK CBANCHOR, 2026-09-20: a FOURTH cause, and it cannot be repaired by substitution
+
+Appended per the project rule rather than opened as a second file about the
+same phenomenon.  Workstation, branch `fpga`, starting at `5dc3ee5`.  No
+hardware, no Vivado (build 11 held the workstation lane and TRACK HDRCOST held
+the BC-250).  GHDL (mcode) only.
+
+## 8.1 The question
+
+> TRACK CBFANOUT changed `rtl/matvec_core.vhd` to replicate the codebook write
+> COMMAND per ROW (`CB_RANKS = 48`) rather than per COPY (`CB_COPIES = 1536`)
+> [...] It handed over one item explicitly: *"`sim/mutate_matvec_cb.sh` anchors
+> on text this change moves and will print `ANCHOR FAILED` on some rows.  Not
+> fixed here -- mechanical replacements are in the write-up, including that the
+> W1 write and W0 capture are now two separate loops."*
+
+## 8.2 The answer, up front
+
+**Nine rows were dead, not "some": K2a K2b K2c K3a K3b K3c K3d K7a K7b.
+Disposition: 9 RE-ANCHOR, 0 RETIRE, 0 CANNOT DECIDE.**  All nine were
+re-anchored, all nine now run, and the re-anchor is **verdict-preserving**:
+measured against the OLD harness on the OLD tree, every column is identical.
+
+**The new cause is a LOOP SPLIT, and it is different in kind from the two this
+document already records.**  Section 2's causes are both cases where the anchor
+TEXT is still in the file and something else changed around it.  Here the text
+is gone because the code's SHAPE changed:
+
+```
+BEFORE (one loop, per COPY)              AFTER (two loops, different bounds)
+  for c in 0 to CB_COPIES-1 loop           for c in 0 to CB_COPIES-1 loop
+    -- W1: write cb(c) from cbw_*(c)         -- W1: write cb(c) from cbw_*(rank)
+    -- W0: capture cbw_*(c)                end loop;
+  end loop;                                for r in 0 to CB_RANKS-1 loop
+                                             -- W0: capture cbw_*(r)
+                                           end loop;
+```
+
+**A row that mutated both halves at once had ONE anchor spanning both, and no
+string in the new file is that anchor's successor.**  `mutate_rtl_n`-style
+count repair cannot fix this and neither can a scope: the row has to be
+re-expressed as TWO anchors, one at the write and one at the tail of the W0
+loop.  K2b and K3c are both of that shape.  **The tell is that the mechanical
+`CB_COPIES -> CB_RANKS` substitution CBFANOUT supplied repairs seven of the
+nine rows and silently cannot repair two**, and nothing distinguishes the two
+cases without reading the mutation's intent.
+
+## 8.3 A near-miss that is the same shape as section 2's duplicate block
+
+`rtl/matvec_core.vhd` contains `if cb_we = '1' and st = S_IDLE and rst = '0'
+then` **twice**: in `P_CB` at eight spaces of indent and in `P_CB_MODEL` at
+six.  Rows K1a-K1d anchor on the eight-space form and are ALIVE **only because
+of whitespace**.  That is exactly section 2's "distinguished only by the
+comment above them", one notch worse: the discriminator is invisible.
+
+**And the twin is the ORACLE.**  `P_CB_MODEL` is the independent model of the
+write path that K2b and K2c are killed by.  A future re-indent that made the
+eight-space form ambiguous would, on the obvious repair, mutate the model
+instead of the design -- and a mutated oracle that stops disagreeing with a
+correct design scores as **SURVIVED**.  A row that tests nothing and says so is
+the SAFE class; a row that mutates its own oracle and prints `surv` is the
+UNSAFE one, and it is reachable from here by an edit nobody would think twice
+about.
+
+MEASURED, the same file, same day:
+
+```
+"for c in 0 to CB_COPIES-1 loop"   matches TWICE   (P_CB:804, P_CB_MODEL:929)
+```
+
+So the fix is this document's own prescription, applied before it was needed:
+every body anchor in the nine re-anchored rows is scoped `@P_CB@`, and a scope
+is two CODE landmarks (a process header required exactly once in the file, and
+the first `end process;` after it).  Nothing depends on a comment or on an
+indent.
+
+**The scope was teeth-tested in three directions, MEASURED:**
+
+```
+ZZunsc  ANCHOR 0 MATCHED 2 TIMES, expected 1          -> ANCHOR FAILED
+ZZsc    the SAME anchor, scoped @P_CB@                -> applied, row ran
+ZZbad   ANCHOR 0 NAMES UNKNOWN SCOPE P_NOT_A_PROCESS  -> ANCHOR FAILED
+```
+
+`ZZunsc` and `ZZsc` differ only by the scope prefix, which is what makes this a
+discrimination test rather than a smoke test.
+
+## 8.4 The harness was NOT one of the ones this track fixed
+
+MEASURED at `5dc3ee5`, `sim/mutate_matvec_cb.sh` unmodified:
+
+```
+ANCHOR 0 MATCHED 0 TIMES, expected 1
+K2a    ANCHOR FAILED -- tested nothing -- the command capture is one cycle late ...
+   ... (nine of these) ...
+kill ratio: 0 KILLED + 0 ABORTED = 0 of 20;  11 SURVIVED
+survivors (nothing in the closure watches these): K1a K1b K1c K1d K4a K5a K5b K6a K8a K8b K9a
+$ echo $?
+0
+```
+
+It is **better than the harnesses section 4.7 fixed** -- the tag is printed
+alongside `ANCHOR FAILED`, so this is an inventory rather than a count -- and
+it is **worse in the one way that matters for CI**: rc is 0 and there is no
+ledger.  The only arithmetic tell is that `KILLED + ABORTED + SURVIVED = 11`
+against a total of `20`, and **nobody computes that**.  It now carries the same
+ledger the other two got:
+
+```
+clean tree:        === every anchor matched; no row was skipped ===   rc 0
+K2b  broken:       === ROWS THAT DID NOT RUN:1 ===  K2b               rc 1
+K3c  broken:       === ROWS THAT DID NOT RUN:1 ===  K3c               rc 1
+K7a  broken:       === ROWS THAT DID NOT RUN:1 ===  K7a               rc 1
+K10a broken:       === ROWS THAT DID NOT RUN:1 ===  K10a              rc 1
+```
+
+each with exactly one anchor made impossible and every other anchor left alone.
+
+## 8.5 THE CONTROL THAT SEPARATES "THE RE-ANCHOR WORKED" FROM "THE RE-ANCHOR CHANGED THE ROW"
+
+This is the part worth reusing and it is not in sections 1-7.
+
+A re-anchored row that KILLS proves the anchor matched.  It does **not** prove
+the row still means what it meant, because a re-anchor is an opportunity to
+write a different, easier mutation -- the failure mode the brief names as "do
+not re-anchor a row by making its mutation trivial enough to kill".
+
+**The control is the OLD harness against the OLD tree**, in a detached
+`git worktree` at `0b34200^`, column for column against the new one.  MEASURED,
+`CBSTYLE=distributed`, `MODES="A N S"`:
+
+```
+                OLD harness @ 0b34200^          NEW harness @ HEAD
+K2a   AC:KILL(a) AL:KILL(a) AM:KILL(a) ... SC:KILL(a) SL:KILL(a) SM:KILL(v)   IDENTICAL
+K2b   AC:KILL(a) AL:KILL(a) AM:KILL(a) ... SC:surv    SL:surv    SM:surv      IDENTICAL
+K2c   AC:KILL(a) AL:KILL(a) AM:KILL(a) ... SC:surv    SL:surv    SM:surv      IDENTICAL
+K3a   AC:KILL(a) ...                       SC:KILL(a) SL:KILL(a) SM:KILL(a)   IDENTICAL
+K3b   AC:KILL(a) ...                       SC:KILL(a) SL:KILL(a) SM:KILL(a)   IDENTICAL
+K3c   AC:KILL(a) ...                       SC:KILL(a) SL:KILL(a) SM:KILL(a)   IDENTICAL
+K3d   surv in all nine                                                        IDENTICAL
+K7a   AC:KILL(a) AL:KILL(a) AM:KILL(a) ... SC:surv    SL:surv    SM:KILL(v)   IDENTICAL
+K7b   AC:KILL(a) AL:KILL(a) AM:KILL(a) ... SC:surv    SL:surv    SM:KILL(v)   IDENTICAL
+```
+
+Nine rows, twenty-seven columns each, no difference.  **The re-anchor is
+verdict-preserving, and that is a measurement rather than an intention.**
+
+## 8.6 AND THE CONTROL FOUND SOMETHING ELSE: TWO LEGENDS HAD BEEN WRONG FOR WEEKS WHILE THE ROWS RAN GREEN
+
+K2b's legend said **"SURVIVE -- and that is the finding"**.  K2c's said
+**"SURVIVE: the write lands one cycle EARLIER, which is still legal"**.  Both
+rows are **KILLED**, and the control above shows they were killed on the OLD
+tree too.
+
+The cause is `P_CB_MODEL`, an independent model of the write path built from
+the ports and delayed by `CB_WR_LAT`.  It was added after those legends were
+written and it sees both mutations.  **Nothing noticed**, because the harness
+prints `expected:` under each row as prose and no check compares it to the
+verdict.
+
+**A row that RUNS is not a row whose legend is true.**  This document's
+sections 1-7 are about rows that vanished; this is the complementary failure --
+a row that is present, green, and describes a property the design no longer
+has.  It is strictly harder to see, because the output looks like evidence.
+Both legends are corrected in place, with the original quoted, so the change is
+visible rather than absorbed.
+
+## 8.7 Teeth and attribution, per re-anchored row (MEASURED)
+
+`CBSTYLE=distributed MODES="A N S P"`, 22 rows, `rc 0`,
+`=== every anchor matched; no row was skipped ===`.
+A = everything live; N = `P_CB_CHK` demoted; S = `P_CB_MODEL` demoted;
+P = TRACK CBFANOUT's elaboration pin `CHK_CB_RANKS` neutered (new here).
+
+| row | verdict | A | N | S | P | attribution |
+|---|---|---|---|---|---|---|
+| CTRL | SURVIVED | surv | surv | surv | surv | control, all twelve columns |
+| K2a | KILLED | KILL(a) | KILL(a) | KILL(a) | KILL(a) | **neither check earned it** -- both see it |
+| K2b | KILLED | KILL(a) | KILL(a) | **surv** | KILL(a) | **`P_CB_MODEL` EARNED it** |
+| K2c | KILLED | KILL(a) | KILL(a) | **surv** | KILL(a) | **`P_CB_MODEL` EARNED it** |
+| K3a | KILLED | KILL(a) | KILL(a) | KILL(a) | KILL(a) | neither earned it |
+| K3b | KILLED | KILL(a) | KILL(a) | KILL(a) | KILL(a) | neither earned it |
+| K3c | KILLED | KILL(a) | KILL(a) | KILL(a) | KILL(a) | neither earned it |
+| K3d | **SURVIVED** | surv | surv | surv | surv | equivalent mutant, by design |
+| K7a | KILLED | KILL(a) | KILL(a) | SC/SL surv, **SM:KILL(v)** | KILL(a) | the **value oracle on bench M**, exactly as its legend claims |
+| K7b | KILLED | KILL(a) | KILL(a) | SC/SL surv, **SM:KILL(v)** | KILL(a) | same |
+
+**The honest reading of four of those rows is that this track re-earned nothing
+for either check.**  K2a, K3a, K3b and K3c die in every column: `P_CB_CHK` and
+`P_CB_MODEL` both catch them, so neither is the sole witness and an older
+property would have caught each one anyway.  That is reported rather than
+folded into a kill count, and it is the same verdict shape section 4.6b records
+for `rmswire`.
+
+**K7a and K7b are the opposite and are the more useful rows.**  With
+`P_CB_MODEL` demoted they survive on benches C and L and die only on M -- which
+is the pre-existing legend, written in 2026-08, reproduced unchanged at the new
+structure: *"C and L are RELATIONAL [...] only an ABSOLUTE oracle has an
+opinion about what the table should contain."*
+
+## 8.8 Mutations that did NOT bite, under their own names
+
+Kept per the standing rule; these measure the resolution floor.
+
+- **K3d SURVIVED all twelve columns.**  Every copy writes off rank 0's command
+  registers -- the master/follower design `matvec_core.vhd` rejects by
+  construction -- and nothing in the functional closure can tell it from the
+  replicated design.  **This is not a gap to be closed; it is the measured form
+  of TRACK CBFANOUT's central claim**, and the reason the elaboration pin had to
+  exist.
+- **K10a and K10b SURVIVE at `CBSTYLE=regs`, which is the harness's DEFAULT.**
+  MEASURED: `tb_matvec_core` runs `ROWS_IF=4 BLK=32`, so `regs` gives
+  `CB_COPIES=4` and `CB_RANKS` is already 4 -- K10a (`CB_RANKS := CB_COPIES`)
+  is **literally the identity**, and K10b (`CB_RANKS := 1`) still satisfies
+  both halves of the fanout bound (`1 <= ROWS_IF=4` and `4/1 <= BLK=32`).  The
+  pin is behaving correctly: at four copies there is no fanout problem to have.
+  **It is recorded because a reader running the harness with no environment set
+  sees two SURVIVED rows and could conclude the pin has no teeth.**  Now stated
+  in the class header and in both row legends.
+- **K1b, K8a, K8b** survive as they always did; not this track's rows, listed so
+  the survivor line is not read as new.
+
+## 8.9 Verifying TRACK CBFANOUT's `M2_percopy` claim independently
+
+CBFANOUT's commit says: *"M2_percopy -- the fix undone, i.e. exactly what build
+10 built -- fires the pin in A and S and SURVIVES ALL THREE BENCHES in P, so
+the pin earned that kill and nothing else in the project can see it."*
+
+**CONFIRMED, and the check was needed, because CBFANOUT's teeth table was NOT
+REPRODUCIBLE FROM THE REPO.**  `git show 0b34200 --stat` lists three files --
+`docs/WORKLOG.md`, the write-up, and `rtl/matvec_core.vhd`.  The M-rows lived in
+a scratch harness that was never committed, so the decisive evidence for the
+change that is going into build 12 existed only in a document.
+
+Reconstructed here as committed rows `K10a` (= M2_percopy) and `K10b`
+(= M1_collapse), with `CHK_CB_RANKS` neutering added to the harness as mode P.
+MEASURED, `CBSTYLE=distributed`:
+
+```
+K10a  ABORTED  AC:ABRT AL:ABRT AM:ABRT  NC:ABRT NL:ABRT NM:ABRT
+               SC:ABRT SL:ABRT SM:ABRT  PC:surv PL:surv PM:surv
+K10b  ABORTED  (identical)
+```
+
+The abort is the pin and nothing else:
+
+```
+/usr/bin/ghdl-mcode:error: bound check failure at .../K10a/A/matvec_core.vhd:371
+  from: work.matvec_core(rtl).DECL_ELAB at matvec_core.vhd:371
+```
+
+`matvec_core.vhd:371` is `constant CHK_CB_RANKS : natural := cb_rank_chk_f;`.
+And with the pin neutered the mutant runs to completion and passes:
+
+```
+.../K10a/P/matvec_core.vhd:763: matvec_core: LEVER C ACTIVE  CB_STYLE=distributed
+    CB_COPIES=64  CB_LANES_PER_COPY=1  CB_RANKS=64  CB_WR_LAT=1
+tb_matvec_cb_contract: PASS -- 9 runs, 0 failures. ...
+```
+
+`CB_RANKS=64 = CB_COPIES` is the fix undone, and every bench passes.  **So the
+claim holds: the pin is the sole witness, and without it a regression to the
+structure that failed build 10 at WNS -5.819 ns is invisible to every test in
+this project.**
+
+**CBFANOUT's own measurement trap reproduced exactly**: the harness scores these
+as `ABORTED`, not `KILLED`, because an out-of-range `natural` fails at
+`ghdl -r` elaboration and no bench log contains an assertion.  Read the
+elaboration diagnostic; do not read the verdict word.
+
+## 8.10 Open item 4 of CBFANOUT's write-up is now ANSWERED, from past runs
+
+> *"Whether Vivado evaluates the new elaboration function.  `cb_rank_chk_f`
+> loops `CB_COPIES-1` times (1,535 at the card) over constant folding.  GHDL
+> does it.  Vivado's VHDL front end is not tested here and no Vivado ran."*
+
+**It does, and the evidence is already in the tree.**  `rtl/fk33_llama_top.vhd`
+(and `rtl/llama_top.vhd`, its source) declares
+
+```vhdl
+function cb_map return cbmap_t is ...
+  for a in 0 to 255 loop
+    for b in 0 to 255 loop        -- 65,536 iterations
+constant CBMAP : cbmap_t := cb_map;
+```
+
+a **65,536-iteration** nested constant-folding loop building a 65,536-element
+constant array, introduced by `c094867` on 2026-08-31.  MEASURED:
+`hw/fk33/gen_pcieep.py` lists `rtl/fk33_llama_top.vhd` in the card source set,
+`hw/fk33/rtl/fk33_card.vhd:220` instantiates it, and every `FK33_CARD=1` build
+since then has synthesised it -- build 9 (`card_kvreg_2026-09-20`) to a shipped
+bitstream at WNS +0.061, and build 10 to a **routed** timing summary.
+
+`cb_rank_chk_f` is **1,535 iterations of integer arithmetic with an early
+return and no array construction**, 43x smaller than a loop Vivado has folded
+in this tree on every card build for three weeks.  **The folding risk is
+retired.**  DERIVED from those runs; no Vivado ran for this track.
+
+**What is NOT settled, and it is the other half of the idiom**: whether Vivado
+STOPS on the out-of-range `natural` when the pin should fire.  `CHK_CB_STYLE`
+in the same file uses the identical idiom and has been through every card
+build -- but it has never FIRED in one, so passing through synthesis is no
+evidence that a violation would be caught.  That half rests on `CLAUDE.md`'s
+recorded rule, not on any measurement here.
+
+## 8.11 Measured and REJECTED -- do not retry
+
+- **Repairing K2b and K3c by substitution into a single anchor.**  There is no
+  single anchor.  The one loop became two with different bounds and different
+  induction variables; the v2 pipeline assignments must go in the W0 **rank**
+  loop while the write stays in the W1 **copy** loop.  Any repair that keeps
+  one anchor has either moved the capture into the copy loop (which changes the
+  fanout the row exists to model) or mutated only half the stage.
+- **Making K3c skew RANKS instead of COPIES** (which is what the mechanical
+  `c -> cb_rank_of(c)` substitution suggests).  What `P_CB_CHK` guards is that
+  no two **copies** of `cb` hold different tables, so the mutation that attacks
+  it must skew copies.  A rank skew is a different mutation -- CBFANOUT's
+  `M4_rankskew` -- and putting it under K3c's name would retire K3c's property
+  while appearing to keep it.
+- **Making K3d collapse `cb_rank_of` instead of the write site.**  That is
+  CBFANOUT's `M1_collapse`, it fires the elaboration pin, and no bench would
+  ever run.  K3d's whole value is that it is a mutation the pin CANNOT see, so
+  it measures the functional closure rather than the pin.  Both are kept, under
+  separate names (K3d and K10b), and the difference is stated in the file.
+- **Retiring any of the nine.**  Each names a property that still exists in
+  today's RTL and that some column still discriminates on, so RETIRE was not
+  reachable for any of them.  0 RETIRE is a result, not an omission.
+- **Adding a Z0 self-teeth row to promote the harness to SELFTEETH class.**  The
+  ledger plus `rc 1` already makes a skipped row impossible to miss, and a Z0
+  row would be a fifth place for an anchor to rot.
+
+## 8.12 Measurement traps hit, including this track's own
+
+- **A `cd` into the control worktree persisted across the next command, and the
+  run labelled "NEW tree, CBSTYLE=regs" was the OLD tree.**  MEASURED: the
+  table it printed looked entirely plausible, including a `P` column -- because
+  the old harness does not know mode `P` and silently ran it as a duplicate of
+  mode `A` with no neuter.  **The only tell was that class K10 was absent from
+  the output**, 20 rows where 22 were expected.  Had the control worktree been
+  at a commit that already had K10, nothing would have looked wrong.  This is
+  `CLAUDE.md`'s "a fact about the harness reported as a fact about the job", in
+  the plainest possible form.  The re-run used an absolute path to the script
+  and printed `pwd` and the md5 of both files first.
+- **An unknown mode is not an error, it is mode A.**  `MODES="A N S P"` against
+  a harness with no `P` sets `neut=""` and prints a full column of results that
+  mean something other than their heading.  Any harness with a mode list should
+  refuse a mode it does not know; this one now has `P` but still does not
+  refuse an unknown one.  Stated as open.
+- **`sim/check_mutation_harness.py` still FAILS, and not on anything here.**
+  `FAIL R1: sim/mutate_gain.sh is not in sim/mutation_harness_audit.tsv` --
+  TRACK GAINTEETH's untracked harness, which is section 6b's defect in a new
+  instance: R1 reconciles the manifest against a **disk glob**, so another
+  track's in-flight file fails the check for everyone.  Deliberately not fixed
+  here; the file belongs to a live track.
+- **The GHDL footprint of this whole harness is 175 MB, not 2.13 GiB.**
+  MEASURED by `/usr/bin/time -v` on a three-row three-mode run:
+  `Maximum resident set size 175,628 kbytes`, 6.4 s wall.  The 2.13 GiB figure
+  in `CLAUDE.md` is the FULL BOTH-SUITE gate and does not transfer to a
+  targeted mutation run.  Quoting it would have refused work that fit in a
+  fortieth of the budget -- the same shape as the 25.0 GiB Vivado figure that
+  `CLAUDE.md` already records as the expensive refusal.
+
+## 8.13 Open, not determined
+
+- **Whether Vivado stops on an out-of-range `natural` constant when it should
+  fire** (section 8.10).  Never observed for `CHK_CB_STYLE` or for
+  `CHK_CB_RANKS`.  One deliberately-broken OOC synthesis would settle it.
+- **The timing benefit of the per-row command is still entirely unmeasured.**
+  Inherited from CBFANOUT unchanged.  No Vivado ran for this track either.
+- **`CB_ROWS_PER_COPY > 1` is still untested**, by CBFANOUT and by this track.
+  The pin admits it; no bench runs at that setting and no K-row reaches it.
+- **K10a and K10b have no `regs`-geometry teeth.**  They are equivalent mutants
+  at `CB_COPIES=4`.  A bench at `ROWS_IF=48` would give them teeth at `regs`
+  too; `sim/tb_matvec_fk33*` is that geometry and was not run here (200 ms
+  stop-time, optional rows needing a `.mv4i`).
+- **The harness does not refuse an unknown mode** (section 8.12).
+- **`sim/mutate_matvec_cb.sh` is still not wired to any gate row**, so nothing
+  schedules the nine rows this track restored.  `sim:mutaudit` is the natural
+  home and section 6b says it must not be wired until the `mutate_gain.sh`
+  manifest question is resolved.
