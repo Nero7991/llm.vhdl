@@ -307,12 +307,15 @@ run_case M8 "host_x_exp forced to zero: the row is published at the wrong scale"
 # ---------------------------------------------------------------------------
 # THE COMPLETION PATH.
 # ---------------------------------------------------------------------------
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY 9fbb5c0 ("seam: ack
+# tok_done, not err"), which took `ack_r <= '1'` out of the `d_tok_done`
+# branch and made it an unconditional `ack_r <= d_tok_done` above the
+# `running` block.  The anchor matched ZERO times from that commit until
+# today, so this row VANISHED from the table rather than lying -- but the
+# property it tests had no teeth for that whole period.  The mutation is
+# unchanged in meaning: `d_tok_ack` is never raised.
 run_case M9 "tok_ack never raised: D holds tok_done and the position sticks" \
-  "$(mutate M9 '            running  <= '"'"'0'"'"';
-            ack_r    <= '"'"'1'"'"';
-            if cur_pos < MAXPOS then' '            running  <= '"'"'0'"'"';
-            ack_r    <= '"'"'0'"'"';
-            if cur_pos < MAXPOS then')"
+  "$(mutate M9 '        ack_r <= d_tok_done;' '        ack_r <= '"'"'0'"'"';')"
 
 run_case M10 "STATUS.done wired high: a done-only poller returns immediately" \
   "$(mutate M10 '              rv(0) := st_done;' '              rv(0) := '"'"'1'"'"';')"

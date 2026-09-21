@@ -8,6 +8,7 @@
 #
 # class     SELFTEETH  carries a Z0 row whose BADMUT verdict is checked
 #           GUARD      an anchor-failure path that cannot reach a verdict
+#           RETIRED    a tombstone: it refuses to run and says what replaced it
 # evidence  MEASURED   the script was RUN with an impossible anchor and the
 #                      row it printed is quoted
 #           DERIVED    classified from the guard mechanism, quoted, which
@@ -53,7 +54,7 @@ sim/mutate_gray.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if !
 sim/mutate_kv_map.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
 sim/mutate_llama_top_kv.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
 sim/mutate_llama_top_land.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
-sim/mutate_llama_top_normuram.sh	GUARD	DERIVED	2026-09-20	the `&&` chain `D=$(mut U1) && sub "$D" ... && row U1 ...` skips the row outright when the anchor count is wrong
+sim/mutate_llama_top_normuram.sh	RETIRED	MEASURED	2026-09-20	RETIRED by TRACK REANCHOR: 9 of its 10 rows had a dead anchor (U1 U2 U3 U4 U6 U6x U6b U6bx U7) because 47c9d9c, c094867 and 21db25b replaced the store it tests.  The file is a tombstone that exits 2 and carries the per-row successor map; sim/mutate_rmswire.sh is the successor.  It was GUARD class while it ran (the `&&` chain skipped a row whose anchor count was wrong)
 sim/mutate_llama_top_smp.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  MUTATION DID NOT APPLY"
 sim/mutate_matvec_cb.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
 sim/mutate_matvec_core.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc

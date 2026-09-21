@@ -82,6 +82,25 @@ SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
 mkdir -p "$SCRATCH"
 
+# ---------------------------------------------------------------------------
+# THE VANISHED-ROW LEDGER.  TRACK REANCHOR, 2026-09-20.
+# ---------------------------------------------------------------------------
+# sim/mutation_harness_audit.tsv classifies this script SAFE, and it is: a
+# zero-match anchor makes the mutator echo the empty string, `[ -n "$D" ]`
+# skips the row, and NO false SURVIVED is printed.  But the row does not fail
+# either -- it VANISHES, and a shorter table reads like a shorter table.
+#
+# MEASURED 2026-09-20: NINE of this file's rows (R6 R7 R7b R8 N1 N2 VN2 VR7
+# VR7b) had been absent for between one and twenty-one days and nothing said
+# so.  Safe from LYING is not the same as reporting that the evidence is
+# missing.
+#
+# So every mutator failure is recorded here, listed by name in a block of its
+# own at the end, and the script EXITS NONZERO.  A caller that reads only the
+# exit status still learns that the table is incomplete.
+MUTKV_DEAD="$SCRATCH/.dead_anchors"
+: > "$MUTKV_DEAD"
+
 # TRACK RMSWIRE, 2026-08-30: `rtl/vec_mem.vhd` and `rtl/rmsnorm_rs_mem.vhd`
 # added.  `llama_top`'s D-vec norm now instantiates the memory-backed unit
 # instead of the flat `rmsnorm_rs`, so the source closure grew by two files.
@@ -198,9 +217,59 @@ if n != 1:
     sys.exit(2)
 open(dst, "w").write(s.replace(old, new))
 PY
-  if [ $? -ne 0 ]; then echo ""; return; fi
+  if [ $? -ne 0 ]; then echo "$tag" >> "$MUTKV_DEAD"; echo ""; return; fi
   echo "$dir"
 }
+
+# ---------------------------------------------------------------------------
+# mutate_rtl_scoped <tag> <file> <scope_begin> <scope_end> <old> <new>
+# ---------------------------------------------------------------------------
+# WHY A SCOPE AND NOT A LONGER ANCHOR.  TRACK REANCHOR, 2026-09-20.
+# `rtl/llama_top.vhd` carries TWO textually IDENTICAL write-back state
+# machines: `gvr`'s (the NORM_REAL adapter, which is what N2 is about) and
+# `gsr`'s (the SWG_REAL adapter, added later).  At git HEAD the two differ
+# only in the COMMENT above them, so every anchor inside either one matches
+# TWICE and `mutate_rtl` refuses it -- which is why N2, VN2 and
+# sim/mutate_rmswire.sh's R7 and R8 all went dead at once.
+#
+# Anchoring on the distinguishing COMMENT would work today and is exactly
+# the mistake this project has recorded twice (a guard satisfied by a
+# comment, and a count guard inflated by a comment).  So the disambiguation
+# is a SCOPE stated in CODE: the substitution is confined to the region
+# between two generate headers, each required exactly once, and the anchor
+# is required exactly once INSIDE it.  A future third copy of the block
+# changes neither.
+mutate_rtl_scoped() {
+  local tag="$1" file="$2" b="$3" e="$4" old="$5" new="$6"
+  local dir="$SCRATCH/${tag}_src"
+  rm -rf "$dir"; mkdir -p "$dir"
+  python3 - "$file" "$dir/$(basename "$file")" "$b" "$e" "$old" "$new" <<'PY'
+import sys
+src, dst, b, e, old, new = sys.argv[1:7]
+s = open(src).read()
+for name, mark in (("SCOPE BEGIN", b), ("SCOPE END", e)):
+    if s.count(mark) != 1:
+        sys.stderr.write("MUTATION %s MATCHED %d TIMES, expected 1\n"
+                         % (name, s.count(mark)))
+        sys.exit(2)
+i = s.index(b); j = s.index(e)
+if not i < j:
+    sys.stderr.write("MUTATION SCOPE END precedes SCOPE BEGIN\n"); sys.exit(2)
+head, mid, tail = s[:i], s[i:j], s[j:]
+n = mid.count(old)
+if n != 1:
+    sys.stderr.write("MUTATION ANCHOR MATCHED %d TIMES IN SCOPE, expected 1\n" % n)
+    sys.exit(2)
+open(dst, "w").write(head + mid.replace(old, new) + tail)
+PY
+  if [ $? -ne 0 ]; then echo "$tag" >> "$MUTKV_DEAD"; echo ""; return; fi
+  echo "$dir"
+}
+
+# The two generate headers that bound `gvr`.  Spelled once, here, because
+# three rows use them and a second copy is how one of them goes stale.
+GVR_B="    gvr : if NORM_REAL and vi = V_NORM generate"
+GVR_E="    gsr : if SWG_REAL and vi = V_SWG generate"
 
 # ---------------------------------------------------------------------------
 # run_row <tag> <desc> <mutdir|""> <entity> <extra ghdl -r args...>
@@ -343,16 +412,20 @@ D=$(mutate_rtl R5 rtl/llama_top.vhd \
   "            c_cpos  <= to_unsigned(tok_pos + 1, POSW);")
 [ -n "$D" ] && run_case R5 "the position published to BOTH the block and the cache is one too large -- the cache is asked to serve the record this job is writing" "$D"
 
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY 109dc27, which made the
+# KV bases SEAM REGISTERS (`kv_k_base`/`kv_v_base` ports) instead of the
+# generics `KBASE_C`/`VBASE_C`.  The mutation is unchanged: the two bases are
+# swapped at the one place they are handed to attn_kv_axi.
 D=$(mutate_rtl R6 rtl/llama_top.vhd \
-  "          k_base => KBASE_C, v_base => VBASE_C," \
-  "          k_base => VBASE_C, v_base => KBASE_C,")
+  "          k_base => kv_k_base, v_base => kv_v_base," \
+  "          k_base => kv_v_base, v_base => kv_k_base,")
 [ -n "$D" ] && run_case R6 "the K and V bases are swapped" "$D"
 
 D=$(mutate_rtl R7 rtl/llama_top.vhd \
-  "        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;" \
-  "        if rst = '1' or tok_done_i = '1' then c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;")
+  "        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;" \
+  "        if rst = '1' or seq_rst = '1' or tok_done_i = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;")
 [ -n "$D" ] && run_case R7 "the v_ref sequence reset is issued per TOKEN, not per sequence (C spec 2.1.4)" "$D"
 
 # R7b.  R7 DOES NOT DO WHAT ITS DESCRIPTION SAYS, MEASURED 2026-08-29 by
@@ -386,16 +459,16 @@ D=$(mutate_rtl R7b rtl/llama_top.vhd \
   "    srp : process(clk) is
     begin
       if rising_edge(clk) then
-        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;
       end if;
     end process;" \
   "    srp : process(clk) is
       variable tdq : std_logic := '0';
     begin
       if rising_edge(clk) then
-        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;
         if tok_done_i = '1' and tdq = '0' then c_seqrst <= '1'; end if;
         tdq := tok_done_i;
       end if;
@@ -421,7 +494,7 @@ if n!=1:
     sys.stderr.write("ANCHOR A MATCHED %d TIMES\n"%n); sys.exit(2)
 open(dst,"w").write(s.replace(old,new))
 PY
-  [ $? -ne 0 ] && { echo ""; return; }
+  [ $? -ne 0 ] && { echo "${tag} (anchor A)" >> "$MUTKV_DEAD"; echo ""; return; }
   python3 - "$fb" "$dir/$(basename "$fb")" "$ob" "$nb2" <<'PY'
 import sys
 src,dst,old,new = sys.argv[1:5]
@@ -430,7 +503,7 @@ if n!=1:
     sys.stderr.write("ANCHOR B MATCHED %d TIMES\n"%n); sys.exit(2)
 open(dst,"w").write(s.replace(old,new))
 PY
-  [ $? -ne 0 ] && { echo ""; return; }
+  [ $? -ne 0 ] && { echo "${tag} (anchor B)" >> "$MUTKV_DEAD"; echo ""; return; }
   echo "$dir"
 }
 
@@ -440,18 +513,25 @@ echo "=== R8: the one mutation that makes the cache SERVE the current position =
 # that actually reads the record at cur_pos, and nothing does, because
 # attn_block bypasses it.  Both sides have to be broken at once: the block
 # stops bypassing AND the cache is told the current position is readable.
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  ANCHOR A BROKEN BY bfdae6b
+# ("writedec"), which moved `krec <= kbyp` out of this branch into the
+# `gkrec` generate, and by bc4156f, which inserted an `elsif SWEEP_PIPE`
+# branch between it and `elsif blk < NBLK`.  Anchor B was never broken.
+#
+# THE BYPASS IS NOW TWO PLACES, so the second half is applied below with its
+# rc read; disabling only the FSM branch leaves `gkrec` still writing `kbyp`
+# into `krec`, which is a design that is neither correct nor the defect.
+# Same two-site shape, same commit, as sim/mutate_attn_kv_seam.sh's R5/R5b.
 D=$(mutate_rtl_pair R8 \
   rtl/attn_block.vhd \
   "            if is_byp = '1' then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
-              ph <= P_HDR;
-            elsif blk < NBLK then" \
+              ph <= P_HDR;" \
   "            if false then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
-              ph <= P_HDR;
-            elsif blk < NBLK then" \
+              ph <= P_HDR;" \
   rtl/llama_top.vhd \
   "          start => c_start, layer => c_layer,
           cur_pos => c_cpos, ctx_len => c_ctx," \
@@ -470,7 +550,24 @@ s=s.replace("    u_err(U_C)   <= uerr;",
             "    c_cpos_hi <= c_cpos + 1;",1)
 open(p,"w").write(s)
 PY
-  run_case R8 "attn_block stops bypassing AND the cache is told cur_pos is readable, so the sweep really does read the record this job is writing" "$D"
+  # THE SECOND BYPASS SITE.  Required exactly once; rc READ, because a python
+  # that exits before writing leaves the FIRST mutation in place and the row
+  # would then run a PARTIAL mutant under the full row's name.
+  if python3 - "$D/attn_block.vhd" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+old = "          if ph = P_RECK and is_byp = '1' then"
+if s.count(old) != 1:
+    sys.stderr.write("ANCHOR A2 (gkrec) MATCHED %d TIMES, expected 1\n" % s.count(old))
+    sys.exit(2)
+open(p, "w").write(s.replace(old, "          if ph = P_RECK and false then"))
+PY
+  then
+    run_case R8 "attn_block stops bypassing AND the cache is told cur_pos is readable, so the sweep really does read the record this job is writing" "$D"
+  else
+    echo "R8  ANCHOR FAILED (the gkrec half, so the mutant was PARTIAL and was NOT run)"
+    echo "R8 (anchor A2, gkrec)" >> "$MUTKV_DEAD"
+  fi
 fi
 
 echo "=== N: the NORM_REAL adapter, which only sim/tb_llama_top_real.vhd reaches ==="
@@ -484,17 +581,36 @@ echo "=== N: the NORM_REAL adapter, which only sim/tb_llama_top_real.vhd reaches
 # the row was SILENTLY DROPPED -- the loud message is the only thing between a
 # stale anchor and a mutation table that has quietly shrunk.  The mutation
 # itself is unchanged: the learned gain's exponent, 20 octaves out.
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR, for the SECOND time -- see the
+# 2026-08-29 note above, which re-anchored it after 9f690a0.  BROKEN AGAIN BY
+# 47c9d9c (TRACK RMSWIRE), which replaced `rmsnorm_rs` with the memory-backed
+# `rmsnorm_bf_mem`: the whole-vector `w_mant => wsel` port became a word
+# stream (`w_we`/`w_waddr`/`w_wdata`), so the anchor's first half stopped
+# existing.  `w_exp` is untouched by that change and is the only thing the
+# mutation ever needed.  THE MUTATION IS UNCHANGED: the learned gain's
+# exponent, 20 octaves out.
+#
+# TWICE IN THREE WEEKS IS THE PATTERN, NOT AN ACCIDENT: this anchor named a
+# neighbouring port it did not mutate, so every edit to that neighbour broke
+# it.  The anchor is now the line the mutation actually changes and nothing
+# else.
 D=$(mutate_rtl N1 rtl/llama_top.vhd \
-  "          w_mant => wsel,    w_exp => NORM_W_EXP," \
-  "          w_mant => wsel,    w_exp => NORM_W_EXP + 20,")
+  "          w_exp => NORM_W_EXP," \
+  "          w_exp => NORM_W_EXP + 20,")
 if [ -n "$D" ]; then
   run_row N1  "the real rmsnorm's learned-gain exponent is 20 octaves out"          "$D" tb_llama_top_real
   run_row N1x "the SAME mutation against the DEFAULT gate row, which does not elaborate the NORM_REAL adapter at all" "$D" tb_llama_top
 fi
 
-D=$(mutate_rtl N2 rtl/llama_top.vhd \
-  "                if k = n-1 then k := 0; st := S_DONE; else k := k + 1; end if;" \
-  "                if k = n-2 then k := 0; st := S_DONE; else k := k + 1; end if;")
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY 47c9d9c, which turned
+# the flat `ov` read into a two-deep bank read pipeline: the write-back
+# counter is now `kw`, gated on `rav_d`, and the single-line `if k = n-1 ...`
+# the anchor named is gone.  The mutation is unchanged in meaning -- the
+# write-back stops one element short -- and is now scoped to `gvr`, because
+# `gsr` holds a byte-identical copy of the same state machine.
+D=$(mutate_rtl_scoped N2 rtl/llama_top.vhd "$GVR_B" "$GVR_E" \
+  "                  if kw = n-1 then kw := 0; st := S_DONE;" \
+  "                  if kw = n-2 then kw := 0; st := S_DONE;")
 if [ -n "$D" ]; then
   run_row N2  "the real rmsnorm's writeback drops its last element"                 "$D" tb_llama_top_real
   run_row N2x "the SAME mutation against the DEFAULT gate row"                      "$D" tb_llama_top
@@ -654,16 +770,17 @@ echo "=== V: the same mutants, scored on the NUMBERS ==============="
 run_cap V0r "CONTROL: the clean design, real-path configuration" "" real
 run_cap V0s "CONTROL: the clean design, KV-cache configuration" "" seq
 
-D=$(mutate_rtl VN2 rtl/llama_top.vhd \
-  "                if k = n-1 then k := 0; st := S_DONE; else k := k + 1; end if;" \
-  "                if k = n-2 then k := 0; st := S_DONE; else k := k + 1; end if;")
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR: N2's anchor, same commit, same fix.
+D=$(mutate_rtl_scoped VN2 rtl/llama_top.vhd "$GVR_B" "$GVR_E" \
+  "                  if kw = n-1 then kw := 0; st := S_DONE;" \
+  "                  if kw = n-2 then kw := 0; st := S_DONE;")
 [ -n "$D" ] && run_cap VN2 "N2 again: the real rmsnorm's writeback drops its last element" "$D" real
 
 D=$(mutate_rtl VR7 rtl/llama_top.vhd \
-  "        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;" \
-  "        if rst = '1' or tok_done_i = '1' then c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;")
+  "        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;" \
+  "        if rst = '1' or seq_rst = '1' or tok_done_i = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;")
 [ -n "$D" ] && run_cap VR7 "R7 again: the v_ref sequence reset is issued per TOKEN, not per sequence" "$D" seq
 
 # VR7 SURVIVES on the shipping design and that is CORRECT, not a regression of
@@ -677,16 +794,16 @@ D=$(mutate_rtl VR7b rtl/llama_top.vhd \
   "    srp : process(clk) is
     begin
       if rising_edge(clk) then
-        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;
       end if;
     end process;" \
   "    srp : process(clk) is
       variable tdq : std_logic := '0';
     begin
       if rising_edge(clk) then
-        if rst = '1' then      c_seqrst <= '1';
-        elsif c_srtk = '1' then c_seqrst <= '0'; end if;
+        if rst = '1' or seq_rst = '1' then c_seqrst <= '1';
+        elsif c_srtk = '1' then           c_seqrst <= '0'; end if;
         if tok_done_i = '1' and tdq = '0' then c_seqrst <= '1'; end if;
         tdq := tok_done_i;
       end if;
@@ -698,4 +815,15 @@ D=$(mutate_rtl VA1 rtl/matvec_core.vhd \
   "            re2_shv(rr) <= floor_shr(re1_acc(rr), os_rep(rr));")
 [ -n "$D" ] && run_cap VA1 "subsystem A's spec 7.4 site 2 truncates instead of rounding -- one LSB, and the bench leaves R_X(0) unchanged" "$D" real
 
+echo
+if [ -s "$MUTKV_DEAD" ]; then
+  echo "=== ROWS THAT DID NOT RUN: $(wc -l < "$MUTKV_DEAD") ========================"
+  echo "    A zero-match anchor.  These rows are NOT survivors and NOT kills:"
+  echo "    they measured NOTHING, and the table above is short by that many"
+  echo "    rows.  Re-anchor them against the RTL as it stands, or retire them."
+  sed 's/^/      /' "$MUTKV_DEAD"
+  echo "=== scratch: $SCRATCH"
+  exit 1
+fi
+echo "=== every anchor matched; no row was skipped ==="
 echo "=== scratch: $SCRATCH"

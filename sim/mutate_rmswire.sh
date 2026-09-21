@@ -79,6 +79,23 @@ SCRATCH="${SCRATCH:-$(mktemp -d)}"
 ONLY="${ONLY:-}"
 mkdir -p "$SCRATCH"
 
+# ---------------------------------------------------------------------------
+# THE VANISHED-ROW LEDGER.  TRACK REANCHOR, 2026-09-20.
+# ---------------------------------------------------------------------------
+# A top-level `D=$(mut Rn) && sub "$D" ... && row Rn ...` chain SKIPS the row
+# when the anchor count is wrong.  That is safe -- no false SURVIVES is
+# printed -- and it is silent: the row VANISHES and a shorter table reads
+# like a shorter table.  MEASURED 2026-09-20: R4, R7, R8 and R11 had been
+# absent for up to twenty-one days and nothing said so.
+#
+# `sub` is also called from INSIDE `row()` to build the attribution columns,
+# and those failures already show as `ANCHOR` in the table, so they are not
+# recorded twice: `RW_INROW` marks that context.
+RW_DEAD="$SCRATCH/.dead_anchors"
+: > "$RW_DEAD"
+RW_INROW=""
+RW_TAG=""
+
 # The source closure, read from the one file that owns it, for the reason that
 # file states: two copies of a file list is how a row goes stale against a
 # design nobody changed.
@@ -124,6 +141,57 @@ if n != int(want):
     sys.exit(2)
 open(p, "w").write(s.replace(old, new))
 PY
+  local rc=$?
+  if [ $rc -ne 0 ] && [ -z "$RW_INROW" ]; then
+    echo "${RW_TAG:-<unnamed>}" >> "$RW_DEAD"
+  fi
+  return $rc
+}
+
+# sub_scope <dir> <scope_begin> <scope_end> <old> <new> <required-count>
+#
+# WHY A SCOPE AND NOT A LONGER ANCHOR.  TRACK REANCHOR, 2026-09-20.
+# `rtl/llama_top.vhd` carries TWO textually IDENTICAL write-back state
+# machines: `gvr`'s (the NORM_REAL adapter, which every row here is about)
+# and `gsr`'s (the SWG_REAL adapter, added later).  At git HEAD they differ
+# only in the COMMENT above them, so `if rav_d = '1' then` matches TWICE and
+# `uw_addr(NUNIT+vi) <= kw;` matches twice, which is why R7 and R8 both went
+# dead without either of them being touched.
+#
+# Anchoring on the distinguishing COMMENT would work today and is the
+# mistake this project has recorded twice (a presence guard satisfied by a
+# comment; a count guard inflated by a comment).  So the disambiguation is a
+# SCOPE stated in CODE: two generate headers, each required exactly once,
+# with the anchor required <count> times INSIDE them.
+GVR_B="    gvr : if NORM_REAL and vi = V_NORM generate"
+GVR_E="    gsr : if SWG_REAL and vi = V_SWG generate"
+sub_scope() {
+  local dir="$1" b="$2" e="$3" old="$4" new="$5" want="$6"
+  python3 - "$dir/llama_top.vhd" "$b" "$e" "$old" "$new" "$want" <<'PY'
+import sys
+p, b, e, old, new, want = sys.argv[1:7]
+s = open(p).read()
+for name, mark in (("SCOPE BEGIN", b), ("SCOPE END", e)):
+    if s.count(mark) != 1:
+        sys.stderr.write("%s MATCHED %d TIMES, REQUIRED 1:\n  %r\n"
+                         % (name, s.count(mark), mark[:70]))
+        sys.exit(2)
+i, j = s.index(b), s.index(e)
+if not i < j:
+    sys.stderr.write("SCOPE END precedes SCOPE BEGIN\n"); sys.exit(2)
+mid = s[i:j]
+n = mid.count(old)
+if n != int(want):
+    sys.stderr.write("ANCHOR MATCHED %d TIMES IN SCOPE, REQUIRED %s:\n  %r\n"
+                     % (n, want, old[:70]))
+    sys.exit(2)
+open(p, "w").write(s[:i] + mid.replace(old, new) + s[j:])
+PY
+  local rc=$?
+  if [ $rc -ne 0 ] && [ -z "$RW_INROW" ]; then
+    echo "${RW_TAG:-<unnamed>}" >> "$RW_DEAD"
+  fi
+  return $rc
 }
 
 # one_run <srcdir|""> -- returns a one-word verdict on stdout.
@@ -160,6 +228,7 @@ row() {
   if [ -n "$ONLY" ]; then
     case " $ONLY " in *" $tag "*) ;; *) return ;; esac
   fi
+  local RW_INROW=1
   local a b c e
   a=$(one_run "$mutdir" "$SCRATCH/$tag.full")
   if [ "$a" = SURVIVES ] || [ "$a" = NOBUILD ]; then
@@ -199,7 +268,7 @@ printf '%-6s %-13s %-13s %-13s %-13s %s\n' ------ ------------- ------------- --
 row R0 "CONTROL: clean tree.  A matrix whose control fails measures nothing." ""
 
 # --- the gate, and the two rows that show what it is worth -----------------
-D=$(mut R1) && sub "$D" \
+RW_TAG=R1; D=$(mut R1) && sub "$D" \
   "                if wbusy = '0' then
                   r_go <= '1';
                   st   := S_RUN;
@@ -227,10 +296,10 @@ mk_slow () {   # $1 = tag, $2 = divisor-1
   echo "$d"
 }
 
-D=$(mk_slow R2 3) \
+RW_TAG=R2; D=$(mk_slow R2 3) \
   && row R2 "LOAD 4x SLOWER, gate INTACT.  EXPECTED TO SURVIVE: the gate turns a blown budget into a stall instead of a wrong number.  This is the row that says the gate is structural." "$D"
 
-D=$(mk_slow R3 3) && sub "$D" \
+RW_TAG=R3; D=$(mk_slow R3 3) && sub "$D" \
   "                if wbusy = '0' then
                   r_go <= '1';
                   st   := S_RUN;
@@ -240,45 +309,96 @@ D=$(mk_slow R3 3) && sub "$D" \
   && row R3 "LOAD 4x SLOWER AND THE GATE REMOVED.  The composition without its interlock.  Must be killed by something." "$D"
 
 # --- one row per stream: the m7 hazard in each of the three ports ----------
-D=$(mut R4) && sub "$D" \
-  "            if (wel_d mod GW) = s then" \
-  "            if (wel_d mod GW) = (GW-1-s) then" 1 \
-  && row R4 "w STREAM, m7 hazard: the GW-to-1 sub-word select reversed, so every gain vector is permuted in groups of four with no structural symptom." "$D"
+# R4 RETIRED 2026-09-20, TRACK REANCHOR.  THE STRUCTURE IT MUTATED NO LONGER
+# EXISTS.  R4 reversed the GW-to-1 sub-word select inside the ROM word.  TRACK
+# GWTWO (21db25b) landed GW = 1 -- `gw_pick` now `return 1;` unconditionally --
+# so there IS no sub-word, and TRACK GAIN16 (c094867) then replaced the value
+# ROM with an index ROM plus a codebook and deleted the mux outright.  The RTL
+# says so itself at rtl/llama_top.vhd's `wsubsel`: "THE GW SUB-WORD MUX IS GONE
+# WITH THE STORE IT SELECTED FROM", and TRACK GWTWO had already reported under
+# its own name that the mirror mutant DOES NOT BITE at GW = 1 because there it
+# is a semantic no-op.
+#
+# The anchor matched ZERO times from c094867 until 2026-09-20 and the row
+# VANISHED (it did not lie -- `sub` fails, `&& row` never runs).
+#
+# WHAT STILL COVERS THE PROPERTY: element ORDER within the w stream is covered
+# by R5 (address off by one) and R5b (address reversed), both below, on the
+# form that actually ships.  A future GW > 1 must bring this row back with it.
 
-D=$(mut R5) && sub "$D" \
+RW_TAG=R5; D=$(mut R5) && sub "$D" \
   "        nw_wa <= std_logic_vector(to_unsigned(wel_d, LOG2N));" \
   "        nw_wa <= std_logic_vector(to_unsigned((wel_d + 1) mod NN, LOG2N));" 1 \
   && row R5 "w STREAM: the bank write address off by one, so the gain is rotated by one element." "$D"
 
-D=$(mut R6) && sub "$D" \
+# R5b.  ADDED 2026-09-20, TRACK REANCHOR, to carry the ONE property that
+# sim/mutate_llama_top_normuram.sh's retirement would otherwise have dropped.
+# That harness's U3 was the m7 hazard's UNPACKER half -- "the shift runs the
+# other way, so the WORDS land reversed" -- written against a `wreg` shift
+# register that 47c9d9c deleted.  On the form that ships, element order in
+# the w stream is the bank WRITE ADDRESS, so a reversal is `NN-1-wel_d`.
+#
+# IT IS NOT R5 WITH A BIGGER NUMBER.  R5 rotates by one element, which moves
+# every element by the same amount; a reversal moves element k by NN-1-2k,
+# leaves the middle element alone at odd NN, and is the mutation a packer and
+# an unpacker can both make and agree on.  That is the recorded `m7 mutant`
+# and it is why U3 existed.
+RW_TAG=R5b; D=$(mut R5b) && sub "$D" \
+  "        nw_wa <= std_logic_vector(to_unsigned(wel_d, LOG2N));" \
+  "        nw_wa <= std_logic_vector(to_unsigned(NN-1-wel_d, LOG2N));" 1 \
+  && row R5b "w STREAM, m7 hazard: the bank write address REVERSED, so the gain vector lands back to front.  Inherits sim/mutate_llama_top_normuram.sh's U3." "$D"
+
+RW_TAG=R6; D=$(mut R6) && sub "$D" \
   "                  x_wa <= std_logic_vector(to_unsigned(k-2, LOG2N));" \
   "                  x_wa <= std_logic_vector(to_unsigned((k-1) mod NN, LOG2N));" 1 \
   && row R6 "x STREAM: the read pass writes each element one address high, so the residual stream is rotated going in." "$D"
 
-D=$(mut R7) && sub "$D" \
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  The anchor was never edited; the
+# `gsr` (SWG_REAL) adapter appeared carrying a byte-identical copy of this
+# state machine, so the anchor went from 1 match to 2 and `sub`'s count guard
+# voided the row.  Scoped to `gvr`, which is what every row here is about.
+RW_TAG=R7; D=$(mut R7) && sub_scope "$D" "$GVR_B" "$GVR_E" \
   "                if rav_d = '1' then" \
   "                if rav = '1' then" 1 \
   && row R7 "o STREAM: the write-back consumes the bank output ONE CYCLE EARLY, which is exactly the latency the flat port did not have." "$D"
 
-D=$(mut R8) && sub "$D" \
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR: same cause as R7, same fix.
+RW_TAG=R8; D=$(mut R8) && sub_scope "$D" "$GVR_B" "$GVR_E" \
   "                  uw_addr(NUNIT+vi) <= kw;" \
   "                  uw_addr(NUNIT+vi) <= (kw + 1) mod NN;" 1 \
   && row R8 "o STREAM: the region write address off by one against the bank read address." "$D"
 
 # --- the loader's own lifecycle, re-earned on the new form -----------------
-D=$(mut R9) && sub "$D" \
+RW_TAG=R9; D=$(mut R9) && sub "$D" \
   "            if rst = '1' or go = '1' or (dn = '1' and v_ack(vi) = '1') then
               wel   <= 0;" \
   "            if rst = '1' or go = '1' then
               wel   <= 0;" 1 \
   && row R9 "THE LOAD NEVER RESTARTS: correct at norm op 0, stale for every op after it.  TRACK NORMURAM's U5 re-asked of the rewritten loader." "$D"
 
-D=$(mut R11) && sub "$D" \
-  "          if n mod 4 = 0 then return 4; else return 1; end if;" \
-  "          return 1;" 1 \
-  && row R11 "GW forced to 1, so the ROM holds one element per word.  The VALUES are unchanged and this MUST survive; it is the resolution floor." "$D"
+# R11 RETIRED 2026-09-20, TRACK REANCHOR.  THE MUTATION IS NOW THE IDENTITY.
+# R11 forced GW to 1 and was the harness's declared resolution floor: it MUST
+# survive because the values do not move.  TRACK GWTWO (21db25b) then made
+# GW = 1 the SHIPPING value -- `gw_pick` is `return 1;` -- so the mutation
+# substitutes a design for itself.  A row that cannot differ from its baseline
+# is not a resolution floor, it is a second copy of the control (R0).
+#
+# The anchor matched ZERO times from 21db25b until 2026-09-20 and the row
+# VANISHED rather than reporting the SURVIVES it would have reported anyway --
+# which is the sharper version of the point: a row whose expected verdict is
+# SURVIVED is the hardest kind to notice has stopped running.  It is exactly
+# the shape of mutate_attn_sweep_pipe's P7, the no-op TRACK MUTAUDIT found.
 
 echo
+if [ -s "$RW_DEAD" ]; then
+  echo "=== ROWS THAT DID NOT RUN: $(wc -l < "$RW_DEAD") ========================"
+  echo "    A zero-match anchor.  These rows are NOT survivors and NOT kills:"
+  echo "    they measured NOTHING, and the table above is short by that many"
+  echo "    rows.  Re-anchor them against the RTL as it stands, or retire them."
+  sed 's/^/      /' "$RW_DEAD"
+  RW_RC=1
+fi
+
 echo "=== the w_active tap, judged by sim/tb_rmswire_loadrace.vhd ==="
 echo "The tap feeds an assertion that never fires in a correct design, so"
 echo "tb_llama_top_normw cannot see it break.  The loadrace bench TIMES both"
@@ -344,3 +464,4 @@ cmp -s "$SCRATCH/T3.vhd" rtl/rmsnorm_rs_mem.vhd && echo "T3 NOSUB" || \
 
 echo
 echo "scratch kept at $SCRATCH"
+exit ${RW_RC:-0}

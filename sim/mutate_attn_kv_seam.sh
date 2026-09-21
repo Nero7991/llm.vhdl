@@ -104,6 +104,12 @@ cc -O2 -w -I ref -o "$SCRATCH/genseq" ref/attn_block_seq_vec.c -lm || exit 2
 # Doing that printed a spurious "R1 ANCHOR FAILED" after a correct KILL.
 run_case() {
   local tag="$1" desc="$2" mutdir="$3"; shift 3
+  # ONLY takes EXACT tags, space separated, and is for splitting the matrix
+  # across shells or re-running one row.  A SUBSTRING filter cannot select R5
+  # without also selecting R5b, and cannot select R7 without R7b/R7c/R7d.
+  if [ -n "${ONLY:-}" ]; then
+    case " $ONLY " in *" $tag "*) ;; *) return ;; esac
+  fi
   local dir="$SCRATCH/$tag"
   NTOT=$((NTOT+1))
   rm -rf "$dir"; mkdir -p "$dir/run"
@@ -226,6 +232,12 @@ PY
 # mutate_rtl_n <tag> <file> <count> <old> <new>   -- like mutate_rtl, but the
 # anchor is expected EXACTLY <count> times and every one is replaced.
 # ---------------------------------------------------------------------------
+# UNUSED SINCE 2026-09-20, AND KEPT AS A WARNING.  Its only caller was L1,
+# and a COMMENT quoting the code took its required count from 3 to 5 (commit
+# 9e3348e).  A substring count over a source file counts comments, so this
+# helper cannot distinguish "a site was added" from "somebody quoted the line
+# in a comment", which is the whole property it exists to guarantee.  Before
+# using it, ask whether the anchor text can appear in prose.
 # Needed because defect C1 is not a single site: `attn_block` indexes its
 # v_ref fold at FOUR places, and a mutation that removed the layer term from
 # only one of them would be a design neither correct nor the defect, so a kill
@@ -288,9 +300,20 @@ else echo "R2  ANCHOR FAILED"; fi
 # residency answer is only meaningful about a question that is already being
 # asked, and this is the mutation that says whether that sentence is load
 # bearing or decorative.
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY bc4156f (SWEEP_PIPE),
+# which made `kr_pos` conditional -- `(pos_i + 1) when (SWEEP_PIPE and
+# pk_act = '1') else pos_i` -- so the flat `kr_pos  <= pos_i;` line the
+# anchor named stopped existing and this row VANISHED from the table.  The
+# mutation is unchanged in meaning: the two continuous `kr_*` drivers are
+# deleted and the request is driven from inside the issue cycle instead.
+# The issue-cycle replacement drives `pos_i`, which is what the conditional
+# evaluates to at SWEEP_PIPE = false, and that is the only configuration
+# this bench runs (sim/tb_attn_kv_seam.vhd:218 defaults it false and no row
+# here overrides it).  A future row that turns SWEEP_PIPE on must carry the
+# conditional into the issue cycle as well.
 D=$(mutate_rtl2 R3 rtl/attn_block.vhd \
 "  kr_head <= to_unsigned(kvh, AW_H);
-  kr_pos  <= pos_i;
+  kr_pos  <= (pos_i + 1) when (SWEEP_PIPE and pk_act = '1') else pos_i;
   vr_head <= to_unsigned(kvh, AW_H);" \
 "  vr_head <= to_unsigned(kvh, AW_H);" \
 "              if kr_rdy = '1' then
@@ -315,17 +338,27 @@ else echo "R4  ANCHOR FAILED"; fi
 # The bypass, at the seam.  C-ORACLE's m14 was invisible to its value oracle
 # and caught only by the address property; here the cache REFUSES the read, so
 # the outcome is different in kind and is reported as such.
-D=$(mutate_rtl R5 rtl/attn_block.vhd \
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY bfdae6b ("writedec"),
+# which moved `krec <= kbyp` out of this branch and into the `gkrec`
+# generate.  THE BYPASS IS NOW TWO PLACES AND THE MUTATION HAS TO BE BOTH:
+# disabling only the FSM branch leaves `gkrec` still loading `kbyp` into
+# `krec` whenever `ph = P_RECK and is_byp = '1'`, which is a design that is
+# neither correct nor the defect.  Each half is required exactly once, so a
+# future move of either one is a loud anchor failure rather than a quietly
+# partial mutant.
+D=$(mutate_rtl2 R5 rtl/attn_block.vhd \
 "          when P_RECK =>
             if is_byp = '1' then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
               ph <= P_HDR;" \
 "          when P_RECK =>
             if is_byp = '1' and false then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
-              ph <= P_HDR;")
+              ph <= P_HDR;" \
+"          if ph = P_RECK and is_byp = '1' then" \
+"          if ph = P_RECK and is_byp = '1' and false then")
 if [ -n "$D" ]; then run_case R5 "the K bypass removed: the sweep asks the cache for cur_pos (C spec 2.4)" "$D"
 else echo "R5  ANCHOR FAILED"; fi
 
@@ -336,17 +369,21 @@ else echo "R5  ANCHOR FAILED"; fi
 # is SERVED -- from memory this job wrote earlier in the same job, i.e. with
 # the RIGHT VALUES.  That is C-ORACLE's m14 reproduced at the seam: invisible
 # to a value oracle, and caught only by the property stated over the ADDRESSES.
-D=$(mutate_rtl R5b rtl/attn_block.vhd \
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR: the same two-site bypass removal
+# as R5 above, for the same reason and broken by the same commit.
+D=$(mutate_rtl2 R5b rtl/attn_block.vhd \
 "          when P_RECK =>
             if is_byp = '1' then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
               ph <= P_HDR;" \
 "          when P_RECK =>
             if is_byp = '1' and false then
-              krec <= kbyp;
+              -- krec <= kbyp has moved to the gkrec generate above
               khdr <= kbh;
-              ph <= P_HDR;")
+              ph <= P_HDR;" \
+"          if ph = P_RECK and is_byp = '1' then" \
+"          if ph = P_RECK and is_byp = '1' and false then")
 if [ -n "$D" ]; then run_case R5b "the K bypass removed AND the cache told cur_pos is readable, so the read is SERVED with the right values" "$D" -gMUT_CACHE_CPOS_HI=true
 else echo "R5b  ANCHOR FAILED"; fi
 
@@ -382,12 +419,48 @@ run_case L3 "the BLOCK is run at layer 0 while the cache is configured for the s
 # DEFECT C1 ITSELF, put back.  rtl/attn_block.vhd holds ONE v_ref fold array
 # and time-shares it across every attention layer; indexing it by head alone
 # lets each layer's write-time minimum leak into every other layer's alignment
-# shift.  Four sites, mutated together -- see mutate_rtl_n.
-D=$(mutate_rtl_n L1a rtl/attn_block.vhd 3 \
-    'vref_r(lay_r*N_KVH + kvh)' 'vref_r(kvh)')
+# shift.  Four sites, mutated together -- one anchor each, see below.
+# RE-ANCHORED 2026-09-20, TRACK REANCHOR.  BROKEN BY 9e3348e (TIMING), which
+# added a two-line COMMENT quoting the old code:
+#
+#     --     ev := vref_r(lay_r*N_KVH + kvh);
+#     --     vref_r(lay_r*N_KVH + kvh) <= ev;
+#
+# so the substring `vref_r(lay_r*N_KVH + kvh)` went from 3 matches to FIVE
+# and mutate_rtl_n's count guard fired.  The guard did its job -- the row
+# vanished loudly rather than mutating three sites of five -- but the count
+# itself is now the wrong instrument: a COMMENT can satisfy it, exactly the
+# way gen_pcieep.py's `\bllama_top\b` D-presence guard was satisfied by a
+# comment.  Raising the count to 5 would have been the wrong fix: it would
+# edit two comments and would let a future removal of a real site be masked
+# by the addition of another comment.
+#
+# So each site now has its OWN anchor, required exactly once.  Three of the
+# four are unambiguous as written; the fourth (`vref_r(...) <= ev;`) is the
+# one the comment also contains, and it is disambiguated by anchoring on the
+# NEWLINE and indentation that only the statement has -- the comment line
+# carries `--     ` between the indent and the name.  Any future edit that
+# adds, removes or moves a site now fails loudly on that site alone.
+D=$(mutate_rtl2 L1a rtl/attn_block.vhd \
+    'to_integer(vref_r(lay_r*N_KVH + kvh))' 'to_integer(vref_r(kvh))' \
+    'ev  := vref_r(lay_r*N_KVH + kvh);'     'ev  := vref_r(kvh);')
 if [ -n "$D" ]; then
-  add_mut "$D" rtl/attn_block.vhd 'vref_r(lay_r*N_KVH + h)' 'vref_r(h)'
-  run_case L1 "defect C1 restored: the v_ref fold indexed by KV HEAD ALONE, with no layer term, at all four sites" "$D"
+  # add_mut's rc was NOT read here before 2026-09-20.  python exits 2 WITHOUT
+  # writing on a bad anchor, so the file kept the earlier mutation and the row
+  # ran a PARTIAL mutant under the full row's name -- the same defect class
+  # sim/mutation_harness_audit.tsv exists to rule out, one level down.
+  if add_mut "$D" rtl/attn_block.vhd \
+       '
+              vref_r(lay_r*N_KVH + kvh) <= ev;' \
+       '
+              vref_r(kvh) <= ev;' \
+     && add_mut "$D" rtl/attn_block.vhd \
+       'vref_r(lay_r*N_KVH + h)' 'vref_r(h)'; then
+    run_case L1 "defect C1 restored: the v_ref fold indexed by KV HEAD ALONE, with no layer term, at all four sites" "$D"
+  else
+    echo "L1 ANCHOR FAILED (a later site, so the mutant was PARTIAL and was NOT run)"
+    NTOT=$((NTOT+1))
+  fi
 else echo "L1 ANCHOR FAILED"; NTOT=$((NTOT+1)); fi
 
 # The address equation's layer term, in the CACHE, where both masters share
