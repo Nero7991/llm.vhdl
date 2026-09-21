@@ -62,6 +62,43 @@
 # survival would be indistinguishable from "the bench does not check pointers".
 #
 # ---------------------------------------------------------------------------
+# CLASS POP, AND WHY THE TABLE ABOVE IT WAS MEASURED AGAINST ONE ARM ONLY
+# ---------------------------------------------------------------------------
+# rtl/async_fifo.vhd's `do_rd` has TWO arms, selected by the `FAST_POP`
+# generic.  Every RTL default is false; the card sets it TRUE, threaded from
+# hw/fk33/rtl/fk33_engine.vhd:1356 down through matvec_int4 ->
+# matvec_int4_desc_axi -> axi_rd_port -> async_fifo, and `DUAL_CLK` is true
+# there, so all 27 of subsystem A's read ports are THIS entity on THAT arm.
+#
+# Until 2026-09-20 sim/tb_async_fifo.vhd ran the DUT at the generic's DEFAULT,
+# so every row above judged the SHIPPING arm and none judged the card's.
+# TRACK SHAPEAUDIT measured the consequence
+# (docs/debugging/2026-09-20_the-shape-a-bench-runs-at.md 5.2) and TRACK
+# POPCOVER measured its size: with the bench as it stood, NINE of the ten
+# read-issue mutations below SURVIVED.  The bench now runs both arms and the
+# same nine are caught.
+#
+# TWO COLUMNS, BECAUSE A KILL HAS TO BE ATTRIBUTED.  Class POP rows are run
+# TWICE: once as the gate runs the bench, and once with `-gCADENCE=false`,
+# which leaves both arms and every value, level, clear, reset and coverage
+# property in place and removes ONLY the cadence check TRACK POPCOVER added.
+# A row that dies in both columns was already covered by an older property and
+# the cadence check may not be credited with it; a row that dies only in the
+# first is what the new check is worth.  MEASURED: three rows (P4, P5, P6) are
+# in the second category and they are exactly the lever-wiring defects --
+# inverted, not threaded, wired on -- which change no value anywhere and are
+# invisible to every oracle in the file.
+#
+# AND ROW O1'S ANCHOR WAS DEAD FOR THE SAME REASON.  Adding the FAST_POP arm
+# rewrote the `do_rd` line, and O1's anchor text -- copied from the old
+# single-arm form -- stopped matching.  It reported "ANCHOR FAILED -- tested
+# nothing" from that commit until 2026-09-20, which is honest but is still a
+# row that measured nothing; sim/mutation_harness_wiring.tsv recorded it as
+# DEADROWS O1 the same day.  It is repaired below and given its FAST_POP twin,
+# P2.  Row Z0 is the standing proof that a zero-match anchor is still reported
+# as BADMUT rather than as a survival.
+#
+# ---------------------------------------------------------------------------
 # THREE VERDICTS.  ABORT IS COUNTED AS A KILL BUT REPORTED SEPARATELY.
 # ---------------------------------------------------------------------------
 #   KILL   the bench's own counters or one of its severity-failure asserts.
@@ -104,6 +141,7 @@ GHDL="${GHDL:-ghdl}"
 mkdir -p "$SCRATCH"
 
 NKILL=0; NABORT=0; NSURV=0; NTOT=0
+NBAD=0; Z0SEEN=0; Z0TRIED=0
 SURV_TAGS=""
 
 # ---------------------------------------------------------------------------
@@ -154,12 +192,25 @@ PY
 mutate() {   # mutate <tag> <class> <desc> <old> <new> [<old> <new> ...]
   local tag="$1" cls="$2" desc="$3"; shift 3
   [ -n "$ONLY" ] && [[ "$tag" != *"$ONLY"* ]] && return
+  # Recorded BEFORE the patch is attempted, so the verdict below is about
+  # whether Z0 reached BADMUT and not about whether it was selected.
+  [ "$tag" = Z0 ] && Z0TRIED=1
   local dir="$SCRATCH/$tag"
   NTOT=$((NTOT+1))
   rm -rf "$dir"; mkdir -p "$dir/work" "$dir/run"
 
   if ! patch_file "$RTL" "$dir/async_fifo.vhd" "$@" 2>"$dir/patch.log"; then
-    printf '%-4s %-6s ANCHOR FAILED -- tested nothing -- %s\n' "$tag" "$cls" "$desc"
+    # BADMUT is neither KILLED nor SURVIVED: the mutation was never applied, so
+    # this row measured NOTHING about the bench.  A mutation anchor is TEXT and
+    # text drifts under the file it points into -- row O1's did, silently, the
+    # day rtl/async_fifo.vhd grew its FAST_POP arm.
+    if [ "$tag" = Z0 ]; then
+      printf '%-4s %-6s BADMUT   ANCHOR MATCHED 0 TIMES -- the REQUIRED outcome for the self-teeth row\n' "$tag" "$cls"
+      Z0SEEN=1
+    else
+      printf '%-4s %-6s BADMUT   ANCHOR MATCHED 0 TIMES -- THIS ROW TESTED NOTHING -- %s\n' "$tag" "$cls" "$desc"
+      NBAD=$((NBAD+1))
+    fi
     sed -n 1,2p "$dir/patch.log"; return
   fi
 
@@ -239,11 +290,110 @@ PY
   printf '%-4s %-6s %s %-56s -- %s\n' "$tag" "$cls" "$v" "$det" "$desc"
 }
 
+# ---------------------------------------------------------------------------
+# 1b. THE TWO-COLUMN RUNNER, used by class POP only.  Column 1 is the bench as
+#     the gate runs it; column 2 is the SAME bench with -gCADENCE=false, which
+#     is the attribution control for the cadence check.  Everything else is
+#     identical, so a difference between the columns is that check and nothing
+#     else.
+# ---------------------------------------------------------------------------
+run_one() {  # run_one <dir> <tag> [ghdl runtime args...]
+  local dir="$1"; shift
+  local tag="$1"; shift
+  ( cd "$dir/run" && timeout 300 "$GHDL" -r --std=08 -frelaxed \
+      --workdir="$dir/work" tb_async_fifo "$@" \
+      --stop-time=4ms --stop-delta=2000000 ) >"$dir/log.$tag" 2>&1
+  local rc=$?
+  python3 - "$dir/log.$tag" "$rc" <<'PY'
+import re, sys
+log = open(sys.argv[1], errors="replace").read()
+rc  = int(sys.argv[2])
+log = "\n".join(l for l in log.splitlines() if "metavalue detected" not in l)
+tot = re.search(r"async_fifo: (\d+) errors across 8 clock ratios", log)
+diag = re.search(r"tb_async_fifo\.vhd:\d+:\d+:@[^:]*:\(report error\): (.+)", log)
+rtlg = re.search(r"async_fifo\.vhd:\d+:\d+:@[^:]*:"
+                 r"\((?:assertion|report) failure\): (async_fifo: .+)", log)
+bound = re.search(r"(index \([-\d]+\) out of bounds[^\n]*|bound check failure[^\n]*|"
+                  r"value [-\d]+ out of range[^\n]*)", log)
+lang = re.search(r"ghdl[^:]*:error: (.+)", log)
+hung = re.search(r"simulation stopped (by --stop-time|@)", log)
+if tot and int(tot.group(1)) == 0 and "PASS: tb_async_fifo" in log:
+    print("SURV|0 errors across 8 clock ratios x 2 arms")
+elif diag:  print("KILL|%s" % diag.group(1).strip()[:56])
+elif tot and int(tot.group(1)) != 0:
+    print("KILL|%s errors, no named diagnostic" % tot.group(1))
+elif rtlg:  print("ABORT|%s" % rtlg.group(1).strip()[:56])
+elif bound: print("ABORT|%s" % bound.group(1).strip()[:56])
+elif hung:  print("ABORT|hung: reached --stop-time with no verdict")
+elif rc == 124: print("ABORT|wall-clock timeout 300s -- never terminated")
+elif lang:  print("ABORT|%s" % lang.group(1).strip()[:56])
+else:       print("ABORT|no verdict line and no error at all")
+PY
+}
+
+mutate_pop() {  # mutate_pop <tag> <desc> <old> <new> [<old> <new> ...]
+  local tag="$1" desc="$2"; shift 2
+  [ -n "$ONLY" ] && [[ "$tag" != *"$ONLY"* ]] && return
+  local dir="$SCRATCH/$tag"
+  NTOT=$((NTOT+1))
+  rm -rf "$dir"; mkdir -p "$dir/work" "$dir/run"
+
+  if ! patch_file "$RTL" "$dir/async_fifo.vhd" "$@" 2>"$dir/patch.log"; then
+    printf '%-4s %-6s BADMUT   ANCHOR MATCHED 0 TIMES -- THIS ROW TESTED NOTHING -- %s\n' \
+      "$tag" POP "$desc"
+    NBAD=$((NBAD+1)); sed -n 1,2p "$dir/patch.log"; return
+  fi
+
+  local f ok=1
+  for f in $DEPS; do
+    "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$REPO/$f" \
+      >>"$dir/analyze.log" 2>&1 || ok=0
+  done
+  "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$dir/async_fifo.vhd" \
+    >>"$dir/analyze.log" 2>&1 || ok=0
+  "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$REPO/$TB" \
+    >>"$dir/analyze.log" 2>&1 || ok=0
+  if [ "$ok" = 0 ]; then
+    printf '%-4s %-6s DID NOT ANALYZE -- a mutation that will not compile has tested nothing -- %s\n' \
+      "$tag" POP "$desc"
+    sed -n 1,3p "$dir/analyze.log"; return
+  fi
+
+  local full nocad vf vn
+  full=$(run_one "$dir" gate)
+  nocad=$(run_one "$dir" nocad -gCADENCE=false)
+  vf="${full%%|*}"; vn="${nocad%%|*}"
+  case "$vf" in
+    KILL)  NKILL=$((NKILL+1)) ;;
+    ABORT) NABORT=$((NABORT+1)) ;;
+    *)     NSURV=$((NSURV+1)); SURV_TAGS="$SURV_TAGS $tag" ;;
+  esac
+  # ATTRIBUTION, printed on every row and not only where it is flattering.
+  local attr="pre-existing property"
+  [ "$vf" != "$vn" ] && attr="THE CADENCE CHECK (nothing else caught it)"
+  [ "$vf" = SURV ]   && attr="nothing -- survivor"
+  printf '%-4s %-6s %-8s %-56s -- %s\n' "$tag" POP "$vf" "${full#*|}" "$desc"
+  printf '          nocad=%-8s %-56s [credit: %s]\n' "$vn" "${nocad#*|}" "$attr"
+}
+
 echo "======================================================================="
 echo " mutations of rtl/async_fifo.vhd, judged by sim/tb_async_fifo.vhd"
 echo " KILL = the bench's value/level/coverage checkers fired."
 echo " ABRT = ghdl or an RTL guard stopped the run (a kill, worth less)."
 echo "======================================================================="
+echo
+echo "---- class AUDIT: this harness's own teeth ----------------------------"
+
+# A mutation anchor is TEXT, and text drifts under the file it points into --
+# MEASURED on row O1 of this very harness, which went dead the day the FAST_POP
+# arm was added and stayed dead.  This row's anchor is deliberately impossible,
+# so the only correct outcome is BADMUT.  If it ever reports SURVIVED, every
+# other SURVIVED in this table is suspect.  It costs one python call and no
+# simulation.
+mutate Z0 AUDIT "SELF-TEETH: an anchor that is NOT in rtl/async_fifo.vhd (MUST report BADMUT, never SURVIVED)" \
+"THIS TEXT IS NOT IN rtl/async_fifo.vhd AND MUST NOT BE PUT IN IT" \
+"nor this"
+
 echo
 echo "---- class GRAY: the pointer encoding and its synchronisers -----------"
 
@@ -369,9 +519,17 @@ mutate C6 CLR "the clear request crosses through ONE flop into the read domain, 
 echo
 echo "---- class OUT: the read-side output stage ----------------------------"
 
-mutate O1 OUT "the output stage is allowed a third beat in flight, one more than it can hold" \
-"                   and (ocnt + inflight) < 2 else '0';" \
-"                   and (ocnt + inflight) < 3 else '0';"
+# ANCHOR REPAIRED 2026-09-20 (TRACK POPCOVER).  This row's text was
+# "and (ocnt + inflight) < 2 else '0';", which stopped existing the moment
+# rtl/async_fifo.vhd's `do_rd` grew its FAST_POP arm: the condition is now one
+# arm of a disjunction and the ` else '0';` no longer follows it on the same
+# line.  The row reported ANCHOR FAILED from that commit onward.  The anchor
+# below is scoped to the SHIPPING arm in CODE (the `(not FAST_POP)` guard is
+# part of the matched text, not a neighbouring comment), so it cannot silently
+# start matching the other arm.  Its FAST_POP twin is P2.
+mutate O1 OUT "the SHIPPING arm is allowed a third beat in flight, one more than the output stage can hold" \
+"((not FAST_POP) and (ocnt + inflight) < 2))" \
+"((not FAST_POP) and (ocnt + inflight) < 3))"
 
 mutate O2 OUT "the in-flight memory read is not counted, so a read is issued against a stage that is already committed" \
 "  inflight <= 1 when mem_q_v = '1' else 0;" \
@@ -412,6 +570,95 @@ mutate R3 RST "the read-domain reset no longer parks the read pointer" \
         wp_g_s1 <= (others => '0'); wp_g_s2 <= (others => '0');" \
 "        wp_g_s1 <= (others => '0'); wp_g_s2 <= (others => '0');"
 
+
+echo
+echo "---- class POP: the read-issue arm FAST_POP selects -------------------"
+echo "      Two columns.  The second runs the SAME bench with -gCADENCE=false,"
+echo "      which removes only the cadence check, so each kill is attributed."
+
+mutate_pop P1 "TRACK SHAPEAUDIT's mutant: the FAST_POP arm allows FOUR beats committed instead of two.  It passed FIVE benches, this one included, while the bench ran one arm" \
+"and ((FAST_POP and after_e < 2) or" \
+"and ((FAST_POP and after_e < 4) or"
+
+mutate_pop P2 "O1's FAST_POP twin: the FAST_POP arm allows THREE beats committed, one more than the output stage holds" \
+"and ((FAST_POP and after_e < 2) or" \
+"and ((FAST_POP and after_e < 3) or"
+
+mutate_pop P3 "the FAST_POP arm allows only ONE.  SAFE, values correct, and STRICTLY SLOWER than the shipping arm it exists to beat -- the whole lever silently undone" \
+"and ((FAST_POP and after_e < 2) or" \
+"and ((FAST_POP and after_e < 1) or"
+
+mutate_pop P4 "THE LEVER IS INVERTED: each arm takes the other's condition.  No value moves in either arm; only the cadence does, and it moves in BOTH directions at once" \
+"and ((FAST_POP and after_e < 2) or
+                        ((not FAST_POP) and (ocnt + inflight) < 2))" \
+"and ((FAST_POP and (ocnt + inflight) < 2) or
+                        ((not FAST_POP) and after_e < 2))"
+
+mutate_pop P5 "THE LEVER IS NOT THREADED: do_rd ignores FAST_POP and always takes the shipping arm.  This is what a generic dropped anywhere between fk33_engine and async_fifo looks like, and it is the defect the card would actually suffer" \
+"and ((FAST_POP and after_e < 2) or
+                        ((not FAST_POP) and (ocnt + inflight) < 2))" \
+"and ((ocnt + inflight) < 2)"
+
+mutate_pop P6 "THE LEVER IS WIRED ON: do_rd ignores FAST_POP and always takes the fast arm, so rtl/fk33_eng_cdc.vhd's two default instances change cadence without asking" \
+"and ((FAST_POP and after_e < 2) or
+                        ((not FAST_POP) and (ocnt + inflight) < 2))" \
+"and (after_e < 2)"
+
+mutate_pop P7 "after_e forgets the in-flight memory read and counts only the output stage" \
+"  after_e <= ocnt + inflight - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt + inflight;" \
+"  after_e <= ocnt - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt;"
+
+mutate_pop P8 "after_e loses its ocnt > 0 guard -- the minus one the RTL comment says it reaches.  NOT FAST_POP-specific: after_e is computed unconditionally, so this one was already caught before the arm existed" \
+"  after_e <= ocnt + inflight - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt + inflight;" \
+"  after_e <= ocnt + inflight - 1 when q_ready = '1'
+             else ocnt + inflight;"
+
+mutate_pop P9 "after_e loses its q_ready term: every cycle is assumed to pop, so a read is issued against a stage that is not draining" \
+"  after_e <= ocnt + inflight - 1 when (ocnt > 0 and q_ready = '1')
+             else ocnt + inflight;" \
+"  after_e <= ocnt + inflight - 1 when ocnt > 0
+             else ocnt + inflight;"
+
+mutate_pop P10 "do_rd drops the clear term entirely.  EXPECTED TO SURVIVE, and it is a PROOF rather than a gap: do_rd is read ONLY inside rproc's ELSE branch, which is the branch clr_r_s2 = '1' takes over, so the term is redundant by construction.  Same shape as F5" \
+"  do_rd    <= '1' when empty_r = '0' and clr_r_s2 = '0'" \
+"  do_rd    <= '1' when empty_r = '0'"
+
+mutate_pop P11 "the clear parks the output stage but LEAVES mem_q_v set, so a read still in flight lands AFTER the park.  The narrow half of C3, and it SURVIVED every arm until phase 5b was added: phase 4 stocks the FIFO with the reader stopped, so nothing is ever in flight across that park" \
+"        ob_wp     <= 0; ob_rp <= 0; ocnt <= 0;
+        mem_q_v   <= '0';
+        clr_ack_r <= '1';" \
+"        ob_wp     <= 0; ob_rp <= 0; ocnt <= 0;
+        clr_ack_r <= '1';"
+
+mutate_pop P12 "q_data is presented from the output stage's WRITE pointer.  Pure ordering, and the control that shows the value oracle is live in BOTH arms rather than only in the one it always ran" \
+"  q_data  <= ob(ob_rp);" \
+"  q_data  <= ob(ob_wp);"
+
+mutate_pop P13 "the read pointer advances when the fetched beat LANDS instead of when the read is ISSUED, so the address stream lags by one under any back-to-back issue" \
+"        if do_rd = '1' then
+          rp   <= rp + 1;
+          rp_g <= bin2gray(rp + 1);
+        end if;" \
+"        if mem_q_v = '1' then
+          rp   <= rp + 1;
+          rp_g <= bin2gray(rp + 1);
+        end if;"
+
+mutate_pop P14 "the memory read is gated on do_rd instead of issued every cycle.  EXPECTED TO SURVIVE: mem_q is consumed only under mem_q_v, which is do_rd one cycle late, so the ungated read is dead work and the two are equivalent" \
+"        mem_q   <= mem(to_integer(rp(AW-1 downto 0)));
+        mem_q_v <= do_rd;" \
+"        if do_rd = '1' then
+          mem_q <= mem(to_integer(rp(AW-1 downto 0)));
+        end if;
+        mem_q_v <= do_rd;"
+
+mutate_pop P15 "the output stage collapses to ONE entry: q_data always reads ob(0).  The fast arm sits at ocnt = 1 with a read always in flight, so it overruns a one-deep stage on every beat" \
+"  q_data  <= ob(ob_rp);" \
+"  q_data  <= ob(0);"
+
 echo
 echo "---- class GUARD: the elaboration guard -------------------------------"
 
@@ -429,3 +676,26 @@ printf 'kill ratio: %d KILLED + %d ABORT = %d of %d;  %d SURVIVED\n' \
   "$NKILL" "$NABORT" "$((NKILL+NABORT))" "$NTOT" "$NSURV"
 [ -n "$SURV_TAGS" ] && echo "survivors:$SURV_TAGS"
 echo "scratch dir with every mutant and its log: $SCRATCH"
+
+# THE HARNESS'S OWN VERDICT, and it is about the HARNESS and not about the RTL.
+# A dead anchor inflates the measured coverage in the flattering direction and
+# is silent, so it is an exit code rather than a line in a table nobody reads.
+rc=0
+if [ "$Z0TRIED" = 1 ] && [ "$Z0SEEN" != 1 ]; then
+  echo "HARNESS FAILURE: row Z0 was run and did NOT report BADMUT.  Its anchor" \
+       "is supposed to be impossible; if it matched, a zero-match anchor is no" \
+       "longer distinguishable from an inert mutation and every SURVIVED above" \
+       "is unsafe to quote."
+  rc=1
+fi
+if [ -z "$ONLY" ] && [ "$Z0TRIED" != 1 ]; then
+  echo "HARNESS FAILURE: a full run did not reach row Z0 at all -- the" \
+       "self-teeth row has been removed or renamed."
+  rc=1
+fi
+if [ "$NBAD" != 0 ]; then
+  echo "HARNESS FAILURE: $NBAD anchor(s) matched zero times.  Those rows" \
+       "measured NOTHING; the anchor text has drifted under rtl/async_fifo.vhd."
+  rc=1
+fi
+exit $rc

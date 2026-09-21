@@ -69,7 +69,38 @@
 --     GHDL bug box -- so the internal pointers cannot be watched from here
 --     even to check the single-bit-change property directly.
 --
--- Teeth: sim/mutate_async_fifo.sh.
+-- BOTH ARMS OF `FAST_POP`, added 2026-09-20 by TRACK POPCOVER
+-- ---------------------------------------------------------------------------
+-- `FAST_POP` selects the read-issue condition in rtl/async_fifo.vhd's `do_rd`.
+-- The card sets it TRUE (hw/fk33/rtl/fk33_engine.vhd:1356, threaded down
+-- through matvec_int4 -> matvec_int4_desc_axi -> axi_rd_port); every RTL
+-- default is FALSE.  MEASURED 2026-09-20 by TRACK SHAPEAUDIT
+-- (docs/debugging/2026-09-20_the-shape-a-bench-runs-at.md 5.2): an off-by-two
+-- planted in the FAST_POP arm alone passed FIVE benches INCLUDING THIS ONE,
+-- because this file ran the DUT at the generic's default and never reached
+-- the arm the shipping bitstream runs.
+--
+-- So every ratio below is instantiated TWICE, once per arm, from one shared
+-- `af_ratios` block, with the SAME SEEDS.  That is the equivalence oracle and
+-- it is not a round trip: the write side emits a strictly increasing counter
+-- and the read side compares against its own independently maintained
+-- counter, so "the same values in the same order come out of both arms" is
+-- checked beat by beat against a number the FIFO never supplied.
+--
+-- AND THE ARMS MUST ALSO BE TOLD APART, or the lever is only proved harmless
+-- and never proved present.  `cadence_probe` stocks the FIFO, STOPS the
+-- writer, opens the reader flat out and times the drain in read cycles per
+-- beat.  DERIVED from the two conditions, and MEASURED below: the shipping
+-- arm settles into pop/pop/idle and takes 3 read cycles per 2 beats; the
+-- FAST_POP arm takes 1 per beat.  The check is two-sided -- the fast arm
+-- FAILS if it is slow, and the slow arm FAILS if it is fast -- so a
+-- FAST_POP that is not threaded to the DUT and a FAST_POP that is wired on
+-- unconditionally are BOTH caught, and neither is visible to the value
+-- oracle.  It is skipped below DEPTH 16, where the resident beats do not
+-- separate the two cadences; `tiny` (DEPTH 4) is therefore covered for
+-- values and not for cadence.
+--
+-- Teeth: sim/mutate_async_fifo.sh, class POP.
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -98,7 +129,15 @@ entity af_case is
     -- Writer offers only while `w_level < DEPTH`, which is exactly
     -- rtl/axi_rd_fsm.vhd's AR throttle with promised = 0.  In this mode an
     -- INFLATED w_level shows up as a throughput failure.
-    THROTTLE   : boolean  := false
+    THROTTLE   : boolean  := false;
+    -- The DUT's read-issue arm.  The CARD RUNS true; every RTL default is
+    -- false.  See the FAST_POP block in the header.
+    FAST_POP   : boolean  := false;
+    -- The cadence check only.  false is the ATTRIBUTION CONTROL: it leaves
+    -- both arms instantiated and every value, level, clear, reset and
+    -- coverage property in place, and removes ONLY the check this track
+    -- added, so a mutation's kill can be attributed to one or the other.
+    CADENCE    : boolean  := true
   );
   port(
     done : out boolean := false;
@@ -154,6 +193,17 @@ architecture beh of af_case is
   signal n_wstall : integer := 0;     -- cycles offering into a full FIFO
   signal n_rstall : integer := 0;     -- cycles ready with an empty FIFO
   signal w_idle   : boolean := true;
+
+  -- Free-running read-domain cycle count, and the cadence the probe measured.
+  -- `cad_cyc` starts NEGATIVE so "the probe never ran" and "the probe measured
+  -- zero" are different states in the final report line.
+  signal rcyc     : integer := 0;
+  signal cad_cyc  : integer := -1;
+  -- Beats timed by the probe, after the first.  10 needs 11 beats resident,
+  -- against the 16 the THROTTLED case reaches and the 18 every other DEPTH-16
+  -- ratio reaches, so the probe is never supply-limited.  DERIVED cadences:
+  -- 10 read cycles with FAST_POP, 15 without.
+  constant CAD_N  : integer := 10;
 begin
   -- ================================================================= clocks
   wclkp : process
@@ -179,7 +229,8 @@ begin
 
   -- ==================================================================== DUT
   dut : entity work.async_fifo
-    generic map(W => W, DEPTH => DEPTH, OUT_MARGIN => OUT_MARGIN)
+    generic map(W => W, DEPTH => DEPTH, OUT_MARGIN => OUT_MARGIN,
+                FAST_POP => FAST_POP)
     port map(wclk => wclk, wrst => wrst,
              w_valid => w_valid, w_data => w_data, w_ready => w_ready,
              w_level => w_level, clr => clr, clr_done => clr_done,
@@ -251,6 +302,7 @@ begin
   begin
     if rising_edge(rclk) then
       lf := lf(14 downto 0) & (lf(15) xor lf(13) xor lf(12) xor lf(10));
+      rcyc <= rcyc + 1;
 
       -- Judged FIRST and unconditionally, for the same reason as the writer.
       if q_ready = '1' and q_valid = '1' then
@@ -438,6 +490,103 @@ begin
       end if;
     end procedure;
 
+    -- THE READ-ISSUE CADENCE -- the one observable `FAST_POP` changes.
+    --
+    -- Stock the FIFO with the reader held off, STOP the writer and wait for it
+    -- to be idle, then open the reader flat out and time the drain.  With the
+    -- writer stopped the window contains NOTHING but the read side's own
+    -- issue condition: no write clock, no clock ratio, no LFSR density.  The
+    -- timer starts at the FIRST beat consumed, so the reader's start-up
+    -- latency and the output stage's fill are outside it.
+    --
+    -- DERIVED.  With `q_ready` held high and the FIFO non-empty, the shipping
+    -- arm's `(ocnt + inflight) < 2` settles into a period-3 orbit with two
+    -- pops in it (the beat leaving the stage this edge is still counted as
+    -- resident, so no read is issued on the third cycle), and the FAST_POP
+    -- arm's `after_e < 2` -- where after_e IS the post-edge occupancy -- holds
+    -- ocnt at 1 with one read always in flight and pops on every cycle.  So
+    -- CAD_N beats after the first take 1.5*CAD_N cycles and CAD_N cycles
+    -- respectively: 15 against 10.  The thresholds below sit in the five-cycle
+    -- gap between them, one cycle of slack on the fast side and two on the
+    -- slow side.
+    --
+    -- Skipped below DEPTH 16: at DEPTH 4 the FIFO holds 6 beats, CAD_N has to
+    -- fall to 3, and 3 against 4.5 cycles does not separate the two arms by
+    -- more than the start-up jitter.  `tiny` is a VALUE row, not a cadence row.
+    procedure cadence_probe is
+      variable c0, n0, cyc : integer;
+    begin
+      if DEPTH < 16 then return; end if;
+
+      -- stock it, reader held off (r_run stays TRUE at density 0, the same
+      -- shape phase 4 uses, so the reader's `reload` path is not entered)
+      w_dens <= 16; r_dens <= 0; w_run <= true; r_run <= true;
+      for i in 0 to 6*DEPTH loop wait until rising_edge(wclk); end loop;
+      w_run <= false;
+      wait until rising_edge(wclk);
+      while not w_idle loop wait until rising_edge(wclk); end loop;
+      for i in 0 to 7 loop wait until rising_edge(rclk); end loop;
+
+      -- open the reader and wait for the FIRST beat
+      r_dens <= 16;
+      n0 := nr;
+      c0 := 0;
+      loop
+        wait until rising_edge(rclk);
+        wait for 0 ns;                    -- see lvlp: nr updates one delta on
+        exit when nr > n0;
+        c0 := c0 + 1;
+        if c0 > 64 then
+          report NAME & ": CADENCE -- the drain never started, " &
+                 integer'image(nw - nr) & " beats resident" severity error;
+          cov := cov + 1;
+          return;
+        end if;
+      end loop;
+
+      -- time CAD_N further beats
+      c0 := rcyc; n0 := nr;
+      loop
+        wait until rising_edge(rclk);
+        wait for 0 ns;
+        exit when nr >= n0 + CAD_N;
+        if rcyc - c0 > 8 * CAD_N then
+          report NAME & ": CADENCE -- the drain STALLED after " &
+                 integer'image(nr - n0) & " of " & integer'image(CAD_N) &
+                 " beats" severity error;
+          cov := cov + 1;
+          return;
+        end if;
+      end loop;
+      cyc := rcyc - c0;
+      cad_cyc <= cyc;
+
+      if CADENCE then
+        if FAST_POP then
+          -- The lever must be PRESENT.  This fires if FAST_POP is not threaded
+          -- to the DUT at all, or if its arm is narrowed.
+          if cyc > CAD_N + 1 then
+            report NAME & ": CADENCE -- FAST_POP took " & integer'image(cyc) &
+                   " read cycles for " & integer'image(CAD_N) & " beats, want " &
+                   "at most " & integer'image(CAD_N + 1) & " -- the fast " &
+                   "read-issue arm is not in the netlist" severity error;
+            cov := cov + 1;
+          end if;
+        else
+          -- And the lever must be ABSENT when it is not asked for.  This fires
+          -- if the fast arm is taken unconditionally.
+          if cyc < CAD_N + 3 then
+            report NAME & ": CADENCE -- the shipping arm took " &
+                   integer'image(cyc) & " read cycles for " &
+                   integer'image(CAD_N) & " beats, want at least " &
+                   integer'image(CAD_N + 3) & " -- the FAST_POP arm is " &
+                   "being taken with FAST_POP false" severity error;
+            cov := cov + 1;
+          end if;
+        end if;
+      end if;
+    end procedure;
+
     -- Restart both sides on a fresh sequence base, so the FIRST beat after a
     -- clear or a reset is a value that CANNOT be residue.
     procedure rebase(constant v : integer) is
@@ -491,6 +640,29 @@ begin
     stop_both;
     rebase(1000000);
     move(NBEATS/2, 12, 12, "phase5 after clear");
+
+    -- ---- PHASE 5b  A CLEAR ENTERED WITH A READ IN FLIGHT ----------------
+    -- Phase 4 stocks the FIFO with the reader STOPPED, so the output stage is
+    -- saturated, `do_rd` has been low for many cycles when the read side parks
+    -- and NOTHING IS IN FLIGHT ACROSS THE PARK.  That is a corner, not the
+    -- normal case, and it was the only clear this bench ever ran.
+    --
+    -- MEASURED 2026-09-20 by TRACK POPCOVER: a mutation that parks the output
+    -- stage but leaves `mem_q_v` SET (sim/mutate_async_fifo.sh row P11, the
+    -- narrow half of C3) SURVIVED the whole bench, in BOTH arms, because the
+    -- stale beat it strands can only land if a read was in flight when the
+    -- park arrived.  Under FAST_POP a read is in flight on essentially every
+    -- read cycle, so this is the CARD'S NORMAL STATE.
+    --
+    -- Both sides run flat out into the clear here, and unlike phase 4 the
+    -- reader is NOT stopped first, so `do_rd` is high in the cycle before
+    -- `clr_r_s2` rises.
+    w_dens <= 16; r_dens <= 16; w_run <= true; r_run <= true;
+    for i in 0 to 4*DEPTH loop wait until rising_edge(wclk); end loop;
+    do_clear;
+    stop_both;
+    rebase(1500000);
+    move(NBEATS/2, 12, 12, "phase5b after an in-flight clear");
 
     -- ---- PHASE 6  WRITE-DOMAIN RESET ONLY -------------------------------
     -- Not a supported operation: it parks wp while rp keeps the old value, so
@@ -548,6 +720,12 @@ begin
     stop_both;
     rebase(4000000);
     move(NBEATS, 16, 5, "phase8 after skewed reset");
+
+    -- ---- PHASE 8b  THE READ-ISSUE CADENCE -------------------------------
+    -- Placed LAST of the traffic phases on purpose: it neither clears nor
+    -- resets, so the value sequence runs straight through it and phase 9's
+    -- accounting check spans it.
+    cadence_probe;
 
     -- ---- PHASE 9  quiesce and account for every beat --------------------
     w_run <= false; r_run <= true; r_dens <= 16;
@@ -612,10 +790,22 @@ begin
       -- depths (18/16, 18/16, 18/16, 18/16, 6/4, 66/64).
       --
       -- Asserting DEPTH alone is NOT enough, and that is a measurement rather
-      -- than a worry: with the bound at DEPTH the mutations F3 (full asserts
-      -- one slot early) and G6 (the read pointer's gray encode lags by one)
-      -- both SURVIVED.  Each silently costs one slot of capacity -- safe, but
-      -- a real regression -- and DEPTH + 2 is what resolves them.
+      -- than a worry: with the bound at DEPTH, mutation G6 (the read pointer's
+      -- gray encode lags by one) SURVIVED.  It silently costs one slot of
+      -- capacity -- safe, but a real regression -- and DEPTH + 2 resolves it.
+      --
+      -- CORRECTION 2026-09-20 (TRACK POPCOVER).  This block used to name F3
+      -- (full asserts one slot early) alongside G6 as resolved by the DEPTH + 2
+      -- bound.  IT IS NOT.  MEASURED at 92ba3ec, BEFORE this file grew its
+      -- second arm, so the correction is not about that change:
+      -- `ONLY=F3 bash sim/mutate_async_fifo.sh` reports `1 SURVIVED` with
+      -- maxocc = 18/16 on every DEPTH-16 ratio, i.e. F3 still reaches the full
+      -- DEPTH + 2.  DERIVED reason: `full_r` is REGISTERED and computed from
+      -- used_w(n), so moving its threshold from DEPTH to DEPTH-1 without also
+      -- moving the look-ahead arm still leaves full_r low in the cycle
+      -- used_w = DEPTH-2, and the write that cycle admits carries used_w to
+      -- DEPTH-1, and the next one to DEPTH.  F3 costs nothing, which is why
+      -- nothing sees it.  The claim was self-consistent and never re-run.
       if max_occ < DEPTH + 2 then
         report NAME & ": COVERAGE -- the FIFO never reached its full " &
                "capacity (max occupancy " & integer'image(max_occ) &
@@ -643,6 +833,7 @@ begin
            " wstall=" & integer'image(n_wstall) &
            " rstall=" & integer'image(n_rstall) &
            " minslack=" & integer'image(min_slack) &
+           " cadence=" & integer'image(cad_cyc) & "/" & integer'image(CAD_N) &
            " err=" & integer'image(nerr + nlvl + nocc + nclr + cov)
       severity note;
     errs <= nerr + nlvl + nocc + nclr + cov;
@@ -653,18 +844,30 @@ begin
 end architecture;
 
 -- ===========================================================================
+-- THE EIGHT CLOCK RATIOS, AS ONE BLOCK, SO THAT BOTH `FAST_POP` ARMS RUN THE
+-- SAME LIST.  Before 2026-09-20 these eight instances were written out once,
+-- directly in the top level, at the DUT's default FAST_POP = false -- which is
+-- the arm the card does NOT run.  Factoring them here is what makes "the same
+-- ratios, the same seeds, the other arm" a two-line change rather than a
+-- second copy of the list that can drift.
+-- ===========================================================================
 library ieee;
 use ieee.std_logic_1164.all;
 
-entity tb_async_fifo is
-  generic(NBEATS : positive := 160);
+entity af_ratios is
+  generic(
+    ARM      : string   := "slow";   -- prefix on every case name
+    FAST_POP : boolean  := false;
+    CADENCE  : boolean  := true;
+    NBEATS   : positive := 160
+  );
+  port(done : out boolean := false; errs : out integer := 0);
 end entity;
 
-architecture sim of tb_async_fifo is
+architecture beh of af_ratios is
   constant NC : integer := 8;
   type ia_t is array(0 to NC-1) of integer;
   signal er : ia_t := (others => 0);
-
   signal d0,d1,d2,d3,d4,d5,d6,d7 : boolean;
 begin
   -- Eight clock ratios.  The list is the point of the file, so each entry
@@ -673,16 +876,18 @@ begin
   -- write 3.25x faster than read: the FK33 direction (HBM ACLK above f_core),
   -- and the one that makes the FIFO fill.
   c0 : entity work.af_case
-    generic map(NAME => "fastw", WPER_PS => 4000, RPER_PS => 13000,
-                SEED => 1, DEPTH => 16, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/fastw", WPER_PS => 4000, RPER_PS => 13000,
+                SEED => 1, DEPTH => 16, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d0, errs => er(0));
 
   -- read 3.25x faster than write: the FIFO is nearly always empty, so the
   -- empty flag and the output stage's first-word-fall-through are what is
   -- under test.
   c1 : entity work.af_case
-    generic map(NAME => "fastr", WPER_PS => 13000, RPER_PS => 4000,
-                SEED => 2, DEPTH => 16, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/fastr", WPER_PS => 13000, RPER_PS => 4000,
+                SEED => 2, DEPTH => 16, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d1, errs => er(1));
 
   -- EXACTLY equal, edges COINCIDENT.  The pathological case for a
@@ -690,15 +895,17 @@ begin
   -- the same delta, so a design that only works because its edges never line
   -- up fails here and nowhere else.
   c2 : entity work.af_case
-    generic map(NAME => "eq_ph0", WPER_PS => 6000, RPER_PS => 6000,
-                SEED => 3, DEPTH => 16, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/eq_ph0", WPER_PS => 6000, RPER_PS => 6000,
+                SEED => 3, DEPTH => 16, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d2, errs => er(2));
 
   -- Equal rate, quarter-period offset: the same rate with the opposite delta
   -- ordering.
   c3 : entity work.af_case
-    generic map(NAME => "eq_ph90", WPER_PS => 6000, RPER_PS => 6000,
-                RPHASE_PS => 1500, SEED => 4, DEPTH => 16, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/eq_ph90", WPER_PS => 6000, RPER_PS => 6000,
+                RPHASE_PS => 1500, SEED => 4, DEPTH => 16, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d3, errs => er(3));
 
   -- 7000 against 6999 ps: NOT an integer multiple, and the phase relationship
@@ -706,22 +913,27 @@ begin
   -- between the two domains occurs somewhere in the run.  This is the single
   -- most useful ratio in the list.
   c4 : entity work.af_case
-    generic map(NAME => "slide", WPER_PS => 7000, RPER_PS => 6999,
-                SEED => 5, DEPTH => 16, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/slide", WPER_PS => 7000, RPER_PS => 6999,
+                SEED => 5, DEPTH => 16, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d4, errs => er(4));
 
   -- A deep FIFO with a 10.33x ratio: the fill phase leaves it full for a long
   -- time, which is where a full flag that is off by one shows up.
   c5 : entity work.af_case
-    generic map(NAME => "deep", WPER_PS => 3000, RPER_PS => 31000,
-                SEED => 6, DEPTH => 64, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/deep", WPER_PS => 3000, RPER_PS => 31000,
+                SEED => 6, DEPTH => 64, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d5, errs => er(5));
 
   -- DEPTH 4, the smallest useful depth: OUT_MARGIN (3) is nearly the whole
-  -- FIFO, so every boundary is hit on almost every beat.
+  -- FIFO, so every boundary is hit on almost every beat.  Below the cadence
+  -- probe's DEPTH floor, so this ratio is a VALUE row in both arms and a
+  -- cadence row in neither -- see cadence_probe's header.
   c6 : entity work.af_case
-    generic map(NAME => "tiny", WPER_PS => 5000, RPER_PS => 11000,
-                SEED => 7, DEPTH => 4, NBEATS => NBEATS)
+    generic map(NAME => ARM & "/tiny", WPER_PS => 5000, RPER_PS => 11000,
+                SEED => 7, DEPTH => 4, NBEATS => NBEATS,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d6, errs => er(6));
 
   -- The REAL caller's contract: the writer offers only while w_level < DEPTH,
@@ -729,8 +941,9 @@ begin
   -- only case in which a w_level that is too LARGE is detectable -- it shows
   -- up as a throughput stall rather than as a wrong value.
   c7 : entity work.af_case
-    generic map(NAME => "thrott", WPER_PS => 5000, RPER_PS => 12000,
-                SEED => 8, DEPTH => 16, NBEATS => NBEATS, THROTTLE => true)
+    generic map(NAME => ARM & "/thrott", WPER_PS => 5000, RPER_PS => 12000,
+                SEED => 8, DEPTH => 16, NBEATS => NBEATS, THROTTLE => true,
+                FAST_POP => FAST_POP, CADENCE => CADENCE)
     port map(done => d7, errs => er(7));
 
   fin : process
@@ -739,8 +952,58 @@ begin
     wait until d0 and d1 and d2 and d3 and d4 and d5 and d6 and d7;
     wait for 1 ns;
     for i in 0 to NC-1 loop tot := tot + er(i); end loop;
-    report "async_fifo: " & integer'image(tot) &
+    report "async_fifo arm " & ARM & ": " & integer'image(tot) &
            " errors across 8 clock ratios" severity note;
+    errs <= tot;
+    done <= true;
+    wait;
+  end process;
+end architecture;
+
+-- ===========================================================================
+library ieee;
+use ieee.std_logic_1164.all;
+
+entity tb_async_fifo is
+  generic(
+    NBEATS  : positive := 160;
+    -- The cadence check, on both arms.  false is the ATTRIBUTION CONTROL --
+    -- see the CADENCE generic on af_case.  Everything else stays.
+    CADENCE : boolean  := true
+  );
+end entity;
+
+architecture sim of tb_async_fifo is
+  signal d_slow, d_fast : boolean;
+  signal e_slow, e_fast : integer := 0;
+begin
+  -- THE ARM EVERY RTL DEFAULT SELECTS, and the only one this bench ran until
+  -- 2026-09-20.
+  a_slow : entity work.af_ratios
+    generic map(ARM => "slow", FAST_POP => false, CADENCE => CADENCE,
+                NBEATS => NBEATS)
+    port map(done => d_slow, errs => e_slow);
+
+  -- THE ARM THE CARD RUNS.  hw/fk33/rtl/fk33_engine.vhd:1356 sets
+  -- FAST_POP => true on matvec_int4, which threads it through
+  -- matvec_int4_desc_axi:202 -> axi_rd_port:102 -> async_fifo:122, and
+  -- DUAL_CLK is true there, so all 27 of subsystem A's read ports end in THIS
+  -- entity with THIS arm.  Same ratios, same seeds, same oracle.
+  a_fast : entity work.af_ratios
+    generic map(ARM => "fast", FAST_POP => true, CADENCE => CADENCE,
+                NBEATS => NBEATS)
+    port map(done => d_fast, errs => e_fast);
+
+  fin : process
+    variable tot : integer := 0;
+  begin
+    wait until d_slow and d_fast;
+    wait for 1 ns;
+    tot := e_slow + e_fast;
+    report "async_fifo: " & integer'image(tot) &
+           " errors across 8 clock ratios x 2 FAST_POP arms (slow " &
+           integer'image(e_slow) & ", fast " & integer'image(e_fast) & ")"
+      severity note;
     assert tot = 0
       report "async_fifo FAILED: see the per-case diagnostics above"
       severity failure;

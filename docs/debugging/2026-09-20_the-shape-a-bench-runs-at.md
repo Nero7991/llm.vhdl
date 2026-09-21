@@ -382,3 +382,296 @@ but three.
 - No `tb_*` coverage claim here was checked against `sim/*.sh` wrappers that
   might pass `-g` overrides; `sim/Makefile` has none, which is not the same as
   none existing.
+
+---
+
+# TRACK POPCOVER, 2026-09-20 -- the FAST_POP arm now has coverage, and it is SOUND
+
+Branch `fpga`, HEAD `92ba3ec` (this file's own commit) at start. No hardware.
+No Vivado anywhere: the workstation lane was on build 11b and the BC-250 on
+TRACK HDRCOST. Every mutation ran in an ISOLATED `git archive HEAD` tree at
+`/mnt/storage/fk33_builds/scratch/popcover/tree`, never in the shared working
+tree; the bench edit itself landed in the repo and was gated there.
+
+## 10. THE QUESTION, VERBATIM
+
+> **Give the `FAST_POP = true` arm real coverage, at the lowest level that
+> closes the cone, and report honestly whether it is sound -- build 11b ships
+> `FAST_POP = true` and Oren will load it onto the live card.**
+
+Section 9 above left it open: *"Whether the `FAST_POP` no-op has already cost
+anything on silicon ... This audit shows the arm is unverified; it does NOT
+show it is wrong."*
+
+## 11. THE ANSWER, UP FRONT
+
+**THE `FAST_POP` ARM IS SOUND. Nothing found here argues against loading build
+11b's bitstream.** MEASURED: with the arm instantiated at all eight clock
+ratios, every property the bench has -- the value-and-order oracle, the
+`w_level >= occupancy` safety guarantee, occupancy within `DEPTH + OUT_MARGIN`,
+no beat accepted during a clear, the four-phase clear with residue resident,
+write-only / read-only / skewed reset recovery, the full drain accounting, and
+both coverage asserts -- passes at `FAST_POP = true` exactly as it does at
+false, on a first run, with **zero** changes to `rtl/async_fifo.vhd`.
+
+Two numbers carry most of that. `maxocc` is **18/16** in BOTH arms, so the fast
+arm reaches the same `DEPTH + 2` capacity and no more; and `minslack` is **0**
+in both arms with **zero** `w_level UNDER-STATES` reports, so the AR throttle's
+one safety guarantee still holds with exactly zero slack under the faster
+cadence. That was the one thing that could have broken, because `OUT_MARGIN`
+and the `+1` were DERIVED against the shipping arm's `(ocnt + inflight) < 2`.
+
+**The equivalence claim holds and the lever works.** MEASURED, on all seven
+ratios at `DEPTH >= 16`, with no scatter at all: the shipping arm takes **15**
+read cycles to deliver 10 beats and the `FAST_POP` arm takes **10**. Same
+values, same order, 1.5x the rate -- which is the silicon slope
+(1.5101 core cycles per weight word, section 4.1 of
+`docs/2026-09-20_d-side-vector-traffic.md`) reproduced in simulation.
+
+**But the arm was unverified by a much wider margin than section 5.2 showed.**
+Ten mutations of the read-issue logic were planted. **NINE of the ten survived
+the bench as it stood at `92ba3ec`**; the single exception (P8) is not
+arm-specific. After this track, nine of the ten are caught and the tenth is a
+provable no-op.
+
+**And one defect was found that is not about `FAST_POP` at all** (section 15):
+the clear was only ever entered with nothing in flight, so a mutation that
+strands an in-flight read across the park survived every arm. Under `FAST_POP`
+a read is in flight on essentially every read cycle, so that is the card's
+normal state.
+
+## 12. THE LEVEL, AND WHY
+
+`sim/tb_async_fifo.vhd` was EXTENDED; no bench file was added.
+
+- It is the dedicated bench for the file that carries the arm, so it is the
+  lowest level at which the cone closes. A composed bench would have paid the
+  27-port geometry to observe one boolean.
+- **The gate-row hazard decided it.** A new `sim/tb_*.vhd` is auto-discovered
+  and becomes a row for every track on every run. Extending an existing row
+  adds none. MEASURED cost of the extension as a gate row: **1 s**
+  (`PASS sim:tb_async_fifo 1s`), against 0 s before, and the honest end time
+  moved 76.03 us -> **83.44 us**, still 24x inside the row's `--stop-time=2ms`.
+- The bench already had the right oracle. It writes a strictly increasing
+  counter and checks it against an independently maintained counter in the read
+  domain, with drop / duplicate / reorder as three separate diagnostics. That is
+  a value-AND-order oracle and not a round trip, so the equivalence claim needed
+  the arm instantiated, not a new checker.
+
+The eight ratios were factored into one `af_ratios` block and instantiated
+twice, **same ratios, same seeds, both arms**. `sim/regress.sh` was NOT touched.
+
+## 13. THE ORACLE, AND THE SECOND ONE THAT HAD TO BE ADDED
+
+**Oracle 1, values and order: already there, now run on both arms.** "The same
+values in the same order come out of either arm" is checked beat by beat
+against a counter the FIFO never supplied.
+
+**Oracle 2, the cadence: new, and it is the one that earns its keep.** A value
+oracle can only ever prove the lever HARMLESS; it can never prove it PRESENT,
+because `FAST_POP` changes no value by construction. `cadence_probe` stocks the
+FIFO, STOPS the writer, waits for it to be idle, opens the reader flat out and
+times the drain from the FIRST beat consumed. With the writer stopped the window
+contains nothing but the read side's own issue condition -- no write clock, no
+clock ratio, no stimulus density.
+
+DERIVED, from the two conditions: with `q_ready` high and the FIFO non-empty,
+`(ocnt + inflight) < 2` settles into a period-3 orbit with two pops in it,
+because the beat leaving the output stage this edge is still counted as
+resident; `after_e < 2`, where `after_e` IS the post-edge occupancy, holds
+`ocnt` at 1 with one read always in flight and pops every cycle. So CAD_N = 10
+beats take 15 and 10 read cycles.
+
+MEASURED, and it is a CONSTANT and not a mean -- **10 and 15 exactly, on all
+seven eligible ratios**, including coincident edges, a quarter-period offset,
+the 7000/6999 slide and the throttled case. The thresholds (fast must be <= 11,
+slow must be >= 13) sit in that five-cycle gap. The check is **TWO-SIDED**, so
+both "the lever is not threaded" and "the lever is wired on unconditionally"
+fail, and neither is visible to any value oracle.
+
+It is skipped below `DEPTH` 16: at `DEPTH` 4 the FIFO holds 6 beats, CAD_N must
+fall to 3, and 3 against 4.5 does not separate the arms. **`tiny` is a value row
+in both arms and a cadence row in neither**, stated so it is not mistaken for
+coverage.
+
+## 14. THE MUTATION TABLE, WITH TEETH AND THE ATTRIBUTION CONTROL
+
+Fifteen mutations, class `POP` in `sim/mutate_async_fifo.sh`. Three columns were
+run during the investigation and two of them are now STANDING in the harness:
+
+- **A** -- the bench at `92ba3ec` (one arm, no cadence). The attribution control
+  for "did the old bench already catch this".
+- **B** -- the new bench with `-gCADENCE=false`: both arms, every pre-existing
+  property, the cadence check REMOVED. This is the attribution control CLAUDE.md
+  requires and the harness runs it on every class-`POP` row, printing the credit
+  on its own line.
+- **C** -- the new bench as the gate runs it.
+
+| row | what it breaks | A (`92ba3ec`) | B (both arms, no cadence) | C (gate) | credit |
+|---|---|---|---|---|---|
+| Z0 | impossible anchor (self-teeth) | BADMUT | BADMUT | BADMUT | required outcome |
+| A0 | a no-op edit inside a string literal | SURV | SURV | SURV | must survive |
+| P1 | SHAPEAUDIT's `after_e < 4` | **SURV** | ABORT `:431` | ABORT | pre-existing |
+| P2 | `after_e < 3` (O1's fast twin) | **SURV** | ABORT `:431` | ABORT | pre-existing |
+| P3 | `after_e < 1` -- safe, and SLOWER than the arm it beats | **SURV** | KILL (coverage) | KILL (cadence) | **pre-existing** |
+| P4 | **the lever INVERTED** | **SURV** | **SURV** | KILL | **the cadence check** |
+| P5 | **the lever NOT THREADED** | **SURV** | **SURV** | KILL | **the cadence check** |
+| P6 | **the lever WIRED ON** | **SURV** | **SURV** | KILL | **the cadence check** |
+| P7 | `after_e` drops `inflight` | **SURV** | ABORT `:431` | ABORT | pre-existing |
+| P8 | `after_e` drops its `ocnt > 0` guard | ABORT `:379` | ABORT | ABORT | pre-existing |
+| P9 | `after_e` drops `q_ready` | **SURV** | ABORT `:431` | ABORT | pre-existing |
+| P10 | `do_rd` drops the clear term | **SURV** | **SURV** | **SURV** | survivor, see 16 |
+| P11 | the clear strands an in-flight read | **SURV** | KILL | KILL | **the new phase 5b** |
+| P12 | `q_data` from the WRITE pointer | KILL | KILL | KILL | pre-existing |
+| P13 | `rp` advances on LAND, not ISSUE | KILL | KILL | KILL | pre-existing |
+| P14 | the memory read gated on `do_rd` | **SURV** | **SURV** | **SURV** | survivor, see 16 |
+| P15 | the output stage collapses to one entry | KILL | KILL | KILL | pre-existing |
+
+**Read column A first.** Eleven of fifteen survived the bench this file's own
+section 5.2 was measured against; restricted to the read-issue logic proper
+(P1..P10) it is **nine of ten**. That is the size of the hole, and it is much
+larger than one mutation at one site.
+
+**Read the credit column second, because it is the honest part.** The cadence
+check is credited with **three** rows and not four. P3 dies in column B as well,
+under the pre-existing `max_occ < DEPTH + 2` coverage assert, so without the
+control this table would have claimed four detections for a check that earns
+three. The three it does earn -- P4, P5, P6 -- are the pure lever-wiring
+defects. They change no value in either arm, and **every other oracle in the
+file, including the value-and-order oracle and the arm instantiation itself,
+reports 0 errors on all three.**
+
+**Attribution for the ARM as distinct from the CHECK**, read out of which case
+names appear in the diagnostics. On P3 every firing case is `fast/*` (8 of 8),
+so the arm is what makes it visible. On P11 the firing cases are 7 of 8 `fast/*`
+and 3 of 8 `slow/*`, so the new PHASE catches it and the arm roughly doubles
+the detection rate.
+
+**Teeth on the harness itself, both directions** (MEASURED in a scratch copy,
+never in the repo):
+
+```
+honest                       Z0 BADMUT ... kill ratio 37 of 49   exit 0
+Z0 given a REAL anchor       Z0 SURVIVED ... HARNESS FAILURE: row Z0 was run
+                             and did NOT report BADMUT              exit 1
+O5 given an impossible one   O5 BADMUT ... HARNESS FAILURE: 1 anchor(s)
+                             matched zero times                     exit 1
+```
+
+Harness totals: **37 of 49 (27 KILLED + 10 ABORT), 11 SURVIVED**, 29 s,
+exit 0. Before this track it was 33 rows with row O1 dead.
+
+## 15. THE DEFECT THAT WAS NOT ABOUT FAST_POP: A CLEAR WITH NOTHING IN FLIGHT
+
+Row **P11** leaves `mem_q_v` SET across the read side's park -- the narrow half
+of the existing row C3 -- so a read still in flight when the clear arrives lands
+AFTER the park and strands a stale beat. **It survived every arm.**
+
+The reason is the bench's own phase 4: it stocks the FIFO with the reader
+STOPPED (`r_dens <= 0`), so the output stage is saturated, `do_rd` has been low
+for many cycles when the park arrives, and **nothing is ever in flight across
+it**. The only clear the bench had ever run was the one shape in which P11 is
+inert.
+
+`PHASE 5b` was added: both sides run flat out INTO the clear, with the reader
+NOT stopped first. P11 is now killed in both arms, at 7 of 8 fast ratios and
+3 of 8 slow ones. **Under `FAST_POP` a read is in flight on essentially every
+read cycle, so the card runs the state this bench had never entered** -- which
+is the same finding as section 5.2 in a different place: a coverage hole hiding
+behind a configuration nobody ran.
+
+## 16. MEASURED AND REJECTED -- DO NOT RETRY, AND THE SURVIVORS
+
+**Two mutations do NOT bite and BOTH are reported under their own names,
+because they measure this bench's resolution floor and both turn out to be
+PROOFS rather than gaps.**
+
+- **P10 -- `do_rd` drops its `clr_r_s2 = '0'` term. SURVIVES, correctly.**
+  `do_rd` is consumed ONLY inside `rproc`'s ELSE branch, which is exactly the
+  branch `clr_r_s2 = '1'` takes over, so the term is redundant by construction.
+  This is the same shape as the existing row F5. Do not add a check for it; it
+  is not a defect and a check that killed it would be wrong.
+- **P14 -- the memory read is gated on `do_rd` instead of issued every cycle.
+  SURVIVES, correctly.** `mem_q` is consumed only under `mem_q_v`, which is
+  `do_rd` one cycle late, so the ungated read is dead work and the two forms are
+  equivalent. It is an area/power question, not a functional one.
+
+**REJECTED: extending the cadence probe to `DEPTH = 4`.** At `DEPTH` 4 the FIFO
+holds 6 beats, so CAD_N falls to 3 and the two arms are 3 cycles against 4.5.
+That gap is smaller than the start-up jitter the probe deliberately excludes,
+and a threshold inside it would fire on honest RTL. `tiny` stays a value row.
+
+**REJECTED: a paired two-DUT comparator** (one FIFO per arm, same stimulus,
+outputs compared beat for beat). It sounds like the sharper equivalence test and
+it is weaker: the stimulus is back-pressure-driven, so the two arms diverge in
+their offer pattern within a few cycles and the comparator would be comparing
+two different input sequences. The monotone-counter oracle already compares each
+arm against an independent model, which is the stronger form and is
+stimulus-independent.
+
+**REJECTED: touching `rtl/async_fifo.vhd`.** Nothing needed changing; the file's
+md5 is unchanged at both ends of every gate window in this section.
+
+## 17. CORRECTION, and it is to a claim in `sim/tb_async_fifo.vhd`
+
+The coverage-assert comment said the `DEPTH + 2` bound is what resolves
+mutations F3 and G6. **For F3 that is WRONG, and it was wrong before this
+track touched anything.** MEASURED at `92ba3ec`, in an unmodified `git archive`
+tree: `ONLY=F3 bash sim/mutate_async_fifo.sh` reports `1 SURVIVED`, with
+`maxocc=18/16` on every `DEPTH`-16 ratio. G6 is killed as claimed.
+
+DERIVED reason: `full_r` is REGISTERED and computed from `used_w(n)`. Moving its
+threshold from `DEPTH` to `DEPTH-1` without also moving the look-ahead arm still
+leaves `full_r` low in the cycle `used_w = DEPTH-2`, so that cycle's write
+carries `used_w` to `DEPTH-1` and the next one to `DEPTH`. **F3 costs no
+capacity at all, which is why nothing sees it.** The claim was self-consistent,
+was never re-run, and is corrected in place rather than deleted.
+
+## 18. MEASUREMENT TRAPS HIT
+
+- **A mutation anchor had already gone dead under this exact lever, silently.**
+  Row **O1**'s anchor was `and (ocnt + inflight) < 2 else '0';`, which stopped
+  existing the moment `do_rd` grew its `FAST_POP` arm. It reported
+  `ANCHOR FAILED -- tested nothing` from that commit onward -- honest, and still
+  a row that measured nothing. `sim/mutation_harness_wiring.tsv` (TRACK MUTWIRE)
+  recorded it as `DEADROWS O1` the same day, independently. It is repaired here
+  and its anchor is now **scoped in CODE**: the `(not FAST_POP)` guard is part
+  of the matched text, so it cannot silently start matching the other arm.
+- **An exit-code guard gated on the wrong variable passes for the wrong
+  reason.** The Z0 verdict was first gated on `[ -z "$ONLY" ]`, so
+  `ONLY=Z0 bash sim/mutate_async_fifo.sh` with Z0's anchor made REAL exited
+  **0** -- the teeth test for the guard reported success while the guard was
+  inert. It is now gated on `Z0TRIED`, recorded before the patch is attempted,
+  and the teeth test above is the run that shows it discriminates.
+- **A backtick in a bash description string runs a command.** P10's description
+  originally contained `` `else` `` inside a double-quoted argument; bash ran it
+  as a command substitution, printed a syntax error to stderr and silently
+  deleted the word from the table. Caught only by reading the run's stderr.
+- **`regress.sh`'s recorded honest end time for this row is now stale.** It says
+  `tb_async_fifo 76.03 us`; the two-arm bench ends at **83.44 us**. The
+  `--stop-time=2ms` backstop is still 24x that, so no action is required and
+  `sim/regress.sh` was deliberately NOT edited -- three tracks were gating and
+  bash re-seeks a running script by byte offset.
+- **Scratch is on `/mnt/storage`, never `/tmp`.**
+
+## 19. OPEN, NOT DETERMINED
+
+- **This is the FIFO in isolation.** It says nothing about `axi_rd_port`,
+  `weight_streamer` or `matvec_int4_desc_axi` behaving correctly against the
+  faster cadence, and nothing at all about the 27-port composition where the
+  array accepts a word only when all 27 ports present a beat in the same cycle.
+  `sim/tb_matvec_fk33_desc_dual` is the only A bench at `DUAL_CLK = true` and it
+  still runs `FAST_POP` at its default of false. **Not attempted here** -- it is
+  a different file and a different track's cone.
+- **`HOST_WINDOW` is still uncovered** (section 9), and nothing here touched it.
+- **POSW = 17 is still run by no harness** (section 5.4).
+- **Whether `FAST_POP` has ALREADY cost anything on silicon is still not
+  answered, and cannot be answered from here.** What IS now established is that
+  the arm computes the same values in the same order as the shipping arm, at
+  1.5x the rate, with the throttle's safety guarantee intact. A silicon
+  discrepancy, if one appears, is not in this FIFO's read-issue logic.
+- **The cadence thresholds are calibrated on seven points that all gave the
+  identical pair (10, 15).** That is a constant, not a fit, and the two-sided
+  bound has 1 and 2 cycles of slack. A future `OUT_MARGIN` or output-stage
+  change would move it; the check would then fail loudly rather than silently,
+  which is the intended direction.
