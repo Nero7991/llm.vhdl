@@ -1,0 +1,5 @@
+	Parameter HDR_TREE bound to: 1 - type: integer 
+ERROR: [Synth 8-11324] array index 8 out of range [/home/labuser/hdrcost/rtl/attn_score_q12.vhd:488]
+ERROR: [Synth 8-285] failed synthesizing module 'attn_score_q12' [/home/labuser/hdrcost/rtl/attn_score_q12.vhd:244]
+ERROR: [Synth 8-285] failed synthesizing module 'attn_block' [/home/labuser/hdrcost/rtl/attn_block.vhd:486]
+ERROR: [Common 17-69] Command failed: Synthesis failed - please see the console or run log file for details

@@ -1,0 +1,88 @@
+HDRCOST2_CHAIN waiting on batch 1's own sentinel in /home/labuser/hdrcost/out/driver.log
+HDRCOST2_CHAIN batch 1 sentinel seen 2026-09-20T21:15:39-04:00
+HDRCOST2_ENV host=cachyos-bc250 out=/home/labuser/hdrcost/out cap=11G
+HDRCOST2_FIXMANIFEST baa117369ef70378755643d86f4ad971fb19168f4b33659b7142c545d4db006c
+=== HDRCOST2 pnr basereport begin 2026-09-20T21:15:41-04:00 ===
+HDRCOST2_OK pnr basereport rc=0 cgroup_peak=3725MB swap=0MB at_cap=no wall=121s
+SCOREHDR_PBEGIN tag=basereport dcp=/home/labuser/hdrcost/out/post_route_base.dcp period=13.333
+SCOREHDR_POPENED tag=basereport cells=221361
+SCOREHDR_PRMCLK clk : invalid command name "remove_clock"
+SCOREHDR_PCLK tag=basereport period=13.333
+SCOREHDR_REPORT_ONLY tag=basereport (no place_design, no route_design)
+SCOREHDR_ROUTESTATUS tag=basereport nets=479958 unrouted=NA
+SCOREHDR_INTRA tag=basereport clk=clk wns=3.101 tns=0.000 failing=0 endpoints=250281
+SCOREHDR_WORST_GLOBAL tag=basereport wns=3.101 levels=3 datapath=9.956 start=ar_rsb_reg[0]/C end=u_arr/p_reg_reg[22]/DSP_A_B_DATA_INST/A[16]
+SCOREHDR_CONE tag=basereport cone=score_all cells=1780
+SCOREHDR_CONE_TO   tag=basereport cone=score_all wns=9.355 levels=1 datapath=3.873 start=u_arr/pv_r_reg/C end=gen_head[1].u_sq/c1_p_reg[15]/CE
+SCOREHDR_CONE_FROM tag=basereport cone=score_all wns=9.428 levels=4 datapath=3.801 start=gen_head[1].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__17/CE
+SCOREHDR_CONE tag=basereport cone=score_emin cells=32
+SCOREHDR_CONE_TO   tag=basereport cone=score_emin wns=10.333 levels=5 datapath=2.897 start=gen_head[3].u_sq/blk_reg[2]/C end=gen_head[3].u_sq/e_min_reg[5]/CE
+SCOREHDR_CONE_FROM tag=basereport cone=score_emin wns=11.043 levels=3 datapath=2.273 start=gen_head[3].u_sq/e_min_reg[0]/C end=gen_head[3].u_sq/shb_reg[0][4]/D
+SCOREHDR_CONE tag=basereport cone=score_shb cells=192
+SCOREHDR_CONE_TO   tag=basereport cone=score_shb wns=10.387 levels=5 datapath=2.925 start=gen_head[1].u_sq/blk_reg[1]/C end=gen_head[1].u_sq/shb_reg[1][2]/D
+SCOREHDR_CONE_FROM tag=basereport cone=score_shb wns=12.477 levels=2 datapath=0.837 start=gen_head[3].u_sq/shb_reg[1][2]/C end=gen_head[3].u_sq/c1_sh_reg[2]/D
+SCOREHDR_CONE tag=basereport cone=score_tv cells=0 to=NONE from=NONE (no sequential cell matches *u_sq*tv_reg* in this arm)
+SCOREHDR_CONE tag=basereport cone=score_st cells=40
+SCOREHDR_CONE_TO   tag=basereport cone=score_st wns=11.205 levels=2 datapath=2.023 start=sq_hdrv_reg/C end=gen_head[3].u_sq/FSM_onehot_state_reg[6]/CE
+SCOREHDR_CONE_FROM tag=basereport cone=score_st wns=9.428 levels=4 datapath=3.801 start=gen_head[1].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__17/CE
+SCOREHDR_PATHS tag=basereport n=200
+SCOREHDR_CONESHARE tag=basereport top=200 in_score_cone=0
+SCOREHDR_PRESULT tag=basereport clb=20377 lut_sites=NA lut_logic=86079 lut_mem=85 ff=101241 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 place_s=0 route_s=0
+SCOREHDR_PDONE basereport
+=== HDRCOST2 synth treefix begin 2026-09-20T21:17:42-04:00 ===
+HDRCOST2_OK synth treefix rc=0 cgroup_peak=11267MB swap=6858MB at_cap=YES wall=998s
+SCOREHDR_BEGIN tag=treefix target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=treefix gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_EARLY=false SCORE_HDR_TREE=1"
+SCOREHDR_READ tag=treefix files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=treefix /home/labuser/hdrcost/out/clk_treefix.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=treefix 872
+SCOREHDR_CENSUS stage=synth tag=treefix dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95829 lut1=2235 lut2=8944 lut3=9403 lut4=6667 lut5=14424 lut6=54156 ff=101378 fdre=100695 fdse=683 fdce=0 fdpe=0 carry8=2753 f7=16343 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=treefix total=6296 lut=4236 ff=1916 carry8=104 muxf=24
+SCOREHDR_CONEREF stage=synth tag=treefix CARRY8=104 FDRE=1788 FDSE=128 GND=8 LUT1=12 LUT2=824 LUT3=524 LUT4=372 LUT5=980 LUT6=1524 MUXF7=24 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=treefix 75
+SCOREHDR_CENSUS stage=opt tag=treefix dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95827 lut1=2230 lut2=8947 lut3=9403 lut4=6667 lut5=14424 lut6=54156 ff=101378 fdre=100695 fdse=683 fdce=0 fdpe=0 carry8=2753 f7=16343 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=treefix total=6292 lut=4232 ff=1916 carry8=104 muxf=24
+SCOREHDR_CONEREF stage=opt tag=treefix CARRY8=104 FDRE=1788 FDSE=128 GND=8 LUT1=8 LUT2=824 LUT3=524 LUT4=372 LUT5=980 LUT6=1524 MUXF7=24 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101378 report=101378 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2753 report=2753 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16343 report=16343 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=treefix wildcard/exact = 9.0000
+SCOREHDR_DCP tag=treefix /home/labuser/hdrcost/out/post_opt_treefix.dcp
+SCOREHDR_SRESULT tag=treefix lut_sites=87403 lut_logic=87310 lut_mem=93 ff=101378 carry8=2753 f7=16343 f8=2992 bram=11 dsp=298 synth_s=872 opt_s=75
+SCOREHDR_SDONE treefix
+=== HDRCOST2 pnr treefix begin 2026-09-20T21:34:21-04:00 ===
+HDRCOST2_OK pnr treefix rc=0 cgroup_peak=6809MB swap=0MB at_cap=no wall=1459s
+SCOREHDR_PBEGIN tag=treefix dcp=/home/labuser/hdrcost/out/post_opt_treefix.dcp period=13.333
+SCOREHDR_POPENED tag=treefix cells=222234
+SCOREHDR_PRMCLK clk : invalid command name "remove_clock"
+SCOREHDR_PCLK tag=treefix period=13.333
+SCOREHDR_PLACE_SECONDS tag=treefix 503
+SCOREHDR_PLACED_WNS tag=treefix wns=5.016 levels=5
+SCOREHDR_ROUTE_SECONDS tag=treefix 774
+SCOREHDR_ROUTESTATUS tag=treefix nets=480846 unrouted=NA
+SCOREHDR_INTRA tag=treefix clk=clk wns=3.101 tns=0.000 failing=0 endpoints=250542
+SCOREHDR_WORST_GLOBAL tag=treefix wns=3.101 levels=5 datapath=10.213 start=u_quant/raddr_r_reg[1]/C end=vs2_q_reg[13]/D
+SCOREHDR_CONE tag=treefix cone=score_all cells=1916
+SCOREHDR_CONE_TO   tag=treefix cone=score_all wns=10.292 levels=5 datapath=3.021 start=gen_head[0].u_sq/tl0_reg/C end=gen_head[0].u_sq/e_min_reg[1]/D
+SCOREHDR_CONE_FROM tag=treefix cone=score_all wns=10.129 levels=4 datapath=3.100 start=gen_head[1].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__15/CE
+SCOREHDR_CONE tag=treefix cone=score_emin cells=32
+SCOREHDR_CONE_TO   tag=treefix cone=score_emin wns=10.292 levels=5 datapath=3.021 start=gen_head[0].u_sq/tl0_reg/C end=gen_head[0].u_sq/e_min_reg[1]/D
+SCOREHDR_CONE_FROM tag=treefix cone=score_emin wns=11.023 levels=4 datapath=2.194 start=gen_head[0].u_sq/e_min_reg[2]/C end=gen_head[0].u_sq/shb_reg[4][2]/R
+SCOREHDR_CONE tag=treefix cone=score_shb cells=192
+SCOREHDR_CONE_TO   tag=treefix cone=score_shb wns=11.023 levels=4 datapath=2.194 start=gen_head[0].u_sq/e_min_reg[2]/C end=gen_head[0].u_sq/shb_reg[4][2]/R
+SCOREHDR_CONE_FROM tag=treefix cone=score_shb wns=12.313 levels=2 datapath=1.003 start=gen_head[3].u_sq/shb_reg[5][3]/C end=gen_head[3].u_sq/c1_sh_reg[3]/D
+SCOREHDR_CONE tag=treefix cone=score_tv cells=128
+SCOREHDR_CONE_TO   tag=treefix cone=score_tv wns=10.453 levels=5 datapath=2.861 start=gen_head[0].u_sq/tl0_reg/C end=gen_head[0].u_sq/tv_reg[0][5]/D
+SCOREHDR_CONE_FROM tag=treefix cone=score_tv wns=10.810 levels=4 datapath=2.505 start=gen_head[0].u_sq/tv_reg[0][6]/C end=gen_head[0].u_sq/e_min_reg[1]/D
+SCOREHDR_CONE tag=treefix cone=score_st cells=40
+SCOREHDR_CONE_TO   tag=treefix cone=score_st wns=10.665 levels=3 datapath=2.563 start=gen_head[3].u_sq/FSM_onehot_state_reg[0]/C end=gen_head[3].u_sq/FSM_onehot_state_reg[4]/CE
+SCOREHDR_CONE_FROM tag=treefix cone=score_st wns=9.713 levels=4 datapath=3.515 start=gen_head[3].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]_rep__15/CE
+SCOREHDR_PATHS tag=treefix n=200
+SCOREHDR_CONESHARE tag=treefix top=200 in_score_cone=0
+SCOREHDR_PRESULT tag=treefix clb=20519 lut_sites=NA lut_logic=86598 lut_mem=85 ff=101378 carry8=2753 f7=16343 f8=2992 bram=11 dsp=298 place_s=503 route_s=774
+SCOREHDR_PDONE treefix
+HDRCOST2_ALLDONE rc=0

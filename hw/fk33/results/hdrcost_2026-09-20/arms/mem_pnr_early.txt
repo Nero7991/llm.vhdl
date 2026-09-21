@@ -1,0 +1,1 @@
+phase=pnr tag=early peak_rss_gb=5.85 cgroup_peak_mb=6807 cgroup_swap_mb=0 at_cap=no wall_s=1453 rc=0

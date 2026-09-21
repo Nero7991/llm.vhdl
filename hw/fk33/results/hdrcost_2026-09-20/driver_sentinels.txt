@@ -1,0 +1,93 @@
+HDRCOST_ENV host=cachyos-bc250 root=/home/labuser/hdrcost out=/home/labuser/hdrcost/out cap=11G period=13.333
+HDRCOST_TREE_SHA cc5f92ffe0d1fb8b21c44c19705ee2a17753b712
+HDRCOST_MANIFEST d88f8e70038e9e874bd565f4bf39b47db4405e6816428808ff0999a6d3f2c9ab
+HDRCOST_CGROUP systemd-run --user scope available, cap 11G
+=== HDRCOST synth base begin 2026-09-20T19:53:28-04:00 ===
+HDRCOST_OK synth base rc=0 cgroup_peak=11266MB swap=7064MB at_cap=YES wall=995s
+SCOREHDR_BEGIN tag=base target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=base gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_EARLY=false SCORE_HDR_TREE=0"
+SCOREHDR_READ tag=base files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=base /home/labuser/hdrcost/out/clk_base.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=base 868
+SCOREHDR_CENSUS stage=synth tag=base dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95057 lut1=2235 lut2=8928 lut3=9175 lut4=6523 lut5=14192 lut6=54004 ff=101242 fdre=100559 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=base total=5408 lut=3464 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=synth tag=base CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=12 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=base 76
+SCOREHDR_CENSUS stage=opt tag=base dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95055 lut1=2230 lut2=8931 lut3=9175 lut4=6523 lut5=14192 lut6=54004 ff=101242 fdre=100559 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=base total=5404 lut=3460 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=opt tag=base CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=8 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101242 report=101242 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2741 report=2741 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16375 report=16375 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=base wildcard/exact = 9.0000
+SCOREHDR_DCP tag=base /home/labuser/hdrcost/out/post_opt_base.dcp
+SCOREHDR_SRESULT tag=base lut_sites=86891 lut_logic=86798 lut_mem=93 ff=101242 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 synth_s=868 opt_s=76
+SCOREHDR_SDONE base
+HDRCOST_LOGMSG synth base synth_8-10226=1 synth_8-7186=1
+=== HDRCOST pnr base begin 2026-09-20T20:10:03-04:00 ===
+HDRCOST_FAIL pnr base: no SCOREHDR_PDONE sentinel (rc=1, wall 1416s, cgroup 6794MB, swap 0MB)
+SCOREHDR_INTRA tag=base clk=clk wns=3.101 tns=0.000 failing=0 endpoints=250281
+=== HDRCOST synth tree begin 2026-09-20T20:33:39-04:00 ===
+HDRCOST_FAIL synth tree: no SCOREHDR_SDONE sentinel (rc=1, wall 49s, cgroup 2966MB, swap 0MB)
+=== HDRCOST synth early begin 2026-09-20T20:34:28-04:00 ===
+HDRCOST_OK synth early rc=0 cgroup_peak=11267MB swap=6680MB at_cap=YES wall=995s
+SCOREHDR_BEGIN tag=early target=attn_block part=xcvu33p-fsvh2104-2L-e period=13.333
+SCOREHDR_GENERICS tag=early gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_EARLY=true  SCORE_HDR_TREE=0"
+SCOREHDR_READ tag=early files=110 skipped=0 excluded=4
+SCOREHDR_XDC tag=early /home/labuser/hdrcost/out/clk_early.xdc period=13.333
+SCOREHDR_SYNTH_SECONDS tag=early 866
+SCOREHDR_CENSUS stage=synth tag=early dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95063 lut1=2235 lut2=8928 lut3=9176 lut4=6525 lut5=14194 lut6=54005 ff=101244 fdre=100561 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=synth tag=early total=5408 lut=3464 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=synth tag=early CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=12 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_OPT_SECONDS tag=early 75
+SCOREHDR_CENSUS stage=opt tag=early dsp48_exact=298 dsp_wildcard=2682 uram288=0 ramb36=3 ramb18=16 lutram=133 lut_all=95061 lut1=2230 lut2=8931 lut3=9176 lut4=6525 lut5=14194 lut6=54005 ff=101244 fdre=100561 fdse=683 fdce=0 fdpe=0 carry8=2741 f7=16375 f8=2992 f9=0 srl=29
+SCOREHDR_CONE stage=opt tag=early total=5404 lut=3460 ff=1780 carry8=92 muxf=56
+SCOREHDR_CONEREF stage=opt tag=early CARRY8=92 FDRE=1652 FDSE=128 GND=8 LUT1=8 LUT2=808 LUT3=296 LUT4=228 LUT5=748 LUT6=1372 MUXF7=56 VCC=4 attn_score_q12=1 attn_score_q12__1=1 attn_score_q12__2=1 attn_score_q12__3=1
+SCOREHDR_FILTERCHK REF_NAME=~FD* census=101244 report=101244 AGREE
+SCOREHDR_FILTERCHK REF_NAME==DSP48E2 census=298 report=298 AGREE
+SCOREHDR_FILTERCHK REF_NAME=~DSP* census=2682 report=298 DIFFER
+SCOREHDR_FILTERCHK REF_NAME==CARRY8 census=2741 report=2741 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF7 census=16375 report=16375 AGREE
+SCOREHDR_FILTERCHK REF_NAME==MUXF8 census=2992 report=2992 AGREE
+SCOREHDR_FILTERCHK REF_NAME==RAMB36E2 census=3 report=3 AGREE
+SCOREHDR_DSPRATIO tag=early wildcard/exact = 9.0000
+SCOREHDR_DCP tag=early /home/labuser/hdrcost/out/post_opt_early.dcp
+SCOREHDR_SRESULT tag=early lut_sites=86896 lut_logic=86803 lut_mem=93 ff=101244 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 synth_s=866 opt_s=75
+SCOREHDR_SDONE early
+HDRCOST_LOGMSG synth early synth_8-10226=1 synth_8-7186=1
+=== HDRCOST pnr early begin 2026-09-20T20:51:04-04:00 ===
+HDRCOST_OK pnr early rc=0 cgroup_peak=6807MB swap=0MB at_cap=no wall=1453s
+SCOREHDR_PBEGIN tag=early dcp=/home/labuser/hdrcost/out/post_opt_early.dcp period=13.333
+SCOREHDR_POPENED tag=early cells=221354
+SCOREHDR_PRMCLK clk : invalid command name "remove_clock"
+SCOREHDR_PCLK tag=early period=13.333
+SCOREHDR_PLACE_SECONDS tag=early 500
+SCOREHDR_PLACED_WNS tag=early wns=3.774 levels=6
+SCOREHDR_ROUTE_SECONDS tag=early 776
+SCOREHDR_ROUTESTATUS tag=early nets=479965 unrouted=NA
+SCOREHDR_INTRA tag=early clk=clk wns=2.735 tns=0.000 failing=0 endpoints=250285
+SCOREHDR_WORST_GLOBAL tag=early wns=2.735 levels=6 datapath=10.578 start=u_quant/raddr_r_reg[0]/C end=vs2_q_reg[15]/D
+SCOREHDR_CONE tag=early cone=score_all cells=1780
+SCOREHDR_CONE_TO   tag=early cone=score_all wns=9.514 levels=1 datapath=3.714 start=u_arr/pv_r_reg/C end=gen_head[1].u_sq/c1_p_reg[0]/CE
+SCOREHDR_CONE_FROM tag=early cone=score_all wns=9.334 levels=2 datapath=3.894 start=gen_head[0].u_sq/p_rdy_reg/C end=opb_reg[2]_rep__14/CE
+SCOREHDR_CONE tag=early cone=score_emin cells=32
+SCOREHDR_CONE_TO   tag=early cone=score_emin wns=10.006 levels=5 datapath=3.225 start=gen_head[2].u_sq/blk_reg[2]/C end=gen_head[2].u_sq/e_min_reg[0]/CE
+SCOREHDR_CONE_FROM tag=early cone=score_emin wns=10.983 levels=4 datapath=2.246 start=gen_head[2].u_sq/e_min_reg[5]/C end=gen_head[2].u_sq/e_min_reg[0]/CE
+SCOREHDR_CONE tag=early cone=score_shb cells=192
+SCOREHDR_CONE_TO   tag=early cone=score_shb wns=9.931 levels=5 datapath=3.385 start=gen_head[2].u_sq/blk_reg[0]/C end=gen_head[2].u_sq/shb_reg[0][4]/D
+SCOREHDR_CONE_FROM tag=early cone=score_shb wns=12.439 levels=2 datapath=0.875 start=gen_head[3].u_sq/shb_reg[1][1]/C end=gen_head[3].u_sq/c1_sh_reg[1]/D
+SCOREHDR_CONE tag=early cone=score_tv cells=0 to=NONE from=NONE (no sequential cell matches *u_sq*tv_reg* in this arm)
+SCOREHDR_CONE tag=early cone=score_st cells=40
+SCOREHDR_CONE_TO   tag=early cone=score_st wns=10.878 levels=2 datapath=2.350 start=sq_hdrv_reg/C end=gen_head[3].u_sq/FSM_onehot_state_reg[2]/CE
+SCOREHDR_CONE_FROM tag=early cone=score_st wns=9.551 levels=4 datapath=3.678 start=gen_head[2].u_sq/FSM_onehot_state_reg[0]/C end=ph_reg[0]/CE
+SCOREHDR_PATHS tag=early n=200
+SCOREHDR_CONESHARE tag=early top=200 in_score_cone=0
+SCOREHDR_PRESULT tag=early clb=20276 lut_sites=NA lut_logic=86086 lut_mem=85 ff=101244 carry8=2741 f7=16375 f8=2992 bram=11 dsp=298 place_s=500 route_s=776
+SCOREHDR_PDONE early
+HDRCOST_LOGMSG pnr early synth_8-10226=0 synth_8-7186=0
+=== HDRCOST_TABLE ===
+HDRCOST_ALLDONE rc=1

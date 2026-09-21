@@ -1,0 +1,17 @@
+# cells under *u_sq* by REF_NAME, stage=synth tag=base
+CARRY8 92
+FDRE 1652
+FDSE 128
+GND 8
+LUT1 12
+LUT2 808
+LUT3 296
+LUT4 228
+LUT5 748
+LUT6 1372
+MUXF7 56
+VCC 4
+attn_score_q12 1
+attn_score_q12__1 1
+attn_score_q12__2 1
+attn_score_q12__3 1

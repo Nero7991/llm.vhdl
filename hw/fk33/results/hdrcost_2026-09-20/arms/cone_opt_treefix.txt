@@ -1,0 +1,17 @@
+# cells under *u_sq* by REF_NAME, stage=opt tag=treefix
+CARRY8 104
+FDRE 1788
+FDSE 128
+GND 8
+LUT1 8
+LUT2 824
+LUT3 524
+LUT4 372
+LUT5 980
+LUT6 1524
+MUXF7 24
+VCC 4
+attn_score_q12 1
+attn_score_q12__1 1
+attn_score_q12__2 1
+attn_score_q12__3 1

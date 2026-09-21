@@ -463,7 +463,35 @@ begin
               for lv in 1 to HDR_TREE loop
                 if wn > 1 then
                   nn := (wn + 1) / 2;
-                  for i in 0 to NBLK-1 loop
+                  -- 0 TO TW-1, NOT 0 TO NBLK-1, AND THE BOUND IS LOAD-BEARING
+                  -- IN SYNTHESIS RATHER THAN IN SIMULATION.  MEASURED
+                  -- 2026-09-20, TRACK HDRCOST, the first Vivado ever run on
+                  -- this generic:
+                  --   ERROR: [Synth 8-11324] array index 8 out of range
+                  --   [rtl/attn_score_q12.vhd:488]
+                  -- at HDR_TREE = 1, NBLK = 8, killing synth_design in 49 s.
+                  -- Line 488 was the odd-level carry `wv(i) := wv(2*i)`.  The
+                  -- guarded branch above it survives because Vivado folds
+                  -- `2*i + 1 <= wn - 1` against `wn`'s subtype to bound the
+                  -- index; the else branch carries no such relation, so with
+                  -- `i` running to NBLK-1 the unrolled loop statically reads
+                  -- wv(8)..wv(14) of a 0..7 array.
+                  --
+                  -- NO BENCH CAN SEE THIS.  GHDL evaluates only the branch a
+                  -- run actually takes, so the out-of-range index is never
+                  -- computed; Vivado elaborates the whole unrolled loop.  The
+                  -- lever passed a 20-point bit-exact grid, two independent C
+                  -- oracles and a 23-row mutation suite while being
+                  -- unsynthesisable.
+                  --
+                  -- TW = (NBLK+1)/2 = ceil(NBLK/2) is the EXACT bound, not a
+                  -- conservative one: the first fold has wn = NBLK, so
+                  -- nn = ceil(NBLK/2) = TW, and the body is a no-op for every
+                  -- i >= nn.  Every iteration removed was already inert, so
+                  -- this is narrowing, not a change of function.  It also
+                  -- makes the else branch statically safe, because
+                  -- 2*(TW-1) = 2*ceil(NBLK/2) - 2 <= NBLK - 1 for all NBLK.
+                  for i in 0 to TW-1 loop
                     if i < nn then
                       if 2*i + 1 <= wn - 1 then
                         -- STRICTLY LESS, matching the legacy scan's `<`, so

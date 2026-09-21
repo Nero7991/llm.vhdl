@@ -1,0 +1,48 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Sun Sep 20 21:17:02 2026
+| Host         : cachyos-bc250 running 64-bit CachyOS
+| Command      : report_utilization -hierarchical -file /home/labuser/hdrcost/out/routeutil_hier_basereport.rpt
+| Design       : attn_block
+| Device       : xcvu33p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++--------------------+-------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|      Instance      |       Module      | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++--------------------+-------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| attn_block         |             (top) |      86164 |      86079 |      60 |   25 | 101241 |      3 |     16 |    0 |        298 |
+|   (attn_block)     |             (top) |      24582 |      24582 |       0 |    0 |  50844 |      3 |      0 |    0 |          0 |
+|   gen_head[0].u_sm |   attn_softmax__1 |        331 |        330 |       0 |    1 |    399 |      0 |      3 |    0 |          2 |
+|   gen_head[0].u_sq | attn_score_q12__1 |        703 |        703 |       0 |    0 |    445 |      0 |      0 |    0 |          0 |
+|   gen_head[1].u_sm |   attn_softmax__2 |        331 |        330 |       0 |    1 |    399 |      0 |      3 |    0 |          2 |
+|   gen_head[1].u_sq | attn_score_q12__2 |        704 |        704 |       0 |    0 |    445 |      0 |      0 |    0 |          0 |
+|   gen_head[2].u_sm |   attn_softmax__3 |        332 |        331 |       0 |    1 |    399 |      0 |      3 |    0 |          2 |
+|   gen_head[2].u_sq | attn_score_q12__3 |        702 |        702 |       0 |    0 |    445 |      0 |      0 |    0 |          0 |
+|   gen_head[3].u_sm |      attn_softmax |        332 |        331 |       0 |    1 |    399 |      0 |      3 |    0 |          2 |
+|   gen_head[3].u_sq |    attn_score_q12 |        705 |        705 |       0 |    0 |    445 |      0 |      0 |    0 |          0 |
+|   u_arr            |    attn_mac_array |      50225 |      50225 |       0 |    0 |  39465 |      0 |      0 |    0 |        256 |
+|   u_emit           |         attn_emit |        446 |        430 |       8 |    8 |    390 |      0 |      0 |    0 |          0 |
+|   u_gate           |         attn_gate |        779 |        779 |       0 |    0 |    890 |      0 |      2 |    0 |          4 |
+|   u_norm           |        rmsnorm_rs |       5297 |       5297 |       0 |    0 |   5306 |      0 |      0 |    0 |         22 |
+|   u_quant          |     attn_kv_quant |        217 |        197 |      12 |    8 |    314 |      0 |      0 |    0 |          0 |
+|   u_recip          |        attn_recip |        144 |        144 |       0 |    0 |    306 |      0 |      0 |    0 |          0 |
+|     (u_recip)      |        attn_recip |         70 |         70 |       0 |    0 |    156 |      0 |      0 |    0 |          0 |
+|     u_div          |        divider_rs |         75 |         75 |       0 |    0 |    150 |      0 |      0 |    0 |          0 |
+|   u_rope           |         attn_rope |        245 |        200 |      40 |    5 |    150 |      0 |      0 |    0 |          4 |
+|   u_tw             |      attn_twiddle |        101 |        101 |       0 |    0 |    200 |      0 |      2 |    0 |          4 |
++--------------------+-------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+
