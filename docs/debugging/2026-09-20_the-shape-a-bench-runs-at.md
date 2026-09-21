@@ -675,3 +675,321 @@ was never re-run, and is corrected in place rather than deleted.
   bound has 1 and 2 cycles of slack. A future `OUT_MARGIN` or output-stage
   change would move it; the check would then fail loudly rather than silently,
   which is the intended direction.
+
+---
+
+# TRACK POPPORT, 2026-09-20 -- the 27-PORT RENDEZVOUS is sound at the card's arm
+
+Branch `fpga`, HEAD `fbac64e` (TRACK POPCOVER) at start. No hardware, no
+Vivado anywhere: the workstation lane was on build 11b and the BC-250 lane on
+TRACK ELABCLASS. `free -g` before every run showed **14 GiB available, swap
+13-14 of 31**, and the largest thing this track ran was a 1.6 s GHDL bench.
+Scratch under `/mnt/storage/fk33_builds/scratch/popport`, never `/tmp`.
+
+## 20. THE QUESTION, VERBATIM
+
+> "Give the `FAST_POP = true` arm coverage at the port and stream level ...
+> **The property to test is the RENDEZVOUS, not the port.** Per-port
+> equivalence is POPCOVER's result. What is unverified is whether the 27-way
+> simultaneous-beat condition still holds, whether any port can starve or run
+> ahead, and whether the accept rate improves as the lever claims."
+
+Section 19 above is where it came from: *"nothing at all about the 27-port
+composition where the array accepts a word only when all 27 ports present a
+beat in the same cycle."*
+
+## 21. THE ANSWER, UP FRONT
+
+**THE COMPOSITION IS SOUND. No defect was found, and build 11b's bitstream is
+not implicated by anything in this section.**
+
+MEASURED at the card's exact shape -- `ROWS_IF=48 / AXI_DW=256`, so
+`NPORTS_W=24 + NPORTS_S=3 = 27` masters, `DUAL_CLK=true` so the per-port FIFO
+is `async_fifo` with the real clock domain crossing, `FAST_POP=true`:
+
+- **Values are unchanged.** Every word and every scale group is bit-exact
+  against the two independent encodings of spec 6.5a the bench already had,
+  under random per-port AXI stalls and random consumer back-pressure. Same at
+  `FAST_POP=false` with `DUAL_CLK=true`, which is the attribution control that
+  makes the pair mean anything.
+- **The 24-way rendezvous costs NOTHING.** 21 accepts span **20 core cycles**
+  at `FAST_POP=true` and **30** at false. 20 is EXACTLY one word per cycle
+  over the 20 gaps and 30 is EXACTLY POPCOVER's 1.5 core cycles per beat. The
+  ports do not drift out of phase -- a 24-way AND of ports that are
+  individually two-cycles-in-three could have been far worse than 1.5, and
+  that is the question a per-port result cannot answer.
+- **The 3-way scale rendezvous follows, on its own different pop condition**
+  (`s_take`, not `pop_w`): **20** fast, **29** slow.
+- **No scatter at all.** The dual-clock and single-clock branches gave
+  identical numbers on every arm. This is the "structural, not a mean" shape
+  again: a constant, not something to fit.
+
+**THE COVERAGE HOLE WAS REAL AND IS NOW CLOSED. Eight of seventeen mutations
+are killed by the new cadence probe AND BY NOTHING ELSE** -- not by the
+pre-POPPORT bench, and not by the new bench with its cadence bounds
+neutralised. Three of those eight are the lever dropped at a single
+forwarding site, which is what "a generic dropped anywhere between
+`fk33_engine` and `async_fifo`" actually looks like in this tree.
+
+## 22. THE LEVEL, AND WHY IT IS NOT `tb_matvec_fk33_desc_dual`
+
+The brief named `sim/tb_matvec_fk33_desc_dual` as the starting point. It is
+at the right geometry (27 masters) and the right `DUAL_CLK`, and it is where
+section 5.2 demonstrated the 2x2. It is the wrong level for the RATE
+property, and the reason is structural rather than a matter of taste:
+
+- it is a value oracle end to end, and **a value oracle can only ever prove
+  the lever harmless, never present**, because `FAST_POP` changes no value by
+  construction (POPCOVER's phrasing; its table is the proof);
+- its consumer is `matvec_core`, which cannot be shut and then opened flat
+  out, so any cadence measured there is a property of the array's acceptance
+  pattern rather than of the rendezvous;
+- its window is the whole descriptor control plane.
+
+The level actually chosen is **`weight_streamer`**, established from the RTL
+and not from any document. It is the SMALLEST entity whose cone contains all
+three of the things the property is about:
+
+| thing | where | why it has to be inside |
+|---|---|---|
+| the per-port FIFO | `axi_rd_port` -> `async_fifo` / `stream_fifo` | the lever's mechanism |
+| the fan-out to all 27 ports | `rtl/weight_streamer.vhd:207` and `:228` | "applied to some and not the others buys nothing" |
+| the rendezvous | `all_v` (`:252`) and `s_allv` (`:284`) | the property itself |
+
+`rtl/axi_rd_port.vhd` forwards `FAST_POP` at **two** sites, `:276` into
+`stream_fifo` and `:397` into `async_fifo`, and the two are NOT textually
+identical -- the second also carries `OUT_MARGIN`. A generic dropped from one
+of them is invisible at the other's `DUAL_CLK`, so both branches are probed.
+The card is the dual-clock one.
+
+And `sim/tb_weight_streamer.vhd` already existed, already ran geometry A at
+27 masters, and already had `ws_check` factored as a re-instantiable block.
+**Extending it adds NO gate row**, which is the thing the brief was most
+insistent about.
+
+## 23. THE PROPERTY, STATED BEFORE IT WAS TESTED
+
+Written into the bench header before any of it was run:
+
+- **P1 VALUES.** Every accepted word is the 24 slices of the SAME word index
+  in order, every scale group the 3 slices of the same superword, under the
+  card's `FAST_POP=true` exactly as under false.
+- **P2 RATE, WEIGHT SIDE.** With all 24 weight FIFOs stocked and the consumer
+  flat out, the `all_v` rendezvous delivers one word per core cycle at true
+  and one per 1.5 at false.
+- **P3 RATE, SCALE SIDE, TIMED SEPARATELY.** The 3 scale ports pop on
+  `s_take`, a different condition, so the lever reaching the weight ports is
+  no evidence it reached the scale ports.
+
+Timing the two streams separately is what gives "forwarded to every one of the
+27" any teeth, and **row T2 below is the row that proves it was worth doing.**
+
+## 24. THE CADENCE ORACLE, AND ITS TWO-SIDEDNESS
+
+POPCOVER's shape, lifted directly. Phase 1 shuts the consumer and lets all 27
+FIFOs stock to at least PN beats; phase 2 opens it flat out and times the
+drain. **Nothing refills during the window** -- every port already holds what
+it will deliver -- so the number contains the read side's own issue condition
+and the rendezvous, and contains no AXI latency, no slave stall and no AR
+throttle.
+
+Three details that are not decoration:
+
+- **The R-beat census that gates phase 1 runs in the AXI DOMAIN**, via the
+  same `if DUAL then wait until rising_edge(aclk)` trick the slaves use.
+  Sampling it on `clk` would miss or double-count beats at the 1.67x ratio
+  and would open the window on a FIFO that was not stocked.
+- **The error count lives in a VARIABLE**, because two `chk`-style increments
+  in one delta collapse to one -- the recorded bench that reported 13 checks
+  for a body containing 60.
+- **The consumer is shut or flat out, never random**, or the stall
+  generator's period would be inside the measured cadence.
+
+**THE CHECK IS TWO-SIDED.** The fast instance fails if it is slow; the slow
+instance fails if it is fast. One-sided would pass a build where the lever
+does nothing (row P3) AND a build where it is wired on (row T6), and those
+are two of the three defects POPCOVER showed no value oracle in this project
+reports a single error on.
+
+Bounds, MEASURED FIRST with the bounds off and only then written down:
+
+```
+dual   slow  weight 30  scale 29      dual   fast  weight 20  scale 20
+single slow  weight 30  scale 29      single fast  weight 20  scale 20
+```
+
+- `FAST_MAX = PN-1 = 20` is the ideal EXACTLY, not a fitted number: a FIFO
+  cannot emit more than one beat per cycle, so 20 is a hard floor and
+  `<= 20` means `= 20`.
+- `SLOW_MIN = 25` is deliberately NOT the measured 29/30. The question it
+  asks is "is the shipping arm fast", and any threshold in (20, 29) answers
+  it. 25 sits 5 above the fast ideal and 4 below the slower measurement.
+- The scale side's **29 rather than 30** is explained (DERIVED; the 29 is
+  MEASURED): `s_hold` is PRE-LOADED during the shut phase, because `s_take`
+  fires once on `s_hv = '0'` with `s_ready` still low, so the window's first
+  accept needs no pop and the first pop overlaps it.
+
+## 25. THE MUTATION TABLE, WITH A STANDING TWO-LAYER ATTRIBUTION CONTROL
+
+`sim/mutate_ws_fastpop.sh`, new, a `.sh` and not a `tb_*.vhd` so it adds no
+gate row. **Every row is run against THREE benches**, because two things were
+added on 2026-09-20 and a kill could belong to either:
+
+- **OLD** -- the newest committed revision of the bench WITHOUT POPPORT's
+  extension, found by walking back until the marker string is gone. Never
+  `HEAD~`: a fixed offset would make OLD equal to NEW the day this commit
+  lands, and every cadence row would then read "pre-existing". The control
+  failing open is exactly the failure mode this file is about.
+- **NOCAD** -- the new bench with the four cadence bounds neutralised. The
+  card's arm is instantiated and its values are checked; nothing times it.
+- **NEW** -- the whole thing.
+
+MEASURED, 17 rows, 1 m 44 s wall clock, `free -g` 14 GiB available throughout:
+
+| tag | file | OLD | NOCAD | NEW | credit | what the new bench saw |
+|---|---|---|---|---|---|---|
+| T1 | weight_streamer | SURV | SURV | KILL | **CADENCE** | dual fast **30**/20 -- the 24 weight ports lost the lever, the 3 scale ports kept it |
+| T2 | weight_streamer | SURV | SURV | KILL | **CADENCE** | dual fast 20/**29** -- the mirror image, and only the SEPARATE scale timing sees it |
+| T3 | axi_rd_port `:397` | SURV | SURV | KILL | **CADENCE** | dual fast **30/29**, single fast 20/20 -- THE CARD'S BRANCH alone |
+| T4 | axi_rd_port `:276` | SURV | SURV | KILL | **CADENCE** | dual fast 20/20, single fast **30/29** -- the other branch alone |
+| T5 | weight_streamer | SURV | SURV | KILL | **CADENCE** | lever INVERTED at both sites: slow arm 20/20, fast arm 30/29 |
+| T6 | weight_streamer | SURV | SURV | KILL | **CADENCE** | lever WIRED ON: every arm 20/20. Caught by `SLOW_MIN` ONLY |
+| R1 | weight_streamer | KILL | KILL | KILL | pre-existing | 24-way AND drops port 0: 7 words wrong |
+| R2 | weight_streamer | KILL | KILL | KILL | pre-existing | pop ignores `w_ready`: wrong word 2, then hung |
+| R3 | weight_streamer | KILL | KILL | KILL | pre-existing | 3-way scale AND drops a slice: 20 wrong |
+| R4 | weight_streamer | KILL | KILL | KILL | pre-existing | `s_take` loses `s_ready`: wrong group 0, then hung |
+| P1 | async_fifo | SURV | KILL | KILL | card-arm | SHAPEAUDIT's `after_e < 4`: bound check failure |
+| P3 | async_fifo | SURV | SURV | KILL | **CADENCE** | fast arm commits ONE: dual fast **40/39**, SLOWER than the shipping arm it exists to beat |
+| P5 | stream_fifo | SURV | SURV | KILL | **CADENCE** | the same undoing in the other FIFO: single fast **40/39** |
+| P6 | async_fifo | SURV | KILL | KILL | card-arm | SHIPPING arm widened to three: bound check failure |
+| S1 | async_fifo | SURV | KILL | KILL | card-arm | POPCOVER's P2 (`after_e < 3`): bound check failure |
+| S2 | axi_rd_port `:397` | SURV | SURV | **SURV** | **SURVIVES** | `OUT_MARGIN + 1` in g_dc only |
+| S3 | async_fifo | SURV | SURV | **SURV** | **SURVIVES** | shipping arm made SLOWER: dual slow **60/58**, reported and deliberately not failed |
+
+```
+ rows 17   pre-existing 4   card-arm 3   CADENCE 8   SURVIVED 2
+```
+
+**WHAT THE CONTROL COST, which is the reason to run it.** Seven rows would
+have been credited to the cadence probe on a naive reading -- they all fail
+the NEW bench. Four (R1-R4) were already caught by the pre-POPPORT bench and
+the probe is worth nothing on them; three (P1, P6, S1) are caught by merely
+INSTANTIATING the card's arm, with no timing involved at all. Without the
+NOCAD column, "eight cadence kills" would have been written as fifteen.
+
+**T6 is the row that justifies two-sidedness on its own.** Every arm reads
+20/20, every value is correct, and a one-sided "is the fast arm fast" check
+passes it cleanly. What it describes is a build where every non-FK33
+instantiation silently changed cadence.
+
+**T2 is the row that justifies timing the two streams separately.** The
+weight side reads a perfect 20 and only the scale side's 29 gives it away.
+
+## 26. THE SURVIVORS, UNDER THEIR OWN NAMES
+
+CLAUDE.md: *"Report mutations that do NOT bite under their own names -- they
+measure your check's resolution floor and are the most valuable line in the
+table. Never discard one."* Neither of these should be given a check here.
+
+- **S3, `(not FAST_POP) and (ocnt + inflight) < 1` -- A PROOF, not a gap.**
+  It makes the SHIPPING arm slower, and the bench MEASURED it: `dual slow
+  60/58` against the honest 30/29, printed in the summary line and
+  deliberately not failed. The two-sided check asks "is the shipping arm
+  FAST", never "is it exactly 1.5". **A check that killed this row would be
+  asserting a cadence nobody has argued for**, and would turn every future
+  latency change in the shipping arm into a red gate for no stated reason.
+  The row exists to pin that the omission is a decision.
+- **S2, `OUT_MARGIN + 1` in the g_dc branch only -- A GAP, and a scoped
+  one.** It breaks the agreement `rtl/axi_rd_port.vhd:144` states outright,
+  that `LVL_MARGIN` is "stated once here and passed to BOTH the FIFO and the
+  FSM ... so they cannot drift apart". This bench cannot see it because this
+  bench is **never capacity-bound**: 24 beats into a 64-deep FIFO, so the AR
+  throttle never binds and an over-stated `w_level` never matters. **Making
+  it capacity-bound to catch S2 would change what the bench measures**, and
+  the instrument for that defect already exists and already runs both arms --
+  POPCOVER's `minslack` in `sim/tb_async_fifo.vhd`, MEASURED at 0 with zero
+  under-statement reports. Left alone on purpose.
+
+## 27. WHAT CHANGED
+
+- **`sim/tb_weight_streamer.vhd`, EXTENDED, not replaced.** `ws_check` gains
+  `DUAL`, `FASTP`, `PROBE` and `PN` generics plus an `aclk` port, all
+  defaulted so the two original instances are bit-identical. Six new
+  instances, all at geometry A's 27 masters: two value arms at
+  `DUAL_CLK=true` (`FAST_POP` false and true, the second being the card), and
+  four cadence probes (dual and single clock, slow and fast).
+  **No new gate row.** The only `sim/tb_*.vhd` this track touched is
+  MODIFIED, not added -- `git status` shows ` M sim/tb_weight_streamer.vhd`
+  and no new `tb_` file from POPPORT -- and rows are discovered from
+  `sim/tb_*.vhd`, so the row set cannot have moved. The new harness is a
+  `.sh`: `regress.sh --only mutate_ws_fastpop` returns `OVERALL PASS 0`,
+  which is what a pattern matching nothing looks like.
+- **The dual-clock arm cost five lines, not a duplicated process.** Every
+  clock reference in the AXI slave already went through one `tick` procedure,
+  so `if DUAL then wait until rising_edge(aclk); else ...` inside it is the
+  whole change. No `sclk <= aclk when DUAL else clk` anywhere -- that costs a
+  delta, and a delta-skewed clock is what silently broke
+  `sim/tb_matvec_int4_ip` when `axi_rd_port` was first written.
+- **`sim/mutate_ws_fastpop.sh`, new.** Four-file mutator with the three-bench
+  attribution control. It is a separate harness from
+  `sim/mutate_weight_streamer.sh` because that one mutates a single file and
+  its parser reads the two original instances by name; a four-file mutator
+  bolted on would have meant rewriting its parser, and a rewritten parser is
+  a rewritten oracle.
+- **Nothing in `rtl/` was touched.** MD5s of `weight_streamer.vhd`,
+  `axi_rd_port.vhd`, `async_fifo.vhd` and `stream_fifo.vhd` are identical at
+  both ends of the window, and so is `sim/regress.sh`.
+
+**RUNTIME.** MEASURED, same machine, same command, `--stop-time=200us`:
+**0.267 s before, 1.601 s after** -- `+1.33 s` on one gate row, which
+`regress.sh` reports as `0s` -> `1s`. That buys four extra 27-master
+instances and the whole cadence instrument.
+
+## 28. MEASUREMENT TRAPS HIT
+
+- **`--only` takes a SUBSTRING and a pattern matching nothing still prints
+  `REGRESSION: PASS`.** Used deliberately here as the proof that the new
+  `.sh` is not a gate row -- `--only mutate_ws_fastpop` gives `OVERALL PASS
+  0`. The count is the only tell and it was read every time.
+- **`regress.sh` checks the exit code BEFORE the pass marker** (`if [ "$rc"
+  != "0" ]` precedes the marker scan). That is load-bearing here: the bench
+  prints `0 reassembly errors across both geometries` and THEN asserts the
+  cadence bounds, so a cadence failure still scores FAIL and not PASS. The
+  marker string was not changed, and `sim/regress.sh` was not edited at all.
+- **A cadence miss is never folded into the "reassembly errors" counter.**
+  Calling it a reassembly error would be a lie, and it would also have made
+  the marker line the verdict for two different properties.
+- **The OLD control cannot be `HEAD~`.** Written that way first; it would
+  have silently become NEW the moment this work committed. It walks back for
+  the marker instead, and refuses to run rather than print a credit column it
+  cannot stand behind.
+- **The bounds were MEASURED with the bounds off before being written.**
+  Setting them from the ideal first and then discovering the scale side reads
+  29 rather than 30 would have produced a red gate attributed to the RTL.
+
+## 29. OPEN, NOT DETERMINED
+
+- **The DESCRIPTOR port's `FAST_POP` is outside this bench's cone entirely.**
+  `rtl/matvec_int4_desc_axi.vhd` forwards the lever at `:628` and `:690`; only
+  one of those is `weight_streamer`. Nothing here says anything about the
+  other.
+- **`sim/tb_matvec_fk33_desc_dual` still runs `FAST_POP` at its default of
+  false**, and this track did not change that. Section 5.2's cell D is
+  MEASURED evidence that the bench PASSES at `FAST_POP=true` -- but it was a
+  manual run, not a gate row, so the full descriptor plane at the card's arm
+  is demonstrated and not gated. Closing it means a new wrapper entity and
+  therefore a new gate row at ~50 s, which is a deliberate cost somebody
+  should decide on rather than a track absorbing quietly.
+- **The real consumer is not modelled.** The probe's consumer is flat out;
+  `matvec_core`'s is not. The claim is "the rendezvous can deliver one word
+  per cycle", never "subsystem A will".
+- **No AR-throttle or capacity-bound behaviour is reachable here**, by
+  construction -- see survivor S2.
+- **Nothing here is a silicon measurement.** It says the composition computes
+  the same values at the card's arm and that the lever measurably reaches all
+  27 ports. It does not say what build 11b achieves on the card.
+- **The 27 ports were never made to starve.** The probe stocks every FIFO
+  equally and the value arms stall them at random; no case deliberately holds
+  one port empty for a long time while the other 26 are full. The rendezvous
+  is a pure AND so this is believed safe, and "believed" is the right word
+  for it.
