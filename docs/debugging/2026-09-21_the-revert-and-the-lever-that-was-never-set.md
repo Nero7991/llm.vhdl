@@ -500,3 +500,51 @@ Written here before its result, and not to be adjusted:
 `Parameter CB_STYLE bound to: regs` printed immediately above
 `done synthesizing module 'matvec_core'` needs explaining and nothing in this
 file survives it.
+
+---
+
+## 10. CONFIRMED INDEPENDENTLY by TRACK CBCENSUS (`e240fbb`), with an honest note on what "registered" is worth here
+
+`e240fbb` reached the same root cause from a different instrument -- a census of
+the preserved post-synthesis checkpoint `build11b_synth_bd_wrapper.dcp` -- and
+its numbers match section 9's prediction:
+
+| quantity | predicted in section 9 | CBCENSUS MEASURED |
+|---|---|---|
+| `CB_COPIES` | 48 | **48** |
+| `cb_reg` flip-flops | 6,144 | **6,144 FDRE** |
+| MUXF8 in the `cb` read cone | 12,288 | **12,288** |
+| MUXF7 | 24,576 (section 2) | **24,576** |
+| cells under `cb_reg` matching `RAM*` | 0 | *"no inference was attempted"*, `cb` is FDRE |
+| distinct `cb_reg` indices = 1,536 (**the falsifier**) | must not happen | **did not happen** |
+
+Two independent routes to the same fact: this file read the **build unit's
+recorded parameters and the two logs' generic bindings**; CBCENSUS read the
+**netlist**. Neither used the other.
+
+**CORRECTION TO MY OWN WORDING.** Section 2 says `regs` means *"`cb` carries no
+`ram_style`"*. CBCENSUS is more precise and its version is the one to keep:
+under `regs`, `matvec_core` sets **`dont_touch = true` and
+`ram_style = registers`** on `cb`. So the design does not merely fail to ask for
+distributed RAM, it actively **forbids** it. That strengthens the conclusion --
+the inference could not have happened under any recognizer behaviour -- and it
+removes the last of CBRAM's "syntactic or semantic" question from build 11b's
+evidence, though not from the lever itself.
+
+**AND AN HONEST NOTE ON THE "REGISTERED PREDICTION" IN SECTION 9.** It was
+written before I had read `e240fbb`, but `e240fbb` was **already committed** when
+section 9 landed (`d04a765`). So it is a prediction made in ignorance of an
+existing answer, not a pre-registration, and it should be read as the weaker
+thing. This project's own record is that *"pre-registration makes the verdict
+feel earned and does nothing to make it valid"*; the reverse applies too, and
+claiming a pre-registration that the repository could have falsified an hour
+earlier would be exactly the flattering version. **What the agreement does
+establish is that two instruments with no shared input give the same numbers to
+the digit, which is worth more than the ordering.**
+
+**What all three tracks now agree is NOT established**, and CBCENSUS states it in
+the same words: *"what caused the -12,304 / +12,288 delta. Four parameters and
+five RTL files differ between the builds."* `CB_STYLE` is sufficient to produce
+the whole signature and is not proven to be the only contributor. **And nothing
+in any of the three bears on the routing failure's cause beyond naming the mux
+tree that congested.**
