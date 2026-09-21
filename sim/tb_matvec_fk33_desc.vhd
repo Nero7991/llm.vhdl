@@ -131,7 +131,57 @@ entity tb_matvec_fk33_desc is
     -- 3000 ps against the core's 5000 ps is 1.67x, the direction the FK33 has
     -- (HBM AXI faster than f_core) and the direction that makes the CDC
     -- load-bearing rather than decorative.
-    ACLK_HALF_PS : positive := 3000
+    ACLK_HALF_PS : positive := 3000;
+    -- ------------------------------------------------------------- FAST_POP
+    -- Forwarded to BOTH DUTs' FAST_POP, which is the generic the FK33 build
+    -- sets and which reaches TWO distinct sites inside
+    -- rtl/matvec_int4_desc_axi.vhd: the DESCRIPTOR read master at :628 and
+    -- the core at :690.  Default false, so the two pre-existing instances of
+    -- this architecture (sim:tb_matvec_fk33_desc and
+    -- sim:tb_matvec_fk33_desc_xexp) are unchanged to the byte.
+    --
+    -- A VALUE ORACLE CANNOT PROVE THE LEVER PRESENT, only harmless, because
+    -- FAST_POP changes no value by construction.  That is what PROBE is for.
+    FASTP   : boolean := false;
+    -- ---------------------------------------------------------------- PROBE
+    -- Time the descriptor fetch's FIFO drain, which is the one window in this
+    -- design where the consumer is open flat out: matvec_int4_desc_axi.vhd:640
+    -- holds q_ready high for the whole of S_R.  DBEATS is 10 at this geometry
+    -- (DESC_BASE0 8 + NPW 24 + NPS 3 + DESC_EXT_WORDS 4 = 39 words, 4 words
+    -- per 256-bit beat, ceil = 10), which is exactly the 10-beat drain TRACK
+    -- POPCOVER measured at 10 read cycles fast against 15 slow.
+    --
+    -- The window is AR-handshake to first weight AR, measured in TIME rather
+    -- than in sampled cycle counts: `now` is exact and a counter sampled
+    -- across two clock domains is not.  Everything in it except the drain is
+    -- identical between the two arms -- same descriptor, same slave, same
+    -- S_CHECK/S_SHAPE/S_CB path -- so the difference is the drain.
+    PROBE   : boolean := false;
+    -- Print the canonical pass marker (`every checked mutation is refused`,
+    -- which sim/regress.sh greps for).  A wrapper running TWO instances sets
+    -- this false on both and prints the marker itself only once BOTH have
+    -- finished; otherwise one arm completing while the other hung would put
+    -- the marker in the log and the row would pass on half a run.
+    MARK    : boolean := true
+  );
+  port(
+    -- Unconnected when this entity is the simulation top, which is how
+    -- sim:tb_matvec_fk33_desc and sim:tb_matvec_fk33_desc_xexp run it.  A
+    -- wrapper instantiating it more than once reads them.
+    done_o  : out boolean := false;
+    -- The drain window and the supply window that CONTROLS it, both in whole
+    -- nanoseconds so that no division truncates a difference (the first cut
+    -- of this probe reported core cycles and turned a 42 ns difference into
+    -- 4 by truncating 48.6 and 52.8 separately).
+    probe_o : out integer := -1;
+    supply_o : out integer := -1;
+    -- The WEIGHT-PATH window and its own control.  `probe_o` above stops at
+    -- the job's first weight AR, so it contains the descriptor master's copy
+    -- of the lever (matvec_int4_desc_axi:628) and NOT the core's (:690).
+    -- MEASURED 2026-09-20: with only the first window, a mutation dropping
+    -- FAST_POP at :690 survived every column of sim/mutate_desc_fastpop.sh.
+    weight_o : out integer := -1;
+    beats_o  : out integer := -1
   );
 end entity;
 
@@ -593,7 +643,8 @@ begin
                 FIFO_DEPTH => 256, MAXB => MAXB, MAXOUT => 16,
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
                 USE_XEXP_PORT => XEXP_PORT,
-                DUAL_CLK => DUAL, CB_STYLE => CB_STYLE, C_S_AXI_ADDR_WIDTH => 8)
+                DUAL_CLK => DUAL, CB_STYLE => CB_STYLE, FAST_POP => FASTP,
+                C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => mclk,
       s_axi_awaddr => awaddr, s_axi_awprot => "000",
@@ -684,6 +735,110 @@ begin
   end process;
 
   -- =====================================================================
+  -- THE DRAIN PROBE.  Only elaborated under PROBE, so the two pre-existing
+  -- instances of this architecture are untouched.
+  --
+  -- WHY THIS WINDOW AND NOT ANOTHER.  TRACK POPPORT declined to measure a
+  -- cadence through matvec_core because the array's acceptance pattern, not
+  -- the FIFO's read-issue condition, decides when a word moves.  The
+  -- DESCRIPTOR fetch has no such problem: matvec_int4_desc_axi.vhd:640 is
+  --   d_qr <= '1' when st = S_R else '0';
+  -- so for the whole of the capture the consumer is unconditionally open and
+  -- the only thing between the beats and `dw` is the read-issue condition
+  -- FAST_POP selects.  It is the same 10-beat drain TRACK POPCOVER timed in
+  -- isolation, reached here through the real descriptor plane.
+  --
+  -- The supply side cannot be the bottleneck and that is arithmetic, not
+  -- hope: the descriptor slave above serves back-to-back with no stall in the
+  -- mclk domain, and at DUAL the mclk period is 6 ns against the core's 10,
+  -- so a beat arrives every 0.6 core cycles against a pop every 1.0 (fast) or
+  -- 1.5 (shipping).
+  --
+  -- MEASURED IN TIME, NOT IN SAMPLED CYCLES.  `now` is exact; a counter
+  -- incremented on clk and sampled on mclk is a race in a simulator that
+  -- samples atomically, and would read one cycle either way depending on
+  -- delta order.  The reported number is the window divided by the core
+  -- period, so it is quotable as core cycles without ever having been
+  -- sampled across a domain.
+  -- =====================================================================
+  g_probe : if PROBE generate
+    pr : process
+      variable t_ar, t_r, t_w : time;
+      variable nb : integer := 0;
+    begin
+      probe_o <= -1; supply_o <= -1; weight_o <= -1; beats_o <= -1;
+      wait until aresetn = '1';
+      -- The FIRST descriptor fetch of the run, so both arms measure the same
+      -- descriptor, and only that one: ARMED ONCE, then the process parks.
+      loop
+        wait until rising_edge(mclk);
+        exit when d_arvalid = '1' and d_arready = '1';
+      end loop;
+      t_ar := now;
+      -- THE CONTROL, and it is the reason the drain number is attributable at
+      -- all: the last descriptor R handshake.  The slave serves back to back
+      -- and the descriptor FIFO is DESC_FIFO = 64 deep against DBEATS = 10, so
+      -- it never fills and `rready` never drops -- the supply is flat out and
+      -- must land at the SAME nanosecond in both arms.  If it does not, the
+      -- difference below is not the drain and the bench says so.
+      while nb < DBEATS loop
+        wait until rising_edge(mclk);
+        if d_rvalid = '1' and d_rready = '1' then nb := nb + 1; end if;
+      end loop;
+      t_r := now;
+      supply_o <= (now - t_ar) / 1 ns;
+      -- The first weight AR of the job.  Everything between the last captured
+      -- beat and this edge is a fixed walk through S_CHECK, S_SHAPE, S_SHAPE_C
+      -- and S_CB, identical in both arms, so the whole window differs by the
+      -- drain and by nothing else.
+      loop
+        wait until rising_edge(mclk);
+        exit when m_arvalid /= (m_arvalid'range => '0');
+      end loop;
+      probe_o <= (now - t_ar) / 1 ns;
+      t_w := now;
+
+      -- ------------------------------------------------ THE WEIGHT WINDOW
+      -- From the job's first weight AR to its `job_done`.  This is where the
+      -- CORE's copy of the lever lives, and the first window cannot see it:
+      -- `probe_o` closes before a single weight beat has moved.
+      --
+      -- IT IS A DETECTOR, NOT A DRAIN MEASUREMENT, AND THE DIFFERENCE MATTERS.
+      -- The weight slaves stall on an LFSR, and the LFSR advances once per
+      -- `tick`, so the moment the two arms' timing diverges their stall
+      -- REALISATIONS diverge too.  The elapsed time is therefore a composite
+      -- of the pop cadence and a different stall pattern, and no number taken
+      -- from it is attributable to the read-issue condition alone.  What it
+      -- CAN say, two-sided and robustly, is that the arms differ and in which
+      -- direction -- which is exactly the question "did the lever reach
+      -- :690", and is why the wrapper checks an ORDER and not a magnitude.
+      --
+      -- `beats_o` is the control that keeps even that honest: the same number
+      -- of weight and scale beats must cross in both arms.  A faster arm that
+      -- moved FEWER beats has not gone faster, it has gone wrong.
+      while job_done = '0' loop
+        wait until rising_edge(mclk);
+        for p in 0 to NP_ALL-1 loop
+          if m_rvalid(p) = '1' and m_rready(p) = '1' then nb := nb + 1; end if;
+        end loop;
+      end loop;
+      weight_o <= (now - t_w) / 1 ns;
+      beats_o  <= nb - DBEATS;
+
+      report "DRAIN PROBE [FASTP=" & boolean'image(FASTP) &
+             "]: descriptor AR to last descriptor R = " &
+             integer'image((t_r - t_ar) / 1 ns) &
+             " ns (supply control), to first weight AR = " &
+             integer'image((t_w - t_ar) / 1 ns) &
+             " ns (drain), first weight AR to job_done = " &
+             integer'image((now - t_w) / 1 ns) & " ns over " &
+             integer'image(nb - DBEATS) & " weight beats, DBEATS=" &
+             integer'image(DBEATS) severity note;
+      wait;
+    end process;
+  end generate;
+
+  -- =====================================================================
   -- One AXI slave per weight/scale master.  Same structure and the same
   -- three structural checks as sim/tb_matvec_fk33.vhd, with `psrc` added so
   -- that a deliberately wrong base can be SERVED instead of aborting the run.
@@ -767,7 +922,8 @@ begin
                 MAXCOLS => B_COLS, MAXROWS_BFP => B_ROWS,
                 FIFO_DEPTH => 64, MAXB => MAXB, MAXOUT => 2,
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
-                DUAL_CLK => false, CB_STYLE => CB_STYLE, C_S_AXI_ADDR_WIDTH => 8)
+                DUAL_CLK => false, CB_STYLE => CB_STYLE, FAST_POP => FASTP,
+                C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => clk,
       s_axi_awaddr => b_awaddr, s_axi_awprot => "000",
@@ -2028,13 +2184,25 @@ begin
     report "tb_matvec_fk33_desc: " & integer'image(NCASE + 1) &
            " cases run, " & integer'image(nerr) & " failures" &
            " [DUAL=" & boolean'image(DUAL) &
-           " XEXP_PORT=" & boolean'image(XEXP_PORT) & "]" severity note;
+           " XEXP_PORT=" & boolean'image(XEXP_PORT) &
+           " FASTP=" & boolean'image(FASTP) & "]" severity note;
     assert nerr = 0
       report "SUBSYSTEM A'S DESCRIPTOR CONTROL PLANE FAILED " &
              integer'image(nerr) & " CASES" severity failure;
-    report "subsystem A is bit-exact with ref/matvec_int4.c through the " &
-           "descriptor control plane, and every checked mutation is refused"
-      severity note;
+    -- The marker sim/regress.sh greps for.  Suppressed under MARK = false so
+    -- that a wrapper running two arms owns the verdict; see the generic's
+    -- comment.  The arm still says it finished, in different words, because a
+    -- log that goes quiet is indistinguishable from one that hung.
+    if MARK then
+      report "subsystem A is bit-exact with ref/matvec_int4.c through the " &
+             "descriptor control plane, and every checked mutation is refused"
+        severity note;
+    else
+      report "ARM COMPLETE [FASTP=" & boolean'image(FASTP) &
+             "]: subsystem A is bit-exact with ref/matvec_int4.c through the " &
+             "descriptor control plane on this arm" severity note;
+    end if;
+    done_o   <= true;
     finished <= true;
     wait;
   end process;

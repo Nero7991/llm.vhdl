@@ -1342,3 +1342,434 @@ run by hand and is NOT a gate row -- see "open".
   "read the artifact" argument does not obviously apply (there is no artifact --
   the values only ever exist as GHDL command-line arguments), but nobody has
   asked whether a `-g` that the row does not actually pass would be noticed.
+
+---
+
+# TRACK DESCARM, 2026-09-20 -- the DESCRIPTOR PLANE is sound at the card's arm
+
+Branch `fpga`, HEAD `62dc777` (TRACK POPPORT) at start. No hardware, no Vivado
+anywhere: the workstation lane was on build 11b, routing, and the BC-250 lane
+was held by TRACK ELABCLASS. `free -g` before every run showed **12 to 14 GiB
+available, swap 13 of 31**, and the largest thing this track ran was a GHDL
+process MEASURED at **0.91 GB VmRSS** (read from `/proc/PID/status` after
+identifying the process by `/proc/PID/exe`, never by its command line). Scratch
+under `/mnt/storage/fk33_builds/scratch/descarm`, never `/tmp`.
+
+## 37. THE QUESTION, VERBATIM
+
+Handed back by TRACK POPPORT at the rendezvous as a decision rather than
+absorbed (section 29, and the wording is POPPORT's):
+
+> "**`tb_matvec_fk33_desc_dual` still runs `FAST_POP=false`.** SHAPEAUDIT's
+> cell D is MEASURED evidence it passes at true, but as a manual run -- the
+> full descriptor plane at the card's arm is **demonstrated, not gated**.
+> Closing it costs a new wrapper entity and a ~50 s gate row; that is a
+> decision, not something a track should absorb."
+
+And a second item in the same area, which POPPORT also declined to stretch to:
+
+> "the descriptor port's own `FAST_POP` at `matvec_int4_desc_axi:628` and
+> `:690` is outside every bench's cone so far."
+
+## 38. THE ANSWER, UP FRONT
+
+**THE DESCRIPTOR PLANE IS SOUND AT `FAST_POP = true`. No defect was found and
+build 11b's bitstream is not implicated by anything in this section.**
+
+MEASURED at the card's shape -- `ROWS_IF=48 / AXI_DW=256`, `DUAL_CLK=true` so
+every port's FIFO is `async_fifo` with the real clock domain crossing,
+`FAST_POP=true` -- the whole of `sim/tb_matvec_fk33_desc`'s content runs
+unchanged: **23 cases, 0 failures**, the 22-case descriptor mutation matrix,
+the legal-shape sweep on both the FK33 and the AXU3EG geometries, and the
+element-exact comparison against `ref/matvec_int4.c` from real packed `.mv4i`
+bytes. Identical at `FAST_POP=false` in the same run, which is the attribution
+control that makes the pair mean anything.
+
+**THE SECOND ITEM IS HALF CLOSED, AND THE HALF THAT IS NOT IS MEASURED RATHER
+THAN ASSUMED.** POPPORT named `matvec_int4_desc_axi:628` and `:690` together.
+
+- **`:628`, the descriptor read master, is now covered, by the cadence probe
+  and by nothing else.** Row D1 -- `dfetch` forwarding `false` while the core
+  keeps `true`, which is precisely "a generic dropped at one forwarding site"
+  -- survives the pre-DESCARM bench AND survives the new bench with its timing
+  bounds neutralised, and dies only on the full new bench.
+- **`:690`, the core's forwarding site, is STILL NOT COVERED, and the obvious
+  repair was built, measured and rejected.** Rows C1 and C2 survive every
+  column. Section 43 has the numbers and the reason.
+
+**THE DRAIN IS 42 ns FASTER, MEASURED, AND THE DERIVATION THAT PREDICTED 50 ns
+IS WRONG.** Descriptor AR handshake to the job's first weight AR:
+
+| arm | supply control (AR to last descriptor R) | drain window (AR to first weight AR) |
+|---|---|---|
+| shipping, `FAST_POP=false` | **60 ns** | **528 ns** |
+| card, `FAST_POP=true` | **60 ns** | **486 ns** |
+
+The supply control is the reason the 42 ns is attributable at all, and it is a
+quantity that must NOT move: 10 descriptor beats served back-to-back at the
+6 ns AXI period is 60 ns, identical on both arms, so the descriptor FIFO never
+throttled the slave and the whole difference is downstream of the supply.
+
+## 39. THE LEVEL, AND WHY IT IS THE ONE PLACE A CADENCE IS HONEST HERE
+
+POPPORT declined to measure a cadence through `matvec_core` and gave the
+reason (section 22): the array's acceptance pattern, not the FIFO's read-issue
+condition, decides when a word moves, so a number timed there is a property of
+the array. **That argument is correct and it does not apply to the descriptor
+fetch**, for one line of RTL:
+
+    rtl/matvec_int4_desc_axi.vhd:640
+      d_qr <= '1' when st = S_R else '0';
+
+`q_ready` is held unconditionally high for the whole of the capture. That is
+exactly the "consumer shut, then opened flat out" shape POPCOVER had to
+construct by hand in `sim/tb_async_fifo.vhd` and POPPORT had to construct again
+in `sim/tb_weight_streamer.vhd` -- and here the shipping design does it for
+free, in the state machine, on every job.
+
+The window is **10 beats**, and that is DERIVED, not counted:
+`DESC_BASE0 8 + NPORTS_W 24 + NPORTS_S 3 + DESC_EXT_WORDS 4 = 39` descriptor
+words at `AXI_DW/64 = 4` words per beat, rounded up, so `DBEATS = 10`. It is
+the same 10-beat drain POPCOVER timed in isolation at 10 read cycles fast
+against 15, reached this time through the real descriptor plane.
+
+The supply cannot be the bottleneck, and that is arithmetic rather than hope:
+the bench's descriptor slave serves back-to-back with no stall, `DESC_FIFO` is
+64 against `DBEATS` 10 so the FIFO cannot fill and `rready` cannot drop, and at
+`DUAL` the AXI period is 6 ns against the core's 10 -- a beat every 0.6 core
+cycles against a pop every 1.0 or 1.5. The supply control MEASURES that
+prediction rather than assuming it.
+
+## 40. THE DERIVATION FAILED, AND THAT IS THE REUSABLE PART
+
+Ten beats popped one per core cycle against one per 1.5 core cycles DERIVES a
+5-cycle, **50 ns** difference. The measurement is **42 ns**.
+
+The first cut of the probe reported **core cycles** and printed the difference
+as **4**, by dividing each endpoint by 10 ns and truncating separately: 486/10
+gives 48 and 528/10 gives 52. The true difference is 4.2 core cycles, and a
+check written against "4" would have been asserting a truncation artefact. The
+probe was changed to report whole nanoseconds, where the arithmetic is exact.
+
+42 is not 50 for two reasons, both worth writing down:
+
+1. **The window's two endpoints are AXI-domain events and the drain they
+   bracket is a core-domain quantity.** Both the descriptor AR handshake and
+   the first weight AR are issued by an `axi_rd_port` on `aclk`. A difference
+   that is a whole number of 10 ns core cycles is therefore observed on a 6 ns
+   grid, and 42 ns is 7 AXI periods.
+2. **The fill and the drain interleave rather than running in sequence.** The
+   slave supplies a beat every 6 ns while the shipping arm pops one every 15,
+   so neither arm spends the whole window pop-limited and the gap is not the
+   full `10 x 0.5`.
+
+**So 42 ns is a MEASURED constant of this wrapper's pinned geometry, not a
+law.** It is asserted as an EQUALITY rather than an inequality, because an
+inequality passes a lever that moved by one cycle -- which is exactly
+POPCOVER's row P3, the fast arm committing one instead of two, every value
+correct and strictly slower than the arm it exists to beat. The sign is
+asserted separately and redundantly, and deliberately so: 42 rots if the
+geometry moves, "the fast arm is faster" does not.
+
+## 41. WHAT CHANGED, AND WHY NO NEW GATE ROW
+
+POPPORT's estimate was "a new wrapper entity and a ~50 s gate row". **A new
+entity would have needed a new FILE, and a new file cannot carry the three
+`sim/regress.sh` edits it needs with it.** Rows are discovered by globbing
+`sim/tb_*.vhd`, but a row's `--stop-delta`, its optional `.mv4i` prerequisite
+and its pass marker are all case arms in `sim/regress.sh` keyed by name. A new
+file landing without them runs on GHDL's 5000-delta default, is scored
+NOVERDICT, and **turns the shared gate red for every track until somebody edits
+the runner** -- which is the hazard CLAUDE.md records in as many words, and
+this track was not permitted to edit `sim/regress.sh`.
+
+So the second arm went INSIDE the existing entity, where it inherits the row's
+flags, its prerequisite and its marker by construction:
+
+- **`sim/tb_matvec_fk33_desc_dual.vhd`** instantiates the architecture TWICE,
+  `FASTP => false` and `FASTP => true`, same `DUAL => true`, same trace.
+- **`sim/tb_matvec_fk33_desc.vhd`** gains three generics (`FASTP`, `PROBE`,
+  `MARK`, all defaulted so the two pre-existing instances are unchanged) and
+  five `out` ports (`done_o`, `probe_o`, `supply_o`, `weight_o`, `beats_o`),
+  forwards `FASTP` to `FAST_POP` on BOTH DUTs, and carries the drain probe
+  under `PROBE`.
+- **`sim/mutate_desc_fastpop.sh`**, new, adds no gate row.
+
+**THE MARKER IS NOW OWNED BY THE WRAPPER, and that is load-bearing.** Two arms
+under one row means a run in which one arm finishes and the other hangs would
+otherwise put the phrase `sim/regress.sh` greps for into the log and PASS on
+half a run. Both arms are told `MARK => false`; the wrapper prints the marker
+only after both have reported `done_o`. A truncated run is therefore a
+NOVERDICT, which is what it is.
+
+**THE ATTRIBUTION CONTROL COSTS NO SOURCE EDIT.** POPPORT's NOCAD column is a
+`sed` that raises two constants out of reach, and a `sed` has an anchor that
+can rot. Here `CADENCE` is a GENERIC of the wrapper, so NOCAD is
+`-gCADENCE=false` at the command line: the same sources, the same library, one
+runtime value different. There is nothing to go stale.
+
+## 42. THE MUTATION TABLE, WITH THE STANDING TWO-LAYER ATTRIBUTION CONTROL
+
+`sim/mutate_desc_fastpop.sh`. Every row runs against THREE benches, following
+POPPORT's pattern:
+
+- **OLD** -- the newest COMMITTED revision of the two bench files without this
+  track's marker, found by walking back until the marker is gone, never
+  `HEAD~n`. A fixed offset makes OLD equal to NEW the day this commit lands and
+  every cadence row would then read "pre-existing": the control failing open.
+  The check is two-sided -- the harness also refuses to run if the WORKING TREE
+  lacks the marker.
+- **NOCAD** -- the new bench with `-gCADENCE=false`. Both arms instantiated,
+  both value oracles running, only the three timing bounds silenced.
+- **NEW** -- the new bench entire.
+
+```
+TAG  FILE                     OLD      NOCAD    NEW      CREDIT       DETAIL
+D1   matvec_int4_desc_axi.vhd SURV     SURV     KILL     CADENCE      drain 528/528, want 42
+D2   matvec_int4_desc_axi.vhd SURV     SURV     KILL     CADENCE      drain 486/486
+D3   matvec_int4_desc_axi.vhd SURV     SURV     KILL     CADENCE      drain 486/528, sign inverted
+C1   matvec_int4_desc_axi.vhd SURV     SURV     SURV     SURVIVES     clean
+C2   matvec_int4_desc_axi.vhd SURV     SURV     SURV     SURVIVES     clean
+A1   axi_rd_port.vhd          SURV     SURV     KILL     CADENCE      drain 528/528
+A2   axi_rd_port.vhd          SURV     SURV     SURV     SURVIVES     clean
+F1   async_fifo.vhd           SURV     KILL     KILL     card-arm     bound check failure
+F2   async_fifo.vhd           SURV     SURV     KILL     CADENCE      drain 528/528
+F3   async_fifo.vhd           SURV     SURV     KILL     CADENCE      drain 528/528
+F4   async_fifo.vhd           SURV     SURV     KILL     CADENCE      drain 486/486
+F5   async_fifo.vhd           SURV     SURV     KILL     CADENCE      drain 486/528, sign inverted
+S1   stream_fifo.vhd          SURV     SURV     SURV     SURVIVES     clean
+Z0   async_fifo.vhd           ANCHOR FAILED -- tested nothing (self-teeth, and it must)
+
+ rows 13   pre-existing 0   card-arm 1   CADENCE 8   SURVIVED 4   anchor-failed 1
+ survivors: C1 C2 A2 S1
+```
+
+The rows, by class:
+
+| tag | the defect |
+|---|---|
+| **D1** | **the DESCRIPTOR master loses the lever** while the core keeps it -- the generic dropped at one forwarding site, and the defect POPPORT named as unreachable |
+| **D2** | the descriptor master WIRED ON: it ignores the generic and always runs fast |
+| **D3** | the descriptor master's lever INVERTED |
+| C1 | the CORE loses the lever while the descriptor master keeps it |
+| C2 | the core WIRED ON |
+| A1 | `axi_rd_port` forwards `false` into `async_fifo` (`:397`), so every port of every master in the dual-clock configuration reverts |
+| A2 | `axi_rd_port` forwards `false` into `stream_fifo` (`:276`) -- the two sites are not textually identical |
+| F1 | SHAPEAUDIT's mutant: the fast arm allows FOUR committed against an output stage that holds two |
+| F2 | POPCOVER's P3: the fast arm allows ONE. Safe, every value correct, and STRICTLY SLOWER than the arm it exists to beat |
+| F3 | the lever NOT THREADED: `do_rd` ignores `FAST_POP` and always takes the shipping arm |
+| F4 | the lever WIRED ON at the bottom |
+| F5 | the two arms SWAPPED |
+| S1 | `stream_fifo`'s fast arm allows FOUR -- F1's twin in the other FIFO |
+| Z0 | self-teeth: an anchor that cannot match, which MUST report ANCHOR FAILED |
+
+**WHAT THE CONTROL COLUMNS BOUGHT, AND IT IS THE WHOLE TABLE.**
+
+- **`pre-existing` is ZERO.** Not one of the thirteen is caught by the
+  pre-DESCARM bench. Every kill here is new coverage rather than a row that
+  was already covered and is being re-reported -- which is the thing the OLD
+  column exists to distinguish and the thing that cannot be assumed.
+- **`card-arm` is ONE, and without the NOCAD column it would have been counted
+  as nine.** F1 dies on a `bound check failure` the moment the fast arm is
+  INSTANTIATED; no timing is involved and the probe deserves no credit for it.
+  Eight of the nine kills are genuinely the probe's and one is not.
+- **The 42 ns EQUALITY earns F2 and D2 and F4 on its own.** F2 is POPCOVER's
+  P3, the fast arm made strictly slower with every value correct: the detail
+  column reads `528/528`, i.e. both arms at the shipping number, and a
+  `fast < slow` inequality passes it cleanly. D2 and F4 are the mirror image,
+  `486/486`, both arms fast. **An inequality would have missed three of the
+  eight**, and those three are exactly the "lever silently undone or silently
+  applied" class that no value oracle can reach.
+- **The SIGN check earns D3 and F5 on its own**, where the arms swap: the
+  equality also fires there, but the sign is the check that says which way
+  round, and it is the one that survives a geometry change.
+
+
+## 43. THE SURVIVORS, UNDER THEIR OWN NAMES
+
+Four rows survive every column. **Two are scoped gaps, one is a real gap in
+the target area, and none is a proof** -- which is a worse result than
+POPPORT's table and is reported as such rather than dressed up.
+
+**C1 and C2 -- THE CORE'S FORWARDING SITE, `matvec_int4_desc_axi:690`. A REAL
+GAP, IN EXACTLY THE AREA THIS TRACK WAS SENT TO COVER, AND REGISTERED BEFORE
+THE RUN.** The drain window closes at the job's first weight AR, which is
+before a single weight beat has moved, so the core's copy of the lever is
+outside it by construction.
+
+**THE OBVIOUS REPAIR WAS BUILT AND MEASURED AND DOES NOT WORK.** A second
+window was added from the first weight AR to that job's `job_done`, with a
+beat count as its control. MEASURED:
+
+| arm | weight window | weight beats |
+|---|---|---|
+| shipping, `FAST_POP=false` | **342 ns** | 27 |
+| card, `FAST_POP=true` | **366 ns** | 27 |
+
+**The card's arm is the SLOWER of the two there, over the identical 27 beats.**
+The sign is an artefact, not a result, and the mechanism is the reason the
+window cannot be used: `sim/tb_matvec_fk33_desc.vhd`'s weight slaves stall on
+a per-port LFSR that advances once per AXI edge from reset, including while
+they sit idle waiting for a request. The two arms enter this window **42 ns
+(7 AXI edges) apart**, because of the DESCRIPTOR drain, so they meet different
+stall realisations. A "the two arms differ here" check would therefore pass on
+that head start alone -- and would pass it under C1 too, where the descriptor
+master is still fast and the head start is unchanged. **It would credit `:690`
+for something `:628` did.** That is the "not the buffers" failure this file
+already records, and the only thing that caught it was measuring the sign.
+
+The window is printed by the bench on every run and asserted by nothing. The
+beat COUNT is asserted, because a count is not a time.
+
+**A2 -- `axi_rd_port:276`, the single-clock forwarding site. A SCOPED GAP.**
+This bench's only `DUAL_CLK = false` DUT is the AXU3EG arm, whose weight
+masters are tied off by design; its `stream_fifo`s carry descriptor beats for
+a DUT that is never asked to compute, and the probe is not armed on it. Not a
+proof -- a bench that armed a probe on the AXU3EG arm would see it.
+
+**S1 -- `stream_fifo`'s own fast arm. The same scoped gap one level down**,
+and F1's exact twin in the other FIFO. F1 dies here and S1 does not, purely
+because of which DUT instantiates which FIFO.
+
+**NOTHING IN THIS TABLE IS A PROOF.** POPPORT's S3 was a proof (a check that
+killed it would assert a cadence nobody has argued for) and its S2 a scoped
+gap. Here all four survivors are gaps of one size or another, and three of
+them (C1, C2, S1) would be closed by a probe this bench cannot host without
+changing what its stimulus is.
+
+## 43b. GATES AND COSTS
+
+
+**THE TWO PRE-EXISTING ROWS ARE UNCHANGED TO THE NANOSECOND, and that is
+MEASURED rather than argued from the defaults.** The pre-change architecture
+was taken out of git and run against the same vectors: `tb_matvec_fk33_desc`
+and `tb_matvec_fk33_desc_xexp` both end at **732,415 ns** with `23 cases run,
+0 failures` before the change and at **732,415 ns** with the identical marker
+after it. The `_dual` row's shipping arm likewise still ends at **730,135 ns**,
+exactly where the single-arm row ended before.
+
+```
+--only tb_matvec_fk33_desc --jobs 1   (substring: all three rows)
+PASS  sim:tb_matvec_fk33_desc        71s
+PASS  sim:tb_matvec_fk33_desc_dual  159s
+PASS  sim:tb_matvec_fk33_desc_xexp   71s
+OVERALL  PASS 3  FAIL 0  NOVERDICT 0  TIMEOUT 0  BUILD-ERROR 0  NOCHECK 0
+REGRESSION: PASS
+
+--only tb_async_fifo       OVERALL PASS 1 FAIL 0   (POPCOVER's row, 0s)
+--only tb_weight_streamer  OVERALL PASS 1 FAIL 0   (POPPORT's row, 2s)
+```
+
+The `_dual` row cost **79 s before this change and 159 s after**, both measured
+beside build 11b's two Vivado processes, so the pair is like for like: **2.0x,
++80 s**, which is one whole extra arm and nothing else. `sim/regress.sh`'s
+recorded figure for these three rows (`48.9 s, 50.9 s and 49.1 s`) was already
+stale on this box before the change and is stale by more now; the corrected
+line is handed over in `docs/WORKLOG.md` rather than applied, because this
+track was not permitted to edit the runner.
+
+**THE HARNESS'S OWN TEETH, BOTH GUARDS, MEASURED.** `sim/mutate_desc_fastpop.sh`
+refuses to run rather than print a credit column it cannot stand behind:
+
+- run in a `git archive` tree with no `.git`, every `git show` fails and it
+  exits 2 with *"CANNOT FIND A PRE-DESCARM ... IN THE LAST 9 COMMITS"*;
+- run in a `git clone --shared` whose working tree is HEAD (no marker), the
+  walk-back finds HEAD as "pre-DESCARM" and the SECOND, two-sided check fires:
+  *"THE WORKING TREE'S ... DOES NOT CARRY THE MARKER -- OLD and NEW cannot be
+  told apart"*, exit 2. That is the control-failing-open case caught by
+  construction.
+- `Z0`, the self-teeth row, reports `ANCHOR FAILED -- tested nothing` and the
+  exit contract requires the anchor-failed count to be **exactly one** on a
+  full run: more means a real row has gone silently inert, fewer means Z0
+  matched something it should not.
+
+## 44. MEASUREMENT TRAPS HIT
+
+- **A DIFFERENCE OF TRUNCATED QUOTIENTS IS NOT THE TRUNCATED QUOTIENT OF A
+  DIFFERENCE.** The probe's first cut reported core cycles and turned a 42 ns
+  gap into 4. Both endpoints were divided by 10 ns and floored independently.
+  Nothing about the output looked wrong; 4 is a perfectly plausible number for
+  10 beats at half a cycle each, and it is within one of the derived 5. The
+  tell was only that the DERIVED number was 5 and the printed one was 4, which
+  is the kind of one-off that gets waved through. Report the raw quantity and
+  do the arithmetic once.
+- **A DERIVATION THAT LANDS NEAR THE MEASUREMENT IS STILL WRONG.** 50 ns
+  against 42 ns is 19% out, which is close enough to have been written up as
+  "about 5 cycles, as expected". It is not the same number and the reasons it
+  is not (section 40) are properties of the design worth knowing. CLAUDE.md's
+  form: an exact relationship for one quantity is not a licence to scale a
+  different one by the same factor.
+- **THE CONTROL HAD TO BE ADDED BEFORE THE CLAIM COULD BE MADE AT ALL.** The
+  supply window was not in the first cut of the probe. Without it, "the drain
+  got faster" is an INVARIANCE ARGUMENT of the kind CLAUDE.md records as
+  identifying what a number is NOT: the window shrank, therefore something in
+  it got faster, therefore the read-issue condition -- and there were never
+  only two candidates. 60 ns on both arms is what makes the 42 ns attributable.
+- **A NEW `sim/tb_*.vhd` IS A GATE ROW WHETHER YOU MEANT IT OR NOT, AND ITS
+  FLAGS ARE NOT.** Discovery is by glob; `--stop-delta`, the prerequisite and
+  the pass marker are by name in `sim/regress.sh`. The two halves live in
+  different files and only one of them arrives with the new file.
+- **`--only tb_matvec_fk33_desc` IS A SUBSTRING AND MATCHES ALL THREE ROWS.**
+  Useful here, and the reason every verdict in this section quotes its
+  `OVERALL PASS n`.
+- **THE FIRST GATE RUN USED TO TIME THE ROW WAS SHARING THE BOX WITH THE
+  MUTATION MATRIX.** It reported **166 s** for the dual row; re-run without
+  the matrix it is **159 s**. A wall-clock number measured under contention is
+  a fact about the box, not about the row, and the handover line quotes the
+  uncontended one. (Neither is "quiet" in the absolute sense: build 11b's two
+  Vivado processes were resident for both, and for the 79 s baseline too,
+  which is what makes the pair comparable.)
+- **A DETECTOR THAT FIRES FOR THE WRONG REASON LOOKS EXACTLY LIKE A DETECTOR.**
+  The weight window differs between the arms -- 342 against 366 ns -- and an
+  "assert they differ" check would have been written, would have passed, and
+  would have been credited with closing `:690`. It differs because of the
+  42 ns head start the DESCRIPTOR drain gives, which is present under C1 too.
+  The thing that caught it was that the card's arm came out SLOWER, which had
+  no business being true, and the thing that explained it was reading how the
+  slave's LFSR advances. **A check nobody has asked "what else would make this
+  fire" about is not a check.**
+
+## 45. OPEN, NOT DETERMINED
+
+**CLOSED by this section**, and struck from POPPORT's section 29: the
+descriptor plane is gated at `FAST_POP=true`, not merely demonstrated, and
+`matvec_int4_desc_axi:628` is covered.
+
+**STILL OPEN:**
+
+- **`matvec_int4_desc_axi:690` IS STILL COVERED BY NOTHING.** POPPORT proved
+  `weight_streamer` HONOURS the lever. Nothing proves `matvec_int4_desc_axi`
+  FORWARDS it to `matvec_int4` and on to `weight_streamer`. Rows C1 and C2
+  measure that hole and section 43 measures why the cheap fix does not fill
+  it. **Closing it needs a probe whose window is not confounded by the weight
+  slaves' stall LFSR** -- a no-stall arm, or a later and much larger job, both
+  of which change what the bench's stimulus is and are a decision rather than
+  something to absorb.
+- **`stream_fifo`'s fast arm is reached by no DUT that carries weight data**
+  in any bench (survivors A2 and S1).
+- **The 42 ns is a constant of ONE geometry and no other was measured.**
+  Nothing here says what the drain difference is at any other `NPORTS_W`,
+  `AXI_DW` or clock ratio, and the derivation that would have predicted it is
+  the one section 40 shows to be wrong.
+- **The clock ratio is 1.67x and nothing else.** No ratio sweep, same as the
+  row's pre-existing limitation.
+- **Nothing here is a silicon measurement.** It says the descriptor plane
+  computes the same values at the card's arm and that the lever measurably
+  reaches the descriptor master. It does not say what build 11b achieves on
+  the card.
+- **A PRE-EXISTING DEAD HARNESS, FOUND IN PASSING AND NOT FIXED.**
+  `sim/mutate_mv4i_desc_stale.sh` takes its DEFECT arm from
+  `git show HEAD:rtl/matvec_int4_desc_axi.vhd` and its FIXED arm from the
+  worktree. MEASURED: both are md5 `07973200a71574678866194e487223fc`, so the
+  two arms are the same design and its DEFECT and CONTROL rows have tested
+  nothing since the commit that landed the fix. It hardcodes `HEAD` where
+  `sim/mutate_ws_fastpop.sh` and `sim/mutate_desc_fastpop.sh` walk back for a
+  marker, which is the same control-failing-open shape those two guard
+  against. Not a gate row, so the gate is unaffected. Not this track's file
+  and not repaired.
+- **`docs/LEVERBOARD.md` section 4.4 and open item 11 are now stale** -- they
+  say no `.vhd` bench sets `FAST_POP=true` and that the discriminating bench
+  exists but nothing schedules it. Left unedited on purpose: it is a shared
+  file with three tracks live, and CLAUDE.md's rule for a shared file is a
+  read-diff-stage-commit sequence that cannot be made atomic tonight.
+
