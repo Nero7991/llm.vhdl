@@ -14,6 +14,28 @@
 #                                gen_pcieep.py -- it catches every class of
 #                                error that is not a timing or placement
 #                                result, at 1/20th of the cost.
+#
+# OPT-IN EARLY ABORT FOR A CARD BUILD THAT CANNOT ROUTE -- see
+# ./congestion_guard.sh.  Nothing in THIS script arms it and the default is
+# off; it is a sibling process, launched beside the build's systemd unit the way
+# a build root's swapguard.sh is:
+#
+#   FK33_ABORT_ON_CONGESTION=1 FK33_CONGABORT_UNIT=<unit> BUILD_ROOT=<root> \
+#     bash congestion_guard.sh &
+#
+# WHY IT IS NOT WIRED IN HERE.  MEASURED 2026-09-21 over the 12 card
+# implementation runs on this box: the trigger separates the 4 that failed to
+# route from the 8 that routed, but the separating gap is 0.83 percentage points
+# wide and 12 observations place one threshold inside it.  The false-positive
+# rate is NOT bounded, and a false positive destroys a build that would have
+# shipped.  A miss merely costs what a build costs today.  So it stays opt-in,
+# per-run, and deliberate.  Read the file's header before arming it.
+#
+# What already fails a route-failed build, so do NOT add a verdict check: this
+# script's `[[ -f "$BIT" ]] || exit 1` below, and the tcl's FK33_BUILD_DONE
+# sentinel never being printed because Vivado's own wait_on_run raises on the
+# failed run.  MEASURED: both catch all 4 route failures and neither fires on
+# any of the 8 legal routes.  The guard buys TIME, not a verdict.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 FK33_DIR="$PWD"   # hw/fk33; line 72 cds into BUILD_ROOT and never returns
