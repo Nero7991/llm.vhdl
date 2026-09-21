@@ -136,7 +136,7 @@ entity fk33_engine is
     -- IS: `-generic` on the synth_design line reaches the TOP's generics
     -- only, never a deep instance, so a lever that is not carried by THIS
     -- entity is not reachable from the card build or from compose4_top at all.
-    FAST_POP : boolean := false
+    FAST_POP : boolean := true
   );
   port(
     ------------------------------------------------------------------------

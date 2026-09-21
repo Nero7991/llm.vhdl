@@ -21,7 +21,28 @@ FK33_DIR="$PWD"   # hw/fk33; line 72 cds into BUILD_ROOT and never returns
 BD_ONLY=0
 [[ "${1:-}" == "--bd-only" ]] && BD_ONLY=1
 
-BUILD_ROOT="${BUILD_ROOT:-/tmp/claude-1000/-home-orencollaco-GitHub-llama-vhdl/329968a0-29c9-45a8-98b6-3274e5b48f2f/scratchpad/pcieep}"
+# THE DEFAULT IS ON /mnt/storage, AND IT USED TO BE A DEAD SESSION SCRATCHPAD.
+#
+# MEASURED 2026-09-20: a routine drive cleanup removed
+# /tmp/claude-1000/.../scratchpad while an FK33_CARD=1 build was running out of
+# it.  The systemd unit stayed `active`, /proc/PID/cwd read "(deleted)", and
+# every byte Vivado had written since launch was unlinked.  Lost with it were
+# build 9's synthesis checkpoint -- which was the re-implementation path for a
+# routing failure -- and tok0.r9bs, the 9B token-0 reference capture.
+#
+# Oren, the same day: "Don't use /tmp/ for things since that can get delete
+# when cleaning."  The root filesystem on this box runs near full, which is
+# exactly why it gets cleaned, so this is not a one-off.
+#
+# The old default was worse than merely being under /tmp: it named the
+# scratchpad of ONE session (329968a0-...) that ended long ago, so an
+# unparameterised run would recreate a dead session's directory and leave its
+# only copy of a four-hour artefact somewhere nobody would look for it.
+#
+# /mnt/storage is a separate 916 GB device and is not swept.  Pass BUILD_ROOT
+# explicitly for a named build; this default only keeps an unparameterised run
+# off the root filesystem.
+BUILD_ROOT="${BUILD_ROOT:-/mnt/storage/fk33_builds/pcieep}"
 
 echo "=== regenerating the build script from the probe build ==="
 python3 gen_i2cprobe.py

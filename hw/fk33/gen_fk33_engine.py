@@ -110,7 +110,7 @@ DESC_MAXB = 16
 #
 # False reproduces the shipping bitstream exactly.  True is the lever.  Values
 # and their order are identical either way; only the issue cycle moves.
-FAST_POP_DEFAULT = False
+FAST_POP_DEFAULT = True
 
 NLANE = NPORTS_W + NPORTS_S          # 27 weight+scale masters
 NMAST = NLANE + 1                    # + the descriptor master
