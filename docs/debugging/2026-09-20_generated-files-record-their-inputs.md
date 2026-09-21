@@ -363,3 +363,50 @@ appending somewhere plausible.
   reading of the default diff suggested the derived-root block depended on the
   port count; the `30 300` reproduction shows it does not. The early reading is
   withdrawn, and the branch was not read line by line.
+
+## Handover patch for `hw/fk33/gen_pcieep.py` (NOT applied -- TRACK BUILDREPORT owns the file)
+
+This is the case that prompted the track, and it is the only one left unstamped
+for a reason that is not technical. Applying it is two edits and one
+regeneration. **Regenerate under the environment the committed file was made
+with** -- `FK33_CARD=1 FK33_CB_STYLE=distributed` plus whatever set `CLKOUT3` to
+75 MHz -- **not under the defaults**, or the commit lands the 496-line
+configuration change this file exists to document. Verify with
+`git diff --numstat`: a correct first application shows roughly `+12 -0`, the
+stamp alone. Anything larger is a configuration change riding along.
+
+```python
+# near the top, after REPO/HERE are computed
+sys.path.insert(0, os.path.join(REPO, "tools"))
+import genstamp
+
+# beside the nine os.environ.get calls, as ONE list so the stamp and the
+# behaviour cannot drift apart.  Value = None where the default was taken.
+def _env(name, default=None):
+    return os.environ.get(name) or None
+
+STAMP_INPUTS = [("env", n, _env(n)) for n in (
+    "FK33_CARD", "FK33_CB_STYLE", "FK33_ENG", "FK33_ENG_CORE_MHZ",
+    "FK33_ENG_FAST_MHZ", "FK33_ENG_SPLIT_CLK", "FK33_FLATTEN",
+    "FK33_SYNTH_JOBS", "FK33_SYNTH_THREADS")]
+STAMP_CMD = ([f"{n}={v}" for (_, n, v) in sorted(STAMP_INPUTS) if v]
+             + ["python3", "hw/fk33/gen_pcieep.py"])
+
+# at gen_pcieep.py:6107, which today reads
+#     open(DST, "w").write(HEADER + text)
+open(DST, "w").write(
+    HEADER + genstamp.stamp(STAMP_CMD, STAMP_INPUTS, comment="#") + text)
+```
+
+`hw/fk33/fk33_pcieep.xdc` (written at `gen_pcieep.py:6229`) is the generator's
+SECOND committed output and wants the same block. Whether the XDC's content
+actually depends on the environment was not determined here; if it does not,
+stamp it with `[]`, which states that positively rather than leaving the reader
+to guess.
+
+`gen_pcieep.py --selftest` should be extended with a row asserting that two runs
+under DIFFERENT environments produce DIFFERENT stamps and two runs under the
+SAME environment produce identical bytes. Build the mutant from a real
+environment difference, not from the string the check looks for: this tree's
+recorded `seam_tieoff_teeth()` failure was a check and a mutant wrong in the
+same direction, and it passed green every day the build was dead.
