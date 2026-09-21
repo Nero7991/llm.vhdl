@@ -1,0 +1,70 @@
+diff --git a/hw/fk33/gen_fk33_engine.py b/hw/fk33/gen_fk33_engine.py
+index 5cd5f20..987c370 100755
+--- a/hw/fk33/gen_fk33_engine.py
++++ b/hw/fk33/gen_fk33_engine.py
+@@ -111,7 +111,7 @@ DESC_MAXB = 16
+ #
+ # False reproduces the shipping bitstream exactly.  True is the lever.  Values
+ # and their order are identical either way; only the issue cycle moves.
+-FAST_POP_DEFAULT = True
++FAST_POP_DEFAULT = False
+ 
+ NLANE = NPORTS_W + NPORTS_S          # 27 weight+scale masters
+ NMAST = NLANE + 1                    # + the descriptor master
+diff --git a/hw/fk33/rtl/fk33_engine.vhd b/hw/fk33/rtl/fk33_engine.vhd
+index be4696a..a4623cd 100644
+--- a/hw/fk33/rtl/fk33_engine.vhd
++++ b/hw/fk33/rtl/fk33_engine.vhd
+@@ -136,7 +136,7 @@ entity fk33_engine is
+     -- IS: `-generic` on the synth_design line reaches the TOP's generics
+     -- only, never a deep instance, so a lever that is not carried by THIS
+     -- entity is not reachable from the card build or from compose4_top at all.
+-    FAST_POP : boolean := true
++    FAST_POP : boolean := false
+   );
+   port(
+     ------------------------------------------------------------------------
+diff --git a/rtl/fk33_llama_top.vhd b/rtl/fk33_llama_top.vhd
+index 2f3f7b8..589f958 100644
+--- a/rtl/fk33_llama_top.vhd
++++ b/rtl/fk33_llama_top.vhd
+@@ -6169,7 +6169,7 @@ begin
+                     -- give back more logic than the banked memories take, so
+                     -- CLB pressure falls on a card that places at 99.81% CLB.
+                     -- 8-10226 and 8-7186 are zero in every arm.
+-                    NWIDE        => true,
++                    NWIDE        => false,
+                     MAXOUT       => 8,
+                     PIPE         => true,
+                     WIDE         => true)
+@@ -7618,7 +7618,7 @@ begin
+         -- it overlaps SCORE_EARLY (SWEEP_PIPE + SCORE_HDR_TREE=1 is 231.11,
+         -- indistinguishable) and buys nothing here while its area and
+         -- routed-timing cost is unmeasured.
+-        SWEEP_PIPE => true, SCORE_EARLY => true)
++        SWEEP_PIPE => false, SCORE_EARLY => false)
+       port map(
+         clk => clk, rst => rst,
+         start => c_start, layer => c_layer, cur_pos => c_cpos,
+diff --git a/rtl/llama_top.vhd b/rtl/llama_top.vhd
+index 1b8b7e1..4286c72 100644
+--- a/rtl/llama_top.vhd
++++ b/rtl/llama_top.vhd
+@@ -5545,7 +5545,7 @@ begin
+                     -- give back more logic than the banked memories take, so
+                     -- CLB pressure falls on a card that places at 99.81% CLB.
+                     -- 8-10226 and 8-7186 are zero in every arm.
+-                    NWIDE        => true,
++                    NWIDE        => false,
+                     MAXOUT       => 8,
+                     PIPE         => true,
+                     WIDE         => true)
+@@ -6994,7 +6994,7 @@ begin
+         -- it overlaps SCORE_EARLY (SWEEP_PIPE + SCORE_HDR_TREE=1 is 231.11,
+         -- indistinguishable) and buys nothing here while its area and
+         -- routed-timing cost is unmeasured.
+-        SWEEP_PIPE => true, SCORE_EARLY => true)
++        SWEEP_PIPE => false, SCORE_EARLY => false)
+       port map(
+         clk => clk, rst => rst,
+         start => c_start, layer => c_layer, cur_pos => c_cpos,

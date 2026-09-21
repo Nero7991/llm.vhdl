@@ -189,3 +189,85 @@ routed timing summary. Placed-stage area analysis of the same build is in
 `hw/fk33/results/card_build11b_2026-09-20/` (TRACK PLACEDIFF). Synthesis,
 placed and routed checkpoints with sha256sums are at
 `/mnt/storage/fk33_builds/KEEP_build11b_dcp/`.
+
+---
+
+# CORRECTION 2026-09-21, same day: the answer above named the wrong cause
+
+Appended in place. The superseded claim is marked withdrawn, not deleted,
+because it was committed (`166a32d`) and reported.
+
+**WITHDRAWN: "Hypothesis (a). The per-row codebook (`0b34200`) exhausted the
+interconnect."**
+
+**The cause is `CB_STYLE=regs`, a launch-environment value that nobody chose.
+`0b34200` was the identity function in build 11b and did nothing.**
+
+MEASURED, two instruments, three builds (TRACK CBREVERT `1cc7cbf`):
+`^FK33_CB_STYLE` sentinel 1/1/**0**, and Vivado's `Parameter CB_STYLE bound to`
+`distributed` x4 / `distributed` x4 / **`regs` x4**. At `regs`, `matvec_core`
+sets `dont_touch=true` and `ram_style=registers` on `cb` so the inference is
+FORBIDDEN, and `CB_COPIES` is 48 rather than 1,536, making
+`CB_RANKS = min(48,48) = 48` and `cb_rank_of(c) = c`.
+
+MEASURED from the netlist (TRACK CBCENSUS `e240fbb`, preserved synthesis DCP,
+sha256 verified): `core/cb` is 6,144 FDRE behind 24,576 MUXF7 + 12,288 MUXF8.
+DERIVED: 6,144 = 48 x 16 x 8 is the `regs` geometry; a 16:1 one-bit mux is
+4 LUT6 + 2 MUXF7 + 1 MUXF8, so 1,536 lanes x 8 bits is exactly the measured
+12,288 / 24,576. DERIVED: 18,315 - 12,288 = 6,027 = build 10's whole-design F8
+total, so build 10 cannot have held this tree.
+
+The routing failure, the 146,948 conflicts, and the 38-of-40 attribution to
+`core/cb` all STAND. What falls is only the step from "the codebook object
+congested" to "the codebook commit did it".
+
+## Add to "Measured and REJECTED -- do not retry"
+
+- **Do not enumerate what differs between two card builds from their commits
+  and RTL diff alone. The LAUNCH ENVIRONMENT is part of the configuration and
+  it is not in any commit.** This file's own "MULTI-VARIABLE" section listed
+  two commits and five RTL files and was still wrong, because `CB_STYLE` lives
+  in a `systemd-run --setenv` list. Read `Parameter <NAME> bound to` out of both
+  logs and diff THAT. Build 11b's full parameter diff against build 10 is four
+  entries (`CB_STYLE`, `CLKOUT2_DIVIDE` 16->6, `FAST_POP` 0->1, `HDR_TREE`
+  added), and only the first mattered.
+- **Do not treat the absence of a `[Synth 8-5859]` message as evidence about an
+  inference.** I wrote that build 11b's log "says nothing either way" and
+  presented it as a finding. Build 10 carries
+  `[Synth 8-5859] Recognized 3D RAM cb_reg [rtl/matvec_core.vhd:692]`; build
+  11b lacks it because no inference was ATTEMPTED. An absence distinguishes
+  "declined", "not attempted" and "not reported" not at all.
+- **A sentinel nothing refuses on is decoration.** `^FK33_CB_STYLE` existed,
+  already read 0 for this build, and was printed into a log nobody gated on.
+  The fix is a refusal, not a better sentinel. TRACK CBGUARD owns it.
+
+## Add to "Measurement traps hit, including my own"
+
+- **I attributed the failure to the change the build was FOR.** The build was
+  launched to test `0b34200`, the congestion named `core/cb`, and the two were
+  joined without checking whether the commit was even active. It was not. This
+  is the same shape as the withdrawal at `a3cb844` the previous night, which
+  this file cites as a warning three sections above, committed one hour before
+  making the same error.
+- **Naming the object correctly is not naming the cause.** 38 of 40 overlap nets
+  being `core/cb` was a sound measurement and remains one. It bounds WHERE, and
+  says nothing about WHY that object had the shape it had.
+- **The OOC's "context divergence" conclusion was also wrong, and for the same
+  reason.** `hw/fk33/results/cbooc_descaxi_2026-09-21/README.md` concluded that
+  Vivado maps the same RTL differently in and out of context, because the OOC
+  reported `cb_ram=26112` while the card had a mux tree. There was no context
+  effect: the OOC ran at `distributed` (its 1,537 fanout proves it) and the card
+  ran at `regs`. A real recorded phenomenon was invoked to explain a plain
+  parameter difference, which made the wrong answer feel well-grounded.
+
+## Open items updated
+
+- The codebook lever's cost in the card context is still UNKNOWN. Builds 9 and
+  10 predate it; 11b drew it as the identity. The only measurement of it is
+  CBOOC's out-of-context `FF -19,345`, and that is a SAVING.
+- Build 10's -5.819 legal-route timing failure remains unattributed. It is now
+  the only unexplained card failure.
+- Build 12 (launched 2026-09-21 08:2x) is the control Oren chose: build 9's
+  lever state at current HEAD plus `FK33_CB_STYLE=distributed`, with NWIDE,
+  FAST_POP, SWEEP_PIPE and SCORE_EARLY all OFF, to re-establish that HEAD routes
+  at all before any lever is charged for a failure.

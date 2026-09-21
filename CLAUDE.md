@@ -554,6 +554,28 @@ inference log, and where the two disagree the census still wins. What is
 retracted is the idea that switching to `REF_NAME` made the census
 self-validating.
 
+**CORRECTION 2026-09-21: `REF_NAME =~ RAM*` HAS NOW BEEN VALIDATED AND IT
+OVER-COUNTS BY 17.6x.** MEASURED by TRACK CBCENSUS on card build 11b's
+synthesis checkpoint: under one instance it returns **651 against 37 real
+macros**, because 518 `RAMD32` + 74 `RAMS32` = 592 = 37 x 16 are the macro's
+own CHILDREN, and the filter additionally sweeps in 22 `RAMB*` block RAMs,
+which are a DIFFERENT RESOURCE and belong to another column entirely. So the
+paragraph above was right to withhold trust, and the answer is now measured:
+this idiom is wrong in the same direction as `REF_NAME =~ DSP*` and by a larger
+factor. **For distributed RAM, count the MACROS (`RAM32M16` and friends) and
+multiply by their width, then anchor against `report_utilization`'s
+`LUT as Distributed RAM` row** -- CBCENSUS got 37 x 8 = 296 against a reported
+296, exact.
+
+**AND THE LUT ROWS CANNOT ANCHOR A CELL CENSUS AT ALL, because they are SITE
+counts.** MEASURED the same day: census `LUT1`-`LUT6` = 124,338 against
+`LUT as Logic` = 118,975, and the 5,363 gap is LUT COMBINING, not a filter
+error. Anchor a cell census only against a row that counts cells: the F7/F8 Mux
+rows, `CLB Registers`, the DSP row and the Shift Register row all matched
+exactly to the digit. Pick the anchor before running the filter, and if the only
+available anchor is a site count, say the census cannot be validated rather
+than quoting it.
+
 **A COMPLETION SIGNAL THAT ALSO FIRES ON FAILURE IS NOT A COMPLETION SIGNAL.**
 MEASURED 2026-08-30: a waiter armed on a `systemd` unit reported **"completed"
 when the unit was KILLED**, not only when it succeeded, and announced a
@@ -968,6 +990,35 @@ any amount of additional structural checking.**
   Ask which stage the claim lives at, then ask what was held constant AT THAT
   STAGE. An area claim and a timing claim from the same pair of runs can have
   different answers, and here they did.
+- **AND "THE RUNS' OWN RECORDED PARAMETERS" INCLUDES THE LAUNCH ENVIRONMENT,
+  WHICH IS IN NO COMMIT. MEASURED 2026-09-21: this cost a 4h25m card build and
+  a wrong root cause that was committed and reported.** Build 11b was launched
+  to test a codebook change and was silently synthesised at `CB_STYLE=regs`
+  while builds 9 and 10 were at `distributed`, because
+  `hw/fk33/pcieep_build.sh` never sets `FK33_CB_STYLE` and `gen_pcieep.py`
+  defaults it to `regs`. At `regs` the codebook is 48 copies rather than 1,536,
+  `cb_rank_of(c) = c`, and **the commit under test was the IDENTITY** -- while
+  the design forbade its own RAM inference (`dont_touch=true`,
+  `ram_style=registers`) and became a 12,288-MUXF8 mux tree that could not
+  route. The failure was written up as the codebook's, in a section explicitly
+  titled "a MULTI-VARIABLE comparison" that enumerated two commits and five RTL
+  files. **The enumeration was of the wrong space.** Diff
+  `Parameter <NAME> bound to` out of both LOGS, and the `--setenv` list of both
+  units; a `git diff` between two builds cannot see either. The full parameter
+  diff here was four entries and only one mattered.
+- **NAMING THE OBJECT IS NOT NAMING THE CAUSE.** Same incident, and the
+  measurement was sound: 38 of the 40 nets Vivado listed at its top ten
+  signal-overlap nodes were `core/cb`, which correctly bounds WHERE the
+  congestion was. It says nothing about WHY that object had the shape it had,
+  and the step from one to the other was taken silently. This file's rule that
+  a naming report beats an argument about a total still holds -- it establishes
+  location, not mechanism.
+- **A SENTINEL NOTHING REFUSES ON IS DECORATION.** The `^FK33_CB_STYLE` line
+  that would have caught the above ALREADY EXISTED, was already anchored, and
+  already read count 0 for that build, printed into a log nobody gated on. Two
+  independent instruments recorded the defect in real time. The gap was never
+  detection. **When you add a sentinel, add the refusal in the same change, or
+  you have added a line to a log.**
 - **A FALSIFIABLE PREDICTION TESTED BY AN UNCONTROLLED EXPERIMENT IS NOT
   FALSIFIED.** Same incident. The congestion mechanism had been registered in
   advance, deliberately, with the net sign left unpredicted -- all correct

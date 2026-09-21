@@ -135,3 +135,51 @@ reported, and an absence is not a measurement. The census settles it.
 `run.log` is the full driver log including both arms' fanout histograms.
 `MANIFEST.txt` records the two arm trees. The per-arm run directories are at
 `/mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846/`.
+
+---
+
+# CORRECTION 2026-09-21, hours later: there was no context divergence. It was a parameter.
+
+Appended in place; the superseded claim is marked withdrawn, not deleted,
+because it was committed (`6f5c681`) and reported.
+
+**WITHDRAWN: the section headed "THIS OOC CANNOT SEE THE CARD'S MECHANISM", and
+with it the conclusion that "no out-of-context experiment on this lever,
+including a `bcast` arm, can settle what it does on the card."**
+
+The arms above ran at `CB_STYLE=distributed`. **Card build 11b ran at
+`CB_STYLE=regs`** (MEASURED, TRACK CBREVERT `1cc7cbf`: `^FK33_CB_STYLE`
+sentinel 1/1/0 across builds 9/10/11b, and Vivado's `Parameter CB_STYLE bound
+to` giving `distributed` x4 / `distributed` x4 / `regs` x4). The 1,537 fanout
+measured here is itself proof this run was at `distributed`, since at `regs`
+`CB_COPIES` is 48.
+
+So the two measurements were never comparable, and Vivado was not mapping the
+same RTL two ways. `cb_ram=26112` here and a 12,288-MUXF8 mux tree on the card
+are two different designs. TRACK CBCENSUS (`e240fbb`) settled it from the
+netlist: 48 copies, 6,144 FDRE, 24,576 MUXF7, 12,288 MUXF8, no inference
+attempted, because at `regs` `matvec_core` itself sets `dont_touch=true` and
+`ram_style=registers` on `cb`.
+
+**An out-of-context A/B on this lever at a MATCHED `CB_STYLE` remains valid.**
+That is the opposite of what the withdrawn section said.
+
+## The trap, and it is worth more than the result
+
+A real, recorded phenomenon was invoked to explain a plain configuration
+difference. This project's notes genuinely do record that the parts do not sum
+across synthesis contexts and that `gdn_block` reports 22 BRAM tiles alone
+against 5,472 attributed elsewhere in the composed block. Reaching for it here
+produced a confident, well-cited, wrong conclusion, and the citation is exactly
+what made it feel grounded. **Before attributing a discrepancy to a mechanism,
+check that the two measurements share their configuration** - and for a card
+build, configuration includes the launch environment, which is in no commit.
+
+## What still stands
+
+Everything measured in the arms above, because both arms were at the same
+`CB_STYLE`: the two MISSED predictions (LUT registered 0 against +1,456
+measured; fanout registered 1,537 -> 49 against 1,537 -> 109 measured, histogram
+`109x1 49x12`), the structural FF result `13 x (1536-48) = 19,344` against a
+measured -19,345, and the unchanged DSP/BRAM/URAM controls. `FF -19,345` is
+still the only measurement of this lever anywhere, and it is a saving.

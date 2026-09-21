@@ -207,3 +207,89 @@ never fired.
 
 Checkpoints (synth, placed, routed) with sha256sums are preserved outside the
 repo at `/mnt/storage/fk33_builds/KEEP_build11b_dcp/`.
+
+---
+
+# CORRECTION 2026-09-21: THE CAUSE WAS `CB_STYLE=regs`, NOT `0b34200`. THE CODEBOOK COMMIT WAS A NO-OP IN THIS BUILD.
+
+Appended in place. Nothing above is deleted, because it was committed and
+reported.
+
+**WITHDRAWN: the claim at the top of this file that "the per-row codebook
+(`0b34200`) exhausted the interconnect."**
+
+**Build 11b was synthesised at `CB_STYLE=regs`. Builds 9 and 10 were at
+`distributed`.** MEASURED by two independent instruments across all three
+builds (TRACK CBREVERT, `1cc7cbf`):
+
+- the line-anchored `^FK33_CB_STYLE` sentinel: present for 9 and 10, **absent
+  for 11b** (1 / 1 / 0)
+- Vivado's own `Parameter CB_STYLE bound to`: `distributed` x4, `distributed`
+  x4, **`regs` x4**. `build11b/build.stdout:6788` reads
+  `Parameter CB_STYLE bound to: regs`, with `:6789`
+  `done synthesizing module 'matvec_core'`.
+
+At `regs`, `rtl/matvec_core.vhd`'s own `cb_dt_f`/`cb_rs_f` set
+`dont_touch = "true"` and `ram_style = "registers"` on `cb`, so the design
+FORBIDS the RAM inference rather than failing to achieve it; and `cb_lpc_f`
+makes lanes-per-copy `1*BLK = 32`, so `CB_COPIES` is **48**, not 1,536.
+Therefore `CB_RANKS = min(48,48) = 48` and `cb_rank_of(c) = c`:
+**`0b34200` is the IDENTITY function in build 11b and changed nothing.**
+
+TRACK CBCENSUS (`e240fbb`) confirmed this from the netlist rather than from the
+parameter log, opening the preserved synthesis checkpoint
+(sha256 `703b3157...`, verified): `core/cb` is **6,144 FDRE** read through
+**24,576 MUXF7 + 12,288 MUXF8** of LUT6 mux tree. DERIVED: 6,144 = 48 x 16 x 8
+is the `regs` geometry, and a 16:1 one-bit mux is 4 LUT6 + 2 MUXF7 + 1 MUXF8,
+so 1,536 lanes x 8 bits gives exactly 12,288 MUXF8 and 24,576 MUXF7 as measured.
+DERIVED: 18,315 - 12,288 = **6,027**, which is build 10's entire-design F8 total
+to the digit, so build 10 cannot have contained this mux tree.
+
+## What survives and what does not
+
+**SURVIVES.** The routing failure and its object. 146,948 of 669,216 routable
+nets in resource conflict; congestion level 6-7; 38 of the 40 nets named at the
+top ten signal-overlap nodes are `core/cb[][][]` with `tr_reg[...]_i_NN` loads.
+Vivado named the object and the object was the codebook. The mux tree that
+congested is real and CBCENSUS counted it.
+
+**WITHDRAWN.** That the codebook COMMIT caused it. The commit was inert here.
+What caused it was a parameter that no one set.
+
+**ALSO WITHDRAWN, and it was mine, from the section above:** the statement that
+build 11b's log "carries no `[Synth 8-5859]` message about `cb` at all, in
+either direction." The absence is real but the inference drawn from it was not.
+Build 10 DOES carry `[Synth 8-5859] Recognized 3D RAM cb_reg
+[rtl/matvec_core.vhd:692]`. Build 11b lacks it because at `regs` no inference
+was ever ATTEMPTED, not because one was declined and not because the tool was
+silent on a question it considered. An absence is not a measurement, and I
+reported it as one.
+
+## How this was missed, and it is the recorded trap
+
+The build-10-to-build-11b comparison was labelled multi-variable in this very
+file, and the enumeration of what differed was drawn from the two commits and
+their RTL diff. **It did not include the LAUNCH ENVIRONMENT.** `CB_STYLE` is
+not in any commit; it is in the `systemd-run --setenv` list, and build 11b's
+unit did not carry it. `hw/fk33/pcieep_build.sh` never sets it and
+`hw/fk33/gen_pcieep.py` defaults it to `regs`, so the omission is silent by
+construction.
+
+So the error was not failing to control a variable. It was **not knowing the
+variable existed**, while writing a section titled "a MULTI-VARIABLE
+comparison" and listing five RTL files. CLAUDE.md already says to enumerate
+what differs from the runs' own RECORDED PARAMETERS; the parameters were
+recorded, in both builds' logs, under `Parameter CB_STYLE bound to`, and were
+not read. TRACK CBGUARD is now censusing every other environment-driven knob
+with the same shape.
+
+The `^FK33_CB_STYLE` sentinel that would have caught this ALREADY EXISTED and
+already read 0 for this build. **Nothing refused.** A sentinel whose absence
+nothing acts on is decoration, which is this project's own standing test for a
+guard.
+
+## And the launch omission was mine
+
+Build 11b was launched from this session. The `--setenv=FK33_CB_STYLE=distributed`
+line that builds 9 and 10 carried was not in its unit. Build 12 carries it and
+verifies the binding from the log rather than trusting `--setenv`.
