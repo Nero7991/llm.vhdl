@@ -1,0 +1,95 @@
+CBOOC_ENV host=Oren-Dell-Ubuntu repo=/home/orencollaco/GitHub/llama.vhdl run=/mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846 target=matvec_int4_desc_axi cap=8G import=no
+               total        used        free      shared  buff/cache   available
+Mem:           31916        5787       13090          10       13038       25655
+CBOOC_SHA c189722
+CBOOC_TREES ok files_differing=1 hunks=4 (matches 0b34200)
+CBOOC_TREE_SHA old=ef401b6ff079e055 new=974734a743f73201
+CBOOC_MANIFEST_WRITTEN /mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846/MANIFEST.txt
+CBOOC_GEOMETRY target=matvec_int4_desc_axi gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 DUAL_CLK=true USE_XEXP_PORT=true CHECK_JOB_INDEX=false CB_STYLE=distributed FAST_POP=true" clk="s_axi_aclk=13.333 m_aclk=4.000"
+=== CBOOC GHDL elaboration gate ===
+CBOOC_GHDL PASS arm=old unit=matvec_core :: rtl/matvec_core.vhd:652:7:@0ms:(report note): matvec_core: LEVER C ACTIVE  CB_STYLE=distributed  CB_COPIES=1536  CB_LANES_PER_COPY=1  CB_WR_LAT=1
+CBOOC_GHDL PASS arm=old unit=matvec_int4_desc_axi :: rtl/matvec_core.vhd:652:7:@0ms:(report note): matvec_core: LEVER C ACTIVE  CB_STYLE=distributed  CB_COPIES=1536  CB_LANES_PER_COPY=1  CB_WR_LAT=1
+CBOOC_GHDL PASS arm=new unit=matvec_core :: rtl/matvec_core.vhd:763:7:@0ms:(report note): matvec_core: LEVER C ACTIVE  CB_STYLE=distributed  CB_COPIES=1536  CB_LANES_PER_COPY=1  CB_RANKS=48  CB_WR_LAT=1
+CBOOC_GHDL PASS arm=new unit=matvec_int4_desc_axi :: rtl/matvec_core.vhd:763:7:@0ms:(report note): matvec_core: LEVER C ACTIVE  CB_STYLE=distributed  CB_COPIES=1536  CB_LANES_PER_COPY=1  CB_RANKS=48  CB_WR_LAT=1
+CBOOC_CGROUP systemd-run --user scope available, cap 8G
+=== CBOOC draw cb_old arm=old target=matvec_int4_desc_axi begin 2026-09-21T06:50:48-06:00 ===
+CBOOC_OK cb_old rc=0 peak_rss=9.69GB cgroup_peak=8193MB swap=9527MB at_cap=YES wall=473s
+CBOOC_GENERICS tag=cb_old gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 DUAL_CLK=true USE_XEXP_PORT=true CHECK_JOB_INDEX=false CB_STYLE=distributed FAST_POP=true"
+CBOOC_ARM_MD5 tag=cb_old b616c7822f93154b08200f9418489012  /mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846/old/rtl/matvec_core.vhd
+CBOOC_READ_EXCLUDE ooc_cattnadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_gdnadapt_ss_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_gdnadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_normadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ tag=cb_old files=110 skipped=0 excluded=4
+CBOOC_CLKMADE tag=cb_old port=s_axi_aclk period=13.333
+CBOOC_CLKMADE tag=cb_old port=m_aclk period=4.000
+CBOOC_CENSUS stage=synth tag=cb_old dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=82310 lut1=1917 lut2=31876 lut3=12687 lut4=4471 lut5=14115 lut6=17244 ff=77235 carry8=6380 f7=287 f8=103 f9=0 srl=798
+CBOOC_CB stage=synth tag=cb_old cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=synth tag=cb_old nets=2258023 max_flat_pin_count=447098 file=fanout_top_synth_cb_old.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_old cbw_ffs=19968 distinct_d_nets=13 max_flat_pin_count=1537 max_sinks=1536 hist="1537x13"
+CBOOC_CENSUS stage=opt tag=cb_old dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=82225 lut1=1935 lut2=31801 lut3=12659 lut4=4471 lut5=14115 lut6=17244 ff=77235 carry8=6380 f7=287 f8=103 f9=0 srl=798
+CBOOC_CB stage=opt tag=cb_old cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288
+CBOOC_FANOUT_TOP stage=opt tag=cb_old nets=2217844 max_flat_pin_count=435316 file=fanout_top_opt_cb_old.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_old cbw_ffs=19968 distinct_d_nets=13 max_flat_pin_count=1537 max_sinks=1536 hist="1537x13"
+CBOOC_INTRA tag=cb_old clk=m_aclk wns=1.173 tns=0.000 failing=0 endpoints=13243
+CBOOC_INTRA tag=cb_old clk=s_axi_aclk wns=8.848 tns=0.000 failing=0 endpoints=487150
+CBOOC_WORST_GLOBAL tag=cb_old wns=1.173 levels=11 datapath=2.723 start=dut/streamer/gen_s[0].scale_port/g_dc.fsm/st_reg[0]/C end=dut/streamer/gen_s[0].scale_port/g_dc.fsm/this_len_reg[0]/CE
+CBOOC_WORST_CLK tag=cb_old clk=s_axi_aclk period=13.333 wns=8.848 levels=16 datapath=4.306 start=dw_reg[10][56]/C end=sh_prod_reg/DSP_A_B_DATA_INST/CEA2
+CBOOC_WORST_CLK tag=cb_old clk=m_aclk period=4.000 wns=1.173 levels=11 datapath=2.723 start=dut/streamer/gen_s[0].scale_port/g_dc.fsm/st_reg[0]/C end=dut/streamer/gen_s[0].scale_port/g_dc.fsm/this_len_reg[0]/CE
+CBOOC_CBW_PATH tag=cb_old paths=20 wns=12.631 levels=2 datapath=0.684 start=dut/core/st_reg[0]/C end=dut/core/cbw_v_reg[0]/D
+CBOOC_RESULT tag=cb_old lut=92259 lut_logic=74733 lut_mem=17526 ff=77235 bram=192.5 ramb36=192 ramb18=1 uram=0 dsp=1585 carry8=6380 f7=287 f8=103 synth_s=279 opt_s=64 timing="s_axi_aclk:8.848 m_aclk:1.173" cbw_worst=12.631
+CBOOC_SYNTH_VS_OPT tag=cb_old synth_lut=92343 opt_lut=92259 synth_ff=77235 opt_ff=77235 synth_bram=192.5 opt_bram=192.5 synth_dsp=1585 opt_dsp=1585 synth_uram=0 opt_uram=0
+CBOOC_LOGMSG cb_old synth_8-10226=1 synth_8-7186=24577
+=== CBOOC draw cb_new arm=new target=matvec_int4_desc_axi begin 2026-09-21T06:58:41-06:00 ===
+CBOOC_OK cb_new rc=0 peak_rss=8.95GB cgroup_peak=8192MB swap=9316MB at_cap=YES wall=435s
+CBOOC_GENERICS tag=cb_new gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 DUAL_CLK=true USE_XEXP_PORT=true CHECK_JOB_INDEX=false CB_STYLE=distributed FAST_POP=true"
+CBOOC_ARM_MD5 tag=cb_new c3325ea1f418dcbcaa85f33e47e8c901  /mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846/new/rtl/matvec_core.vhd
+CBOOC_READ_EXCLUDE ooc_cattnadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_gdnadapt_ss_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_gdnadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ_EXCLUDE ooc_normadapt_top.vhd (harness top, not a closure member)
+CBOOC_READ tag=cb_new files=110 skipped=0 excluded=4
+CBOOC_CLKMADE tag=cb_new port=s_axi_aclk period=13.333
+CBOOC_CLKMADE tag=cb_new port=m_aclk period=4.000
+CBOOC_CENSUS stage=synth tag=cb_new dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=83785 lut1=2665 lut2=31930 lut3=13822 lut4=4494 lut5=15372 lut6=15502 ff=57890 carry8=6475 f7=280 f8=103 f9=0 srl=798
+CBOOC_CB stage=synth tag=cb_new cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=synth tag=cb_new nets=2241280 max_flat_pin_count=430193 file=fanout_top_synth_cb_new.txt
+CBOOC_FANOUT_CBW stage=synth tag=cb_new cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=109 max_sinks=108 hist="109x1 49x12"
+CBOOC_CENSUS stage=opt tag=cb_new dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=83637 lut1=2731 lut2=31744 lut3=13794 lut4=4494 lut5=15372 lut6=15502 ff=57890 carry8=6475 f7=280 f8=103 f9=0 srl=798
+CBOOC_CB stage=opt tag=cb_new cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_FANOUT_TOP stage=opt tag=cb_new nets=2200355 max_flat_pin_count=418137 file=fanout_top_opt_cb_new.txt
+CBOOC_FANOUT_CBW stage=opt tag=cb_new cbw_ffs=624 distinct_d_nets=13 max_flat_pin_count=109 max_sinks=108 hist="109x1 49x12"
+CBOOC_INTRA tag=cb_new clk=m_aclk wns=1.173 tns=0.000 failing=0 endpoints=13243
+CBOOC_INTRA tag=cb_new clk=s_axi_aclk wns=8.848 tns=0.000 failing=0 endpoints=467652
+CBOOC_WORST_GLOBAL tag=cb_new wns=1.173 levels=11 datapath=2.723 start=dut/streamer/gen_s[0].scale_port/g_dc.fsm/st_reg[0]/C end=dut/streamer/gen_s[0].scale_port/g_dc.fsm/this_len_reg[0]/CE
+CBOOC_WORST_CLK tag=cb_new clk=s_axi_aclk period=13.333 wns=8.848 levels=16 datapath=4.306 start=dw_reg[10][56]/C end=sh_prod_reg/DSP_A_B_DATA_INST/CEA2
+CBOOC_WORST_CLK tag=cb_new clk=m_aclk period=4.000 wns=1.173 levels=11 datapath=2.723 start=dut/streamer/gen_s[0].scale_port/g_dc.fsm/st_reg[0]/C end=dut/streamer/gen_s[0].scale_port/g_dc.fsm/this_len_reg[0]/CE
+CBOOC_CBW_PATH tag=cb_new paths=20 wns=12.899 levels=1 datapath=0.416 start=dut/core/st_reg[2]/C end=dut/core/cbw_v_reg[0]/D
+CBOOC_RESULT tag=cb_new lut=93715 lut_logic=76189 lut_mem=17526 ff=57890 bram=192.5 ramb36=192 ramb18=1 uram=0 dsp=1585 carry8=6475 f7=280 f8=103 synth_s=252 opt_s=64 timing="s_axi_aclk:8.848 m_aclk:1.173" cbw_worst=12.899
+CBOOC_SYNTH_VS_OPT tag=cb_new synth_lut=93862 opt_lut=93715 synth_ff=57890 opt_ff=57890 synth_bram=192.5 opt_bram=192.5 synth_dsp=1585 opt_dsp=1585 synth_uram=0 opt_uram=0
+CBOOC_LOGMSG cb_new synth_8-10226=1 synth_8-7186=24577
+=== CBOOC_TABLE (per arm; the census is authoritative over report_utilization) ===
+old: cb_old,matvec_int4_desc_axi,"BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 DUAL_CLK=true USE_XEXP_PORT=true CHECK_JOB_INDEX=false CB_STYLE=distributed FAST_POP=true",92259,74733,17526,77235,192.5,192,1,0,1585,6380,287,103,"s_axi_aclk:8.848 m_aclk:1.173",12.631,279,64,"cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288","cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288","447098 1537 13","435316 1537 13","dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=82225 lut1=1935 lut2=31801 lut3=12659 lut4=4471 lut5=14115 lut6=17244 ff=77235 carry8=6380 f7=287 f8=103 f9=0 srl=798"
+old: arm=old tag=cb_old target=matvec_int4_desc_axi peak_rss_gb=9.69 cgroup_peak_mb=8193 cgroup_swap_mb=9527 at_cap=YES wall_s=473 rc=0
+new: cb_new,matvec_int4_desc_axi,"BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 DUAL_CLK=true USE_XEXP_PORT=true CHECK_JOB_INDEX=false CB_STYLE=distributed FAST_POP=true",93715,76189,17526,57890,192.5,192,1,0,1585,6475,280,103,"s_axi_aclk:8.848 m_aclk:1.173",12.899,252,64,"cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384","cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384","430193 109 13","418137 109 13","dsp48=1585 uram288=0 ramb36=192 ramb18=1 lutram=35561 lut=83637 lut1=2731 lut2=31744 lut3=13794 lut4=4494 lut5=15372 lut6=15502 ff=57890 carry8=6475 f7=280 f8=103 f9=0 srl=798"
+new: arm=new tag=cb_new target=matvec_int4_desc_axi peak_rss_gb=8.95 cgroup_peak_mb=8192 cgroup_swap_mb=9316 at_cap=YES wall_s=435 rc=0
+CBOOC_DELTA  field            old            new          new-old
+CBOOC_DELTA  lut                     92259          93715          +1456
+CBOOC_DELTA  lut_logic               74733          76189          +1456
+CBOOC_DELTA  lut_mem                 17526          17526             +0
+CBOOC_DELTA  ff                      77235          57890         -19345
+CBOOC_DELTA  bram_tile               192.5          192.5             +0
+CBOOC_DELTA  ramb36                    192            192             +0
+CBOOC_DELTA  ramb18                      1              1             +0
+CBOOC_DELTA  uram                        0              0             +0
+CBOOC_DELTA  dsp                      1585           1585             +0
+CBOOC_DELTA  carry8                   6380           6475            +95
+CBOOC_DELTA  f7                        287            280             -7
+CBOOC_DELTA  f8                        103            103             +0
+CBOOC_DELTA  cb_synth       old=cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288 | new=cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_DELTA  cb_opt         old=cb_ram=26112 cb_ff=0 cbw_ff=19968 cbw_any=19970 cbwv_ff=1536 cbwa_ff=6144 cbwd_ff=12288 | new=cb_ram=26112 cb_ff=0 cbw_ff=624 cbw_any=625 cbwv_ff=48 cbwa_ff=192 cbwd_ff=384
+CBOOC_DELTA  fan_synth      old=447098 1537 13 | new=430193 109 13
+CBOOC_DELTA  fan_opt        old=435316 1537 13 | new=418137 109 13
+CBOOC_DELTA  timing_per_clk old=s_axi_aclk:8.848 m_aclk:1.173 | new=s_axi_aclk:8.848 m_aclk:1.173
+CBOOC_DELTA  cbw_worst_slack old=12.631 | new=12.899
+CBOOC_ALLDONE rc=0 run=/mnt/storage/fk33_builds/scratch/cbooc_descaxi_main/run_20260921_065042_1471846
