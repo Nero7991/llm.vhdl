@@ -367,6 +367,17 @@ entity tb_llama_top is
     -- unchanged; sim/tb_llama_top_swg.vhd and sim:seamgate_swg elaborate it
     -- true.
     SWG_REAL    : boolean := false;
+    -- LEVER L2, TRACK GSRWIDE.  `SWG_LANES` is swiglu_mem's own LANES and
+    -- `SWG_WIDE` moves the `gsr` adapter's load and write-back onto the
+    -- region file's LANES-wide group ports.  DEFAULT 1 / false, so every
+    -- pinned landmark in this family is unchanged.
+    -- `sim/tb_llama_top_swgw.vhd` is the row that sets them, and it carries
+    -- `sim/tb_llama_top_swg.vhd`'s four landmarks UNCHANGED rather than
+    -- re-deriving them: re-measuring a landmark from a run of the arm under
+    -- test is a round trip against itself, which this project has on record
+    -- passing for a wrong-but-consistent implementation (the `m7 mutant`).
+    SWG_LANES   : positive := 1;
+    SWG_WIDE    : boolean := false;
     -- ==================================================================
     -- SUBSYSTEM B'S RECURRENT STATE, TIERED.  See `B_STATE_AXI` in
     -- rtl/llama_top.vhd.  false keeps `stmem`/`semem`, every layer on chip.
@@ -1456,6 +1467,7 @@ begin
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
       NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
       SWG_REAL => SWG_REAL,
+      SWG_LANES => SWG_LANES, SWG_WIDE => SWG_WIDE,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
       B_CONST_HBM => B_CONST_HBM, C_QKN_IMAGE => C_QKN_IMAGE,
       C_KV_BLOCK => KV_BLOCK, C_N_ROT => N_ROT, C_MAXPOS => MAXPOS,

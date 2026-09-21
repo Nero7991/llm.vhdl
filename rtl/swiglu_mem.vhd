@@ -107,6 +107,40 @@
 -- operand, no write decode, no read select (o_rdata is bank 0's registered
 -- dout directly), no S_MAX, the same cycle count.
 --
+-- WIDE_IO, DEFAULT FALSE.  TRACK GSRWIDE, 2026-09-20.  LANES makes the two
+-- COMPUTE passes NB beats each; it cannot touch the LOAD and the STORE,
+-- which are the parent's and are 3N one-element-per-cycle beats
+-- (docs/2026-09-20_d-side-vector-traffic.md section 4.2: 36,870 of the
+-- card's 61,473-cycle VEC_SWG step against this unit's 24,588).  That is
+-- the other 60% of the step, and it is not a property of this unit's ports
+-- either -- it is `llama_top`'s region file having a LANES-wide group port
+-- with per-lane enables that carries TWO operand regions at one address,
+-- and both D-vec adapters being wired to the ONE-ELEMENT port beside it.
+--
+-- WIDE_IO is this unit's half of moving the SwiGLU onto that port:
+--   * `gw_we` writes ONE WORD INTO EVERY BANK in a single beat -- lane k is
+--     element `gw_addr + k`, which lives in bank k at offset
+--     `gw_addr / LANES` by the layout above, so a LANES-aligned group maps
+--     one-to-one onto the banks and NO shuffle, mask or decode is needed.
+--     G and U arrive together on `gw_g`/`gw_u` because the region file's
+--     group READ returns both operand regions in the same cycle.
+--   * `o_gdata` is the LANES banks' own registered douts, concatenated,
+--     addressed by the SAME `o_raddr` the narrow read uses.  There is no
+--     second read address and no second read port: the banks are read once
+--     and the narrow port merely selects one of the words the wide port
+--     publishes whole.  The one-edge latency contract is therefore
+--     literally the same contract, not an analogous one.
+--
+-- WIDE_IO REPLACES THE WORD PORTS, IT DOES NOT SIT BESIDE THEM.  With it
+-- true `g_we`/`g_waddr`/`g_wdata` and their u twins drive nothing, so
+-- neither bank write port grows a mux and the false configuration is
+-- textually the 2026-09-19/SWGFAST unit.  A parent uses one face or the
+-- other; a parent that drives the wrong one loads nothing, which is loud.
+-- `sim/tb_swiglu_mem.vhd` runs the identity bench through the WIDE face at
+-- LANES 1, 2, 4 and 8 against the same `swiglu -> vec_mem -> bfp_pack`
+-- reference, and checks `o_gdata` lane by lane against it as well as
+-- `o_rdata`, so both faces are held to an independent model.
+--
 -- READ LATENCY of o_raddr -> o_rdata is ONE EDGE, the same contract as
 -- rmsnorm_rs_mem: the output bank's own registered dout IS the port, with no
 -- lane select in front of it.  sim/tb_swiglu_mem.vhd MEASURES it.
@@ -127,7 +161,12 @@ entity swiglu_mem is
     Q : integer := 12;
     -- Elements per cycle in both passes.  A power of two dividing N.  1 is
     -- the 2026-09-19 unit exactly; see the header.
-    LANES : positive := 1
+    LANES : positive := 1;
+    -- Load through `gw_*` and read back through `o_gdata`, LANES elements a
+    -- beat, instead of the one-word `g_*`/`u_*`/`o_rdata` face.  FALSE is
+    -- the shipping unit and elaborates no extra logic at all; see the
+    -- header.  The two faces are exclusive by construction.
+    WIDE_IO : boolean := false
   );
   port(
     clk     : in  std_logic;
@@ -146,6 +185,26 @@ entity swiglu_mem is
     u_wdata : in  std_logic_vector(15 downto 0);
     u_exp   : in  integer;
     done    : out std_logic := '0';
+    -- ---- THE WIDE FACE.  WIDE_IO only; see the header.  Every port has a
+    -- default so a parent built against the 2026-09-19 entity still
+    -- elaborates without naming them.
+    --
+    -- ONE BEAT = LANES CONSECUTIVE ELEMENTS OF BOTH OPERANDS.  `gw_addr` is
+    -- the ELEMENT address of lane 0 and MUST be a multiple of LANES; lane k
+    -- carries element `gw_addr + k`.  The unit does not check the alignment
+    -- because it has no way to refuse -- the parent's elaboration pin does
+    -- (`CHK_SWG_WIDE` in rtl/llama_top.vhd), and N mod LANES = 0 is pinned
+    -- here, so every beat of a 0..N-1 sweep is aligned by construction and
+    -- there is no partial final group in this unit at any N.
+    gw_we   : in  std_logic := '0';
+    gw_addr : in  std_logic_vector(clog2(N)-1 downto 0) := (others => '0');
+    gw_g    : in  std_logic_vector(LANES*16-1 downto 0) := (others => '0');
+    gw_u    : in  std_logic_vector(LANES*16-1 downto 0) := (others => '0');
+    -- The LANES banks at the offset `o_raddr` selects, concatenated, lane k
+    -- = element `o_raddr - (o_raddr mod LANES) + k`.  Same one-edge
+    -- latency as `o_rdata`, because it is the same read of the same banks.
+    -- All zeros when WIDE_IO is false.
+    o_gdata : out std_logic_vector(LANES*16-1 downto 0) := (others => '0');
     -- The packed result: value = o_rdata * 2^-o_exp.  One-edge read latency.
     o_raddr : in  std_logic_vector(clog2(N)-1 downto 0);
     o_rdata : out std_logic_vector(15 downto 0);
@@ -184,6 +243,12 @@ architecture rtl of swiglu_mem is
   type sl16a is array(0 to LANES-1) of std_logic_vector(15 downto 0);
   signal g_bq, u_bq, o_bq : sl16a;
   signal g_bwe, u_bwe : std_logic_vector(LANES-1 downto 0) := (others => '0');
+  -- The banks' write address and per-bank write datum, driven by exactly one
+  -- of the two faces (see WIDE_IO in the header).  Naming them makes the
+  -- FALSE arm a rename of the expressions the file already had rather than a
+  -- mux with a constant select.
+  signal gb_wa, ub_wa : std_logic_vector(AB-1 downto 0);
+  signal gb_wd, ub_wd : sl16a;
   signal o_rsel : std_logic_vector(LB downto 0) := (others => '0');
 
   -- The latched exponents.  Seam rule (1) of rtl/llama_top.vhd, applied
@@ -280,27 +345,65 @@ begin
   ram_ra <= std_logic_vector(to_unsigned(idx, AB)) when idx < NB
             else (others => '0');
 
-  gbank : for k in 0 to LANES-1 generate
-    gsel1 : if LANES = 1 generate
-      g_bwe(0) <= g_we;
-      u_bwe(0) <= u_we;
-    else generate
-      g_bwe(k) <= g_we when unsigned(g_waddr(LB-1 downto 0)) = k else '0';
-      u_bwe(k) <= u_we when unsigned(u_waddr(LB-1 downto 0)) = k else '0';
+  -- ---- THE WRITE FACE.  Exactly one of these two generates elaborates, so
+  -- neither bank write port carries a mux in either configuration.
+  gnarrow : if not WIDE_IO generate
+    gb_wa <= g_waddr(LOG2N-1 downto LB);
+    ub_wa <= u_waddr(LOG2N-1 downto LB);
+    gnl : for k in 0 to LANES-1 generate
+      gb_wd(k) <= g_wdata;
+      ub_wd(k) <= u_wdata;
+      gsel1 : if LANES = 1 generate
+        g_bwe(0) <= g_we;
+        u_bwe(0) <= u_we;
+      else generate
+        g_bwe(k) <= g_we when unsigned(g_waddr(LB-1 downto 0)) = k else '0';
+        u_bwe(k) <= u_we when unsigned(u_waddr(LB-1 downto 0)) = k else '0';
+      end generate;
     end generate;
+  end generate;
 
+  gwide : if WIDE_IO generate
+    -- ONE BEAT, EVERY BANK.  Lane k is element `gw_addr + k`; with
+    -- `gw_addr` a multiple of LANES that element is bank k at offset
+    -- `gw_addr / LANES`, which is `gw_addr(LOG2N-1 downto LB)` -- the SAME
+    -- slice the narrow face takes, because the low LB bits it drops are the
+    -- lane index and they are zero on an aligned beat.  So there is one
+    -- write address for all LANES banks and no decode at all.
+    gb_wa <= gw_addr(LOG2N-1 downto LB);
+    ub_wa <= gw_addr(LOG2N-1 downto LB);
+    gwl : for k in 0 to LANES-1 generate
+      g_bwe(k) <= gw_we;
+      u_bwe(k) <= gw_we;
+      gb_wd(k) <= gw_g((k+1)*16-1 downto k*16);
+      ub_wd(k) <= gw_u((k+1)*16-1 downto k*16);
+    end generate;
+  end generate;
+
+  gbank : for k in 0 to LANES-1 generate
     ug : entity work.vec_mem generic map(WORDS => NB, W => 16)
       port map(clk => clk, we => g_bwe(k),
-               waddr => g_waddr(LOG2N-1 downto LB), raddr => ram_ra,
-               din => g_wdata, dout => g_bq(k));
+               waddr => gb_wa, raddr => ram_ra,
+               din => gb_wd(k), dout => g_bq(k));
     uu : entity work.vec_mem generic map(WORDS => NB, W => 16)
       port map(clk => clk, we => u_bwe(k),
-               waddr => u_waddr(LOG2N-1 downto LB), raddr => ram_ra,
-               din => u_wdata, dout => u_bq(k));
+               waddr => ub_wa, raddr => ram_ra,
+               din => ub_wd(k), dout => u_bq(k));
     uo : entity work.vec_mem generic map(WORDS => NB, W => 16)
       port map(clk => clk, we => o_we, waddr => o_wa,
                raddr => o_raddr(LOG2N-1 downto LB),
                din => o_wd(k), dout => o_bq(k));
+  end generate;
+
+  -- ---- THE WIDE READ.  The banks' own registered douts, concatenated.  No
+  -- second read address, no second port, no select: `o_rdata` below picks
+  -- one of exactly these words.
+  gord : if WIDE_IO generate
+    gol : for k in 0 to LANES-1 generate
+      o_gdata((k+1)*16-1 downto k*16) <= o_bq(k);
+    end generate;
+  else generate
+    o_gdata <= (others => '0');
   end generate;
 
   -- The output read: a LANES-to-1 select registered in PARALLEL with the

@@ -79,6 +79,18 @@ entity tb_swiglu_mem is
           -- The DUT's LANES generic (elements per cycle in both passes).
           -- 1 is the 2026-09-19 unit; TRACK SWGFAST added 2 and 4.
           LANES   : positive := 1;
+          -- TRACK GSRWIDE.  Drive the DUT through swiglu_mem's WIDE face
+          -- (`gw_*` in, `o_gdata` out, LANES elements a beat) instead of the
+          -- one-word face.  The reference chain is UNCHANGED and so is every
+          -- value check, so a WIDE_IO run is the same identity claim through
+          -- a different pair of ports -- which is the point: the wide face
+          -- has to be held to `swiglu -> vec_mem -> bfp_pack` and not to the
+          -- narrow face, or it is a round trip against a sibling.
+          WIDE_IO : boolean := false;
+          -- The wide read-out check: every lane of `o_gdata` against
+          -- bfp_pack's flat o_mant.  Its own switch, so the attribution
+          -- control can turn it off alone.
+          CHK_GRD : boolean := true;
           -- TRACK SWGFAST.  When non-empty, every trial's DUT read-out
           -- (o_exp, then the N mantissas as read through o_raddr) is
           -- appended to this file, one integer per line, so two runs of the
@@ -120,6 +132,12 @@ architecture sim of tb_swiglu_mem is
   signal d_done  : std_logic;
   signal o_ra    : std_logic_vector(AW-1 downto 0) := (others => '0');
   signal o_rd    : std_logic_vector(15 downto 0);
+  -- the wide face
+  signal gw_we   : std_logic := '0';
+  signal gw_addr : std_logic_vector(AW-1 downto 0) := (others => '0');
+  signal gw_g    : std_logic_vector(LANES*16-1 downto 0) := (others => '0');
+  signal gw_u    : std_logic_vector(LANES*16-1 downto 0) := (others => '0');
+  signal o_gd    : std_logic_vector(LANES*16-1 downto 0);
   signal d_oe    : integer;
   signal d_sh    : integer;
   signal d_mx    : unsigned(31 downto 0);
@@ -161,10 +179,12 @@ begin
   hbp_start <= sw_done;
 
   dut : entity work.swiglu_mem
-    generic map(N => N, Q => Q, LANES => LANES)
+    generic map(N => N, Q => Q, LANES => LANES, WIDE_IO => WIDE_IO)
     port map(clk => clk, rst => rst, start => d_start,
              g_we => g_we, g_waddr => g_wa, g_wdata => g_wd, g_exp => ge,
              u_we => u_we, u_waddr => u_wa, u_wdata => u_wd, u_exp => ue,
+             gw_we => gw_we, gw_addr => gw_addr, gw_g => gw_g, gw_u => gw_u,
+             o_gdata => o_gd,
              done => d_done,
              o_raddr => o_ra, o_rdata => o_rd, o_exp => d_oe,
              o_shift => d_sh, o_maxabs => d_mx);
@@ -188,6 +208,7 @@ begin
     variable r : real;
     variable rm, dm : signed(15 downto 0);
     variable nbadel : natural;
+    variable nbadg  : natural;
     variable nz : natural;
     variable first_v : signed(15 downto 0);
     variable seen2 : boolean;
@@ -214,22 +235,44 @@ begin
     -- so a "u enable decoded from g_waddr" fault is not a no-op.
     procedure load is
     begin
-      for i in 0 to N-1 loop
+      if WIDE_IO then
+        -- THE WIDE FACE.  One beat carries LANES consecutive elements of
+        -- BOTH operands, which is how the region file's group read delivers
+        -- them; there is no separate u pass here and no u address, so the
+        -- "u enable decoded from g_waddr" fault the narrow load is shaped
+        -- against cannot exist.  What CAN exist instead is a lane shuffle,
+        -- and that is what the o_gdata read-out below is shaped against.
+        for b in 0 to N/LANES - 1 loop
+          wait until rising_edge(clk);
+          gw_we   <= '1';
+          gw_addr <= std_logic_vector(to_unsigned(b*LANES, AW));
+          for k in 0 to LANES-1 loop
+            gw_g((k+1)*16-1 downto k*16) <= gm((b*LANES+k+1)*16-1
+                                               downto (b*LANES+k)*16);
+            gw_u((k+1)*16-1 downto k*16) <= um((b*LANES+k+1)*16-1
+                                               downto (b*LANES+k)*16);
+          end loop;
+        end loop;
         wait until rising_edge(clk);
-        g_we <= '1'; u_we <= '0';
-        g_wa <= std_logic_vector(to_unsigned(i, AW));
-        g_wd <= gm((i+1)*16-1 downto i*16);
-      end loop;
-      wait until rising_edge(clk);
-      g_we <= '0';
-      for i in 0 to N-1 loop
+        gw_we <= '0';
+      else
+        for i in 0 to N-1 loop
+          wait until rising_edge(clk);
+          g_we <= '1'; u_we <= '0';
+          g_wa <= std_logic_vector(to_unsigned(i, AW));
+          g_wd <= gm((i+1)*16-1 downto i*16);
+        end loop;
         wait until rising_edge(clk);
-        u_we <= '1';
-        u_wa <= std_logic_vector(to_unsigned(i, AW));
-        u_wd <= um((i+1)*16-1 downto i*16);
-      end loop;
-      wait until rising_edge(clk);
-      u_we <= '0';
+        g_we <= '0';
+        for i in 0 to N-1 loop
+          wait until rising_edge(clk);
+          u_we <= '1';
+          u_wa <= std_logic_vector(to_unsigned(i, AW));
+          u_wd <= um((i+1)*16-1 downto i*16);
+        end loop;
+        wait until rising_edge(clk);
+        u_we <= '0';
+      end if;
     end procedure;
 
     procedure trial(tag : string; wild : boolean := false) is
@@ -291,6 +334,37 @@ begin
         elsif rm /= first_v then seen2 := true; end if;
       end loop;
 
+      -- ---- THE WIDE READ-OUT, AGAINST THE SAME INDEPENDENT REFERENCE.
+      -- WIDE_IO only.  Every lane of `o_gdata` is compared with bfp_pack's
+      -- flat o_mant at the element that lane is supposed to hold -- NOT with
+      -- `o_rdata`, which is a sibling of the same banks and would make this
+      -- a round trip.  The loop waits EXACTLY ONE rising edge between
+      -- presenting `o_raddr` and sampling, so it is also the wide face's
+      -- one-edge latency check: a two-edge port fails it on element 0.
+      nbadg := 0;
+      if WIDE_IO and CHK_GRD then
+        for b in 0 to N/LANES - 1 loop
+          o_ra <= std_logic_vector(to_unsigned(b*LANES, AW));
+          wait until rising_edge(clk);
+          wait for 1 ns;
+          for k in 0 to LANES-1 loop
+            nchk := nchk + 1;
+            dm := signed(o_gd((k+1)*16-1 downto k*16));
+            rm := signed(r_om((b*LANES+k+1)*16-1 downto (b*LANES+k)*16));
+            if dm /= rm then
+              if nbadg < 4 then
+                report "tb_swiglu_mem BAD " & tag & " o_gdata b "
+                     & integer'image(b) & " lane " & integer'image(k)
+                     & " (element " & integer'image(b*LANES+k) & ") ref "
+                     & integer'image(to_integer(rm)) & " dut "
+                     & integer'image(to_integer(dm)) severity error;
+              end if;
+              nbadg := nbadg + 1; nbad := nbad + 1;
+            end if;
+          end loop;
+        end loop;
+      end if;
+
       -- ---- NON-DEGENERACY
       if nz > 0 and seen2 then
         nlive := nlive + 1;
@@ -300,7 +374,8 @@ begin
              & " o_exp " & integer'image(r_oe) & " shift " & integer'image(d_sh)
              & " nonzero " & integer'image(nz) & "/" & integer'image(N)
              & " ref_cyc " & integer'image(r_c) & " dut_cyc " & integer'image(d_c)
-             & " badel " & integer'image(nbadel) severity note;
+             & " badel " & integer'image(nbadel)
+             & " badgrp " & integer'image(nbadg) severity note;
       else
         nrail := nrail + 1;
         report "tb_swiglu_mem RAIL " & tag & " g_exp " & integer'image(ge)
@@ -493,6 +568,18 @@ begin
     -- see docs/debugging/2026-09-20_vec-swg-5-cycles-per-element.md.
     report "SWGFAST_CYCLES " & integer'image(last_dut_cyc)
          & " N=" & integer'image(N) & " LANES=" & integer'image(LANES)
+         & " WIDE_IO=" & boolean'image(WIDE_IO)
+      severity note;
+    -- TRACK GSRWIDE.  The LOAD and the STORE the parent has to run, in
+    -- beats, at this face.  The narrow face is N beats per operand and N
+    -- back; the wide face is N/LANES for BOTH operands together and N/LANES
+    -- back, because the region file's group read carries two regions at one
+    -- address.  Printed rather than derived so the write-up quotes a
+    -- measurement.
+    report "GSRWIDE_BEATS load " & integer'image(2*N) & " store "
+         & integer'image(N) & " narrow, load "
+         & integer'image(N/LANES) & " store " & integer'image(N/LANES)
+         & " wide   N=" & integer'image(N) & " LANES=" & integer'image(LANES)
       severity note;
     report "tb_swiglu_mem: checks=" & integer'image(nchk)
          & " bad=" & integer'image(nbad)

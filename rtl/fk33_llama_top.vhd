@@ -510,6 +510,39 @@ entity fk33_llama_top is
     SWG_REAL : boolean := false;
 
     -- ==================================================================
+    -- LEVER L2: THE SwiGLU ON THE REGION FILE'S GROUP PORTS.
+    -- TRACK GSRWIDE, 2026-09-20.  Both generics default to the shipping
+    -- configuration and the FALSE/1 elaboration is textually what this file
+    -- did before they existed.
+    --
+    -- `SWG_LANES` is `rtl/swiglu_mem.vhd`'s own LANES: elements per cycle
+    -- in each of its two compute passes.  It has been 1 since the unit was
+    -- written, because the instantiation below never named the generic.
+    -- TRACK SWGFAST MEASURED 24,588 / 12,301 / 6,157 cycles at LANES
+    -- 1 / 2 / 4 and N = 12288; `sim/tb_swiglu_mem_w8_9b.vhd` MEASURES 8.
+    --
+    -- `SWG_WIDE` moves the ADAPTER -- which is the other 60% of the step --
+    -- off the one-element region port and onto the LANES-wide group ports.
+    -- MEASURED on the card at N = 12288 (docs/2026-09-20_d-side-vector-
+    -- traffic.md section 4.2): the unit is 24,588 cycles of a 61,473-cycle
+    -- VEC_SWG step and `gsr`'s three serial one-element passes are 36,870.
+    -- The group READ port returns LANES words of `v_reg_a` AND LANES words
+    -- of `v_reg_b` at ONE address, and G and U are exactly `v_reg_a` and
+    -- `v_reg_b`, so the two load passes collapse into one that is
+    -- SWG_LANES elements wide; the group WRITE port takes the result back
+    -- the same width.
+    --
+    -- SWG_WIDE REQUIRES SWG_REAL (there is no stub on the group ports) and
+    -- requires `LANES mod SWG_LANES = 0`, both pinned by CHK_SWG_WIDE with
+    -- the out-of-range-natural idiom because Vivado ignores a failing
+    -- `severity failure`.  The pin is written against the configuration
+    -- being ASKED FOR, not unconditionally: TRACK WIDEDRAIN's correction
+    -- (i) records an unconditional pin that refused the whole tree in every
+    -- configuration including the one with the lever off.
+    SWG_LANES : positive := 1;
+    SWG_WIDE  : boolean := false;
+
+    -- ==================================================================
     -- THE REAL SUBSYSTEM C, NOT THE STUB.  With C_REAL true `OP_C_JOB` is
     -- computed by `rtl/attn_block.vhd`; with it false the `-32768 + i` ramp
     -- above runs and `err_unit_stub` rises, and the default path is
@@ -1346,6 +1379,24 @@ architecture rtl of fk33_llama_top is
   -- arms read it and a constant costs nothing when the arm is not generated.
   constant A_DW_GRP : positive := minimum(LANES, A_ROWS_IF);
 
+  -- LEVER L2's ELABORATION PIN, written against the configuration being
+  -- ASKED FOR for the reason CHK_A_DRAIN_WIDE's comment gives.  It goes
+  -- negative -- an error in GHDL and in Vivado, during declaration
+  -- elaboration, before any assert runs -- when SWG_WIDE is set and either
+  --   * SWG_REAL is not (the group ports carry the real unit or nothing;
+  --     the `gv` stand-in arm has no swiglu_mem to load), or
+  --   * SWG_LANES does not divide LANES, which includes SWG_LANES > LANES
+  --     (8 mod 16 = 8).  A beat has to fill a whole number of the group
+  --     port's lanes and no more of them than exist.
+  constant CHK_SWG_WIDE : natural :=
+    0 - boolean'pos(SWG_WIDE)
+        * (boolean'pos(not SWG_REAL) + (LANES mod SWG_LANES));
+  -- Elements moved per wide cycle.  Equal to SWG_LANES by the pin above,
+  -- and named separately because it is the GROUP-PORT quantity: it is what
+  -- decides the group address, the lane offset inside the group and the
+  -- per-lane write enables, none of which are the unit's business.
+  constant SWG_GRP : positive := SWG_LANES;
+
   -- ---- D core ----------------------------------------------------------
   signal go_walk    : std_logic;
   -- `tok_done` is a PORT and this file has to act on it, so the driver is an
@@ -1524,6 +1575,26 @@ architecture rtl of fk33_llama_top is
   signal aw_be   : std_logic_vector(LANES-1 downto 0) := (others => '0');
   signal aw_data : std_logic_vector(LANES*MANT_W-1 downto 0)
                  := (others => '0');
+  -- `seq_vec_res`'s half of the group READ port, renamed from the bare
+  -- `r_en`/`r_addr` for the same reason its write face was renamed to
+  -- `vw_*`: the instantiation must name the CLIENT's port, not the region
+  -- file's, the moment the port has a second client.
+  signal vrd_en   : std_logic;
+  signal vrd_addr : unsigned(GA_W-1 downto 0);
+  -- The SwiGLU adapter's group READ face, driven by `gsr`'s S_RD when
+  -- SWG_WIDE, and its group WRITE face, driven by S_WR.  Declared at the
+  -- architecture because `gsr` is nested two generates deep and a signal
+  -- declared inside a generate is invisible to the muxes; exactly one `vi`
+  -- elaborates `gsr`, so there is exactly one driver.  Tied off here so the
+  -- SWG_REAL-false and SWG_WIDE-false configurations present a constant to
+  -- the muxes rather than a 'U'.
+  signal swr_en   : std_logic := '0';
+  signal swr_addr : unsigned(GA_W-1 downto 0) := (others => '0');
+  signal sw_we    : std_logic := '0';
+  signal sw_addr  : unsigned(GA_W-1 downto 0) := (others => '0');
+  signal sw_be    : std_logic_vector(LANES-1 downto 0) := (others => '0');
+  signal sw_data  : std_logic_vector(LANES*MANT_W-1 downto 0)
+                  := (others => '0');
   signal vres_exp : signed(EXP_W-1 downto 0);
 
   -- ======================================================================
@@ -1797,8 +1868,23 @@ begin
   -- than by an argument about when `aw_we` can be high.  It also means the
   -- card builds in flight are unaffected whether or not they read this tree.
   -- ----------------------------------------------------------------------
-  wgmux : process(act_unit, aw_we, aw_reg, aw_addr, aw_be, aw_data,
-                  vw_we, vw_addr, vw_be, vw_data, v_reg_d) is
+  -- THE SwiGLU ADAPTER IS THE THIRD CLIENT (LEVER L2, TRACK GSRWIDE).  It
+  -- is selected on `act_unit = U_V and act_vop = V_SWG`, which is the SAME
+  -- pair `act_port` uses for the element mux and not a new rule: `act_vop`
+  -- is latched at `v_taken`, the engine's own accept instant, and `gsr`
+  -- registers its `tk` so `v_taken` is high in the cycle AFTER the accept
+  -- edge -- the same edge on which its first group request is registered.
+  -- Selecting on `act_unit` alone would hand the port to `gsr` for the
+  -- whole of every D-vec op including the residual, so the rule is part of
+  -- the lever and not decoration; `greq` below is armed on exactly that.
+  --
+  -- `wg_reg` IS `v_reg_d` IN BOTH NON-A ARMS, and that is not an oversight:
+  -- `seq_vec_res` and `gsr` both write the D-vec DESTINATION region, which
+  -- is what `v_reg_d` names.  Only unit A writes a region `v_reg_d` does not
+  -- name, which is why TRACK WIDEDRAIN had to introduce `wg_reg` at all.
+  wgmux : process(act_unit, act_vop, aw_we, aw_reg, aw_addr, aw_be, aw_data,
+                  vw_we, vw_addr, vw_be, vw_data, v_reg_d,
+                  sw_we, sw_addr, sw_be, sw_data) is
   begin
     if A_DRAIN_WIDE and act_unit = U_A then
       w_we   <= aw_we;
@@ -1806,12 +1892,169 @@ begin
       w_addr <= aw_addr;
       w_be   <= aw_be;
       w_data <= aw_data;
+    elsif SWG_WIDE and act_unit = U_V and act_vop = V_SWG then
+      w_we   <= sw_we;
+      wg_reg <= v_reg_d;
+      w_addr <= sw_addr;
+      w_be   <= sw_be;
+      w_data <= sw_data;
     else
       w_we   <= vw_we;
       wg_reg <= v_reg_d;
       w_addr <= vw_addr;
       w_be   <= vw_be;
       w_data <= vw_data;
+    end if;
+  end process;
+
+  -- ----------------------------------------------------------------------
+  -- THE GROUP READ MUX.  Until lever L2 the group READ port had exactly one
+  -- client, `seq_vec_res`, and `r_en`/`r_addr` were its output ports wired
+  -- straight through.  Same selection rule as `wgmux`, and with SWG_WIDE
+  -- false this process reduces to two wires -- textually what the file had.
+  -- ----------------------------------------------------------------------
+  rgmux : process(act_unit, act_vop, swr_en, swr_addr, vrd_en, vrd_addr) is
+  begin
+    if SWG_WIDE and act_unit = U_V and act_vop = V_SWG then
+      r_en   <= swr_en;
+      r_addr <= swr_addr;
+    else
+      r_en   <= vrd_en;
+      r_addr <= vrd_addr;
+    end if;
+  end process;
+
+  -- ----------------------------------------------------------------------
+  -- THE GROUP PORTS' ONE-HOT / REQUEST-HONOURED CHECK.  TRACK GSRWIDE.
+  --
+  -- WHY THIS EXISTS, and it is the L2 analogue of the `wr_region <= wg_reg`
+  -- hunk TRACK WIDEDRAIN's section 10.2(iii) found by accident.  The
+  -- ELEMENT ports have `onehot` above: it watches `uw_en` across every
+  -- client and fires when a unit that is not `act_port` drives it.  THE
+  -- GROUP PORTS HAVE NEVER HAD AN EQUIVALENT, because for a year they had
+  -- one client and for one day they had two that cannot both be active.
+  -- With three, the failure mode is no longer two drivers on one wire -- a
+  -- mux structurally prevents that -- it is a client raising a request that
+  -- the mux is not pointing at, which is a write or a read SILENTLY
+  -- DROPPED.  `onehot` is the shape of the check and `elmux` is the shape
+  -- of the hazard; this is both, for the ports that had neither.
+  --
+  -- TWO PROPERTIES, both clocked so Vivado ignores them in synthesis:
+  --   (a) at most one client requests the group write port in a cycle;
+  --   (b) a client that requests EITHER group port is the one the mux
+  --       selects.  (b) implies (a) and is stated separately because (b)
+  --       names WHICH client was dropped and (a) does not;
+  --   (c) THE PORT CARRIES WHOEVER ASKED.
+  --
+  -- (c) WAS ADDED AFTER (a) AND (b) WERE MEASURED TO HAVE NO TEETH AGAINST
+  -- THE DEFECT THEY WERE WRITTEN FOR.  (a) and (b) compare each client's
+  -- request against `greq`'s OWN COPY of the selection rule, and a defect
+  -- IN THE MUX leaves that copy intact and correct -- so the process stays
+  -- silent while the mux hands the port to the wrong client.  MEASURED
+  -- 2026-09-20 by `sim/mutate_swg_wide.sh`: `M9_wmux_sel` and
+  -- `M10_rmux_sel` both drop `act_vop` from a mux selector, and with (a)
+  -- and (b) alone BOTH were killed by `tb_llama_top`'s P4 ("R_X is
+  -- unchanged after a whole token") and their `_G` controls, with `greq`
+  -- disabled whole, gave the IDENTICAL kill.  A check credited with a kill
+  -- an existing property would have made anyway is not worth its
+  -- maintenance.
+  --
+  -- (c) reads the mux OUTPUT and carries no copy of the rule at all: it
+  -- names the one client that is requesting and asserts that the port is
+  -- carrying that client's beat.  A mux that honours the wrong client fails
+  -- it whatever the rule says, which is the property that was wanted.
+  -- ----------------------------------------------------------------------
+  greq : process(clk) is
+    variable nw : natural;
+    variable a_sel, s_sel : boolean;
+  begin
+    if rising_edge(clk) then
+      a_sel := A_DRAIN_WIDE and act_unit = U_A;
+      s_sel := SWG_WIDE and act_unit = U_V and act_vop = V_SWG;
+      nw := 0;
+      if aw_we = '1' then nw := nw + 1; end if;
+      if vw_we = '1' then nw := nw + 1; end if;
+      if sw_we = '1' then nw := nw + 1; end if;
+      assert nw <= 1
+        report "llama_top: two clients requested the group WRITE port in "
+             & "the same cycle.  The mux honours one of them and the other "
+             & "write is lost with no error anywhere downstream."
+        severity failure;
+      assert not (aw_we = '1' and not a_sel)
+        report "llama_top: unit A requested the group WRITE port while the "
+             & "mux was pointing elsewhere.  A's drain beat was DROPPED."
+        severity failure;
+      assert not (sw_we = '1' and not s_sel)
+        report "llama_top: the SwiGLU adapter requested the group WRITE "
+             & "port while the mux was pointing elsewhere.  Its write-back "
+             & "beat was DROPPED."
+        severity failure;
+      assert not (vw_we = '1' and (a_sel or s_sel))
+        report "llama_top: seq_vec_res requested the group WRITE port while "
+             & "the mux was pointing at another client.  A residual beat "
+             & "was DROPPED, and the residual is the block spine."
+        severity failure;
+      assert not (swr_en = '1' and not s_sel)
+        report "llama_top: the SwiGLU adapter requested the group READ port "
+             & "while the mux was pointing elsewhere.  It will consume "
+             & "whatever the other client's address returned."
+        severity failure;
+      assert not (vrd_en = '1' and s_sel)
+        report "llama_top: seq_vec_res requested the group READ port while "
+             & "the mux was pointing at the SwiGLU adapter."
+        severity failure;
+
+      -- (c).  Gated on `rst` because a client's outputs are 'U' before its
+      -- own reset releases them, and `w_we = '0'` is FALSE on 'U'; the
+      -- negative arms are written `/= '1'` for the same reason.
+      if rst = '0' then
+        if aw_we = '1' then
+          assert w_we = '1' and wg_reg = aw_reg and w_addr = aw_addr
+                 and w_be = aw_be and w_data = aw_data
+            report "llama_top: unit A was the only client requesting the "
+                 & "group WRITE port and the port is not carrying its beat.  "
+                 & "The mux honoured somebody else."
+            severity failure;
+        elsif sw_we = '1' then
+          assert w_we = '1' and wg_reg = v_reg_d and w_addr = sw_addr
+                 and w_be = sw_be and w_data = sw_data
+            report "llama_top: the SwiGLU adapter was the only client "
+                 & "requesting the group WRITE port and the port is not "
+                 & "carrying its beat.  The mux honoured somebody else."
+            severity failure;
+        elsif vw_we = '1' then
+          assert w_we = '1' and wg_reg = v_reg_d and w_addr = vw_addr
+                 and w_be = vw_be and w_data = vw_data
+            report "llama_top: seq_vec_res was the only client requesting "
+                 & "the group WRITE port and the port is not carrying its "
+                 & "beat.  The mux honoured somebody else."
+            severity failure;
+        else
+          assert w_we /= '1'
+            report "llama_top: the group WRITE port fired with no client "
+                 & "requesting it."
+            severity failure;
+        end if;
+
+        if swr_en = '1' then
+          assert r_en = '1' and r_addr = swr_addr
+            report "llama_top: the SwiGLU adapter was the only client "
+                 & "requesting the group READ port and the port is not "
+                 & "carrying its address."
+            severity failure;
+        elsif vrd_en = '1' then
+          assert r_en = '1' and r_addr = vrd_addr
+            report "llama_top: seq_vec_res was the only client requesting "
+                 & "the group READ port and the port is not carrying its "
+                 & "address."
+            severity failure;
+        else
+          assert r_en /= '1'
+            report "llama_top: the group READ port fired with no client "
+                 & "requesting it."
+            severity failure;
+        end if;
+      end if;
     end if;
   end process;
 
@@ -2157,7 +2400,8 @@ begin
       clk => clk, rst => rst,
       ready => v_ready(V_RES), start => v_start(V_RES), i_n => v_n,
       i_exp_x => v_exp_a, i_exp_e => v_exp_b, i_taken => v_taken(V_RES),
-      r_en => r_en, r_addr => r_addr, x_rdata => x_rdata, e_rdata => e_rdata,
+      r_en => vrd_en, r_addr => vrd_addr,
+      x_rdata => x_rdata, e_rdata => e_rdata,
       w_we => vw_we, w_addr => vw_addr, w_be => vw_be, w_data => vw_data,
       done => v_done(V_RES), done_ack => v_ack(V_RES),
       o_exp => vres_exp, o_shift => open, o_sat => open,
@@ -3855,6 +4099,16 @@ begin
       -- The output word stream, driven by S_WR.
       signal o_ra   : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
       signal o_rd   : std_logic_vector(MANT_W-1 downto 0);
+      -- THE WIDE FACE, SWG_WIDE only.  `gw_*` is swiglu_mem's group write
+      -- (SWG_LANES elements of BOTH operands in one beat, straight out of
+      -- the region file's group read) and `o_gd` is its group read-back.
+      signal gw_we  : std_logic := '0';
+      signal gw_addr : std_logic_vector(LOG2N-1 downto 0) := (others => '0');
+      signal gw_g   : std_logic_vector(SWG_LANES*MANT_W-1 downto 0)
+                    := (others => '0');
+      signal gw_u   : std_logic_vector(SWG_LANES*MANT_W-1 downto 0)
+                    := (others => '0');
+      signal o_gd   : std_logic_vector(SWG_LANES*MANT_W-1 downto 0);
       signal rav    : std_logic := '0';
       signal rav_d  : std_logic := '0';
       signal r_go   : std_logic := '0';
@@ -3879,11 +4133,13 @@ begin
       end generate;
 
       u_swg : entity work.swiglu_mem
-        generic map(N => NN, Q => 12)
+        generic map(N => NN, Q => 12, LANES => SWG_LANES, WIDE_IO => SWG_WIDE)
         port map(
           clk => clk, rst => rst, start => r_go,
           g_we => g_we, g_waddr => g_wa, g_wdata => g_wd, g_exp => r_ge,
           u_we => u_we, u_waddr => u_wa, u_wdata => u_wd, u_exp => r_ue,
+          gw_we => gw_we, gw_addr => gw_addr, gw_g => gw_g, gw_u => gw_u,
+          o_gdata => o_gd,
           done => r_done,
           o_raddr => o_ra, o_rdata => o_rd, o_exp => r_oe,
           o_shift => open, o_maxabs => open);
@@ -3896,12 +4152,22 @@ begin
         variable kw   : natural := 0;
         variable pass : natural range 0 to 1 := 0;
         variable oe   : integer := 0;
+        -- SWG_WIDE only.  `ng` is the beat count of BOTH the one-pass load
+        -- and the write-back; `lane0` is the beat's offset inside the
+        -- LANES-wide group.  Both are `natural range`s so an overrun is a
+        -- loud range error rather than a silently wrapped index, which is
+        -- the discipline `ga_real`'s "NO CLAMP on rword" comment states.
+        variable ng    : natural range 0 to NN := 0;
+        variable lane0 : natural range 0 to LANES-1 := 0;
       begin
         if rising_edge(clk) then
           tk   <= '0';
           r_go <= '0';
           g_we <= '0';
           u_we <= '0';
+          gw_we  <= '0';
+          swr_en <= '0';
+          sw_we  <= '0';
           ur_en(NUNIT+vi) <= '0';
           uw_en(NUNIT+vi) <= '0';
           if rst = '1' then
@@ -3930,6 +4196,10 @@ begin
                   r_ue <= to_integer(v_exp_b);
                   k    := 0;
                   pass := 0;
+                  -- Exact by CHK_SWG_WIDE and by the `n = NN` assert above:
+                  -- swiglu_mem pins `N mod LANES = 0`, so `n / SWG_GRP` has
+                  -- no remainder and there is no partial final beat.
+                  ng   := n / SWG_GRP;
                   st   := S_RD;
                 end if;
 
@@ -3937,6 +4207,51 @@ begin
               -- before the pass counter moves.  See READ_LATENCY in the
               -- region-file header.
               when S_RD =>
+                if SWG_WIDE then
+                  -- ========================================================
+                  -- ONE PASS, SWG_GRP ELEMENTS WIDE.  The group read port
+                  -- takes ONE address and returns LANES words of `v_reg_a`
+                  -- on `x_rdata` AND LANES words of `v_reg_b` on `e_rdata`
+                  -- in the same cycle, and G and U ARE `v_reg_a` and
+                  -- `v_reg_b`.  So the narrow arm's two serial passes of
+                  -- `n + 2` collapse to ONE of `ng + 2`, `ng = n/SWG_GRP`.
+                  --
+                  -- The read latency is the SAME two edges the element port
+                  -- has, and for the same reason (the address is registered
+                  -- here, `memp` registers the data), so the `k >= 2`
+                  -- consumption offset is carried over unchanged.
+                  --
+                  -- `lane0` is where this beat's SWG_GRP elements sit inside
+                  -- the LANES-wide group.  It is identically 0 when
+                  -- SWG_GRP = LANES, which is the card and every bench row
+                  -- here; the general case exists because CHK_SWG_WIDE
+                  -- admits SWG_LANES < LANES, and it is TRACK WIDEDRAIN's
+                  -- `lane0` cursor for the same reason.
+                  if k < ng then
+                    swr_en   <= '1';
+                    swr_addr <= to_unsigned((k*SWG_GRP)/LANES, GA_W);
+                  end if;
+                  if k >= 2 then
+                    lane0 := ((k-2)*SWG_GRP) mod LANES;
+                    gw_we   <= '1';
+                    gw_addr <= std_logic_vector(
+                                 to_unsigned((k-2)*SWG_GRP, LOG2N));
+                    for i in 0 to SWG_GRP-1 loop
+                      gw_g((i+1)*MANT_W-1 downto i*MANT_W)
+                        <= x_rdata((lane0+i+1)*MANT_W-1
+                                   downto (lane0+i)*MANT_W);
+                      gw_u((i+1)*MANT_W-1 downto i*MANT_W)
+                        <= e_rdata((lane0+i+1)*MANT_W-1
+                                   downto (lane0+i)*MANT_W);
+                    end loop;
+                  end if;
+                  if k = ng+1 then
+                    k  := 0;
+                    st := S_GO;
+                  else
+                    k := k + 1;
+                  end if;
+                else
                 if k < n then
                   ur_en(NUNIT+vi)   <= '1';
                   ur_reg(NUNIT+vi)  <= to_integer(unsigned(v_reg_a(6 downto 0)))
@@ -3967,6 +4282,7 @@ begin
                 else
                   k := k + 1;
                 end if;
+                end if;
 
               -- Both banks are resident: the last u word was registered on
               -- the edge that ended S_RD and lands on this one, and the
@@ -3988,6 +4304,53 @@ begin
               -- `o_ra`, so a `rav_d` seen high means the word beside it is
               -- the one `kw` wants.
               when S_WR =>
+                if SWG_WIDE then
+                  -- ========================================================
+                  -- THE WRITE-BACK ON THE GROUP WRITE PORT.  `o_gdata` is
+                  -- the unit's SWG_LANES output banks at one offset with
+                  -- the SAME one-edge latency `o_rdata` has -- it is the
+                  -- same read of the same banks -- so the `rav`/`rav_d`
+                  -- two-deep pipeline is carried over unchanged and only
+                  -- the stride and the width differ.
+                  --
+                  -- `w_be` IS COMPUTED FROM `n` AND NOT TIED HIGH.  At the
+                  -- card and at every bench shape SWG_GRP divides `n` (the
+                  -- unit pins `N mod LANES = 0` and the adapter asserts
+                  -- `n = NN`), so the tail term is provably never false --
+                  -- said out loud in the write-up, and the mutant that
+                  -- removes it is reported as NOT BITING under its own
+                  -- name.  It is here because a lane enabled past `n`
+                  -- writes ELEMENTS NOBODY READS, which no value landmark
+                  -- can see and only `wsump`'s write hash can.
+                  if k < ng then
+                    o_ra <= std_logic_vector(to_unsigned(k*SWG_GRP, LOG2N));
+                    rav  <= '1';
+                    k    := k + 1;
+                  else
+                    rav  <= '0';
+                  end if;
+                  rav_d <= rav;
+                  if rav_d = '1' then
+                    lane0   := (kw*SWG_GRP) mod LANES;
+                    sw_we   <= '1';
+                    sw_addr <= to_unsigned((kw*SWG_GRP)/LANES, GA_W);
+                    for i in 0 to LANES-1 loop
+                      if i >= lane0 and i < lane0 + SWG_GRP
+                         and (kw*SWG_GRP + i - lane0) < n then
+                        sw_be(i) <= '1';
+                        sw_data((i+1)*MANT_W-1 downto i*MANT_W)
+                          <= o_gd((i-lane0+1)*MANT_W-1
+                                  downto (i-lane0)*MANT_W);
+                      else
+                        sw_be(i) <= '0';
+                        sw_data((i+1)*MANT_W-1 downto i*MANT_W)
+                          <= (others => '0');
+                      end if;
+                    end loop;
+                    if kw = ng-1 then kw := 0; st := S_DONE;
+                    else kw := kw + 1; end if;
+                  end if;
+                else
                 if k < n then
                   o_ra <= std_logic_vector(to_unsigned(k, LOG2N));
                   rav  <= '1';
@@ -4003,6 +4366,7 @@ begin
                   uw_data(NUNIT+vi) <= signed(o_rd);
                   if kw = n-1 then kw := 0; st := S_DONE;
                   else kw := kw + 1; end if;
+                end if;
                 end if;
 
               when S_DONE =>
