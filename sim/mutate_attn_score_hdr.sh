@@ -78,7 +78,7 @@ FILES="rtl/util_pkg.vhd rtl/attn_score_q12.vhd sim/tb_attn_score_q12.vhd"
 
 cc -O2 -w -I ref -o "$SCRATCH/gensq" ref/attn_score_q12_vec.c -lm || exit 2
 
-NKILL=0; NABORT=0; NSURV=0; NTOT=0
+NKILL=0; NABORT=0; NSURV=0; NTOT=0; NBAD=0; Z0SEEN=0
 declare -A VERD
 
 # run_case <tag> <desc> <mutdir> <nblk> <extra ghdl args...>
@@ -89,7 +89,13 @@ run_case() {
   if [ "$mutdir" = __ANCHOR_FAIL__ ]; then
     echo "$tag  BADMUT (anchor matched 0 times -- the mutation was NOT applied)  -- $desc"
     echo "        NOT a survival.  Nothing was measured about the oracle."
-    VERD[$tag]=BADMUT; NABORT=$((NABORT+1)); return
+    VERD[$tag]=BADMUT
+    # A SELF-TEETH ROW WHOSE RESULT NOTHING BRANCHES ON IS DECORATION.  Z0 was
+    # printed in the summary and read by a human; TRACK MUTAUDIT 2026-09-20
+    # made it a verdict this script exits on, so a Z0 that stopped reaching
+    # this branch would turn the whole run red instead of going unnoticed.
+    if [ "${tag#Z0}" != "$tag" ]; then Z0SEEN=1; else NBAD=$((NBAD+1)); fi
+    NABORT=$((NABORT+1)); return
   fi
   rm -rf "$dir"; mkdir -p "$dir/run"
   ( cd "$dir/run" && "$SCRATCH/gensq" attn_score_q12_vec.txt 64 "$nblk" 4 ) \
@@ -382,3 +388,15 @@ echo " and its kill is NOT attributable to HDR_TREE.  A row that survives at"
 echo " NBLK = 8 and dies at NBLK = 5 was UNREACHABLE at 8 and measured nothing"
 echo " there.  T8_off is the positive control: if it does not KILL, the OFF"
 echo " arm's PASSes mean nothing."
+
+# THE HARNESS'S OWN VERDICT.  A run in which Z0 did not reach BADMUT has not
+# shown that this script can tell an unapplied mutation from an inert one.
+if [ "${Z0SEEN:-0}" -ne 1 ]; then
+  echo "Z0 SELF-TEETH DID NOT FIRE: an anchor that matched nothing is"
+  echo "  indistinguishable here from a mutation the oracle tolerates."
+  exit 1
+fi
+if [ "${NBAD:-0}" -ne 0 ]; then
+  echo "$NBAD row(s) BADMUT: their anchors have drifted and they tested nothing."
+  exit 1
+fi

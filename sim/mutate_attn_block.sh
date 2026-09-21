@@ -83,7 +83,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
        rtl/attn_block.vhd sim/tb_attn_block.vhd"
 
 STOP=900ms
-NKILL=0; NABORT=0; NSURV=0; NTOT=0
+NKILL=0; NABORT=0; NSURV=0; NTOT=0; NBAD=0; Z0SEEN=0
 
 # ---------------------------------------------------------------------------
 # mutate <tag> <file> <old> <new>  -- scratch copy of ONE file, echoes its dir.
@@ -105,7 +105,15 @@ if n != 1:
     sys.exit(2)
 open(dst, "w").write(s.replace(old, new))
 PY
-  [ $? -ne 0 ] && { echo ""; return; }
+  # A FAILED ANCHOR MUST NOT LOOK LIKE AN UNMUTATED RUN.  This line used to
+  # echo the EMPTY STRING, and run_case reads an empty mutdir as "use the repo
+  # file" -- so a mutation whose anchor text had drifted ran the PRISTINE
+  # design and was reported SURVIVED.  MEASURED 2026-09-20 by TRACK MUTAUDIT:
+  # with an impossible anchor this script's first mutant row printed SURVIVED,
+  # and the only tell was one python line on stderr, above the table and
+  # absent from any committed copy of it.  The sentinel makes it a loud BADMUT
+  # row instead, and row Z0 below is the standing proof that it still does.
+  [ $? -ne 0 ] && { echo "__ANCHOR_FAIL__"; return; }
   echo "$dir"
 }
 
@@ -118,6 +126,20 @@ run_case() {
   local tag="$1" desc="$2" mutdir="$3" genc="$4"
   local dir="$SCRATCH/$tag"
   NTOT=$((NTOT+1))
+  # --- THE ANCHOR SENTINEL.  BADMUT is neither KILLED nor SURVIVED: it says
+  # --- the mutation was never applied, so this row measured NOTHING about the
+  # --- oracle.  Row Z0 is the harness's own teeth and MUST reach this branch.
+  if [ "$mutdir" = __ANCHOR_FAIL__ ]; then
+    echo "$tag  BADMUT (anchor matched 0 times -- the mutation was NOT applied)   -- $desc"
+    if [ "$tag" = Z0 ]; then
+      echo "        Z0 is the SELF-TEETH row: BADMUT here is the REQUIRED outcome."
+      Z0SEEN=1
+    else
+      echo "        NOT a survival.  The anchor text has drifted under the file."
+      NBAD=$((NBAD+1))
+    fi
+    return
+  fi
   rm -rf "$dir"; mkdir -p "$dir/run"
   if ! cc -O2 -w -I ref -o "$dir/gen" "$genc" -lm >"$dir/cc.log" 2>&1; then
     echo "$tag  ORACLE DID NOT BUILD   -- $desc"; return
@@ -215,6 +237,18 @@ echo "==========================================================================
 run_case A0 "honest rtl/attn_block.vhd, tapered stimulus" "" "$GEN"
 
 echo
+# ---------------------------------------------------------------------------
+# Z0: THE TEETH OF THIS HARNESS ITSELF.  A mutation anchor is TEXT, and text
+# drifts under the file it points into.  This row's anchor is deliberately
+# impossible, so the only correct outcome is BADMUT.  If it ever reports
+# SURVIVED, every other SURVIVED in this table is suspect, because it would
+# mean an unapplied mutation is indistinguishable from an inert one.  It costs
+# one python invocation and no simulation.
+# ---------------------------------------------------------------------------
+Z0=$(mutate Z0 rtl/attn_block.vhd \
+  "THIS TEXT IS NOT IN THE FILE AND MUST NOT BE PUT IN IT" "nor this")
+run_case Z0 "SELF-TEETH: impossible anchor (MUST report BADMUT, never SURVIVED)" "$Z0" "$GEN"
+
 echo "=========================================================================="
 echo " THE FOLD MUTANTS, against sim/tb_attn_block.vhd as it now stands"
 echo "=========================================================================="
@@ -301,8 +335,8 @@ run_case C2 "honest RTL, flat V stimulus -- P9 must fire" "" "$FLAT"
 
 echo
 echo "=========================================================================="
-printf " TOTAL %d   KILLED %d   SURVIVED %d   ABORT %d\n" \
-       "$NTOT" "$NKILL" "$NSURV" "$NABORT"
+printf " TOTAL %d   KILLED %d   SURVIVED %d   ABORT %d   BADMUT %d\n" \
+       "$NTOT" "$NKILL" "$NSURV" "$NABORT" "$NBAD"
 echo
 echo " SURVIVORS ARE THE POINT.  Read them, do not delete them.  As of"
 echo " 2026-08-30 the expected survivors and WHY are:"
@@ -317,5 +351,19 @@ echo "       sim/tb_attn_kv_seam.vhd owns this one too (NLAY = 2) and KILLS it."
 echo "   every C1 row that KILLED -- that is the control working: the kill"
 echo "       belongs to P8.  P9 is credited with none of them."
 echo "=========================================================================="
+# THE HARNESS'S OWN VERDICT, and Z0 is half of it.  A run in which Z0 did not
+# reach BADMUT has not shown that this script can tell an unapplied mutation
+# from an inert one, and every SURVIVED it printed is worth less than it looks.
+if [ "${Z0SEEN:-0}" -ne 1 ]; then
+  echo "Z0 SELF-TEETH DID NOT FIRE: this harness cannot distinguish an anchor"
+  echo "  that matched nothing from a mutation the checks tolerate.  Every"
+  echo "  SURVIVED above is unverified."
+  exit 1
+fi
+if [ "${NBAD:-0}" -ne 0 ]; then
+  echo "$NBAD row(s) BADMUT: their anchor text has drifted under the RTL and"
+  echo "  they tested nothing.  Fix the anchors before reading this table."
+  exit 1
+fi
 [ "$NABORT" -eq 0 ] || exit 1
 exit 0

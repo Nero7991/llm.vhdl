@@ -82,7 +82,7 @@ FILES="rtl/fixed_luts_pkg.vhd rtl/fixed_pkg.vhd rtl/util_pkg.vhd
 
 cc -O2 -w -I ref -o "$SCRATCH/genseq" ref/attn_block_seq_vec.c -lm || exit 2
 
-NKILL=0; NABORT=0; NSURV=0; NTOT=0
+NKILL=0; NABORT=0; NSURV=0; NTOT=0; NBAD=0; Z0SEEN=0
 declare -A VERD
 
 # run_case <tag> <desc> <mutdir> <extra ghdl args...>
@@ -90,6 +90,21 @@ run_case() {
   local tag="$1" desc="$2" mutdir="$3"; shift 3
   local dir="$SCRATCH/$tag"
   NTOT=$((NTOT+1))
+  # --- THE ANCHOR SENTINEL.  BADMUT is neither KILLED nor SURVIVED: it says
+  # --- the mutation was never applied, so this row measured NOTHING about the
+  # --- oracle.  Row Z0 is the harness's own teeth and MUST reach this branch.
+  if [ "$mutdir" = __ANCHOR_FAIL__ ]; then
+    echo "$tag  BADMUT (anchor matched 0 times -- the mutation was NOT applied)   -- $desc"
+    VERD[$tag]=BADMUT
+    if [ "$tag" = Z0 ]; then
+      echo "        Z0 is the SELF-TEETH row: BADMUT here is the REQUIRED outcome."
+      Z0SEEN=1
+    else
+      echo "        NOT a survival.  The anchor text has drifted under the file."
+      NBAD=$((NBAD+1))
+    fi
+    return
+  fi
   rm -rf "$dir"; mkdir -p "$dir/run"
   ( cd "$dir/run" && "$SCRATCH/genseq" attn_block_seq_vec.txt $VECARGS ) \
       >/dev/null 2>&1 || { echo "$tag  VECGEN FAILED"; VERD[$tag]=VECGEN; return; }
@@ -145,7 +160,15 @@ for i in range(0, len(args), 2):
     s = s.replace(old, new)
 open(dst, "w").write(s)
 PY
-  if [ $? -ne 0 ]; then echo ""; return; fi
+  # A FAILED ANCHOR MUST NOT LOOK LIKE AN UNMUTATED RUN.  This line used to
+  # echo the EMPTY STRING, and run_case reads an empty mutdir as "use the repo
+  # file" -- so a mutation whose anchor text had drifted ran the PRISTINE
+  # design and was reported SURVIVED.  MEASURED 2026-09-20 by TRACK MUTAUDIT:
+  # with an impossible anchor this script's first mutant row printed SURVIVED,
+  # and the only tell was one python line on stderr, above the table and
+  # absent from any committed copy of it.  The sentinel makes it a loud BADMUT
+  # row instead, and row Z0 below is the standing proof that it still does.
+  if [ $? -ne 0 ]; then echo "__ANCHOR_FAIL__"; return; fi
   echo "$dir"
 }
 
@@ -164,6 +187,18 @@ run_case A_on  "ANCHOR: unmutated, SCORE_EARLY=true  (must SURVIVE)" "" \
          -gSCORE_EARLY=true
 run_case A_off "ANCHOR: unmutated, SCORE_EARLY=false (must SURVIVE)" "" \
          -gSCORE_EARLY=false
+
+# ---------------------------------------------------------------------------
+# Z0: THE TEETH OF THIS HARNESS ITSELF.  A mutation anchor is TEXT, and text
+# drifts under the file it points into.  This row's anchor is deliberately
+# impossible, so the only correct outcome is BADMUT.  If it ever reports
+# SURVIVED, every other SURVIVED in this table is suspect, because it would
+# mean an unapplied mutation is indistinguishable from an inert one.  It costs
+# one python invocation and no simulation.
+# ---------------------------------------------------------------------------
+D=$(mutate_rtl Z0 rtl/attn_block.vhd \
+  "THIS TEXT IS NOT IN THE FILE AND MUST NOT BE PUT IN IT" "nor this")
+run_case Z0 "SELF-TEETH: impossible anchor (MUST report BADMUT, never SURVIVED)" "$D"
 
 # --- E1: se_rdy armed on EVERY captured K beat, not only the first ------
 # The arm is supposed to fire once per record.  Armed on every beat it
@@ -371,10 +406,10 @@ D=$(mutate_rtl E7 rtl/attn_block.vhd \
 run_case E7_on  "E7 arm held off while a capture lands (EXPECT SURVIVE)" "$D" -gSCORE_EARLY=true
 
 echo "=========================================================================="
-printf ' TOTAL %d   KILLED %d   SURVIVED %d   ABORT %d\n' \
-       "$NTOT" "$NKILL" "$NSURV" "$NABORT"
+printf ' TOTAL %d   KILLED %d   SURVIVED %d   ABORT %d   BADMUT %d\n' \
+       "$NTOT" "$NKILL" "$NSURV" "$NABORT" "$NBAD"
 echo " Per-row verdicts:"
-for k in A_on A_off E1_on E1_off E1c_on E1b_on E1b_off E2_on E2_off \
+for k in Z0 A_on A_off E1_on E1_off E1c_on E1b_on E1b_off E2_on E2_off \
          E3_on E3_off \
          E4_on E4_off E5_on E5_off H0_on H0_off H0c_on H7_on H7_off \
          H7c_on E6_on E7_on; do
@@ -404,3 +439,18 @@ echo "                             change is invisible to a value oracle by"
 echo "                             construction; the ceiling in"
 echo "                             sim/tb_csweep_rate.vhd is its guard."
 echo "=========================================================================="
+
+# THE HARNESS'S OWN VERDICT, and Z0 is half of it.  A run in which Z0 did not
+# reach BADMUT has not shown that this script can tell an unapplied mutation
+# from an inert one, and every SURVIVED it printed is worth less than it looks.
+if [ "${Z0SEEN:-0}" -ne 1 ]; then
+  echo "Z0 SELF-TEETH DID NOT FIRE: this harness cannot distinguish an anchor"
+  echo "  that matched nothing from a mutation the checks tolerate.  Every"
+  echo "  SURVIVED above is unverified."
+  exit 1
+fi
+if [ "${NBAD:-0}" -ne 0 ]; then
+  echo "$NBAD row(s) BADMUT: their anchor text has drifted under the RTL and"
+  echo "  they tested nothing.  Fix the anchors before reading this table."
+  exit 1
+fi

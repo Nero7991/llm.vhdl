@@ -1,0 +1,82 @@
+# sim/mutation_harness_audit.tsv -- TRACK MUTAUDIT, 2026-09-20.
+#
+# Every sim/mutate_*.sh, and whether a mutation anchor that matched ZERO
+# times can be told apart from a mutation the checks tolerated.  The
+# question is NOT whether a script spells the bug the same way; it is
+# whether the OUTPUT of a no-op substitution differs from the output of a
+# survivor.  A script can be safe by several routes and the route is named.
+#
+# class     SELFTEETH  carries a Z0 row whose BADMUT verdict is checked
+#           GUARD      an anchor-failure path that cannot reach a verdict
+# evidence  MEASURED   the script was RUN with an impossible anchor and the
+#                      row it printed is quoted
+#           DERIVED    classified from the guard mechanism, quoted, which
+#                      returns before the design is built.  NOT run.
+#
+# sim/check_mutation_harness.py reads this file.  A new harness that is not
+# listed here fails the audit: that is the way this defect comes back, since
+# harnesses are written by copying an existing one.
+#
+# file	class	evidence	date	note
+sim/mutate_a_drain_wide.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
+sim/mutate_a_geom.sh	SELFTEETH	MEASURED	2026-09-20	pre-fix an impossible sed pattern printed "M1 ... PASS (want ANALYSIS or FAIL)"; real pattern printed FAIL.  Fixed 2026-09-20; full re-run has Z0 BADMUT and M1-M7 unchanged
+sim/mutate_a_wbase.sh	GUARD	DERIVED	2026-09-20	`if ! mut_py "$m"` voids the table row: MUTATION DID NOT APPLY, and the pristine source is restored
+sim/mutate_async_fifo.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0   AUDIT  ANCHOR FAILED -- tested nothing"; real anchor G1 -> "1 SURVIVED"
+sim/mutate_attn_block.sh	SELFTEETH	MEASURED	2026-09-20	pre-fix an impossible M1 anchor printed "M1  SURVIVED"; real anchor printed KILLED.  Fixed 2026-09-20; Z0 re-run prints BADMUT, Z0SEEN=1
+sim/mutate_attn_emit.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_gate.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_kv_axi.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_kv_seam.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
+sim/mutate_attn_recip.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_rescale.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_rope.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0: ANCHOR FAILED"; real anchor -> "CTL  SURVIVED EVERY CONFIG"
+sim/mutate_attn_score_early.sh	SELFTEETH	MEASURED	2026-09-20	pre-fix an impossible E1 anchor printed "E1_on  SURVIVED"; real anchor printed ABORT(DUTASSERT).  Fixed 2026-09-20; Z0 re-run prints BADMUT, Z0SEEN=1
+sim/mutate_attn_score_hdr.sh	SELFTEETH	MEASURED	2026-09-20	carries its own Z0 impossible-anchor row (TRACK SCOREHDR); TRACK MUTAUDIT added the Z0SEEN gate so the run exits nonzero if Z0 stops firing
+sim/mutate_attn_softmax.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_attn_sweep_pipe.sh	SELFTEETH	MEASURED	2026-09-20	pre-fix an impossible P1 anchor printed "P1_on  SURVIVED"; real anchor printed ABORT(LANG).  Fixed 2026-09-20; Z0 re-run prints BADMUT, Z0SEEN=1
+sim/mutate_attn_twiddle.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_axi_rd_fsm.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_axi_rd_port.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_axi_rd_port_dual.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_eng_cdc.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0   VOID   expect SURV   <== UNEXPECTED"; real anchor W1 -> "rows-as-expected=1 unexpected=0"
+sim/mutate_fk33_seam.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  ANCHOR FAILED (the mutation was not applied)"; real anchor -> "DID NOT ANALYZE"
+sim/mutate_gdn_block.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_gdn_conv.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_emit_chain.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_exp_capture.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_gdn_head_emit.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_recur.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_scalar.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_silu.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gdn_y_emit.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_gray.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_kv_map.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_llama_top_kv.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
+sim/mutate_llama_top_land.sh	GUARD	DERIVED	2026-09-20	every call site that passes a mutator result is guarded by [ -n "$D" ]
+sim/mutate_llama_top_normuram.sh	GUARD	DERIVED	2026-09-20	the `&&` chain `D=$(mut U1) && sub "$D" ... && row U1 ...` skips the row outright when the anchor count is wrong
+sim/mutate_llama_top_smp.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  MUTATION DID NOT APPLY"
+sim/mutate_matvec_cb.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_matvec_core.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_matvec_int4.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
+sim/mutate_mv4i_desc.sh	GUARD	DERIVED	2026-09-20	sim/mv4i_desc_mutations.py --apply exits 3 on a zero-match anchor; `if ! python3 ... --apply` prints an ANCHOR row and continues
+sim/mutate_mv4i_desc_run.sh	GUARD	DERIVED	2026-09-20	sim/mv4i_desc_mutations.py --apply exits 3 on a zero-match anchor; `if ! python3 ... --apply` prints an ANCHOR row and exits the row
+sim/mutate_mv4i_desc_stale.sh	GUARD	DERIVED	2026-09-20	the two prefix patches are `cmp -s`-checked against the pre-image and a no-op exits 2 outright
+sim/mutate_normw.sh	SELFTEETH	MEASURED	2026-09-20	pre-fix an impossible M1 anchor printed "bench PASS R_XN oracle 9/9", identical to M0; real anchor printed 8/9.  Fixed 2026-09-20; Z0 re-run prints BADMUT
+sim/mutate_ref_attn_rescale.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_ref_attn_rope.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_ref_attn_twiddle.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_ref_seq_vec_chain.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_ref_seq_vec_res.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  ANCHOR FAILED"; real anchor -> "R1  KILLED by the accumulator-overflow trap"
+sim/mutate_rmsnorm_bf.sh	GUARD	DERIVED	2026-09-20	mk_mut's rc gates the row: `|| { echo "$tag RTL/C ANCHOR FAILED"; return; }` before any ghdl/cc
+sim/mutate_rmsnorm_bf_mem.sh	GUARD	DERIVED	2026-09-20	cmp against the source: a sed that changed nothing prints NOSUB and counts a failure
+sim/mutate_rmsnorm_rs_mem.sh	GUARD	DERIVED	2026-09-20	cmp against the source: a sed that changed nothing prints NOSUB and counts a failure
+sim/mutate_rmswire.sh	GUARD	DERIVED	2026-09-20	`sub ... || { b="ANCHOR"; }` marks the column, and the three T rows are `cmp -s`-checked against the source and print NOSUB
+sim/mutate_seq_desc_fetch.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_seq_opdec.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_seq_region_lock.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_seq_tbl_shape.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_seq_vec_issue.sh	GUARD	DERIVED	2026-09-20	an ANCHOR FAILED row is printed and the row returns before the design is built
+sim/mutate_seq_vec_res.sh	GUARD	DERIVED	2026-09-20	the mutation is applied INSIDE the row function and its rc is read; ANCHOR FAILED is printed and the row returns before any ghdl/cc
+sim/mutate_swg_wide.sh	GUARD	MEASURED	2026-09-20	ran with an impossible anchor -> "Z0  ANCHOR FAILED"
+sim/mutate_swiglu_mem.sh	GUARD	DERIVED	2026-09-20	cmp against the source: a sed that changed nothing prints NOSUB and counts a failure
+sim/mutate_weight_streamer.sh	GUARD	DERIVED	2026-09-20	patch_file's rc gates the row: `if ! patch_file ...; then ... ANCHOR FAILED ...; return; fi`
