@@ -1,0 +1,34 @@
+ELABCLASS_ENV host=cachyos-bc250 root=/home/labuser/elabclass out=/home/labuser/elabclass/out cap=11G
+ELABCLASS_TREE_SHA f58a07544f6b1ef2c9db43f58a31413a10554920
+ELABCLASS_MANIFEST dbf8f458c911fc22e53591fc4d662c28b6cacd12561caa2e6335950229eab274
+               total        used        free      shared  buff/cache   available
+Mem:           15204        1987       11098           6        2441       13216
+ELABCLASS_CGROUP systemd-run --user scope available, cap 11G
+=== ELABCLASS row=teeth top=attn_block expect=fail begin 2026-09-20T22:22:55-04:00 ===
+ELABCLASS_ROW row=teeth top=attn_block verdict=FAIL expect=fail wall_s=45 cgroup_peak_mb=3001 rc=1
+ERROR: [Synth 8-11324] array index 8 out of range [/home/labuser/elabclass/mutant/attn_score_q12.vhd:488]
+ERROR: [Synth 8-285] failed synthesizing module 'attn_score_q12' [/home/labuser/elabclass/mutant/attn_score_q12.vhd:244]
+ERROR: [Synth 8-285] failed synthesizing module 'attn_block' [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+=== ELABCLASS row=c_base top=attn_block expect=pass begin 2026-09-20T22:23:41-04:00 ===
+ELABCLASS_ROW row=c_base top=attn_block verdict=PASS expect=pass wall_s=244 cgroup_peak_mb=5025 rc=0
+=== ELABCLASS row=c_tree top=attn_block expect=pass begin 2026-09-20T22:27:46-04:00 ===
+ELABCLASS_ROW row=c_tree top=attn_block verdict=PASS expect=pass wall_s=243 cgroup_peak_mb=5028 rc=0
+=== ELABCLASS row=swg_base top=swiglu_mem expect=pass begin 2026-09-20T22:31:50-04:00 ===
+ELABCLASS_ROW row=swg_base top=swiglu_mem verdict=PASS expect=pass wall_s=42 cgroup_peak_mb=2403 rc=0
+=== ELABCLASS row=swg_w1 top=swiglu_mem expect=pass begin 2026-09-20T22:32:33-04:00 ===
+ELABCLASS_ROW row=swg_w1 top=swiglu_mem verdict=PASS expect=pass wall_s=42 cgroup_peak_mb=2402 rc=0
+=== ELABCLASS row=swg_w8 top=swiglu_mem expect=pass begin 2026-09-20T22:33:17-04:00 ===
+ELABCLASS_ROW row=swg_w8 top=swiglu_mem verdict=PASS expect=pass wall_s=42 cgroup_peak_mb=2380 rc=0
+=== ELABCLASS row=d_card top=fk33_llama_top expect=pass begin 2026-09-20T22:34:00-04:00 ===
+ELABCLASS_ROW row=d_card top=fk33_llama_top verdict=FAIL expect=pass wall_s=72 cgroup_peak_mb=2389 rc=1
+ERROR: [Synth 8-3302] unable to open file '{"/home/labuser/elabclass/gen/norm_w_9b.hex"}' in 'r' mode [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2885]
+ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2921]
+ERROR: [Synth 8-285] failed synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+ELABCLASS_UNEXPECTED row=d_card expected=pass got=FAIL
+=== ELABCLASS row=d_hostwin top=fk33_llama_top expect=pass begin 2026-09-20T22:35:13-04:00 ===
+ELABCLASS_ROW row=d_hostwin top=fk33_llama_top verdict=FAIL expect=pass wall_s=72 cgroup_peak_mb=2391 rc=1
+ERROR: [Synth 8-3302] unable to open file '{"/home/labuser/elabclass/gen/norm_w_9b.hex"}' in 'r' mode [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2885]
+ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2921]
+ERROR: [Synth 8-285] failed synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+ELABCLASS_UNEXPECTED row=d_hostwin expected=pass got=FAIL
+=== ELABCLASS row=d_adw top=fk33_llama_top expect=pass begin 2026-09-20T22:36:27-04:00 ===

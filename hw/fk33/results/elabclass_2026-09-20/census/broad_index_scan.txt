@@ -1,0 +1,611 @@
+ELABCLASS_SHAPE_HITS 285
+  rtl/layer.vhd                            62
+  rtl/matvec_core.vhd                      30
+  rtl/fk33_llama_top.vhd                   28
+  rtl/llama_top.vhd                        23
+  rtl/weight_streamer.vhd                  17
+  rtl/gdn_recur.vhd                        13
+  rtl/ooc_normadapt_top.vhd                11
+  rtl/gdn_recur_pipe.vhd                   10
+  rtl/attn_mac_array.vhd                   9
+  rtl/attention.vhd                        8
+  rtl/rmsnorm_bf.vhd                       8
+  rtl/layer_fsm.vhd                        7
+  rtl/matvec_int4_desc_axi.vhd             6
+  rtl/attention_ml.vhd                     5
+  rtl/attn_score_q12.vhd                   5
+  rtl/ooc_gdnadapt_ss_top.vhd              5
+  rtl/rmsnorm_rs.vhd                       5
+  rtl/hbm_tg.vhd                           4
+  rtl/ooc_gdnadapt_top.vhd                 4
+  rtl/attn_block.vhd                       3
+  rtl/engine_shared.vhd                    2
+  rtl/gdn_conv.vhd                         2
+  rtl/l2norm_rs.vhd                        2
+  rtl/async_fifo.vhd                       1
+  rtl/attn_gate.vhd                        1
+  rtl/attn_softmax.vhd                     1
+  rtl/bc_port_grant.vhd                    1
+  rtl/gdn_conv_tap_mem.vhd                 1
+  rtl/gdn_conv_w_mem.vhd                   1
+  rtl/gdn_silu.vhd                         1
+  rtl/gdn_state_store.vhd                  1
+  rtl/layer_ar.vhd                         1
+  rtl/matmul.vhd                           1
+  rtl/matvec_engine.vhd                    1
+  rtl/matvec_int4_axi.vhd                  1
+  rtl/region_drain.vhd                     1
+  rtl/seq_ctrl.vhd                         1
+  rtl/seq_region_lock.vhd                  1
+  rtl/seq_top_skel.vhd                     1
+
+rtl/async_fifo.vhd:174 loop(i in AW-1 downto 0) -> rtl/async_fifo.vhd:175  b(i+1) [index] guards=0
+      | b(i) := b(i+1) xor g(i);
+rtl/attention.vhd:224 loop(j in 0 to KVDIM-1) -> rtl/attention.vhd:226  kc_v(base + j) [index] guards=0
+      | std_logic_vector(to_signed(kc_v(base + j), 16));
+rtl/attention.vhd:224 loop(j in 0 to KVDIM-1) -> rtl/attention.vhd:228  vc_v(base + j) [index] guards=0
+      | std_logic_vector(to_signed(vc_v(base + j), 16));
+rtl/attention.vhd:299 loop(j in 0 to KVDIM-1) -> rtl/attention.vhd:300  kc_v(cur_pos*KVDIM + j) [index] guards=0
+      | kc_v(cur_pos*KVDIM + j) <=
+rtl/attention.vhd:299 loop(j in 0 to KVDIM-1) -> rtl/attention.vhd:302  vc_v(cur_pos*KVDIM + j) [index] guards=0
+      | vc_v(cur_pos*KVDIM + j) <=
+rtl/attention.vhd:329 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention.vhd:331  downto(hd*HEAD_SIZE+j) [index] guards=1
+      | qmant_l((hd*HEAD_SIZE+j+1)*16-1 downto (hd*HEAD_SIZE+j)*16)));
+rtl/attention.vhd:348 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention.vhd:349  kc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=1
+      | khead(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/attention.vhd:428 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention.vhd:433  vc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=3
+      | vval := vc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/attention.vhd:428 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention.vhd:449  xb_acc(hd*HEAD_SIZE + j) [index] guards=3
+      | xb_acc(hd*HEAD_SIZE + j) <= resize(qd96, 64);
+rtl/attention_ml.vhd:721 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention_ml.vhd:723  downto(hd*HEAD_SIZE+j) [index] guards=1
+      | qmant_l((hd*HEAD_SIZE+j+1)*16-1 downto (hd*HEAD_SIZE+j)*16)));
+rtl/attention_ml.vhd:731 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention_ml.vhd:733  downto(hd*HEAD_SIZE+j) [index] guards=0
+      | resize(signed(qmant_l((hd*HEAD_SIZE+j+1)*16-1 downto (hd*HEAD_SIZE+j)*16)), 32),
+rtl/attention_ml.vhd:754 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention_ml.vhd:756  downto(kv_h*HEAD_SIZE+j) [index] guards=1
+      | kc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)));
+rtl/attention_ml.vhd:764 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention_ml.vhd:766  downto(kv_h*HEAD_SIZE+j) [index] guards=0
+      | resize(signed(kc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16)), 32),
+rtl/attention_ml.vhd:875 loop(j in 0 to HEAD_SIZE-1) -> rtl/attention_ml.vhd:877  downto(kv_h*HEAD_SIZE+j) [index] guards=0
+      | vc_v_do(((kv_h*HEAD_SIZE+j)+1)*16-1 downto (kv_h*HEAD_SIZE+j)*16);
+rtl/attn_block.vhd:1203 loop(t in 0 to KV_BLOCK-1) -> rtl/attn_block.vhd:1204  downto(gg*KV_BLOCK + t) [index] guards=0
+      | ar_scq((gg*KV_BLOCK + t + 1)*MANT_W-1 downto (gg*KV_BLOCK + t)*MANT_W)
+rtl/attn_block.vhd:1210 loop(t in 0 to KV_BLOCK-1) -> rtl/attn_block.vhd:1212  downto(opb*KV_BLOCK + t) [index] guards=2
+      | <= krec((opb*KV_BLOCK + t + 1)*CM_W-1 downto (opb*KV_BLOCK + t)*CM_W);
+rtl/attn_block.vhd:2195 loop(h in 0 to N_KVH-1) -> rtl/attn_block.vhd:2197  vref_r(lay_r*N_KVH + h) [index] guards=0
+      | <= std_logic_vector(vref_r(lay_r*N_KVH + h)
+rtl/attn_gate.vhd:306 loop(k in 0 to SIG_N-1) -> rtl/attn_gate.vhd:307  SIG_ROM(k+1) [index] guards=1
+      | d := SIG_ROM(k+1) - SIG_ROM(k);
+rtl/attn_mac_array.vhd:390 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:391  av(h*DIM_TILE + t2) [index] guards=0
+      | av(h*DIM_TILE + t2) := resize(signed(
+rtl/attn_mac_array.vhd:390 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:394  bv(h*DIM_TILE + t2) [index] guards=0
+      | bv(h*DIM_TILE + t2) := resize(signed(
+rtl/attn_mac_array.vhd:402 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:406  av(h*DIM_TILE + t2) [index] guards=0
+      | av(h*DIM_TILE + t2) := resize(signed('0' &
+rtl/attn_mac_array.vhd:402 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:408  bv(h*DIM_TILE + t2) [index] guards=0
+      | bv(h*DIM_TILE + t2) := resize(signed(
+rtl/attn_mac_array.vhd:416 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:418  av(h*DIM_TILE + t2) [index] guards=0
+      | av(h*DIM_TILE + t2) := resize(acc(idx), A_W);
+rtl/attn_mac_array.vhd:416 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:419  bv(h*DIM_TILE + t2) [index] guards=0
+      | bv(h*DIM_TILE + t2) := resize(signed('0' &
+rtl/attn_mac_array.vhd:445 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:446  p_reg(h*DIM_TILE + t2) [index] guards=0
+      | t := t + resize(p_reg(h*DIM_TILE + t2), T_W);
+rtl/attn_mac_array.vhd:461 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:464  p_reg(h*DIM_TILE + t2) [index] guards=1
+      | + resize(p_reg(h*DIM_TILE + t2), ACC_W+1);
+rtl/attn_mac_array.vhd:477 loop(t2 in 0 to DIM_TILE-1) -> rtl/attn_mac_array.vhd:479  p_reg(h*DIM_TILE + t2) [index] guards=1
+      | rsh := shift_right(p_reg(h*DIM_TILE + t2)
+rtl/attn_score_q12.vhd:494 loop(i in 0 to TW-1) -> rtl/attn_score_q12.vhd:503  wv(2*i + 1) [index] guards=3
+      | if wv(2*i + 1) < wv(2*i) then
+rtl/attn_score_q12.vhd:494 loop(i in 0 to TW-1) -> rtl/attn_score_q12.vhd:503  wv(2*i) [index] guards=3
+      | if wv(2*i + 1) < wv(2*i) then
+rtl/attn_score_q12.vhd:494 loop(i in 0 to TW-1) -> rtl/attn_score_q12.vhd:504  wv(2*i + 1) [index] guards=3
+      | wv(i) := wv(2*i + 1);
+rtl/attn_score_q12.vhd:494 loop(i in 0 to TW-1) -> rtl/attn_score_q12.vhd:506  wv(2*i) [index] guards=3
+      | wv(i) := wv(2*i);
+rtl/attn_score_q12.vhd:494 loop(i in 0 to TW-1) -> rtl/attn_score_q12.vhd:516  wv(2*i) [index] guards=3
+      | wv(i) := wv(2*i);
+rtl/attn_softmax.vhd:313 loop(k in 0 to ROM_N-1) -> rtl/attn_softmax.vhd:314  EXP_ROM(k+1) [index] guards=1
+      | d := EXP_ROM(k+1) - EXP_ROM(k);
+rtl/bc_port_grant.vhd:254 loop(i in 0 to 1) -> rtl/bc_port_grant.vhd:256  c_arlen(i*8+7 downto i*8+MLEN_W) [slice] guards=1
+      | and unsigned(c_arlen(i*8+7 downto i*8+MLEN_W)) /= 0 then
+rtl/engine_shared.vhd:267 loop(j in 0 to DIM-1) -> rtl/engine_shared.vhd:268  a(l*DIM+j) [index] guards=0
+      | r(l)((j+1)*16-1 downto j*16) := std_logic_vector(to_signed(a(l*DIM+j), 16));
+rtl/engine_shared.vhd:311 loop(i in 0 to v'length/32 - 1) -> rtl/engine_shared.vhd:312  v(32*i+31 downto 32*i) [slice] guards=0
+      | w := v(32*i+31 downto 32*i);
+rtl/fk33_llama_top.vhd:3581 loop(a in 0 to 255) -> rtl/fk33_llama_top.vhd:3583  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/fk33_llama_top.vhd:3582 loop(b in 0 to 255) -> rtl/fk33_llama_top.vhd:3583  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/fk33_llama_top.vhd:3594 loop(a in 0 to 255) -> rtl/fk33_llama_top.vhd:3596  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/fk33_llama_top.vhd:3594 loop(a in 0 to 255) -> rtl/fk33_llama_top.vhd:3597  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/fk33_llama_top.vhd:3595 loop(b in 0 to 255) -> rtl/fk33_llama_top.vhd:3596  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/fk33_llama_top.vhd:3595 loop(b in 0 to 255) -> rtl/fk33_llama_top.vhd:3597  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/fk33_llama_top.vhd:3621 loop(a in 0 to 255) -> rtl/fk33_llama_top.vhd:3623  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/fk33_llama_top.vhd:3621 loop(a in 0 to 255) -> rtl/fk33_llama_top.vhd:3624  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/fk33_llama_top.vhd:3622 loop(b in 0 to 255) -> rtl/fk33_llama_top.vhd:3623  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/fk33_llama_top.vhd:3622 loop(b in 0 to 255) -> rtl/fk33_llama_top.vhd:3624  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/fk33_llama_top.vhd:3637 loop(w in 0 to NWORD-1) -> rtl/fk33_llama_top.vhd:3638  r(k*NWORD + w) [index] guards=0
+      | r(k*NWORD + w) := std_logic_vector(to_unsigned(
+rtl/fk33_llama_top.vhd:4239 loop(i in 0 to SWG_GRP-1) -> rtl/fk33_llama_top.vhd:4242  downto(lane0+i) [index] guards=0
+      | downto (lane0+i)*MANT_W);
+rtl/fk33_llama_top.vhd:4239 loop(i in 0 to SWG_GRP-1) -> rtl/fk33_llama_top.vhd:4245  downto(lane0+i) [index] guards=0
+      | downto (lane0+i)*MANT_W);
+rtl/fk33_llama_top.vhd:4337 loop(i in 0 to LANES-1) -> rtl/fk33_llama_top.vhd:4339  and(kw*SWG_GRP + i - lane0) [index] guards=1
+      | and (kw*SWG_GRP + i - lane0) < n then
+rtl/fk33_llama_top.vhd:4897 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:4898  smp_be_dat(rr*32+31 downto rr*32) [slice] guards=0
+      | smp_be_dat(rr*32+31 downto rr*32)
+rtl/fk33_llama_top.vhd:4897 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:4899  a_y_data(rr*64+31 downto rr*64) [slice] guards=0
+      | <= a_y_data(rr*64+31 downto rr*64);
+rtl/fk33_llama_top.vhd:4916 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:4918  a_y_data(rr*64+MANT_W-1 downto rr*64) [slice] guards=0
+      | := a_y_data(rr*64+MANT_W-1 downto rr*64);
+rtl/fk33_llama_top.vhd:5041 loop(i in 0 to LANES-1) -> rtl/fk33_llama_top.vhd:5043  and(r + i - lane0) [index] guards=1
+      | and (r + i - lane0) < j_rows then
+rtl/fk33_llama_top.vhd:5041 loop(i in 0 to LANES-1) -> rtl/fk33_llama_top.vhd:5047  downto(rlane+i-lane0) [index] guards=1
+      | downto (rlane+i-lane0)*MANT_W);
+rtl/fk33_llama_top.vhd:5348 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:5349  smp_be_dat(rr*32+31 downto rr*32) [slice] guards=0
+      | smp_be_dat(rr*32+31 downto rr*32)
+rtl/fk33_llama_top.vhd:5348 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:5350  y_data(rr*64+31 downto rr*64) [slice] guards=0
+      | <= y_data(rr*64+31 downto rr*64);
+rtl/fk33_llama_top.vhd:5366 loop(rr in 0 to A_ROWS_IF-1) -> rtl/fk33_llama_top.vhd:5368  y_data(rr*64+MANT_W-1 downto rr*64) [slice] guards=0
+      | := y_data(rr*64+MANT_W-1 downto rr*64);
+rtl/fk33_llama_top.vhd:5534 loop(i in 0 to LANES-1) -> rtl/fk33_llama_top.vhd:5536  and(r + i - lane0) [index] guards=1
+      | and (r + i - lane0) < j_rows then
+rtl/fk33_llama_top.vhd:5534 loop(i in 0 to LANES-1) -> rtl/fk33_llama_top.vhd:5540  downto(rlane+i-lane0) [index] guards=1
+      | downto (rlane+i-lane0)*MANT_W);
+rtl/fk33_llama_top.vhd:6303 loop(t in 0 to KC-1) -> rtl/fk33_llama_top.vhd:6307  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/fk33_llama_top.vhd:6304 loop(ln in 0 to B_CONV_LANES-1) -> rtl/fk33_llama_top.vhd:6307  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/fk33_llama_top.vhd:6345 loop(t in 0 to KC-1) -> rtl/fk33_llama_top.vhd:6349  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/fk33_llama_top.vhd:6346 loop(ln in 0 to B_CONV_LANES-1) -> rtl/fk33_llama_top.vhd:6349  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/gdn_conv.vhd:362 loop(ln in 0 to LANES-1) -> rtl/gdn_conv.vhd:364  amp(ln + half) [index] guards=2
+      | if amp(ln + half) > amp(ln) then amp(ln) <= amp(ln + half); end if;
+rtl/gdn_conv.vhd:362 loop(ln in 0 to LANES-1) -> rtl/gdn_conv.vhd:364  amp(ln + half) [index] guards=2
+      | if amp(ln + half) > amp(ln) then amp(ln) <= amp(ln + half); end if;
+rtl/gdn_conv_tap_mem.vhd:424 loop(ln in 0 to CONV_LANES-1) -> rtl/gdn_conv_tap_mem.vhd:426  rq(sl*CONV_LANES + ln) [index] guards=0
+      | <= rq(sl*CONV_LANES + ln);
+rtl/gdn_conv_w_mem.vhd:255 loop(ln in 0 to CONV_LANES-1) -> rtl/gdn_conv_w_mem.vhd:257  rq(t*CONV_LANES + ln) [index] guards=0
+      | <= rq(t*CONV_LANES + ln);
+rtl/gdn_recur.vhd:283 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:289  downto(base+k) [index] guards=1
+      | sf(k) <= signed(s_in((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur.vhd:283 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:291  downto(base+k) [index] guards=1
+      | kf(k) <= signed(k_n((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur.vhd:313 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:314  w18a(base+k) [index] guards=0
+      | w18a(base+k) <= resize(shift_right(m1(k) + to_signed(2**12, 33), 13), 19);
+rtl/gdn_recur.vhd:340 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:341  skp(k + half) [index] guards=1
+      | if k < half then skp(k) <= skp(k) + skp(k + half); end if;
+rtl/gdn_recur.vhd:479 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:480  downto(base+k) [index] guards=0
+      | kf(k) <= signed(k_n((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur.vhd:479 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:481  w18a(base+k) [index] guards=0
+      | wf1(k) <= w18a(base+k);
+rtl/gdn_recur.vhd:510 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:511  ua(base+k) [index] guards=0
+      | ua(base+k) <= ksr(k) + wsr(k);
+rtl/gdn_recur.vhd:538 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:540  amp(k + half) [index] guards=2
+      | if amp(k + half) > amp(k) then amp(k) <= amp(k + half); end if;
+rtl/gdn_recur.vhd:538 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:540  amp(k + half) [index] guards=2
+      | if amp(k + half) > amp(k) then amp(k) <= amp(k + half); end if;
+rtl/gdn_recur.vhd:568 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:569  ua(base+k) [index] guards=0
+      | uf(k) <= ua(base+k);
+rtl/gdn_recur.vhd:568 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:570  downto(base+k) [index] guards=0
+      | qf(k) <= signed(q_s((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur.vhd:596 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:597  downto(base+k) [index] guards=0
+      | s_reg((base+k+1)*16-1 downto (base+k)*16)
+rtl/gdn_recur.vhd:626 loop(k in 0 to LANES-1) -> rtl/gdn_recur.vhd:627  op(k + half) [index] guards=1
+      | if k < half then op(k) <= op(k) + op(k + half); end if;
+rtl/gdn_recur_pipe.vhd:500 loop(k in 0 to LANES-1) -> rtl/gdn_recur_pipe.vhd:508  downto(base+k) [index] guards=1
+      | a_kf(k) <= signed(kbuf(b2i(hsel_v))((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur_pipe.vhd:548 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:552  redk(r+1) [index] guards=1
+      | redk(r+1)(k) <= redk(r)(k) + redk(r)(k + half);
+rtl/gdn_recur_pipe.vhd:548 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:555  redk_c(r+1) [index] guards=1
+      | redk_c(r+1) <= redk_c(r);
+rtl/gdn_recur_pipe.vhd:704 loop(k in 0 to LANES-1) -> rtl/gdn_recur_pipe.vhd:705  downto(base+k) [index] guards=0
+      | b_kf(k) <= signed(kbuf(b2i(par1(slotB).hsel))((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur_pipe.vhd:756 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:761  reda(r+1) [index] guards=2
+      | reda(r+1)(k) <= reda(r)(k + half);
+rtl/gdn_recur_pipe.vhd:756 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:763  reda(r+1) [index] guards=2
+      | reda(r+1)(k) <= reda(r)(k);
+rtl/gdn_recur_pipe.vhd:756 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:767  reda_c(r+1) [index] guards=2
+      | reda_c(r+1) <= reda_c(r);
+rtl/gdn_recur_pipe.vhd:813 loop(k in 0 to LANES-1) -> rtl/gdn_recur_pipe.vhd:814  downto(base+k) [index] guards=0
+      | c_qf(k) <= signed(qbuf(b2i(par2(slotC).hsel))((base+k+1)*16-1 downto (base+k)*16));
+rtl/gdn_recur_pipe.vhd:867 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:871  redo(r+1) [index] guards=1
+      | redo(r+1)(k) <= redo(r)(k) + redo(r)(k + half);
+rtl/gdn_recur_pipe.vhd:867 loop(r in 0 to LOG2L-1) -> rtl/gdn_recur_pipe.vhd:874  redo_c(r+1) [index] guards=1
+      | redo_c(r+1) <= redo_c(r);
+rtl/gdn_silu.vhd:87 loop(i in 0 to 511) -> rtl/gdn_silu.vhd:88  SIG_ROM(i+1) [index] guards=2
+      | d := SIG_ROM(i+1) - SIG_ROM(i);
+rtl/gdn_state_store.vhd:946 loop(qw in 0 to WPB_C-1) -> rtl/gdn_state_store.vhd:955  k_wwd(qw*16+7 downto qw*16) [slice] guards=4
+      | ex_m(si - SB_EXP) <= signed(k_wwd(qw*16+7 downto qw*16));
+rtl/hbm_tg.vhd:642 loop(i in 0 to NPORT-1) -> rtl/hbm_tg.vhd:900  m_bresp(2*i+1) [index] guards=38
+      | ev_be <= m_bresp(2*i+1) or m_bresp(2*i);
+rtl/hbm_tg.vhd:642 loop(i in 0 to NPORT-1) -> rtl/hbm_tg.vhd:900  m_bresp(2*i) [index] guards=38
+      | ev_be <= m_bresp(2*i+1) or m_bresp(2*i);
+rtl/hbm_tg.vhd:642 loop(i in 0 to NPORT-1) -> rtl/hbm_tg.vhd:913  m_rresp(2*i+1) [index] guards=38
+      | ev_re <= m_rresp(2*i+1) or m_rresp(2*i);
+rtl/hbm_tg.vhd:642 loop(i in 0 to NPORT-1) -> rtl/hbm_tg.vhd:913  m_rresp(2*i) [index] guards=38
+      | ev_re <= m_rresp(2*i+1) or m_rresp(2*i);
+rtl/l2norm_rs.vhd:290 loop(k in 0 to LANES-1) -> rtl/l2norm_rs.vhd:291  downto(base+k) [index] guards=0
+      | xa(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/l2norm_rs.vhd:479 loop(k in 0 to LANES-1) -> rtl/l2norm_rs.vhd:480  downto(base+k) [index] guards=0
+      | xf(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/layer.vhd:317 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:318  kc_v(t*KVDIM+j) [index] guards=0
+      | kc_v(t*KVDIM+j) := to_integer(signed(k_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer.vhd:317 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:318  downto(t*KVDIM+j) [index] guards=0
+      | kc_v(t*KVDIM+j) := to_integer(signed(k_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer.vhd:317 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:319  vc_v(t*KVDIM+j) [index] guards=0
+      | vc_v(t*KVDIM+j) := to_integer(signed(v_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer.vhd:317 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:319  downto(t*KVDIM+j) [index] guards=0
+      | vc_v(t*KVDIM+j) := to_integer(signed(v_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer.vhd:380 loop(j in 0 to DIM-1) -> rtl/layer.vhd:381  WQ_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(WQ_MANT(i*DIM+j), 16);
+rtl/layer.vhd:409 loop(j in 0 to DIM-1) -> rtl/layer.vhd:410  WK_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(WK_MANT(i*DIM+j), 16);
+rtl/layer.vhd:450 loop(j in 0 to DIM-1) -> rtl/layer.vhd:451  WV_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(WV_MANT(i*DIM+j), 16);
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:486  q_v(2*i) [index] guards=4
+      | q0_v    := to_signed(q_v(2*i),   16);
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:487  q_v(2*i+1) [index] guards=4
+      | q1_v    := to_signed(q_v(2*i+1), 16);
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:496  q_v(2*i) [index] guards=4
+      | if    rope_r >  32767 then q_v(2*i)   :=  32767;
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:497  q_v(2*i) [index] guards=4
+      | elsif rope_r < -32768 then q_v(2*i)   := -32768;
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:498  q_v(2*i) [index] guards=4
+      | else                       q_v(2*i)   := to_integer(resize(rope_r, 32));
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:505  q_v(2*i+1) [index] guards=4
+      | if    rope_r >  32767 then q_v(2*i+1) :=  32767;
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:506  q_v(2*i+1) [index] guards=4
+      | elsif rope_r < -32768 then q_v(2*i+1) := -32768;
+rtl/layer.vhd:485 loop(i in 0 to DIM/2-1) -> rtl/layer.vhd:507  q_v(2*i+1) [index] guards=4
+      | else                       q_v(2*i+1) := to_integer(resize(rope_r, 32));
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:518  k_new_v(2*i) [index] guards=4
+      | k0_v    := to_signed(k_new_v(2*i),   16);
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:519  k_new_v(2*i+1) [index] guards=4
+      | k1_v    := to_signed(k_new_v(2*i+1), 16);
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:527  k_new_v(2*i) [index] guards=4
+      | if    rope_r >  32767 then k_new_v(2*i)   :=  32767;
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:528  k_new_v(2*i) [index] guards=4
+      | elsif rope_r < -32768 then k_new_v(2*i)   := -32768;
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:529  k_new_v(2*i) [index] guards=4
+      | else                       k_new_v(2*i)   := to_integer(resize(rope_r, 32));
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:535  k_new_v(2*i+1) [index] guards=4
+      | if    rope_r >  32767 then k_new_v(2*i+1) :=  32767;
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:536  k_new_v(2*i+1) [index] guards=4
+      | elsif rope_r < -32768 then k_new_v(2*i+1) := -32768;
+rtl/layer.vhd:517 loop(i in 0 to KVDIM/2-1) -> rtl/layer.vhd:537  k_new_v(2*i+1) [index] guards=4
+      | else                       k_new_v(2*i+1) := to_integer(resize(rope_r, 32));
+rtl/layer.vhd:545 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:546  kc_v(cur_pos*KVDIM+j) [index] guards=0
+      | kc_v(cur_pos*KVDIM+j) := k_new_v(j);
+rtl/layer.vhd:545 loop(j in 0 to KVDIM-1) -> rtl/layer.vhd:547  vc_v(cur_pos*KVDIM+j) [index] guards=0
+      | vc_v(cur_pos*KVDIM+j) := v_new_v(j);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:569  q_v(h*HEAD_SIZE + j) [index] guards=58
+      | q_head_m(j) := q_v(h*HEAD_SIZE + j);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:590  kc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=58
+      | k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:656  xb_att_r(h*HEAD_SIZE + j) [index] guards=58
+      | xb_att_r(h*HEAD_SIZE + j) := 0.0;
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:659  xb_att_r(h*HEAD_SIZE + j) [index] guards=58
+      | xb_att_r(h*HEAD_SIZE + j) :=
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:660  xb_att_r(h*HEAD_SIZE + j) [index] guards=58
+      | xb_att_r(h*HEAD_SIZE + j) +
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:661  vc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=58
+      | probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:718  WO_MANT(i*DIM+j) [index] guards=58
+      | w16    := to_signed(WO_MANT(i*DIM+j), 16);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:816  W1_MANT(i*DIM+j) [index] guards=58
+      | w16    := to_signed(W1_MANT(i*DIM+j), 16);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:844  W3_MANT(i*DIM+j) [index] guards=58
+      | w16    := to_signed(W3_MANT(i*DIM+j), 16);
+rtl/layer.vhd:561 loop(j in 0 to DIM-1) -> rtl/layer.vhd:920  W2_MANT(i*HIDDEN+j) [index] guards=58
+      | w16    := to_signed(W2_MANT(i*HIDDEN+j), 16);
+rtl/layer.vhd:568 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:569  q_v(h*HEAD_SIZE + j) [index] guards=1
+      | q_head_m(j) := q_v(h*HEAD_SIZE + j);
+rtl/layer.vhd:578 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:590  kc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=13
+      | k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/layer.vhd:578 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:656  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) := 0.0;
+rtl/layer.vhd:578 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:659  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) :=
+rtl/layer.vhd:578 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:660  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) +
+rtl/layer.vhd:578 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:661  vc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=13
+      | probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+rtl/layer.vhd:580 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:590  kc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=13
+      | k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/layer.vhd:580 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:656  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) := 0.0;
+rtl/layer.vhd:580 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:659  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) :=
+rtl/layer.vhd:580 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:660  xb_att_r(h*HEAD_SIZE + j) [index] guards=13
+      | xb_att_r(h*HEAD_SIZE + j) +
+rtl/layer.vhd:580 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:661  vc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=13
+      | probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+rtl/layer.vhd:589 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:590  kc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=1
+      | k_head_m(j) := kc_v(t*KVDIM + kv_h*HEAD_SIZE + j);
+rtl/layer.vhd:655 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:656  xb_att_r(h*HEAD_SIZE + j) [index] guards=1
+      | xb_att_r(h*HEAD_SIZE + j) := 0.0;
+rtl/layer.vhd:655 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:659  xb_att_r(h*HEAD_SIZE + j) [index] guards=1
+      | xb_att_r(h*HEAD_SIZE + j) :=
+rtl/layer.vhd:655 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:660  xb_att_r(h*HEAD_SIZE + j) [index] guards=1
+      | xb_att_r(h*HEAD_SIZE + j) +
+rtl/layer.vhd:655 loop(j in 0 to HEAD_SIZE-1) -> rtl/layer.vhd:661  vc_v(t*KVDIM + kv_h*HEAD_SIZE + j) [index] guards=1
+      | probs(t) * real(vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)) * (2.0 ** (-vc_e(t)));
+rtl/layer.vhd:676 loop(j in 0 to DIM-1) -> rtl/layer.vhd:718  WO_MANT(i*DIM+j) [index] guards=40
+      | w16    := to_signed(WO_MANT(i*DIM+j), 16);
+rtl/layer.vhd:676 loop(j in 0 to DIM-1) -> rtl/layer.vhd:816  W1_MANT(i*DIM+j) [index] guards=40
+      | w16    := to_signed(W1_MANT(i*DIM+j), 16);
+rtl/layer.vhd:676 loop(j in 0 to DIM-1) -> rtl/layer.vhd:844  W3_MANT(i*DIM+j) [index] guards=40
+      | w16    := to_signed(W3_MANT(i*DIM+j), 16);
+rtl/layer.vhd:676 loop(j in 0 to DIM-1) -> rtl/layer.vhd:920  W2_MANT(i*HIDDEN+j) [index] guards=40
+      | w16    := to_signed(W2_MANT(i*HIDDEN+j), 16);
+rtl/layer.vhd:717 loop(j in 0 to DIM-1) -> rtl/layer.vhd:718  WO_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(WO_MANT(i*DIM+j), 16);
+rtl/layer.vhd:738 loop(j in 0 to DIM-1) -> rtl/layer.vhd:816  W1_MANT(i*DIM+j) [index] guards=33
+      | w16    := to_signed(W1_MANT(i*DIM+j), 16);
+rtl/layer.vhd:738 loop(j in 0 to DIM-1) -> rtl/layer.vhd:844  W3_MANT(i*DIM+j) [index] guards=33
+      | w16    := to_signed(W3_MANT(i*DIM+j), 16);
+rtl/layer.vhd:738 loop(j in 0 to DIM-1) -> rtl/layer.vhd:920  W2_MANT(i*HIDDEN+j) [index] guards=33
+      | w16    := to_signed(W2_MANT(i*HIDDEN+j), 16);
+rtl/layer.vhd:815 loop(j in 0 to DIM-1) -> rtl/layer.vhd:816  W1_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(W1_MANT(i*DIM+j), 16);
+rtl/layer.vhd:843 loop(j in 0 to DIM-1) -> rtl/layer.vhd:844  W3_MANT(i*DIM+j) [index] guards=0
+      | w16    := to_signed(W3_MANT(i*DIM+j), 16);
+rtl/layer.vhd:919 loop(j in 0 to HIDDEN-1) -> rtl/layer.vhd:920  W2_MANT(i*HIDDEN+j) [index] guards=0
+      | w16    := to_signed(W2_MANT(i*HIDDEN+j), 16);
+rtl/layer_ar.vhd:72 loop(j in 0 to n-1) -> rtl/layer_ar.vhd:73  a(base+j) [index] guards=0
+      | r((j+1)*16-1 downto j*16) := std_logic_vector(to_signed(a(base+j), 16));
+rtl/layer_fsm.vhd:102 loop(j in 0 to n-1) -> rtl/layer_fsm.vhd:103  a(base+j) [index] guards=0
+      | r((j+1)*16-1 downto j*16) := std_logic_vector(to_signed(a(base+j), 16));
+rtl/layer_fsm.vhd:417 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:418  hk_v(t*KVDIM+j) [index] guards=0
+      | hk_v(t*KVDIM+j) <= to_integer(signed(
+rtl/layer_fsm.vhd:417 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:419  downto(t*KVDIM+j) [index] guards=0
+      | k_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer_fsm.vhd:417 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:420  hv_v(t*KVDIM+j) [index] guards=0
+      | hv_v(t*KVDIM+j) <= to_integer(signed(
+rtl/layer_fsm.vhd:417 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:421  downto(t*KVDIM+j) [index] guards=0
+      | v_mant((t*KVDIM+j+1)*16-1 downto (t*KVDIM+j)*16)));
+rtl/layer_fsm.vhd:479 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:481  hk_v(att_t*KVDIM+j) [index] guards=0
+      | std_logic_vector(to_signed(hk_v(att_t*KVDIM+j), 16));
+rtl/layer_fsm.vhd:479 loop(j in 0 to KVDIM-1) -> rtl/layer_fsm.vhd:483  hv_v(att_t*KVDIM+j) [index] guards=0
+      | std_logic_vector(to_signed(hv_v(att_t*KVDIM+j), 16));
+rtl/llama_top.vhd:3446 loop(a in 0 to 255) -> rtl/llama_top.vhd:3448  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/llama_top.vhd:3447 loop(b in 0 to 255) -> rtl/llama_top.vhd:3448  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/llama_top.vhd:3459 loop(a in 0 to 255) -> rtl/llama_top.vhd:3461  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/llama_top.vhd:3459 loop(a in 0 to 255) -> rtl/llama_top.vhd:3462  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/llama_top.vhd:3460 loop(b in 0 to 255) -> rtl/llama_top.vhd:3461  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/llama_top.vhd:3460 loop(b in 0 to 255) -> rtl/llama_top.vhd:3462  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/llama_top.vhd:3486 loop(a in 0 to 255) -> rtl/llama_top.vhd:3488  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/llama_top.vhd:3486 loop(a in 0 to 255) -> rtl/llama_top.vhd:3489  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/llama_top.vhd:3487 loop(b in 0 to 255) -> rtl/llama_top.vhd:3488  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/llama_top.vhd:3487 loop(b in 0 to 255) -> rtl/llama_top.vhd:3489  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/llama_top.vhd:3502 loop(w in 0 to NWORD-1) -> rtl/llama_top.vhd:3503  r(k*NWORD + w) [index] guards=0
+      | r(k*NWORD + w) := std_logic_vector(to_unsigned(
+rtl/llama_top.vhd:4104 loop(i in 0 to SWG_GRP-1) -> rtl/llama_top.vhd:4107  downto(lane0+i) [index] guards=0
+      | downto (lane0+i)*MANT_W);
+rtl/llama_top.vhd:4104 loop(i in 0 to SWG_GRP-1) -> rtl/llama_top.vhd:4110  downto(lane0+i) [index] guards=0
+      | downto (lane0+i)*MANT_W);
+rtl/llama_top.vhd:4202 loop(i in 0 to LANES-1) -> rtl/llama_top.vhd:4204  and(kw*SWG_GRP + i - lane0) [index] guards=1
+      | and (kw*SWG_GRP + i - lane0) < n then
+rtl/llama_top.vhd:4724 loop(rr in 0 to A_ROWS_IF-1) -> rtl/llama_top.vhd:4725  smp_be_dat(rr*32+31 downto rr*32) [slice] guards=0
+      | smp_be_dat(rr*32+31 downto rr*32)
+rtl/llama_top.vhd:4724 loop(rr in 0 to A_ROWS_IF-1) -> rtl/llama_top.vhd:4726  y_data(rr*64+31 downto rr*64) [slice] guards=0
+      | <= y_data(rr*64+31 downto rr*64);
+rtl/llama_top.vhd:4742 loop(rr in 0 to A_ROWS_IF-1) -> rtl/llama_top.vhd:4744  y_data(rr*64+MANT_W-1 downto rr*64) [slice] guards=0
+      | := y_data(rr*64+MANT_W-1 downto rr*64);
+rtl/llama_top.vhd:4910 loop(i in 0 to LANES-1) -> rtl/llama_top.vhd:4912  and(r + i - lane0) [index] guards=1
+      | and (r + i - lane0) < j_rows then
+rtl/llama_top.vhd:4910 loop(i in 0 to LANES-1) -> rtl/llama_top.vhd:4916  downto(rlane+i-lane0) [index] guards=1
+      | downto (rlane+i-lane0)*MANT_W);
+rtl/llama_top.vhd:5679 loop(t in 0 to KC-1) -> rtl/llama_top.vhd:5683  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/llama_top.vhd:5680 loop(ln in 0 to B_CONV_LANES-1) -> rtl/llama_top.vhd:5683  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/llama_top.vhd:5721 loop(t in 0 to KC-1) -> rtl/llama_top.vhd:5725  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/llama_top.vhd:5722 loop(ln in 0 to B_CONV_LANES-1) -> rtl/llama_top.vhd:5725  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/matmul.vhd:88 loop(j in 0 to IN_COLS-1) -> rtl/matmul.vhd:90  WMANT(WM_LOW + cur_row*IN_COLS + j) [index] guards=0
+      | std_logic_vector(to_signed(WMANT(WM_LOW + cur_row*IN_COLS + j), 16));
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=42
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1302  wm(2*i) [index] guards=42
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=42
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1303  wm(2*i) [index] guards=42
+      | else                        fold(i) <= wm(2*i); end if;
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1314  fold(sg*HALF + i) [index] guards=42
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i+1);
+rtl/matvec_core.vhd:997 loop(i in 0 to LVLR-1) -> rtl/matvec_core.vhd:1316  fold(sg*HALF + i) [index] guards=42
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i);
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=43
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1302  wm(2*i) [index] guards=43
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=43
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1303  wm(2*i) [index] guards=43
+      | else                        fold(i) <= wm(2*i); end if;
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1314  fold(sg*HALF + i) [index] guards=43
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i+1);
+rtl/matvec_core.vhd:998 loop(i in 0 to PIPE-1) -> rtl/matvec_core.vhd:1316  fold(sg*HALF + i) [index] guards=43
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i);
+rtl/matvec_core.vhd:1070 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1071  s_data(rr*16+15 downto rr*16) [slice] guards=0
+      | nsc(0)(rr) := unsigned(s_data(rr*16+15 downto rr*16));
+rtl/matvec_core.vhd:1107 loop(j in 0 to BLK-1) -> rtl/matvec_core.vhd:1109  downto(rr*BLK + j) [index] guards=1
+      | w_r((rr*BLK + j)*4 + 3 downto (rr*BLK + j)*4)));
+rtl/matvec_core.vhd:1107 loop(j in 0 to BLK-1) -> rtl/matvec_core.vhd:1110  x_r(j*16+15 downto j*16) [slice] guards=1
+      | xw  := signed(x_r(j*16+15 downto j*16));
+rtl/matvec_core.vhd:1162 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1163  tp_val(rr*64+63 downto rr*64) [slice] guards=0
+      | tp_val(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1185 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1186  tc_val(rr*64+63 downto rr*64) [slice] guards=2
+      | tc_val(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1185 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1195  ta_val(rr*64+63 downto rr*64) [slice] guards=2
+      | ta_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(an, 64));
+rtl/matvec_core.vhd:1225 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1235  ynew(rr*32+31 downto rr*32) [slice] guards=3
+      | ynew(rr*32+31 downto rr*32) := std_logic_vector(a32);
+rtl/matvec_core.vhd:1225 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1241  y_data(rr*64+63 downto rr*64) [slice] guards=3
+      | y_data(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1225 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1244  y_data(rr*64+63 downto rr*64) [slice] guards=3
+      | y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(a32, 64));
+rtl/matvec_core.vhd:1301 loop(i in 0 to HALF-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=1
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:1301 loop(i in 0 to HALF-1) -> rtl/matvec_core.vhd:1302  wm(2*i) [index] guards=1
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:1301 loop(i in 0 to HALF-1) -> rtl/matvec_core.vhd:1302  wm(2*i+1) [index] guards=1
+      | if wm(2*i+1) > wm(2*i) then fold(i) <= wm(2*i+1);
+rtl/matvec_core.vhd:1301 loop(i in 0 to HALF-1) -> rtl/matvec_core.vhd:1303  wm(2*i) [index] guards=1
+      | else                        fold(i) <= wm(2*i); end if;
+rtl/matvec_core.vhd:1312 loop(i in 0 to (MAXPOW / (2**(sg+1))) - 1) -> rtl/matvec_core.vhd:1314  fold(sg*HALF + i) [index] guards=1
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i+1);
+rtl/matvec_core.vhd:1312 loop(i in 0 to (MAXPOW / (2**(sg+1))) - 1) -> rtl/matvec_core.vhd:1316  fold(sg*HALF + i) [index] guards=1
+      | fold(sg*HALF + i) <= fold((sg-1)*HALF + 2*i);
+rtl/matvec_core.vhd:1406 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1411  ybuf_q(rr*32+31 downto rr*32) [slice] guards=0
+      | signed(ybuf_q(rr*32+31 downto rr*32)),
+rtl/matvec_core.vhd:1422 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1424  y_data(rr*64+63 downto rr*64) [slice] guards=1
+      | y_data(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+rtl/matvec_core.vhd:1422 loop(rr in 0 to ROWS_IF-1) -> rtl/matvec_core.vhd:1425  tm_val(rr*64+63 downto rr*64) [slice] guards=1
+      | tm_val(rr*64+63 downto rr*64) <= std_logic_vector(resize(ymn, 64));
+rtl/matvec_engine.vhd:96 loop(j in 0 to IN_DIM-1) -> rtl/matvec_engine.vhd:98  WQ_L0(cur_row*IN_DIM + j) [index] guards=0
+      | std_logic_vector(to_signed(WQ_L0(cur_row*IN_DIM + j), WW));
+rtl/matvec_int4_axi.vhd:191 loop(i in 0 to 31) -> rtl/matvec_int4_axi.vhd:192  v(v'low + i) [index] guards=1
+      | if 32 + i >= ADDR_W and v(v'low + i) /= '0' then
+rtl/matvec_int4_desc_axi.vhd:654 loop(p in 0 to NPORTS_W-1) -> rtl/matvec_int4_desc_axi.vhd:656  dw(DESC_BASE0 + p) [index] guards=0
+      | <= dw(DESC_BASE0 + p)(ADDR_W-1 downto 0);
+rtl/matvec_int4_desc_axi.vhd:658 loop(q in 0 to NPORTS_S-1) -> rtl/matvec_int4_desc_axi.vhd:660  dw(DESC_BASE0 + NPORTS_W + q) [index] guards=0
+      | <= dw(DESC_BASE0 + NPORTS_W + q)(ADDR_W-1 downto 0);
+rtl/matvec_int4_desc_axi.vhd:670 loop(p in 0 to NP_ALL-1) -> rtl/matvec_int4_desc_axi.vhd:671  dw(DESC_BASE0 + p) [index] guards=2
+      | if bad = '0' and not fits_addr(dw(DESC_BASE0 + p)) then
+rtl/matvec_int4_desc_axi.vhd:670 loop(p in 0 to NP_ALL-1) -> rtl/matvec_int4_desc_axi.vhd:673  ei(EI_SUB_NONE, DESC_BASE0 + p) [index] guards=2
+      | info := ei(EI_SUB_NONE, DESC_BASE0 + p);
+rtl/matvec_int4_desc_axi.vhd:670 loop(p in 0 to NP_ALL-1) -> rtl/matvec_int4_desc_axi.vhd:675  dw(DESC_BASE0 + p) [index] guards=2
+      | if bad = '0' and not is_4k_aligned(dw(DESC_BASE0 + p)) then
+rtl/matvec_int4_desc_axi.vhd:670 loop(p in 0 to NP_ALL-1) -> rtl/matvec_int4_desc_axi.vhd:677  ei(EI_SUB_NONE, DESC_BASE0 + p) [index] guards=2
+      | info := ei(EI_SUB_NONE, DESC_BASE0 + p);
+rtl/ooc_gdnadapt_ss_top.vhd:443 loop(t in 0 to KC-1) -> rtl/ooc_gdnadapt_ss_top.vhd:447  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/ooc_gdnadapt_ss_top.vhd:444 loop(ln in 0 to B_CONV_LANES-1) -> rtl/ooc_gdnadapt_ss_top.vhd:447  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/ooc_gdnadapt_ss_top.vhd:475 loop(t in 0 to KC-1) -> rtl/ooc_gdnadapt_ss_top.vhd:479  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/ooc_gdnadapt_ss_top.vhd:476 loop(ln in 0 to B_CONV_LANES-1) -> rtl/ooc_gdnadapt_ss_top.vhd:479  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/ooc_gdnadapt_ss_top.vhd:815 loop(j in 0 to DM-1) -> rtl/ooc_gdnadapt_ss_top.vhd:817  zb(h*DM + j) [index] guards=0
+      | std_logic_vector(zb(h*DM + j));
+rtl/ooc_gdnadapt_top.vhd:811 loop(t in 0 to KC-1) -> rtl/ooc_gdnadapt_top.vhd:815  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/ooc_gdnadapt_top.vhd:812 loop(ln in 0 to B_CONV_LANES-1) -> rtl/ooc_gdnadapt_top.vhd:815  m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5));
+rtl/ooc_gdnadapt_top.vhd:853 loop(t in 0 to KC-1) -> rtl/ooc_gdnadapt_top.vhd:857  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/ooc_gdnadapt_top.vhd:854 loop(ln in 0 to B_CONV_LANES-1) -> rtl/ooc_gdnadapt_top.vhd:857  m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln) [index] guards=0
+      | std_logic_vector(m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln));
+rtl/ooc_normadapt_top.vhd:842 loop(a in 0 to 255) -> rtl/ooc_normadapt_top.vhd:844  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/ooc_normadapt_top.vhd:843 loop(b in 0 to 255) -> rtl/ooc_normadapt_top.vhd:844  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then n := n + 1; end if;
+rtl/ooc_normadapt_top.vhd:855 loop(a in 0 to 255) -> rtl/ooc_normadapt_top.vhd:857  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/ooc_normadapt_top.vhd:855 loop(a in 0 to 255) -> rtl/ooc_normadapt_top.vhd:858  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/ooc_normadapt_top.vhd:856 loop(b in 0 to 255) -> rtl/ooc_normadapt_top.vhd:857  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/ooc_normadapt_top.vhd:856 loop(b in 0 to 255) -> rtl/ooc_normadapt_top.vhd:858  r(a*256 + b) [index] guards=1
+      | r(a*256 + b) := n;
+rtl/ooc_normadapt_top.vhd:882 loop(a in 0 to 255) -> rtl/ooc_normadapt_top.vhd:884  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/ooc_normadapt_top.vhd:882 loop(a in 0 to 255) -> rtl/ooc_normadapt_top.vhd:885  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/ooc_normadapt_top.vhd:883 loop(b in 0 to 255) -> rtl/ooc_normadapt_top.vhd:884  CBMARK(a*256 + b) [index] guards=1
+      | if CBMARK(a*256 + b) then
+rtl/ooc_normadapt_top.vhd:883 loop(b in 0 to 255) -> rtl/ooc_normadapt_top.vhd:885  CBMAP(a*256 + b) [index] guards=1
+      | r(CBMAP(a*256 + b)) := std_logic_vector(to_unsigned(a*256 + b, MANT_W));
+rtl/ooc_normadapt_top.vhd:898 loop(w in 0 to NWORD-1) -> rtl/ooc_normadapt_top.vhd:899  r(k*NWORD + w) [index] guards=0
+      | r(k*NWORD + w) := std_logic_vector(to_unsigned(
+rtl/region_drain.vhd:203 loop(i in 0 to LANES-1) -> rtl/region_drain.vhd:207  downto(rlane+i) [index] guards=1
+      | <= yb_rdata((rlane+i+1)*MANT_W-1 downto (rlane+i)*MANT_W);
+rtl/rmsnorm_bf.vhd:429 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:430  downto(base+k) [index] guards=0
+      | xa(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_bf.vhd:728 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:729  downto(base+k) [index] guards=0
+      | xf(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_bf.vhd:728 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:730  downto(base+k) [index] guards=0
+      | wf(k) <= signed(w_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_bf.vhd:872 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:873  downto(base+k) [index] guards=0
+      | xf(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_bf.vhd:872 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:874  downto(base+k) [index] guards=0
+      | wf(k) <= signed(w_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_bf.vhd:907 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:910  downto(base+k) [index] guards=2
+      | o_reg((base+k+1)*16-1 downto (base+k)*16)
+rtl/rmsnorm_bf.vhd:907 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:913  downto(base+k) [index] guards=2
+      | o_reg((base+k+1)*16-1 downto (base+k)*16)
+rtl/rmsnorm_bf.vhd:907 loop(k in 0 to LANES-1) -> rtl/rmsnorm_bf.vhd:916  downto(base+k) [index] guards=2
+      | o_reg((base+k+1)*16-1 downto (base+k)*16)
+rtl/rmsnorm_rs.vhd:307 loop(k in 0 to LANES-1) -> rtl/rmsnorm_rs.vhd:308  downto(base+k) [index] guards=0
+      | xa(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_rs.vhd:545 loop(k in 0 to LANES-1) -> rtl/rmsnorm_rs.vhd:546  downto(base+k) [index] guards=0
+      | xf(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_rs.vhd:545 loop(k in 0 to LANES-1) -> rtl/rmsnorm_rs.vhd:547  downto(base+k) [index] guards=0
+      | wf(k) <= signed(w_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_rs.vhd:619 loop(k in 0 to LANES-1) -> rtl/rmsnorm_rs.vhd:620  downto(base+k) [index] guards=0
+      | xf(k) <= signed(x_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/rmsnorm_rs.vhd:619 loop(k in 0 to LANES-1) -> rtl/rmsnorm_rs.vhd:621  downto(base+k) [index] guards=0
+      | wf(k) <= signed(w_mant((base+k+1)*16-1 downto (base+k)*16));
+rtl/seq_ctrl.vhd:276 loop(p in 0 to NGEN-1) -> rtl/seq_ctrl.vhd:344  PROMPT(p + 1) [index] guards=2
+      | next_tok := PROMPT(p + 1);
+rtl/seq_region_lock.vhd:385 loop(i in 0 to NREG-1) -> rtl/seq_region_lock.vhd:386  lock_state(2*i+1 downto 2*i) [slice] guards=0
+      | lock_state(2*i+1 downto 2*i) <= lock(i);
+rtl/seq_top_skel.vhd:434 loop(i in 0 to NREG-1) -> rtl/seq_top_skel.vhd:435  lock_state(2*i+1 downto 2*i) [slice] guards=0
+      | lock_state(2*i+1 downto 2*i) <= lock(i);
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:232  m_arvalid(NPORTS_W+q) [index] guards=0
+      | arvalid => m_arvalid(NPORTS_W+q), arready => m_arready(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:232  m_arready(NPORTS_W+q) [index] guards=0
+      | arvalid => m_arvalid(NPORTS_W+q), arready => m_arready(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:233  downto(NPORTS_W+q) [index] guards=0
+      | araddr  => m_araddr((NPORTS_W+q+1)*ADDR_W-1 downto (NPORTS_W+q)*ADDR_W),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:234  downto(NPORTS_W+q) [index] guards=0
+      | arlen   => m_arlen((NPORTS_W+q+1)*8-1 downto (NPORTS_W+q)*8),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:235  downto(NPORTS_W+q) [index] guards=0
+      | arsize  => m_arsize((NPORTS_W+q+1)*3-1 downto (NPORTS_W+q)*3),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:236  downto(NPORTS_W+q) [index] guards=0
+      | arburst => m_arburst((NPORTS_W+q+1)*2-1 downto (NPORTS_W+q)*2),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:237  m_rvalid(NPORTS_W+q) [index] guards=0
+      | rvalid  => m_rvalid(NPORTS_W+q), rready => m_rready(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:237  m_rready(NPORTS_W+q) [index] guards=0
+      | rvalid  => m_rvalid(NPORTS_W+q), rready => m_rready(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:238  downto(NPORTS_W+q) [index] guards=0
+      | rdata   => m_rdata((NPORTS_W+q+1)*AXI_DW-1 downto (NPORTS_W+q)*AXI_DW),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:239  m_rlast(NPORTS_W+q) [index] guards=0
+      | rlast   => m_rlast(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:240  qv(NPORTS_W+q) [index] guards=0
+      | q_valid => qv(NPORTS_W+q), q_data => qd(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:240  qd(NPORTS_W+q) [index] guards=0
+      | q_valid => qv(NPORTS_W+q), q_data => qd(NPORTS_W+q),
+rtl/weight_streamer.vhd:224 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:241  qr(NPORTS_W+q) [index] guards=0
+      | q_ready => qr(NPORTS_W+q));
+rtl/weight_streamer.vhd:283 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:291  qr(NPORTS_W+q) [index] guards=5
+      | qr(NPORTS_W+q) <= s_take;
+rtl/weight_streamer.vhd:283 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:314  qd(NPORTS_W+q) [index] guards=5
+      | s_hold((q+1)*AXI_DW-1 downto q*AXI_DW) <= qd(NPORTS_W+q);
+rtl/weight_streamer.vhd:290 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:291  qr(NPORTS_W+q) [index] guards=0
+      | qr(NPORTS_W+q) <= s_take;
+rtl/weight_streamer.vhd:313 loop(q in 0 to NPORTS_S-1) -> rtl/weight_streamer.vhd:314  qd(NPORTS_W+q) [index] guards=0
+      | s_hold((q+1)*AXI_DW-1 downto q*AXI_DW) <= qd(NPORTS_W+q);

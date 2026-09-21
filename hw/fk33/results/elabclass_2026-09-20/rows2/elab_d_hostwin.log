@@ -1,0 +1,73 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=d_hostwin top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=d_hostwin gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex HOST_WINDOW=true"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=d_hostwin extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1315.980 ; gain = 0.027 ; free physical = 11986 ; free virtual = 59865
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=d_hostwin files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top fk33_llama_top -part xcvu33p-fsvh2104-2L-e -generic A_DESC=true -generic B_STATE_AXI=true -generic B_SRC_REAL=true -generic B_CONST_HBM=true -generic C_KV_AXI=true -generic HOST_WINDOW=false -generic C_REAL=true -generic NORM_REAL=true -generic SWG_REAL=true -generic SMP_EN=true -generic C_N_ROT=64 -generic C_KV_BLOCK=32 -generic C_KV_ADDR_W=33 -generic C_K_BASE_CH=282672640 -generic C_V_BASE_CH=318324224 -generic C_MAXPOS=65536 -generic C_CTXLEN=65536 -generic WDOG_LIMIT=4000000 -generic A_ROWS_IF=48 -generic A_JOB_STRIDE=262144 -generic NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex -generic C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex -generic HOST_WINDOW=true
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2224127
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:05 . Memory (MB): peak = 2783.633 ; gain = 399.035 ; free physical = 10321 ; free virtual = 58081
+---------------------------------------------------------------------------------
+Terminated                 "$RDI_PROG" "$@"
+Parent process (pid 2223164) has died. This helper process will now exit

@@ -1,0 +1,251 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=c_base top=attn_block part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=c_base gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_HDR_TREE=0"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=c_base extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1320.918 ; gain = 0.027 ; free physical = 10650 ; free virtual = 59950
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=c_base files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top attn_block -part xcvu33p-fsvh2104-2L-e -generic HEAD_DIM=256 -generic N_QH=16 -generic N_KVH=4 -generic KV_BLOCK=32 -generic N_ROT=64 -generic LAYERS=8 -generic POS_W=17 -generic MANT_W=16 -generic CM_W=8 -generic EXP_W=8 -generic NORM_LANES=1 -generic STRICT_PRODUCER=true -generic SWEEP_PIPE=true -generic SCORE_HDR_TREE=0
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2191064
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 2783.438 ; gain = 399.047 ; free physical = 8814 ; free virtual = 58114
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'attn_block' [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter N_QH bound to: 16 - type: integer 
+	Parameter N_KVH bound to: 4 - type: integer 
+	Parameter KV_BLOCK bound to: 32 - type: integer 
+	Parameter N_ROT bound to: 64 - type: integer 
+	Parameter LAYERS bound to: 8 - type: integer 
+	Parameter POS_W bound to: 17 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter CM_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter NORM_LANES bound to: 1 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+	Parameter SWEEP_PIPE bound to: 1 - type: bool 
+	Parameter SCORE_HDR_TREE bound to: 0 - type: integer 
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_rs' [/home/labuser/elabclass/rtl/rmsnorm_rs.vhd:81]
+	Parameter N bound to: 256 - type: integer 
+	Parameter LANES bound to: 1 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'rmsnorm_rs' (0#1) [/home/labuser/elabclass/rtl/rmsnorm_rs.vhd:81]
+INFO: [Synth 8-638] synthesizing module 'attn_twiddle' [/home/labuser/elabclass/rtl/attn_twiddle.vhd:165]
+	Parameter NPAIR bound to: 32 - type: integer 
+	Parameter TBL bound to: 1024 - type: integer 
+	Parameter POS_W bound to: 17 - type: integer 
+	Parameter Q_W bound to: 16 - type: integer 
+	Parameter PHI_W bound to: 32 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_twiddle' (0#1) [/home/labuser/elabclass/rtl/attn_twiddle.vhd:165]
+INFO: [Synth 8-638] synthesizing module 'attn_rope' [/home/labuser/elabclass/rtl/attn_rope.vhd:206]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter N_ROT bound to: 64 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter Q bound to: 15 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_rope' (0#1) [/home/labuser/elabclass/rtl/attn_rope.vhd:206]
+INFO: [Synth 8-638] synthesizing module 'attn_kv_quant' [/home/labuser/elabclass/rtl/attn_kv_quant.vhd:223]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter KV_BLOCK bound to: 32 - type: integer 
+	Parameter IN_W bound to: 16 - type: integer 
+	Parameter MANT_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter VREF_INIT bound to: 127 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_kv_quant' (0#1) [/home/labuser/elabclass/rtl/attn_kv_quant.vhd:223]
+INFO: [Synth 8-638] synthesizing module 'attn_mac_array' [/home/labuser/elabclass/rtl/attn_mac_array.vhd:222]
+	Parameter QH_TILE bound to: 4 - type: integer 
+	Parameter DIM_TILE bound to: 32 - type: integer 
+	Parameter ACC_N bound to: 8 - type: integer 
+	Parameter Q_W bound to: 16 - type: integer 
+	Parameter K_W bound to: 8 - type: integer 
+	Parameter E_W bound to: 13 - type: integer 
+	Parameter ACC_W bound to: 36 - type: integer 
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_mac_array' (0#1) [/home/labuser/elabclass/rtl/attn_mac_array.vhd:222]
+INFO: [Synth 8-638] synthesizing module 'attn_score_q12' [/home/labuser/elabclass/rtl/attn_score_q12.vhd:244]
+	Parameter NBLK bound to: 8 - type: integer 
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter KQ_SHIFT bound to: 4 - type: integer 
+	Parameter QOUT bound to: 12 - type: integer 
+	Parameter LSH_CLAMP bound to: 32 - type: integer 
+	Parameter RSH_CLAMP bound to: 32 - type: integer 
+	Parameter HDR_TREE bound to: 0 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_score_q12' (0#1) [/home/labuser/elabclass/rtl/attn_score_q12.vhd:244]
+INFO: [Synth 8-638] synthesizing module 'attn_softmax' [/home/labuser/elabclass/rtl/attn_softmax.vhd:283]
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter ROM_N bound to: 256 - type: integer 
+	Parameter E_W bound to: 13 - type: integer 
+	Parameter S_W bound to: 26 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_softmax' (0#1) [/home/labuser/elabclass/rtl/attn_softmax.vhd:283]
+INFO: [Synth 8-638] synthesizing module 'attn_recip' [/home/labuser/elabclass/rtl/attn_recip.vhd:193]
+	Parameter S_W bound to: 26 - type: integer 
+	Parameter R_W bound to: 16 - type: integer 
+	Parameter R_Q bound to: 15 - type: integer 
+	Parameter NW bound to: 44 - type: integer 
+	Parameter DW bound to: 28 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'divider_rs' [/home/labuser/elabclass/rtl/divider_rs.vhd:79]
+	Parameter NW bound to: 44 - type: integer 
+	Parameter DW bound to: 28 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'divider_rs' (0#1) [/home/labuser/elabclass/rtl/divider_rs.vhd:79]
+INFO: [Synth 8-256] done synthesizing module 'attn_recip' (0#1) [/home/labuser/elabclass/rtl/attn_recip.vhd:193]
+INFO: [Synth 8-638] synthesizing module 'attn_gate' [/home/labuser/elabclass/rtl/attn_gate.vhd:260]
+	Parameter N bound to: 256 - type: integer 
+	Parameter O_W bound to: 36 - type: integer 
+	Parameter R_W bound to: 16 - type: integer 
+	Parameter P_W bound to: 5 - type: integer 
+	Parameter G_W bound to: 16 - type: integer 
+	Parameter Z_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter GQ bound to: 15 - type: integer 
+	Parameter T_W bound to: 24 - type: integer 
+	Parameter Y_W bound to: 24 - type: integer 
+	Parameter SIG_N bound to: 512 - type: integer 
+	Parameter LSH_CLAMP bound to: 32 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_gate' (0#1) [/home/labuser/elabclass/rtl/attn_gate.vhd:260]
+INFO: [Synth 8-638] synthesizing module 'attn_emit' [/home/labuser/elabclass/rtl/attn_emit.vhd:207]
+	Parameter NGRP bound to: 4 - type: integer 
+	Parameter GRP_N bound to: 1024 - type: integer 
+	Parameter IN_W bound to: 24 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter TARGET_MSB bound to: 14 - type: integer 
+	Parameter SH_MAX bound to: 63 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_emit' (0#1) [/home/labuser/elabclass/rtl/attn_emit.vhd:207]
+INFO: [Synth 8-256] done synthesizing module 'attn_block' (0#1) [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+WARNING: [Synth 8-6014] Unused sequential element tn_reg was removed.  [/home/labuser/elabclass/rtl/attn_score_q12.vhd:409]
+WARNING: [Synth 8-6014] Unused sequential element tl0_reg was removed.  [/home/labuser/elabclass/rtl/attn_score_q12.vhd:410]
+WARNING: [Synth 8-6014] Unused sequential element se_rdy_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1331]
+WARNING: [Synth 8-6014] Unused sequential element se_sent_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1331]
+WARNING: [Synth 8-6014] Unused sequential element rbi_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1338]
+WARNING: [Synth 8-6014] Unused sequential element clen_r_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1602]
+WARNING: [Synth 8-6014] Unused sequential element rp_start_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1068]
+WARNING: [Synth 8-6014] Unused sequential element sm_start_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:1139]
+WARNING: [Synth 8-6014] Unused sequential element wntk_r_reg was removed.  [/home/labuser/elabclass/rtl/attn_block.vhd:928]
+WARNING: [Synth 8-7129] Port ep_ready in module attn_softmax is either unconnected or has no load
+WARNING: [Synth 8-7129] Port p_ready in module attn_mac_array is either unconnected or has no load
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:02:48 ; elapsed = 00:02:52 . Memory (MB): peak = 5381.281 ; gain = 2996.891 ; free physical = 6167 ; free virtual = 55487
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:02:50 ; elapsed = 00:02:54 . Memory (MB): peak = 5381.281 ; gain = 2996.891 ; free physical = 6171 ; free virtual = 55491
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:02:50 ; elapsed = 00:02:54 . Memory (MB): peak = 5381.281 ; gain = 2996.891 ; free physical = 6171 ; free virtual = 55491
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 5381.289 ; gain = 0.000 ; free physical = 6535 ; free virtual = 55855
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+Netlist sorting complete. Time (s): cpu = 00:00:00.03 ; elapsed = 00:00:00.03 . Memory (MB): peak = 5445.312 ; gain = 0.000 ; free physical = 6547 ; free virtual = 55869
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:03:40 ; elapsed = 00:03:30 . Memory (MB): peak = 5445.348 ; gain = 3060.957 ; free physical = 6545 ; free virtual = 55867
+30 Infos, 11 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:03:48 ; elapsed = 00:03:39 . Memory (MB): peak = 5445.348 ; gain = 4124.430 ; free physical = 6545 ; free virtual = 55867
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 5277.752; main = 4951.534; forked = 480.651
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 6401.172; main = 5445.316; forked = 1019.887
+# set tel [expr {[clock seconds] - $t1}]
+# puts "ELABCHK_SECONDS tag=$tag elaborate=$tel total=[expr {[clock seconds]-$t0}]"
+ELABCHK_SECONDS tag=c_base elaborate=220 total=226
+# if {!$ok} {
+#     # Write the raw text out verbatim; a summary of an error is not the error.
+#     set fh [open [file join $outdir elabfail_$tag.txt] w]
+#     puts $fh $err
+#     close $fh
+#     puts "ELABCHK_ERRTEXT_BEGIN $tag"
+#     foreach l [split $err "\n"] { puts "  | $l" }
+#     puts "ELABCHK_ERRTEXT_END $tag"
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# set ncell [llength [get_cells -hier -quiet]]
+# set nport [llength [get_ports -quiet]]
+# puts "ELABCHK_SIZE tag=$tag rtl_cells=$ncell ports=$nport"
+ELABCHK_SIZE tag=c_base rtl_cells=135966 ports=9472
+# if {$nport == 0} {
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# puts "ELABCHK_PASS $tag"
+ELABCHK_PASS c_base
+INFO: [Common 17-206] Exiting Vivado at Sun Sep 20 22:27:33 2026...

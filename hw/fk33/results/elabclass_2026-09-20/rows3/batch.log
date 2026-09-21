@@ -1,0 +1,12 @@
+ELABCLASS_ENV host=cachyos-bc250 root=/home/labuser/elabclass out=/home/labuser/elabclass/out3 cap=11G
+ELABCLASS_TREE_SHA f58a07544f6b1ef2c9db43f58a31413a10554920
+ELABCLASS_MANIFEST 03a2d528ae98d323dbc4b8538ca373161acfe9d2bdebb4fb07419035d486304a
+               total        used        free      shared  buff/cache   available
+Mem:           15204        1918       12510           0        1073       13285
+ELABCLASS_CGROUP systemd-run --user scope available, cap 11G
+=== ELABCLASS row=d_hostwin top=fk33_llama_top expect=pass begin 2026-09-20T23:52:50-04:00 ===
+ELABCLASS_ROW row=d_hostwin top=fk33_llama_top verdict=PASS expect=pass wall_s=785 cgroup_peak_mb=11266 rc=0
+=== ELABCLASS_TABLE ===
+row        top                expect   verdict    wall_s    peak_mb
+d_hostwin  fk33_llama_top     pass     PASS          785      11266
+ELABCLASS_ALLDONE rc=0

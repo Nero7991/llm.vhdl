@@ -1,0 +1,195 @@
+ELABCLASS_STATIC total_growing=266 purely_static=151 runtime_indexed=115
+
+=== PURELY STATIC, GROWING INDEX  (HDRCOST's class) ===
+rtl/async_fifo.vhd:174  loop[i in AW-1 downto 0]  -> :175  b(i+1)
+rtl/attn_gate.vhd:306  loop[k in 0 to SIG_N-1]  -> :307  SIG_ROM(k+1)
+rtl/attn_mac_array.vhd:389  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :391  av(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:389  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :394  bv(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:401  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :406  av(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:401  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :408  bv(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:415  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :418  av(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:415  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :419  bv(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:443  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :446  p_reg(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:460  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :464  p_reg(h*DIM_TILE + t2)
+rtl/attn_mac_array.vhd:476  loop[h in 0 to QH_TILE-1 / t2 in 0 to DIM_TILE-1]  -> :479  p_reg(h*DIM_TILE + t2)
+rtl/attn_score_q12.vhd:494  loop[i in 0 to TW-1]  -> :503  wv(2*i + 1)
+rtl/attn_score_q12.vhd:494  loop[i in 0 to TW-1]  -> :503  wv(2*i)
+rtl/attn_softmax.vhd:313  loop[k in 0 to ROM_N-1]  -> :314  EXP_ROM(k+1)
+rtl/bc_port_grant.vhd:254  loop[i in 0 to 1]  -> :256  c_arlen(i*8+7 downto i*8+MLEN_W)
+rtl/engine_shared.vhd:266  loop[l in 0 to NLAYERS-1 / j in 0 to DIM-1]  -> :268  a(l*DIM+j)
+rtl/engine_shared.vhd:311  loop[i in 0 to v'length/32 - 1]  -> :312  v(32*i+31 downto 32*i)
+rtl/fk33_llama_top.vhd:3581  loop[a in 0 to 255 / b in 0 to 255]  -> :3583  CBMARK(a*256 + b)
+rtl/fk33_llama_top.vhd:3594  loop[a in 0 to 255 / b in 0 to 255]  -> :3596  CBMARK(a*256 + b)
+rtl/fk33_llama_top.vhd:3594  loop[a in 0 to 255 / b in 0 to 255]  -> :3597  r(a*256 + b)
+rtl/fk33_llama_top.vhd:3621  loop[a in 0 to 255 / b in 0 to 255]  -> :3623  CBMARK(a*256 + b)
+rtl/fk33_llama_top.vhd:3621  loop[a in 0 to 255 / b in 0 to 255]  -> :3624  CBMAP(a*256 + b)
+rtl/fk33_llama_top.vhd:3636  loop[k in 0 to NW_N-1 / w in 0 to NWORD-1]  -> :3638  r(k*NWORD + w)
+rtl/fk33_llama_top.vhd:4897  loop[rr in 0 to A_ROWS_IF-1]  -> :4898  smp_be_dat(rr*32+31 downto rr*32)
+rtl/fk33_llama_top.vhd:4897  loop[rr in 0 to A_ROWS_IF-1]  -> :4899  a_y_data(rr*64+31 downto rr*64)
+rtl/fk33_llama_top.vhd:4916  loop[rr in 0 to A_ROWS_IF-1]  -> :4918  a_y_data(rr*64+MANT_W-1 downto rr*64)
+rtl/fk33_llama_top.vhd:5348  loop[rr in 0 to A_ROWS_IF-1]  -> :5349  smp_be_dat(rr*32+31 downto rr*32)
+rtl/fk33_llama_top.vhd:5348  loop[rr in 0 to A_ROWS_IF-1]  -> :5350  y_data(rr*64+31 downto rr*64)
+rtl/fk33_llama_top.vhd:5366  loop[rr in 0 to A_ROWS_IF-1]  -> :5368  y_data(rr*64+MANT_W-1 downto rr*64)
+rtl/gdn_conv_w_mem.vhd:254  loop[t in 0 to KCONV-1 / ln in 0 to CONV_LANES-1]  -> :257  rq(t*CONV_LANES + ln)
+rtl/gdn_recur_pipe.vhd:548  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :552  redk(r+1)
+rtl/gdn_recur_pipe.vhd:548  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :555  redk_c(r+1)
+rtl/gdn_recur_pipe.vhd:756  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :761  reda(r+1)
+rtl/gdn_recur_pipe.vhd:756  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :767  reda_c(r+1)
+rtl/gdn_recur_pipe.vhd:867  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :871  redo(r+1)
+rtl/gdn_recur_pipe.vhd:867  loop[r in 0 to LOG2L-1 / k in 0 to LANES-1]  -> :874  redo_c(r+1)
+rtl/gdn_silu.vhd:87  loop[i in 0 to 511]  -> :88  SIG_ROM(i+1)
+rtl/gdn_state_store.vhd:946  loop[qw in 0 to WPB_C-1]  -> :955  k_wwd(qw*16+7 downto qw*16)
+rtl/hbm_tg.vhd:642  loop[i in 0 to NPORT-1 / k in 0 to AXI_DW/32 - 1]  -> :900  m_bresp(2*i+1)
+rtl/hbm_tg.vhd:642  loop[i in 0 to NPORT-1 / k in 0 to AXI_DW/32 - 1]  -> :900  m_bresp(2*i)
+rtl/hbm_tg.vhd:642  loop[i in 0 to NPORT-1 / k in 0 to AXI_DW/32 - 1]  -> :913  m_rresp(2*i+1)
+rtl/hbm_tg.vhd:642  loop[i in 0 to NPORT-1 / k in 0 to AXI_DW/32 - 1]  -> :913  m_rresp(2*i)
+rtl/layer.vhd:313  loop[t in 0 to MAXPOS-1 / j in 0 to KVDIM-1]  -> :318  kc_v(t*KVDIM+j)
+rtl/layer.vhd:313  loop[t in 0 to MAXPOS-1 / j in 0 to KVDIM-1]  -> :319  vc_v(t*KVDIM+j)
+rtl/layer.vhd:378  loop[i in 0 to DIM-1 / j in 0 to DIM-1]  -> :381  WQ_MANT(i*DIM+j)
+rtl/layer.vhd:407  loop[i in 0 to KVDIM-1 / j in 0 to DIM-1]  -> :410  WK_MANT(i*DIM+j)
+rtl/layer.vhd:448  loop[i in 0 to KVDIM-1 / j in 0 to DIM-1]  -> :451  WV_MANT(i*DIM+j)
+rtl/layer.vhd:485  loop[i in 0 to DIM/2-1]  -> :486  q_v(2*i)
+rtl/layer.vhd:485  loop[i in 0 to DIM/2-1]  -> :487  q_v(2*i+1)
+rtl/layer.vhd:517  loop[i in 0 to KVDIM/2-1]  -> :518  k_new_v(2*i)
+rtl/layer.vhd:517  loop[i in 0 to KVDIM/2-1]  -> :519  k_new_v(2*i+1)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :569  q_v(h*HEAD_SIZE + j)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :656  xb_att_r(h*HEAD_SIZE + j)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :718  WO_MANT(i*DIM+j)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :816  W1_MANT(i*DIM+j)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :844  W3_MANT(i*DIM+j)
+rtl/layer.vhd:561  loop[j in 0 to DIM-1 / h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :920  W2_MANT(i*HIDDEN+j)
+rtl/layer.vhd:563  loop[h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1]  -> :569  q_v(h*HEAD_SIZE + j)
+rtl/layer.vhd:563  loop[h in 0 to NHEADS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / j in 0 to HEAD_SIZE-1 / k in 0 to 62 / t in 1 to MAXPOS-1 / t in 0 to MAXPOS-1 / t in 0 to MAXPOS-1 / j in 0 to HEAD_SIZE-1 / t in 0 to MAXPOS-1]  -> :656  xb_att_r(h*HEAD_SIZE + j)
+rtl/layer.vhd:676  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :718  WO_MANT(i*DIM+j)
+rtl/layer.vhd:676  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :816  W1_MANT(i*DIM+j)
+rtl/layer.vhd:676  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :844  W3_MANT(i*DIM+j)
+rtl/layer.vhd:676  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / i in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :920  W2_MANT(i*HIDDEN+j)
+rtl/layer.vhd:715  loop[i in 0 to DIM-1 / j in 0 to DIM-1]  -> :718  WO_MANT(i*DIM+j)
+rtl/layer.vhd:738  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :816  W1_MANT(i*DIM+j)
+rtl/layer.vhd:738  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :844  W3_MANT(i*DIM+j)
+rtl/layer.vhd:738  loop[j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1 / j in 0 to DIM-1 / j in 0 to DIM-1 / i in 0 to 62 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / j in 0 to DIM-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to HIDDEN-1 / i in 0 to DIM-1 / j in 0 to HIDDEN-1 / j in 0 to DIM-1 / ti in 0 to 60 / j in 0 to DIM-1]  -> :920  W2_MANT(i*HIDDEN+j)
+rtl/layer.vhd:813  loop[i in 0 to HIDDEN-1 / j in 0 to DIM-1]  -> :816  W1_MANT(i*DIM+j)
+rtl/layer.vhd:841  loop[i in 0 to HIDDEN-1 / j in 0 to DIM-1]  -> :844  W3_MANT(i*DIM+j)
+rtl/layer.vhd:917  loop[i in 0 to DIM-1 / j in 0 to HIDDEN-1]  -> :920  W2_MANT(i*HIDDEN+j)
+rtl/layer_fsm.vhd:413  loop[t in 0 to MAXPOS-1 / j in 0 to KVDIM-1]  -> :418  hk_v(t*KVDIM+j)
+rtl/layer_fsm.vhd:413  loop[t in 0 to MAXPOS-1 / j in 0 to KVDIM-1]  -> :420  hv_v(t*KVDIM+j)
+rtl/llama_top.vhd:3446  loop[a in 0 to 255 / b in 0 to 255]  -> :3448  CBMARK(a*256 + b)
+rtl/llama_top.vhd:3459  loop[a in 0 to 255 / b in 0 to 255]  -> :3461  CBMARK(a*256 + b)
+rtl/llama_top.vhd:3459  loop[a in 0 to 255 / b in 0 to 255]  -> :3462  r(a*256 + b)
+rtl/llama_top.vhd:3486  loop[a in 0 to 255 / b in 0 to 255]  -> :3488  CBMARK(a*256 + b)
+rtl/llama_top.vhd:3486  loop[a in 0 to 255 / b in 0 to 255]  -> :3489  CBMAP(a*256 + b)
+rtl/llama_top.vhd:3501  loop[k in 0 to NW_N-1 / w in 0 to NWORD-1]  -> :3503  r(k*NWORD + w)
+rtl/llama_top.vhd:4724  loop[rr in 0 to A_ROWS_IF-1]  -> :4725  smp_be_dat(rr*32+31 downto rr*32)
+rtl/llama_top.vhd:4724  loop[rr in 0 to A_ROWS_IF-1]  -> :4726  y_data(rr*64+31 downto rr*64)
+rtl/llama_top.vhd:4742  loop[rr in 0 to A_ROWS_IF-1]  -> :4744  y_data(rr*64+MANT_W-1 downto rr*64)
+rtl/matvec_core.vhd:997  loop[i in 0 to LVLR-1 / i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1302  wm(2*i+1)
+rtl/matvec_core.vhd:997  loop[i in 0 to LVLR-1 / i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1302  wm(2*i)
+rtl/matvec_core.vhd:997  loop[i in 0 to LVLR-1 / i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1314  fold(sg*HALF + i)
+rtl/matvec_core.vhd:998  loop[i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1302  wm(2*i+1)
+rtl/matvec_core.vhd:998  loop[i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1302  wm(2*i)
+rtl/matvec_core.vhd:998  loop[i in 0 to PIPE-1 / i in PIPE-1 downto 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / j in 0 to BLK-1 / l in 1 to LVL / rr in 0 to ROWS_IF-1 / i in 0 to (BLK / (2**l)) - 1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in 0 to ROWS_IF-1 / rr in ROWS_IF to MAXPOW-1 / i in 0 to HALF-1 / sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1 / rr in 0 to ROWS_IF-1]  -> :1314  fold(sg*HALF + i)
+rtl/matvec_core.vhd:1070  loop[rr in 0 to ROWS_IF-1]  -> :1071  s_data(rr*16+15 downto rr*16)
+rtl/matvec_core.vhd:1107  loop[j in 0 to BLK-1]  -> :1110  x_r(j*16+15 downto j*16)
+rtl/matvec_core.vhd:1162  loop[rr in 0 to ROWS_IF-1]  -> :1163  tp_val(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1185  loop[rr in 0 to ROWS_IF-1]  -> :1186  tc_val(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1185  loop[rr in 0 to ROWS_IF-1]  -> :1195  ta_val(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1225  loop[rr in 0 to ROWS_IF-1]  -> :1235  ynew(rr*32+31 downto rr*32)
+rtl/matvec_core.vhd:1225  loop[rr in 0 to ROWS_IF-1]  -> :1241  y_data(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1301  loop[i in 0 to HALF-1]  -> :1302  wm(2*i+1)
+rtl/matvec_core.vhd:1301  loop[i in 0 to HALF-1]  -> :1302  wm(2*i)
+rtl/matvec_core.vhd:1309  loop[sg in 1 to LVLR-1 / i in 0 to (MAXPOW / (2**(sg+1))) - 1]  -> :1314  fold(sg*HALF + i)
+rtl/matvec_core.vhd:1406  loop[rr in 0 to ROWS_IF-1]  -> :1411  ybuf_q(rr*32+31 downto rr*32)
+rtl/matvec_core.vhd:1422  loop[rr in 0 to ROWS_IF-1]  -> :1424  y_data(rr*64+63 downto rr*64)
+rtl/matvec_core.vhd:1422  loop[rr in 0 to ROWS_IF-1]  -> :1425  tm_val(rr*64+63 downto rr*64)
+rtl/ooc_normadapt_top.vhd:842  loop[a in 0 to 255 / b in 0 to 255]  -> :844  CBMARK(a*256 + b)
+rtl/ooc_normadapt_top.vhd:855  loop[a in 0 to 255 / b in 0 to 255]  -> :857  CBMARK(a*256 + b)
+rtl/ooc_normadapt_top.vhd:855  loop[a in 0 to 255 / b in 0 to 255]  -> :858  r(a*256 + b)
+rtl/ooc_normadapt_top.vhd:882  loop[a in 0 to 255 / b in 0 to 255]  -> :884  CBMARK(a*256 + b)
+rtl/ooc_normadapt_top.vhd:882  loop[a in 0 to 255 / b in 0 to 255]  -> :885  CBMAP(a*256 + b)
+rtl/ooc_normadapt_top.vhd:897  loop[k in 0 to NW_N-1 / w in 0 to NWORD-1]  -> :899  r(k*NWORD + w)
+rtl/seq_ctrl.vhd:276  loop[p in 0 to NGEN-1 / l in 0 to NLAYERS-1]  -> :344  PROMPT(p + 1)
+rtl/seq_region_lock.vhd:385  loop[i in 0 to NREG-1]  -> :386  lock_state(2*i+1 downto 2*i)
+rtl/seq_top_skel.vhd:434  loop[i in 0 to NREG-1]  -> :435  lock_state(2*i+1 downto 2*i)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :232  m_arvalid(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :232  m_arready(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :237  m_rvalid(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :237  m_rready(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :239  m_rlast(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :240  qv(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :240  qd(NPORTS_W+q)
+rtl/weight_streamer.vhd:224  loop[q in 0 to NPORTS_S-1]  -> :241  qr(NPORTS_W+q)
+rtl/weight_streamer.vhd:283  loop[q in 0 to NPORTS_S-1 / q in 0 to NPORTS_S-1 / q in 0 to NPORTS_S-1]  -> :291  qr(NPORTS_W+q)
+rtl/weight_streamer.vhd:283  loop[q in 0 to NPORTS_S-1 / q in 0 to NPORTS_S-1 / q in 0 to NPORTS_S-1]  -> :314  qd(NPORTS_W+q)
+rtl/weight_streamer.vhd:290  loop[q in 0 to NPORTS_S-1]  -> :291  qr(NPORTS_W+q)
+rtl/weight_streamer.vhd:313  loop[q in 0 to NPORTS_S-1]  -> :314  qd(NPORTS_W+q)
+
+=== runtime-indexed (NOT this class; kept as the filter's control) ===
+rtl/attention.vhd:226 kc_v(base + j)  nonstatic=BASE
+rtl/attention.vhd:228 vc_v(base + j)  nonstatic=BASE
+rtl/attention.vhd:300 kc_v(cur_pos*KVDIM + j)  nonstatic=CUR_POS
+rtl/attention.vhd:302 vc_v(cur_pos*KVDIM + j)  nonstatic=CUR_POS
+rtl/attention.vhd:349 kc_v(t*KVDIM + kv_h*HEAD_SIZE + j)  nonstatic=KV_H
+rtl/attention.vhd:433 vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)  nonstatic=KV_H
+rtl/attention.vhd:449 xb_acc(hd*HEAD_SIZE + j)  nonstatic=HD
+rtl/attn_block.vhd:2197 vref_r(lay_r*N_KVH + h)  nonstatic=LAY_R
+rtl/attn_mac_array.vhd:391 av(h*DIM_TILE + t2)  nonstatic=H
+rtl/attn_mac_array.vhd:394 bv(h*DIM_TILE + t2)  nonstatic=H
+rtl/attn_mac_array.vhd:446 p_reg(h*DIM_TILE + t2)  nonstatic=H
+rtl/engine_shared.vhd:268 a(l*DIM+j)  nonstatic=L
+rtl/fk33_llama_top.vhd:3583 CBMARK(a*256 + b)  nonstatic=A
+rtl/fk33_llama_top.vhd:3597 r(a*256 + b)  nonstatic=A
+rtl/fk33_llama_top.vhd:3624 CBMAP(a*256 + b)  nonstatic=A
+rtl/fk33_llama_top.vhd:3638 r(k*NWORD + w)  nonstatic=K
+rtl/fk33_llama_top.vhd:6307 m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/fk33_llama_top.vhd:6349 m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/gdn_conv.vhd:364 amp(ln + half)  nonstatic=HALF
+rtl/gdn_conv_tap_mem.vhd:426 rq(sl*CONV_LANES + ln)  nonstatic=SL
+rtl/gdn_conv_w_mem.vhd:257 rq(t*CONV_LANES + ln)  nonstatic=T
+rtl/gdn_recur.vhd:314 w18a(base+k)  nonstatic=BASE
+rtl/gdn_recur.vhd:341 skp(k + half)  nonstatic=HALF
+rtl/gdn_recur.vhd:511 ua(base+k)  nonstatic=BASE
+rtl/gdn_recur.vhd:540 amp(k + half)  nonstatic=HALF
+rtl/gdn_recur.vhd:627 op(k + half)  nonstatic=HALF
+rtl/layer.vhd:318 kc_v(t*KVDIM+j)  nonstatic=T
+rtl/layer.vhd:319 vc_v(t*KVDIM+j)  nonstatic=T
+rtl/layer.vhd:381 WQ_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:410 WK_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:451 WV_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:546 kc_v(cur_pos*KVDIM+j)  nonstatic=CUR_POS
+rtl/layer.vhd:547 vc_v(cur_pos*KVDIM+j)  nonstatic=CUR_POS
+rtl/layer.vhd:590 kc_v(t*KVDIM + kv_h*HEAD_SIZE + j)  nonstatic=KV_H
+rtl/layer.vhd:661 vc_v(t*KVDIM + kv_h*HEAD_SIZE + j)  nonstatic=KV_H
+rtl/layer.vhd:569 q_v(h*HEAD_SIZE + j)  nonstatic=H
+rtl/layer.vhd:656 xb_att_r(h*HEAD_SIZE + j)  nonstatic=H
+rtl/layer.vhd:718 WO_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:816 W1_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:844 W3_MANT(i*DIM+j)  nonstatic=I
+rtl/layer.vhd:920 W2_MANT(i*HIDDEN+j)  nonstatic=I
+rtl/layer_ar.vhd:73 a(base+j)  nonstatic=BASE
+rtl/layer_fsm.vhd:103 a(base+j)  nonstatic=BASE
+rtl/layer_fsm.vhd:418 hk_v(t*KVDIM+j)  nonstatic=T
+rtl/layer_fsm.vhd:420 hv_v(t*KVDIM+j)  nonstatic=T
+rtl/layer_fsm.vhd:481 hk_v(att_t*KVDIM+j)  nonstatic=ATT_T
+rtl/layer_fsm.vhd:483 hv_v(att_t*KVDIM+j)  nonstatic=ATT_T
+rtl/llama_top.vhd:3448 CBMARK(a*256 + b)  nonstatic=A
+rtl/llama_top.vhd:3462 r(a*256 + b)  nonstatic=A
+rtl/llama_top.vhd:3489 CBMAP(a*256 + b)  nonstatic=A
+rtl/llama_top.vhd:3503 r(k*NWORD + w)  nonstatic=K
+rtl/llama_top.vhd:5683 m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/llama_top.vhd:5725 m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/matmul.vhd:90 WMANT(WM_LOW + cur_row*IN_COLS + j)  nonstatic=CUR_ROW
+rtl/matvec_core.vhd:1314 fold(sg*HALF + i)  nonstatic=SG
+rtl/matvec_engine.vhd:98 WQ_L0(cur_row*IN_DIM + j)  nonstatic=CUR_ROW,IN_DIM
+rtl/matvec_int4_axi.vhd:192 v(v'low + i)  nonstatic=LOW,V
+rtl/matvec_int4_desc_axi.vhd:656 dw(DESC_BASE0 + p)  nonstatic=DESC_BASE0
+rtl/matvec_int4_desc_axi.vhd:660 dw(DESC_BASE0 + NPORTS_W + q)  nonstatic=DESC_BASE0
+rtl/matvec_int4_desc_axi.vhd:673 ei(EI_SUB_NONE, DESC_BASE0 + p)  nonstatic=DESC_BASE0,EI_SUB_NONE
+rtl/ooc_gdnadapt_ss_top.vhd:447 m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/ooc_gdnadapt_ss_top.vhd:479 m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/ooc_gdnadapt_ss_top.vhd:817 zb(h*DM + j)  nonstatic=H
+rtl/ooc_gdnadapt_top.vhd:815 m12(cvq_seg*65537 + cvq_grp*13, t*101 + ln + 5)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/ooc_gdnadapt_top.vhd:857 m12(cvq_seg*104729 + cvq_grp*31, t*17 + ln)  nonstatic=CVQ_GRP,CVQ_SEG
+rtl/ooc_normadapt_top.vhd:844 CBMARK(a*256 + b)  nonstatic=A
+rtl/ooc_normadapt_top.vhd:858 r(a*256 + b)  nonstatic=A
+rtl/ooc_normadapt_top.vhd:885 CBMAP(a*256 + b)  nonstatic=A
+rtl/ooc_normadapt_top.vhd:899 r(k*NWORD + w)  nonstatic=K

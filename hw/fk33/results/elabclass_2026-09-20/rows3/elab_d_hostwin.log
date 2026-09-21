@@ -1,0 +1,994 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=d_hostwin top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=d_hostwin gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex HOST_WINDOW=true"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=d_hostwin extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1301.402 ; gain = 30.840 ; free physical = 12139 ; free virtual = 59995
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=d_hostwin files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top fk33_llama_top -part xcvu33p-fsvh2104-2L-e -generic A_DESC=true -generic B_STATE_AXI=true -generic B_SRC_REAL=true -generic B_CONST_HBM=true -generic C_KV_AXI=true -generic HOST_WINDOW=false -generic C_REAL=true -generic NORM_REAL=true -generic SWG_REAL=true -generic SMP_EN=true -generic C_N_ROT=64 -generic C_KV_BLOCK=32 -generic C_KV_ADDR_W=33 -generic C_K_BASE_CH=282672640 -generic C_V_BASE_CH=318324224 -generic C_MAXPOS=65536 -generic C_CTXLEN=65536 -generic WDOG_LIMIT=4000000 -generic A_ROWS_IF=48 -generic A_JOB_STRIDE=262144 -generic NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex -generic C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex -generic HOST_WINDOW=true
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2390079
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 2782.797 ; gain = 396.035 ; free physical = 10468 ; free virtual = 58214
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+	Parameter WDOG_LIMIT bound to: 4000000 - type: integer 
+	Parameter B_SRC_REAL bound to: 1 - type: bool 
+	Parameter NORM_REAL bound to: 1 - type: bool 
+	Parameter NORM_W_IMAGE bound to: /home/labuser/elabclass/gen/norm_w_9b.hex - type: string 
+	Parameter SWG_REAL bound to: 1 - type: bool 
+	Parameter C_REAL bound to: 1 - type: bool 
+	Parameter C_KV_BLOCK bound to: 32 - type: integer 
+	Parameter C_N_ROT bound to: 64 - type: integer 
+	Parameter C_MAXPOS bound to: 65536 - type: integer 
+	Parameter C_KV_AXI bound to: 1 - type: bool 
+	Parameter C_CTXLEN bound to: 65536 - type: integer 
+	Parameter C_K_BASE_CH bound to: 282672640 - type: integer 
+	Parameter C_V_BASE_CH bound to: 318324224 - type: integer 
+	Parameter C_KV_ADDR_W bound to: 33 - type: integer 
+	Parameter C_QKN_IMAGE bound to: /home/labuser/elabclass/gen/qkn_9b.hex - type: string 
+	Parameter SMP_EN bound to: 1 - type: bool 
+	Parameter A_ROWS_IF bound to: 48 - type: integer 
+	Parameter A_JOB_STRIDE bound to: 262144 - type: integer 
+	Parameter B_CONST_HBM bound to: 1 - type: bool 
+	Parameter B_STATE_AXI bound to: 1 - type: bool 
+	Parameter HOST_WINDOW bound to: 1 - type: bool 
+	Parameter A_DESC bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'region_mem' [/home/labuser/elabclass/rtl/region_mem.vhd:128]
+	Parameter NREGION bound to: 14 - type: integer 
+	Parameter REGMAX bound to: 12288 - type: integer 
+	Parameter LANES bound to: 8 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter GA_W bound to: 11 - type: integer 
+	Parameter SZ bound to: 448'b0000000000000000000100000000000000000000000000000001000000000000000000000000000000100000000000000000000000000000000100000000000000000000000000000000000000100000000000000000000000000000001000000000000000000000001000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000011000000000000000000000000000000110000000000000000000000000000001100000000000000000000000000000001000000000000 
+	Parameter HOST_WINDOW bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'region_mem' (0#1) [/home/labuser/elabclass/rtl/region_mem.vhd:128]
+INFO: [Synth 8-638] synthesizing module 'seq_desc_fetch' [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:250]
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter EPOCH_W bound to: 4 - type: integer 
+	Parameter NUNIT bound to: 5 - type: integer 
+	Parameter NSUB_MAX bound to: 64 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter WDOG_LIMIT bound to: 4000000 - type: integer 
+	Parameter STRICT_PROTO bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:893]
+INFO: [Synth 8-256] done synthesizing module 'seq_desc_fetch' (0#1) [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:250]
+INFO: [Synth 8-638] synthesizing module 'seq_opdec' [/home/labuser/elabclass/rtl/seq_opdec.vhd:281]
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter SEGS bound to: 3 - type: integer 
+	Parameter ADDR_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter NUNIT bound to: 5 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter OPC_CONS bound to: 256'b0000000000000000000000000000000000000000000000000000000000111000000000000000000000000001100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000010000000000000000000000000000000000000000000 
+	Parameter MSEG_REG bound to: 2 - type: integer 
+	Parameter MSEG_OFF1 bound to: 2048 - type: integer 
+	Parameter MSEG_OFF2 bound to: 4096 - type: integer 
+	Parameter REL_NAIVE bound to: 0 - type: bool 
+	Parameter HOST_REG bound to: 0 - type: integer 
+	Parameter HOST_ROWS bound to: 4096 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_opdec.vhd:685]
+INFO: [Synth 8-256] done synthesizing module 'seq_opdec' (0#1) [/home/labuser/elabclass/rtl/seq_opdec.vhd:281]
+INFO: [Synth 8-638] synthesizing module 'seq_region_lock' [/home/labuser/elabclass/rtl/seq_region_lock.vhd:208]
+	Parameter REG_SIZE bound to: 448'b0000000000000000000100000000000000000000000000000001000000000000000000000000000000100000000000000000000000000000000100000000000000000000000000000000000000100000000000000000000000000000001000000000000000000000001000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000011000000000000000000000000000000110000000000000000000000000000001100000000000000000000000000000001000000000000 
+	Parameter SEGS bound to: 3 - type: integer 
+	Parameter ADDR_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_region_lock.vhd:527]
+INFO: [Synth 8-256] done synthesizing module 'seq_region_lock' (0#1) [/home/labuser/elabclass/rtl/seq_region_lock.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'seq_vec_issue' [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:214]
+	Parameter NVOP bound to: 3 - type: integer 
+	Parameter OP_BASE bound to: 4 - type: integer 
+	Parameter MY_UNIT bound to: 4 - type: integer 
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter VN_W bound to: 14 - type: integer 
+	Parameter EPOCH_W bound to: 4 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:490]
+INFO: [Synth 8-256] done synthesizing module 'seq_vec_issue' (0#1) [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:214]
+INFO: [Synth 8-638] synthesizing module 'seq_vec_res' [/home/labuser/elabclass/rtl/seq_vec_res.vhd:221]
+	Parameter LANES bound to: 8 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter ACC_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter ADDR_W bound to: 14 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_vec_res.vhd:644]
+INFO: [Synth 8-256] done synthesizing module 'seq_vec_res' (0#1) [/home/labuser/elabclass/rtl/seq_vec_res.vhd:221]
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_bf_mem' [/home/labuser/elabclass/rtl/rmsnorm_bf_mem.vhd:254]
+	Parameter N bound to: 4096 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+INFO: [Synth 8-638] synthesizing module 'vec_mem' [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+	Parameter WORDS bound to: 1024 - type: integer 
+	Parameter W bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'vec_mem' (0#1) [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+INFO: [Synth 8-256] done synthesizing module 'rmsnorm_bf_mem' (0#1) [/home/labuser/elabclass/rtl/rmsnorm_bf_mem.vhd:254]
+INFO: [Synth 8-638] synthesizing module 'swiglu_mem' [/home/labuser/elabclass/rtl/swiglu_mem.vhd:221]
+	Parameter N bound to: 12288 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter LANES bound to: 1 - type: integer 
+	Parameter WIDE_IO bound to: 0 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'vec_mem__parameterized0' [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+	Parameter WORDS bound to: 12288 - type: integer 
+	Parameter W bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'vec_mem__parameterized0' (0#1) [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/fixed_pkg.vhd:215]
+INFO: [Synth 8-256] done synthesizing module 'swiglu_mem' (0#1) [/home/labuser/elabclass/rtl/swiglu_mem.vhd:221]
+INFO: [Synth 8-638] synthesizing module 'a_job_counter' [/home/labuser/elabclass/rtl/a_job_counter.vhd:119]
+	Parameter N_JOBS bound to: 311 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'a_job_counter' (0#1) [/home/labuser/elabclass/rtl/a_job_counter.vhd:119]
+INFO: [Synth 8-638] synthesizing module 'a_desc_adapter' [/home/labuser/elabclass/rtl/a_desc_adapter.vhd:109]
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter LITE_AW bound to: 12 - type: integer 
+	Parameter DESC_STRIDE bound to: 512 - type: integer 
+	Parameter N_JOBS bound to: 311 - type: integer 
+	Parameter EPOCH_W bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'a_desc_adapter' (0#1) [/home/labuser/elabclass/rtl/a_desc_adapter.vhd:109]
+INFO: [Synth 8-638] synthesizing module 'gdn_block' [/home/labuser/elabclass/rtl/gdn_block.vhd:358]
+	Parameter KEY_HEADS bound to: 16 - type: integer 
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter RECUR_SLOTS bound to: 16 - type: integer 
+	Parameter L2_LANES bound to: 4 - type: integer 
+	Parameter SILU_LANES bound to: 8 - type: integer 
+	Parameter RMS_LANES bound to: 4 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[0][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[1][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[2][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[3][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[4][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][4]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][5]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][6]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][7]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][8]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][9]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][10]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][11]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][12]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][13]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][14]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[5][15]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[6][0]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[6][1]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[6][2]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+WARNING: [Synth 8-7186] Applying attribute ram_style = "distributed" is ignored, object 'qbuf[6][3]' is not inferred as ram due to incorrect usage [/home/labuser/elabclass/rtl/gdn_block.vhd:396]
+INFO: [Common 17-14] Message 'Synth 8-7186' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+INFO: [Synth 8-638] synthesizing module 'gdn_exp_capture' [/home/labuser/elabclass/rtl/gdn_exp_capture.vhd:87]
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter SEGS bound to: 3 - type: integer 
+	Parameter K bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_exp_capture' (0#1) [/home/labuser/elabclass/rtl/gdn_exp_capture.vhd:87]
+INFO: [Synth 8-638] synthesizing module 'gdn_conv' [/home/labuser/elabclass/rtl/gdn_conv.vhd:101]
+	Parameter CH_MAX bound to: 4096 - type: integer 
+	Parameter K bound to: 4 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_conv' (0#1) [/home/labuser/elabclass/rtl/gdn_conv.vhd:101]
+INFO: [Synth 8-638] synthesizing module 'gdn_silu' [/home/labuser/elabclass/rtl/gdn_silu.vhd:69]
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter ARG_Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_silu' (0#1) [/home/labuser/elabclass/rtl/gdn_silu.vhd:69]
+INFO: [Synth 8-638] synthesizing module 'l2norm_rs' [/home/labuser/elabclass/rtl/l2norm_rs.vhd:110]
+	Parameter N bound to: 128 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'l2norm_rs' (0#1) [/home/labuser/elabclass/rtl/l2norm_rs.vhd:110]
+INFO: [Synth 8-638] synthesizing module 'gdn_scalar' [/home/labuser/elabclass/rtl/gdn_scalar.vhd:97]
+	Parameter SP_Q bound to: 18 - type: integer 
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/gdn_scalar.vhd:295]
+INFO: [Synth 8-256] done synthesizing module 'gdn_scalar' (0#1) [/home/labuser/elabclass/rtl/gdn_scalar.vhd:97]
+INFO: [Synth 8-638] synthesizing module 'gdn_recur_pipe' [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:122]
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter SLOTS bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_recur_pipe' (0#1) [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:122]
+INFO: [Synth 8-638] synthesizing module 'gdn_emit_chain' [/home/labuser/elabclass/rtl/gdn_emit_chain.vhd:194]
+	Parameter HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter SILU_LANES bound to: 8 - type: integer 
+	Parameter RMS_LANES bound to: 4 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter EPS bound to: 0.000001 - type: double 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/gdn_emit_chain.vhd:275]
+INFO: [Synth 8-638] synthesizing module 'gdn_head_emit' [/home/labuser/elabclass/rtl/gdn_head_emit.vhd:151]
+	Parameter DIM bound to: 128 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_head_emit' (0#1) [/home/labuser/elabclass/rtl/gdn_head_emit.vhd:151]
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_bf' [/home/labuser/elabclass/rtl/rmsnorm_bf.vhd:163]
+	Parameter N bound to: 128 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter EPS bound to: 0.000001 - type: double 
+INFO: [Synth 8-256] done synthesizing module 'rmsnorm_bf' (0#1) [/home/labuser/elabclass/rtl/rmsnorm_bf.vhd:163]
+INFO: [Synth 8-638] synthesizing module 'gdn_silu__parameterized0' [/home/labuser/elabclass/rtl/gdn_silu.vhd:69]
+	Parameter LANES bound to: 8 - type: integer 
+	Parameter ARG_Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_silu__parameterized0' (0#1) [/home/labuser/elabclass/rtl/gdn_silu.vhd:69]
+INFO: [Synth 8-638] synthesizing module 'gdn_y_emit' [/home/labuser/elabclass/rtl/gdn_y_emit.vhd:119]
+	Parameter HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_y_emit' (0#1) [/home/labuser/elabclass/rtl/gdn_y_emit.vhd:119]
+INFO: [Synth 8-256] done synthesizing module 'gdn_emit_chain' (0#1) [/home/labuser/elabclass/rtl/gdn_emit_chain.vhd:194]
+INFO: [Synth 8-256] done synthesizing module 'gdn_block' (0#1) [/home/labuser/elabclass/rtl/gdn_block.vhd:358]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_store' [/home/labuser/elabclass/rtl/gdn_state_store.vhd:263]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter KEY_HEADS bound to: 16 - type: integer 
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 1048576 - type: integer 
+	Parameter EXP_BYTES bound to: 4096 - type: integer 
+	Parameter CONV_BYTES bound to: 49152 - type: integer 
+	Parameter CONST_EN bound to: 1 - type: bool 
+	Parameter CONST_STRIDE bound to: 66048 - type: integer 
+	Parameter CONST_BYTES bound to: 66048 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter NWIDE bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'gdn_state_mem' [/home/labuser/elabclass/rtl/gdn_state_mem.vhd:103]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter STYLE bound to: ultra - type: string 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter WPB bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_mem' (0#1) [/home/labuser/elabclass/rtl/gdn_state_mem.vhd:103]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi' [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 64 - type: integer 
+	Parameter N_GRP bound to: 32 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 1048576 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi' (0#1) [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_exp_mem' [/home/labuser/elabclass/rtl/gdn_exp_mem.vhd:141]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter STYLE bound to: distributed - type: string 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter WPB bound to: 32 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_exp_mem' (0#1) [/home/labuser/elabclass/rtl/gdn_exp_mem.vhd:141]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized0' [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 8 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 4096 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized0' (0#1) [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_conv_tap_mem' [/home/labuser/elabclass/rtl/gdn_conv_tap_mem.vhd:231]
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter KEY_CH bound to: 2048 - type: integer 
+	Parameter VAL_CH bound to: 4096 - type: integer 
+	Parameter STYLE bound to: block - type: string 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter WPB bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_conv_tap_mem' (0#1) [/home/labuser/elabclass/rtl/gdn_conv_tap_mem.vhd:231]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized1' [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 1 - type: integer 
+	Parameter DIM bound to: 24576 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 16 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 1101824 - type: integer 
+	Parameter MANT_BYTES bound to: 49152 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized1' (0#1) [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'gdn_conv_w_mem' [/home/labuser/elabclass/rtl/gdn_conv_w_mem.vhd:126]
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter KEY_CH bound to: 2048 - type: integer 
+	Parameter VAL_CH bound to: 4096 - type: integer 
+	Parameter STYLE bound to: block - type: string 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter WPB bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_conv_w_mem' (0#1) [/home/labuser/elabclass/rtl/gdn_conv_w_mem.vhd:126]
+INFO: [Synth 8-638] synthesizing module 'gdn_state_axi__parameterized2' [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+	Parameter VAL_HEADS bound to: 1 - type: integer 
+	Parameter DIM bound to: 33024 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+	Parameter WORD_BITS bound to: 16 - type: integer 
+	Parameter N_GRP bound to: 1 - type: integer 
+	Parameter LAYER_STRIDE bound to: 66048 - type: integer 
+	Parameter MANT_BYTES bound to: 66048 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_axi__parameterized2' (0#1) [/home/labuser/elabclass/rtl/gdn_state_axi.vhd:208]
+INFO: [Synth 8-256] done synthesizing module 'gdn_state_store' (0#1) [/home/labuser/elabclass/rtl/gdn_state_store.vhd:263]
+INFO: [Synth 8-638] synthesizing module 'gdn_job_seq' [/home/labuser/elabclass/rtl/gdn_job_seq.vhd:112]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter KEY_HEADS bound to: 16 - type: integer 
+	Parameter KCONV bound to: 4 - type: integer 
+	Parameter CONV_LANES bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 24 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'gdn_job_seq' (0#1) [/home/labuser/elabclass/rtl/gdn_job_seq.vhd:112]
+INFO: [Synth 8-638] synthesizing module 'attn_kv_axi' [/home/labuser/elabclass/rtl/attn_kv_axi.vhd:361]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter KV_BLOCK bound to: 32 - type: integer 
+	Parameter N_KVH bound to: 4 - type: integer 
+	Parameter LAYERS bound to: 8 - type: integer 
+	Parameter MAXCTX bound to: 65536 - type: integer 
+	Parameter POS_W bound to: 17 - type: integer 
+	Parameter CM_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 33 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 4 - type: integer 
+	Parameter RBUF bound to: 4 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'attn_kv_axi' (0#1) [/home/labuser/elabclass/rtl/attn_kv_axi.vhd:361]
+INFO: [Synth 8-638] synthesizing module 'attn_block' [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter N_QH bound to: 16 - type: integer 
+	Parameter N_KVH bound to: 4 - type: integer 
+	Parameter KV_BLOCK bound to: 32 - type: integer 
+	Parameter N_ROT bound to: 64 - type: integer 
+	Parameter LAYERS bound to: 8 - type: integer 
+	Parameter POS_W bound to: 17 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter CM_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter NORM_LANES bound to: 1 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+	Parameter SWEEP_PIPE bound to: 1 - type: bool 
+	Parameter SCORE_EARLY bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_rs' [/home/labuser/elabclass/rtl/rmsnorm_rs.vhd:81]
+	Parameter N bound to: 256 - type: integer 
+	Parameter LANES bound to: 1 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'rmsnorm_rs' (0#1) [/home/labuser/elabclass/rtl/rmsnorm_rs.vhd:81]
+INFO: [Synth 8-638] synthesizing module 'attn_twiddle' [/home/labuser/elabclass/rtl/attn_twiddle.vhd:165]
+	Parameter NPAIR bound to: 32 - type: integer 
+	Parameter TBL bound to: 1024 - type: integer 
+	Parameter POS_W bound to: 17 - type: integer 
+	Parameter Q_W bound to: 16 - type: integer 
+	Parameter PHI_W bound to: 32 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_twiddle' (0#1) [/home/labuser/elabclass/rtl/attn_twiddle.vhd:165]
+INFO: [Synth 8-638] synthesizing module 'attn_rope' [/home/labuser/elabclass/rtl/attn_rope.vhd:206]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter N_ROT bound to: 64 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter Q bound to: 15 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_rope' (0#1) [/home/labuser/elabclass/rtl/attn_rope.vhd:206]
+INFO: [Synth 8-638] synthesizing module 'attn_kv_quant' [/home/labuser/elabclass/rtl/attn_kv_quant.vhd:223]
+	Parameter HEAD_DIM bound to: 256 - type: integer 
+	Parameter KV_BLOCK bound to: 32 - type: integer 
+	Parameter IN_W bound to: 16 - type: integer 
+	Parameter MANT_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter VREF_INIT bound to: 127 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_kv_quant' (0#1) [/home/labuser/elabclass/rtl/attn_kv_quant.vhd:223]
+INFO: [Synth 8-638] synthesizing module 'attn_mac_array' [/home/labuser/elabclass/rtl/attn_mac_array.vhd:222]
+	Parameter QH_TILE bound to: 4 - type: integer 
+	Parameter DIM_TILE bound to: 32 - type: integer 
+	Parameter ACC_N bound to: 8 - type: integer 
+	Parameter Q_W bound to: 16 - type: integer 
+	Parameter K_W bound to: 8 - type: integer 
+	Parameter E_W bound to: 13 - type: integer 
+	Parameter ACC_W bound to: 36 - type: integer 
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_mac_array' (0#1) [/home/labuser/elabclass/rtl/attn_mac_array.vhd:222]
+INFO: [Synth 8-638] synthesizing module 'attn_score_q12' [/home/labuser/elabclass/rtl/attn_score_q12.vhd:244]
+	Parameter NBLK bound to: 8 - type: integer 
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter KQ_SHIFT bound to: 4 - type: integer 
+	Parameter QOUT bound to: 12 - type: integer 
+	Parameter LSH_CLAMP bound to: 32 - type: integer 
+	Parameter RSH_CLAMP bound to: 32 - type: integer 
+	Parameter HDR_TREE bound to: 0 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_score_q12' (0#1) [/home/labuser/elabclass/rtl/attn_score_q12.vhd:244]
+INFO: [Synth 8-638] synthesizing module 'attn_softmax' [/home/labuser/elabclass/rtl/attn_softmax.vhd:283]
+	Parameter P_W bound to: 32 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter ROM_N bound to: 256 - type: integer 
+	Parameter E_W bound to: 13 - type: integer 
+	Parameter S_W bound to: 26 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_softmax' (0#1) [/home/labuser/elabclass/rtl/attn_softmax.vhd:283]
+INFO: [Synth 8-638] synthesizing module 'attn_recip' [/home/labuser/elabclass/rtl/attn_recip.vhd:193]
+	Parameter S_W bound to: 26 - type: integer 
+	Parameter R_W bound to: 16 - type: integer 
+	Parameter R_Q bound to: 15 - type: integer 
+	Parameter NW bound to: 44 - type: integer 
+	Parameter DW bound to: 28 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'divider_rs' [/home/labuser/elabclass/rtl/divider_rs.vhd:79]
+	Parameter NW bound to: 44 - type: integer 
+	Parameter DW bound to: 28 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'divider_rs' (0#1) [/home/labuser/elabclass/rtl/divider_rs.vhd:79]
+INFO: [Synth 8-256] done synthesizing module 'attn_recip' (0#1) [/home/labuser/elabclass/rtl/attn_recip.vhd:193]
+INFO: [Synth 8-638] synthesizing module 'attn_gate' [/home/labuser/elabclass/rtl/attn_gate.vhd:260]
+	Parameter N bound to: 256 - type: integer 
+	Parameter O_W bound to: 36 - type: integer 
+	Parameter R_W bound to: 16 - type: integer 
+	Parameter P_W bound to: 5 - type: integer 
+	Parameter G_W bound to: 16 - type: integer 
+	Parameter Z_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter GQ bound to: 15 - type: integer 
+	Parameter T_W bound to: 24 - type: integer 
+	Parameter Y_W bound to: 24 - type: integer 
+	Parameter SIG_N bound to: 512 - type: integer 
+	Parameter LSH_CLAMP bound to: 32 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_gate' (0#1) [/home/labuser/elabclass/rtl/attn_gate.vhd:260]
+INFO: [Synth 8-638] synthesizing module 'attn_emit' [/home/labuser/elabclass/rtl/attn_emit.vhd:207]
+	Parameter NGRP bound to: 4 - type: integer 
+	Parameter GRP_N bound to: 1024 - type: integer 
+	Parameter IN_W bound to: 24 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter TARGET_MSB bound to: 14 - type: integer 
+	Parameter SH_MAX bound to: 63 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'attn_emit' (0#1) [/home/labuser/elabclass/rtl/attn_emit.vhd:207]
+INFO: [Synth 8-256] done synthesizing module 'attn_block' (0#1) [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+INFO: [Synth 8-638] synthesizing module 'sampler_stream' [/home/labuser/elabclass/rtl/sampler_stream.vhd:31]
+	Parameter VOCAB bound to: 248320 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'sampler_stream' (0#1) [/home/labuser/elabclass/rtl/sampler_stream.vhd:31]
+INFO: [Synth 8-256] done synthesizing module 'fk33_llama_top' (0#1) [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+WARNING: [Synth 8-6014] Unused sequential element dw_reg[0][5] was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:452]
+WARNING: [Synth 8-6014] Unused sequential element dw_reg[0][6] was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:452]
+WARNING: [Synth 8-6014] Unused sequential element dw_reg[1][5] was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:452]
+WARNING: [Synth 8-6014] Unused sequential element dw_reg[1][6] was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:452]
+WARNING: [Synth 8-6014] Unused sequential element post_ack_reg was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:636]
+WARNING: [Synth 8-6014] Unused sequential element start_acc_reg was removed.  [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:640]
+WARNING: [Synth 8-6014] Unused sequential element req_seen_reg was removed.  [/home/labuser/elabclass/rtl/seq_region_lock.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element j_step_reg was removed.  [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:354]
+WARNING: [Synth 8-3936] Found unconnected internal register 'o_rsel_reg' and it is trimmed from '3' to '2' bits. [/home/labuser/elabclass/rtl/rmsnorm_bf_mem.vhd:564]
+WARNING: [Synth 8-6014] Unused sequential element o_rsel_reg was removed.  [/home/labuser/elabclass/rtl/swiglu_mem.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element idx3_reg was removed.  [/home/labuser/elabclass/rtl/gdn_conv.vhd:277]
+WARNING: [Synth 8-6014] Unused sequential element amax_reg was removed.  [/home/labuser/elabclass/rtl/gdn_conv.vhd:370]
+WARNING: [Synth 8-6014] Unused sequential element v6_reg was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:218]
+WARNING: [Synth 8-6014] Unused sequential element eseg_r_reg was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:248]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[0] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[1] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[2] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element rl3_reg[3] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:334]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[0] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[1] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[2] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element sm5_reg[3] was removed.  [/home/labuser/elabclass/rtl/gdn_silu.vhd:350]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][e_u] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[0][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][e_u] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[1][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][e_u] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[2][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][e_u] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[3][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][tk0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][hsel] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][e_u] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][slot] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element a_ctx_reg[4][grp] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[0][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[1][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][tk0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[2][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][tk0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][sk2] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][shq] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[3][bias] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][tk0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][eg0] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][se_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][e_v] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][v_j] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][d_m] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+WARNING: [Synth 8-6014] Unused sequential element b_ctx_reg[4][su] was removed.  [/home/labuser/elabclass/rtl/gdn_recur_pipe.vhd:416]
+INFO: [Common 17-14] Message 'Synth 8-6014' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+WARNING: [Synth 8-11357] Potential Runtime issue for 3D-RAM or RAM from Record/Structs for RAM  mbank_reg with 16384 registers
+WARNING: [Synth 8-4767] Trying to implement RAM 'GEN_RD[0].hdr_r_reg' in registers. Block RAM or DRAM implementation is not possible; see log for reasons.
+Reason is one or more of the following :
+	1: RAM has multiple writes via different ports in same process. If RAM inferencing intended, write to one port per process. 
+	2: Unable to determine number of words or word size in RAM. 
+	3: No valid read/write found for RAM. 
+RAM "GEN_RD[0].hdr_r_reg" dissolved into registers
+WARNING: [Synth 8-4767] Trying to implement RAM 'GEN_RD[1].hdr_r_reg' in registers. Block RAM or DRAM implementation is not possible; see log for reasons.
+Reason is one or more of the following :
+	1: RAM has multiple writes via different ports in same process. If RAM inferencing intended, write to one port per process. 
+	2: Unable to determine number of words or word size in RAM. 
+	3: No valid read/write found for RAM. 
+RAM "GEN_RD[1].hdr_r_reg" dissolved into registers
+WARNING: [Synth 8-4767] Trying to implement RAM ' ' in registers. Block RAM or DRAM implementation is not possible; see log for reasons.
+	1: RAM read is not driven by RAM register. 
+	2: Unable to determine number of words or word size in RAM. 
+	3: No valid read/write found for RAM. 
+RAM dissolved into registers
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_arvalid[4] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_arvalid[3] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_arvalid[2] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_arvalid[1] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_arvalid[0] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[159] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[158] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[157] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[156] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[155] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[154] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[153] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[152] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[151] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[150] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[149] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[148] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[147] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[146] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[145] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[144] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[143] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[142] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[141] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[140] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[139] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[138] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[137] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[136] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[135] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[134] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[133] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[132] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[131] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[130] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[129] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[128] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[127] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[126] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[125] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[124] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[123] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[122] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[121] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[120] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[119] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[118] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[117] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[116] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[115] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[114] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[113] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[112] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[111] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[110] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[109] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[108] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[107] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[106] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[105] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[104] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[103] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[102] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[101] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[100] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[99] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[98] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[97] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[96] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[95] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[94] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[93] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[92] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[91] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[90] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[89] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[88] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[87] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[86] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[85] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[84] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[83] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[82] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[81] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[80] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[79] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[78] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[77] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[76] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[75] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[74] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[73] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[72] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[71] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[70] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[69] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[68] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[67] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[66] driven by constant 0
+WARNING: [Synth 8-3917] design fk33_llama_top has port m_araddr[65] driven by constant 0
+INFO: [Common 17-14] Message 'Synth 8-3917' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+WARNING: [Synth 8-7129] Port ep_ready in module attn_softmax is either unconnected or has no load
+WARNING: [Synth 8-7129] Port p_ready in module attn_mac_array is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[15] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[14] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[13] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[12] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[11] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[10] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[9] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[8] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[7] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[6] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[5] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[4] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[3] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[2] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[1] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[0] in module gdn_state_axi__parameterized2 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[15] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[14] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[13] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[12] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[11] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[10] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[9] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[8] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[7] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[6] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[5] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[4] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[3] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[2] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[1] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[0] in module gdn_state_axi__parameterized1 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[7] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[6] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[5] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[4] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[3] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[2] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[1] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[0] in module gdn_state_axi__parameterized0 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[63] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[62] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[61] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[60] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[59] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[58] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[57] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[56] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[55] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[54] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[53] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[52] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[51] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[50] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[49] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[48] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[47] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[46] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[45] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[44] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[43] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[42] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[41] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[40] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[39] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[38] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[37] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[36] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[35] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[34] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[33] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[32] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[31] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[30] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[29] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[28] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[27] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[26] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[25] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[24] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[23] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[22] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[21] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[20] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[19] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[18] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[17] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[16] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[15] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[14] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[13] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[12] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[11] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[10] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[9] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[8] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[7] in module gdn_state_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port m_r_data[6] in module gdn_state_axi is either unconnected or has no load
+INFO: [Common 17-14] Message 'Synth 8-7129' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:07:47 ; elapsed = 00:11:19 . Memory (MB): peak = 31118.320 ; gain = 28731.559 ; free physical = 495 ; free virtual = 26226
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:07:50 ; elapsed = 00:11:22 . Memory (MB): peak = 31118.320 ; gain = 28731.559 ; free physical = 487 ; free virtual = 26230
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:07:50 ; elapsed = 00:11:22 . Memory (MB): peak = 31118.320 ; gain = 28731.559 ; free physical = 487 ; free virtual = 26230
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:08 ; elapsed = 00:00:08 . Memory (MB): peak = 31118.328 ; gain = 0.000 ; free physical = 195 ; free virtual = 26591
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+Netlist sorting complete. Time (s): cpu = 00:00:00.05 ; elapsed = 00:00:00.06 . Memory (MB): peak = 31182.352 ; gain = 0.000 ; free physical = 216 ; free virtual = 26643
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:09:10 ; elapsed = 00:12:22 . Memory (MB): peak = 31182.387 ; gain = 28795.625 ; free physical = 189 ; free virtual = 26638
+108 Infos, 413 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:09:20 ; elapsed = 00:12:33 . Memory (MB): peak = 31182.387 ; gain = 29880.984 ; free physical = 189 ; free virtual = 26638
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 11249.947; main = 11125.095; forked = 527.099
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 32094.215; main = 31182.355; forked = 975.891
+# set tel [expr {[clock seconds] - $t1}]
+# puts "ELABCHK_SECONDS tag=$tag elaborate=$tel total=[expr {[clock seconds]-$t0}]"
+ELABCHK_SECONDS tag=d_hostwin elaborate=754 total=761
+# if {!$ok} {
+#     # Write the raw text out verbatim; a summary of an error is not the error.
+#     set fh [open [file join $outdir elabfail_$tag.txt] w]
+#     puts $fh $err
+#     close $fh
+#     puts "ELABCHK_ERRTEXT_BEGIN $tag"
+#     foreach l [split $err "\n"] { puts "  | $l" }
+#     puts "ELABCHK_ERRTEXT_END $tag"
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# set ncell [llength [get_cells -hier -quiet]]
+# set nport [llength [get_ports -quiet]]
+# puts "ELABCHK_SIZE tag=$tag rtl_cells=$ncell ports=$nport"
+ELABCHK_SIZE tag=d_hostwin rtl_cells=247724 ports=6635
+# if {$nport == 0} {
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# puts "ELABCHK_PASS $tag"
+ELABCHK_PASS d_hostwin
+INFO: [Common 17-206] Exiting Vivado at Mon Sep 21 00:05:37 2026...

@@ -1,0 +1,421 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=a_base top=matvec_int4_desc_axi part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=a_base gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 FAST_POP=true DUAL_CLK=true CHECK_JOB_INDEX=false"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=a_base extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1319.375 ; gain = 0.027 ; free physical = 10608 ; free virtual = 59933
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=a_base files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top matvec_int4_desc_axi -part xcvu33p-fsvh2104-2L-e -generic BLK=32 -generic ROWS_IF=48 -generic NPORTS_W=24 -generic NPORTS_S=3 -generic AXI_DW=256 -generic ADDR_W=40 -generic MAXCOLS=17408 -generic MAXROWS_BFP=17408 -generic FIFO_DEPTH=512 -generic MAXB=16 -generic MAXOUT=16 -generic DESC_MAXB=16 -generic FAST_POP=true -generic DUAL_CLK=true -generic CHECK_JOB_INDEX=false
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2206450
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 2783.145 ; gain = 397.043 ; free physical = 8794 ; free virtual = 58119
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'matvec_int4_desc_axi' [/home/labuser/elabclass/rtl/matvec_int4_desc_axi.vhd:285]
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter ROWS_IF bound to: 48 - type: integer 
+	Parameter NPORTS_W bound to: 24 - type: integer 
+	Parameter NPORTS_S bound to: 3 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter MAXCOLS bound to: 17408 - type: integer 
+	Parameter MAXROWS_BFP bound to: 17408 - type: integer 
+	Parameter FIFO_DEPTH bound to: 512 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 16 - type: integer 
+	Parameter DESC_MAXB bound to: 16 - type: integer 
+	Parameter CHECK_JOB_INDEX bound to: 0 - type: bool 
+	Parameter DUAL_CLK bound to: 1 - type: bool 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'axi_rd_port' [/home/labuser/elabclass/rtl/axi_rd_port.vhd:135]
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter DEPTH bound to: 64 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 2 - type: integer 
+	Parameter DUAL_CLK bound to: 1 - type: bool 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'axi_rd_fsm' [/home/labuser/elabclass/rtl/axi_rd_fsm.vhd:93]
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter BYTES bound to: 32 - type: integer 
+	Parameter DEPTH bound to: 64 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 2 - type: integer 
+	Parameter LVL_MARGIN bound to: 3 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'axi_rd_fsm' (0#1) [/home/labuser/elabclass/rtl/axi_rd_fsm.vhd:93]
+INFO: [Synth 8-638] synthesizing module 'async_fifo' [/home/labuser/elabclass/rtl/async_fifo.vhd:152]
+	Parameter W bound to: 256 - type: integer 
+	Parameter DEPTH bound to: 64 - type: integer 
+	Parameter OUT_MARGIN bound to: 3 - type: integer 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'async_fifo' (0#1) [/home/labuser/elabclass/rtl/async_fifo.vhd:152]
+INFO: [Synth 8-256] done synthesizing module 'axi_rd_port' (0#1) [/home/labuser/elabclass/rtl/axi_rd_port.vhd:135]
+INFO: [Synth 8-638] synthesizing module 'matvec_int4' [/home/labuser/elabclass/rtl/matvec_int4.vhd:145]
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter ROWS_IF bound to: 48 - type: integer 
+	Parameter NPORTS_W bound to: 24 - type: integer 
+	Parameter NPORTS_S bound to: 3 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter MAXCOLS bound to: 17408 - type: integer 
+	Parameter MAXROWS_BFP bound to: 17408 - type: integer 
+	Parameter FIFO_DEPTH bound to: 512 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 16 - type: integer 
+	Parameter DUAL_CLK bound to: 1 - type: bool 
+	Parameter CB_STYLE bound to: regs - type: string 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'weight_streamer' [/home/labuser/elabclass/rtl/weight_streamer.vhd:139]
+	Parameter NPORTS_W bound to: 24 - type: integer 
+	Parameter NPORTS_S bound to: 3 - type: integer 
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter ROWS_IF bound to: 48 - type: integer 
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter DEPTH bound to: 512 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 16 - type: integer 
+	Parameter DUAL_CLK bound to: 1 - type: bool 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'axi_rd_port__parameterized0' [/home/labuser/elabclass/rtl/axi_rd_port.vhd:135]
+	Parameter AXI_DW bound to: 256 - type: integer 
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter DEPTH bound to: 512 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 16 - type: integer 
+	Parameter DUAL_CLK bound to: 1 - type: bool 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'axi_rd_fsm__parameterized0' [/home/labuser/elabclass/rtl/axi_rd_fsm.vhd:93]
+	Parameter ADDR_W bound to: 40 - type: integer 
+	Parameter BYTES bound to: 32 - type: integer 
+	Parameter DEPTH bound to: 512 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 16 - type: integer 
+	Parameter LVL_MARGIN bound to: 3 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'axi_rd_fsm__parameterized0' (0#1) [/home/labuser/elabclass/rtl/axi_rd_fsm.vhd:93]
+INFO: [Synth 8-638] synthesizing module 'async_fifo__parameterized0' [/home/labuser/elabclass/rtl/async_fifo.vhd:152]
+	Parameter W bound to: 256 - type: integer 
+	Parameter DEPTH bound to: 512 - type: integer 
+	Parameter OUT_MARGIN bound to: 3 - type: integer 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'async_fifo__parameterized0' (0#1) [/home/labuser/elabclass/rtl/async_fifo.vhd:152]
+INFO: [Synth 8-256] done synthesizing module 'axi_rd_port__parameterized0' (0#1) [/home/labuser/elabclass/rtl/axi_rd_port.vhd:135]
+INFO: [Synth 8-256] done synthesizing module 'weight_streamer' (0#1) [/home/labuser/elabclass/rtl/weight_streamer.vhd:139]
+INFO: [Synth 8-638] synthesizing module 'act_mem_striped' [/home/labuser/elabclass/rtl/act_mem_striped.vhd:52]
+	Parameter ELEMS bound to: 17408 - type: integer 
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter LANES bound to: 4 - type: integer 
+	Parameter W bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'act_mem_striped' (0#1) [/home/labuser/elabclass/rtl/act_mem_striped.vhd:52]
+INFO: [Synth 8-638] synthesizing module 'matvec_core' [/home/labuser/elabclass/rtl/matvec_core.vhd:120]
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter ROWS_IF bound to: 48 - type: integer 
+	Parameter MAXCOLS bound to: 17408 - type: integer 
+	Parameter MAXROWS_BFP bound to: 17408 - type: integer 
+	Parameter CB_STYLE bound to: regs - type: string 
+INFO: [Synth 8-256] done synthesizing module 'matvec_core' (0#1) [/home/labuser/elabclass/rtl/matvec_core.vhd:120]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:223]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:224]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:225]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:226]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:227]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:228]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/matvec_int4.vhd:229]
+INFO: [Synth 8-256] done synthesizing module 'matvec_int4' (0#1) [/home/labuser/elabclass/rtl/matvec_int4.vhd:145]
+INFO: [Synth 8-256] done synthesizing module 'matvec_int4_desc_axi' (0#1) [/home/labuser/elabclass/rtl/matvec_int4_desc_axi.vhd:285]
+WARNING: [Synth 8-6014] Unused sequential element s_chunk_reg was removed.  [/home/labuser/elabclass/rtl/weight_streamer.vhd:295]
+WARNING: [Synth 8-11357] Potential Runtime issue for 3D-RAM or RAM from Record/Structs for RAM  tr_reg with 64512 registers
+WARNING: [Synth 8-11357] Potential Runtime issue for 3D-RAM or RAM from Record/Structs for RAM  trn_reg with 20160 registers
+WARNING: [Synth 8-6014] Unused sequential element tg_reg[9][tile] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1024]
+WARNING: [Synth 8-6014] Unused sequential element tg_reg[9][blk] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1024]
+WARNING: [Synth 8-6014] Unused sequential element tg_reg[9][first] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1024]
+WARNING: [Synth 8-6014] Unused sequential element tg_reg[9][last] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1024]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][0] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][1] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][2] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][3] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][4] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][5] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][6] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][7] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][8] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][9] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][10] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][11] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][12] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][13] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][14] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][15] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][16] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][17] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][18] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][19] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][20] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][21] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][22] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][23] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][24] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][25] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][26] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][27] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][28] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][29] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][30] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][31] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][32] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][33] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][34] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][35] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][36] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][37] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][38] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][39] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][40] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][41] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][42] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][43] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][44] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][45] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][46] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[7][47] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][0] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][1] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][2] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][3] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][4] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][5] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][6] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][7] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][8] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][9] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][10] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][11] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][12] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][13] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][14] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][15] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][16] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][17] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][18] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][19] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][20] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][21] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][22] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][23] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][24] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][25] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][26] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][27] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][28] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][29] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][30] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][31] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][32] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][33] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][34] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][35] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][36] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][37] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][38] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][39] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][40] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][41] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][42] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][43] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][44] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][45] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+WARNING: [Synth 8-6014] Unused sequential element scp_reg[8][46] was removed.  [/home/labuser/elabclass/rtl/matvec_core.vhd:1062]
+INFO: [Common 17-14] Message 'Synth 8-6014' appears 100 times and further instances of the messages will be disabled. Use the Tcl command set_msg_config to change the current settings.
+WARNING: [Synth 8-3917] design matvec_int4_desc_axi has port s_axi_bresp[1] driven by constant 0
+WARNING: [Synth 8-3917] design matvec_int4_desc_axi has port s_axi_bresp[0] driven by constant 0
+WARNING: [Synth 8-3917] design matvec_int4_desc_axi has port s_axi_rresp[1] driven by constant 0
+WARNING: [Synth 8-3917] design matvec_int4_desc_axi has port s_axi_rresp[0] driven by constant 0
+WARNING: [Synth 8-7129] Port x_waddr[15] in module matvec_int4 is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[31] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[30] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[29] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[28] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[27] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[26] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[25] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[24] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[23] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[22] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[21] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[20] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[19] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[18] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[17] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[16] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[15] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[14] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[13] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[12] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[11] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[10] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[9] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[8] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[7] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[6] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[5] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[4] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[3] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port job_index[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_awprot[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[3] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_wstrb[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_araddr[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port s_axi_arprot[0] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[31] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[30] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[29] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[28] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[27] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[26] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[25] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[24] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[23] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[22] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[21] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[20] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[19] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[18] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[17] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[16] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[15] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[14] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[13] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[12] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[11] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[10] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[9] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[8] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[7] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[6] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[5] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[4] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[3] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[2] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[1] in module matvec_int4_desc_axi is either unconnected or has no load
+WARNING: [Synth 8-7129] Port x_exp_in[0] in module matvec_int4_desc_axi is either unconnected or has no load
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:01:04 ; elapsed = 00:01:07 . Memory (MB): peak = 3694.965 ; gain = 1308.863 ; free physical = 7827 ; free virtual = 57168
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:01:06 ; elapsed = 00:01:10 . Memory (MB): peak = 3694.965 ; gain = 1308.863 ; free physical = 7835 ; free virtual = 57175
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:01:06 ; elapsed = 00:01:10 . Memory (MB): peak = 3694.965 ; gain = 1308.863 ; free physical = 7835 ; free virtual = 57175
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:03 ; elapsed = 00:00:03 . Memory (MB): peak = 3694.973 ; gain = 0.000 ; free physical = 8193 ; free virtual = 57534
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+Netlist sorting complete. Time (s): cpu = 00:00:00.04 ; elapsed = 00:00:00.04 . Memory (MB): peak = 3979.996 ; gain = 0.000 ; free physical = 7997 ; free virtual = 57339
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:01:37 ; elapsed = 00:01:31 . Memory (MB): peak = 3980.031 ; gain = 1593.930 ; free physical = 7988 ; free virtual = 57330
+29 Infos, 190 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:01:46 ; elapsed = 00:01:41 . Memory (MB): peak = 3980.031 ; gain = 2660.656 ; free physical = 7988 ; free virtual = 57330
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 3582.377; main = 3442.923; forked = 479.756
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 4714.852; main = 3980.000; forked = 1019.883
+# set tel [expr {[clock seconds] - $t1}]
+# puts "ELABCHK_SECONDS tag=$tag elaborate=$tel total=[expr {[clock seconds]-$t0}]"
+ELABCHK_SECONDS tag=a_base elaborate=101 total=107
+# if {!$ok} {
+#     # Write the raw text out verbatim; a summary of an error is not the error.
+#     set fh [open [file join $outdir elabfail_$tag.txt] w]
+#     puts $fh $err
+#     close $fh
+#     puts "ELABCHK_ERRTEXT_BEGIN $tag"
+#     foreach l [split $err "\n"] { puts "  | $l" }
+#     puts "ELABCHK_ERRTEXT_END $tag"
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# set ncell [llength [get_cells -hier -quiet]]
+# set nport [llength [get_ports -quiet]]
+# puts "ELABCHK_SIZE tag=$tag rtl_cells=$ncell ports=$nport"
+ELABCHK_SIZE tag=a_base rtl_cells=192015 ports=12167
+# if {$nport == 0} {
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# puts "ELABCHK_PASS $tag"
+ELABCHK_PASS a_base
+INFO: [Common 17-206] Exiting Vivado at Sun Sep 20 22:39:14 2026...

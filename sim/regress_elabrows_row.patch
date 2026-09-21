@@ -1,0 +1,54 @@
+--- a/sim/regress.sh
++++ b/sim/regress.sh
+@@ -2051,6 +2051,34 @@
+ printf 'c4stale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+ 
+ # ---------------------------------------------------------------------------
++# elabrows -- a BOOLEAN GENERIC ARM THAT NO SYNTHESISER HAS EVER BEEN GIVEN.
++# ---------------------------------------------------------------------------
++# MEASURED 2026-09-20 by TRACK HDRCOST: `SCORE_HDR_TREE=1` had passed a
++# 20-point bit-exact grid against two C oracles, a 23-row mutation suite with
++# attribution controls, and five green gate groups -- and the first Vivado ever
++# aimed at it killed synth_design in 49 s on `[Synth 8-11324] array index 8 out
++# of range`.  GHDL evaluates the branch a run takes; Vivado unrolls the loop and
++# folds every index.  No bench in this repository can see that class of defect.
++#
++# THIS ROW DOES NOT RUN VIVADO AND CANNOT FIND SUCH A DEFECT.  It finds the
++# thing that let that one survive: an ABSENCE.  It recomputes the boolean-arm
++# census from the RTL and fails when a reachable arm no synthesiser has been
++# given is neither in `sim/elab_check_run.sh`'s row table nor in that script's
++# EXEMPT list with a written reason.  So a new lever turns the gate red until
++# someone schedules an elaboration row or writes down why it needs none.
++#
++# The Vivado half is `sim/elab_check_run.sh` and belongs pre-build and nightly,
++# NOT here: MEASURED, its three `fk33_llama_top` rows cost 758 s each and a
++# DERIVED 34.7 GB footprint.  This row costs 0.25 s and 12 MB.
++#
++# Teeth are in docs/debugging/2026-09-20_the-defect-only-a-synthesiser-sees.md
++# section 5.6: M1 a new one-armed generic, M2 a deleted elaboration row, M3 a
++# deleted exemption -- all KILLED; M4 a stale exemption and M5 a row whose top
++# does not build the generic it names -- both SURVIVE, and are the check's
++# stated resolution floor.
++printf 'elabrows\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
++
++# ---------------------------------------------------------------------------
+ # gdnstale -- rtl/ooc_gdnadapt_top.vhd is GENERATED from rtl/llama_top.vhd by
+ # sim/ooc_gdnadapt_extract.py, and it was STALE for two days.
+ #
+@@ -2841,6 +2869,7 @@
+   [bdports]="python3 $REPO/sim/check_bd_ports.py"
+   [srvstories]="make -s -C $REPO/server test-stories"
+   [c4stale]="python3 $REPO/hw/fk33/gen_compose4_top.py --check"
++  [elabrows]="python3 $REPO/sim/check_elab_rows.py"
+   [gdnstale]="python3 $REPO/sim/ooc_gdnadapt_extract.py --check $REPO/rtl/llama_top.vhd"
+   [shapechk]="python3 $REPO/sim/check_model_shape.py"
+   # The Python side of `mk_shape_scaled` is a hand transcription of the VHDL
+@@ -2974,7 +3003,7 @@
+   case "${key#*:}" in
+     seamgate_*) run_seam "$key"; return ;;
+     graygate)   run_graygate "$key"; return ;;
+-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock) run_selfcheck "$key"; return ;;
++    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|elabrows) run_selfcheck "$key"; return ;;
+   esac
+   [ "$vecs" = "-" ] && vecs=""
+   local tb="${key#*:}" suite="${key%%:*}"

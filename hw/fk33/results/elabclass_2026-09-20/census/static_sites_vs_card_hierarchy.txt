@@ -1,0 +1,31 @@
+# TRACK ELABCLASS -- the 121 purely-static growing-index sites, against the
+# entity closure of the CARD's three tops (fk33_card, fk33_llama_top,
+# fk33_engine).  A site outside that closure is not elaborated by any card
+# build at any shape, so the scan's ranking must not treat it as covered.
+#
+# card-hierarchy entities=55 files=55
+# sites TOTAL=121 IN=67 OUTSIDE=54
+
+file                         sites in_card_hierarchy
+rtl/layer.vhd                   28 no
+rtl/matvec_core.vhd             19 YES
+rtl/fk33_llama_top.vhd          12 YES
+rtl/weight_streamer.vhd         12 YES
+rtl/attn_mac_array.vhd           9 YES
+rtl/llama_top.vhd                9 no
+rtl/gdn_recur_pipe.vhd           6 YES
+rtl/ooc_normadapt_top.vhd        6 no
+rtl/hbm_tg.vhd                   4 no
+rtl/attn_score_q12.vhd           2 YES
+rtl/engine_shared.vhd            2 no
+rtl/layer_fsm.vhd                2 no
+rtl/async_fifo.vhd               1 YES
+rtl/attn_gate.vhd                1 YES
+rtl/attn_softmax.vhd             1 YES
+rtl/bc_port_grant.vhd            1 no
+rtl/gdn_conv_w_mem.vhd           1 YES
+rtl/gdn_silu.vhd                 1 YES
+rtl/gdn_state_store.vhd          1 YES
+rtl/seq_ctrl.vhd                 1 no
+rtl/seq_region_lock.vhd          1 YES
+rtl/seq_top_skel.vhd             1 no

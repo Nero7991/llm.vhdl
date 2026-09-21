@@ -1,0 +1,51 @@
+ELABCLASS_BOOL total_boolean_generic_names=42
+ELABCLASS_BOOL both_arms_literal_somewhere=20 one_arm_only=22
+
+=== ONE ARM ONLY: the other arm appears as a literal NOWHERE in the
+=== synthesisable source, so no synthesiser can have been given it
+generic                default    literals seen            passthru entities
+A_BEHAV                false      -                        0        fk33_llama_top,llama_top
+A_DRAIN_WIDE           false      -                        0        fk33_llama_top,llama_top
+B_BEHAV                false      -                        0        fk33_llama_top,llama_top,ooc_gdnadapt,ooc_gdnadapt_ss
+CHECK_JOB_INDEX        false      -                        1        matvec_int4_desc_axi
+CONST_EN               false      -                        3        gdn_state_store
+DEBUG                  false      -                        1        rmsnorm
+DEBUG_TAPS             false      false=1                  0        engine_shared
+D_NORM                 true       -                        0        gdn_recur,gdn_recur_pipe
+EG0_ED                 true       -                        0        gdn_recur,gdn_recur_pipe
+FAST_POP               false      -                        8        async_fifo,axi_rd_port,matvec_int4,matvec_int4_desc_axi...
+MUX_FLAT               true       -                        0        attn_rescale_skel
+NEOX                   false      -                        0        rope
+NORM_ANCHOR            false      -                        0        fk33_llama_top,llama_top
+PROBES                 true       -                        1        attention_ml
+REL_NAIVE              false      false=2                  0        seq_opdec
+RESCALE_ON_LANE        true       -                        0        attn_lane_skel
+SEQ_MULT               false      -                        0        attn_rescale_skel
+STRICT_PROTO           false      -                        2        seq_desc_fetch
+SWG_WIDE               false      -                        0        fk33_llama_top,llama_top
+TK0_ED                 true       -                        0        gdn_recur,gdn_recur_pipe
+USE_XEXP_PORT          false      -                        1        matvec_int4_desc_axi
+WIDE_IO                false      -                        2        swiglu_mem
+
+=== BOTH ARMS appear as a literal somewhere (NOT a claim that both were
+=== synthesised -- only that neither is unreachable on its face) ===
+A_DESC                 false      true=1                   0        fk33_llama_top
+B_CONST_HBM            false      true=1                   0        fk33_llama_top,llama_top,ooc_gdnadapt
+B_SRC_REAL             false      true=1                   0        fk33_llama_top,llama_top,ooc_gdnadapt,ooc_gdnadapt_ss
+B_STATE_AXI            false      true=1                   0        fk33_llama_top,llama_top,ooc_gdnadapt
+CLAMP_NONNEG           true       false=8,true=6           0        matmul
+C_KV_AXI               false      true=1                   0        fk33_llama_top,llama_top,ooc_cattnadapt_top
+C_REAL                 false,true true=1                   0        fk33_llama_top,llama_top,ooc_cattnadapt_top
+DUAL_CLK               false      true=1                   5        axi_rd_port,matvec_int4,matvec_int4_desc_axi,weight_streamer
+HOST_WINDOW            true       false=1                  1        fk33_llama_top,region_mem
+NORM_REAL              false,true true=1                   0        fk33_llama_top,llama_top,ooc_normadapt
+NWIDE                  false      true=3                   0        gdn_state_store
+PIPE                   false      true=3                   4        gdn_state_axi,gdn_state_store
+SCORE_EARLY            false      true=2                   0        attn_block
+SHOUT                  false,true -                        0        fk33_llama_top,llama_top,ooc_cattnadapt_top,ooc_normadapt
+SMP_EN                 false      true=1                   0        fk33_llama_top,llama_top
+STRICT                 false,true true=2                   6        fk33_llama_top,fk33_seam,llama_top,ooc_cattnadapt_top...
+STRICT_PRODUCER        false,true true=3                   14       attn_block,attn_c_ports_skel,attn_emit,attn_gate...
+SWEEP_PIPE             false      true=2                   0        attn_block
+SWG_REAL               false      true=1                   0        fk33_llama_top,llama_top
+WIDE                   false      true=3                   8        gdn_conv_tap_mem,gdn_conv_w_mem,gdn_exp_mem,gdn_state_axi...

@@ -1,0 +1,34 @@
+ELABCLASS_ENV host=cachyos-bc250 root=/home/labuser/elabclass out=/home/labuser/elabclass/out2 cap=11G
+ELABCLASS_TREE_SHA f58a07544f6b1ef2c9db43f58a31413a10554920
+ELABCLASS_MANIFEST 03a2d528ae98d323dbc4b8538ca373161acfe9d2bdebb4fb07419035d486304a
+               total        used        free      shared  buff/cache   available
+Mem:           15204        2009       11056           9        2465       13195
+ELABCLASS_CGROUP systemd-run --user scope available, cap 11G
+=== ELABCLASS row=a_base top=matvec_int4_desc_axi expect=pass begin 2026-09-20T22:37:21-04:00 ===
+ELABCLASS_ROW row=a_base top=matvec_int4_desc_axi verdict=PASS expect=pass wall_s=123 cgroup_peak_mb=3301 rc=0
+=== ELABCLASS row=a_chkjob top=matvec_int4_desc_axi expect=pass begin 2026-09-20T22:39:25-04:00 ===
+ELABCLASS_ROW row=a_chkjob top=matvec_int4_desc_axi verdict=PASS expect=pass wall_s=126 cgroup_peak_mb=3308 rc=0
+=== ELABCLASS row=d_card top=fk33_llama_top expect=pass begin 2026-09-20T22:41:32-04:00 ===
+ELABCLASS_ROW row=d_card top=fk33_llama_top verdict=PASS expect=pass wall_s=758 cgroup_peak_mb=11265 rc=0
+=== ELABCLASS row=d_hostwin top=fk33_llama_top expect=pass begin 2026-09-20T22:54:12-04:00 ===
+ELABCLASS_ROW row=d_hostwin top=fk33_llama_top verdict=NORESULT expect=pass wall_s=373 cgroup_peak_mb=11265 rc=143
+ELABCLASS_UNEXPECTED row=d_hostwin expected=pass got=NORESULT
+=== ELABCLASS row=d_adw top=fk33_llama_top expect=pass begin 2026-09-20T23:00:26-04:00 ===
+ELABCLASS_ROW row=d_adw top=fk33_llama_top verdict=PASS expect=pass wall_s=779 cgroup_peak_mb=11266 rc=0
+=== ELABCLASS row=d_swgw1 top=fk33_llama_top expect=pass begin 2026-09-20T23:13:27-04:00 ===
+ELABCLASS_ROW row=d_swgw1 top=fk33_llama_top verdict=PASS expect=pass wall_s=782 cgroup_peak_mb=11265 rc=0
+=== ELABCLASS row=d_swgw8 top=fk33_llama_top expect=pass begin 2026-09-20T23:26:30-04:00 ===
+ELABCLASS_ROW row=d_swgw8 top=fk33_llama_top verdict=PASS expect=pass wall_s=777 cgroup_peak_mb=11265 rc=0
+=== ELABCLASS row=d_normanchor top=fk33_llama_top expect=pass begin 2026-09-20T23:39:28-04:00 ===
+ELABCLASS_ROW row=d_normanchor top=fk33_llama_top verdict=PASS expect=pass wall_s=798 cgroup_peak_mb=11266 rc=0
+=== ELABCLASS_TABLE ===
+row        top                expect   verdict    wall_s    peak_mb
+a_base     matvec_int4_desc_axi pass     PASS          123       3301
+a_chkjob   matvec_int4_desc_axi pass     PASS          126       3308
+d_card     fk33_llama_top     pass     PASS          758      11265
+d_hostwin  fk33_llama_top     pass     NORESULT      373      11265
+d_adw      fk33_llama_top     pass     PASS          779      11266
+d_swgw1    fk33_llama_top     pass     PASS          782      11265
+d_swgw8    fk33_llama_top     pass     PASS          777      11265
+d_normanchor fk33_llama_top     pass     PASS          798      11266
+ELABCLASS_ALLDONE rc=1

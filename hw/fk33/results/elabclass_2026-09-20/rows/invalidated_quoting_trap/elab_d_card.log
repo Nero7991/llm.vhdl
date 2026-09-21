@@ -1,0 +1,188 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=d_card top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=d_card gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE={"/home/labuser/elabclass/gen/norm_w_9b.hex"} C_QKN_IMAGE={"/home/labuser/elabclass/gen/qkn_9b.hex"}"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=d_card extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1301.375 ; gain = 24.840 ; free physical = 10630 ; free virtual = 59945
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=d_card files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top fk33_llama_top -part xcvu33p-fsvh2104-2L-e -generic A_DESC=true -generic B_STATE_AXI=true -generic B_SRC_REAL=true -generic B_CONST_HBM=true -generic C_KV_AXI=true -generic HOST_WINDOW=false -generic C_REAL=true -generic NORM_REAL=true -generic SWG_REAL=true -generic SMP_EN=true -generic C_N_ROT=64 -generic C_KV_BLOCK=32 -generic C_KV_ADDR_W=33 -generic C_K_BASE_CH=282672640 -generic C_V_BASE_CH=318324224 -generic C_MAXPOS=65536 -generic C_CTXLEN=65536 -generic WDOG_LIMIT=4000000 -generic A_ROWS_IF=48 -generic A_JOB_STRIDE=262144 -generic NORM_W_IMAGE={\"/home/labuser/elabclass/gen/norm_w_9b.hex\"} -generic C_QKN_IMAGE={\"/home/labuser/elabclass/gen/qkn_9b.hex\"}
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2199890
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 2785.738 ; gain = 399.004 ; free physical = 8813 ; free virtual = 58128
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+	Parameter WDOG_LIMIT bound to: 4000000 - type: integer 
+	Parameter B_SRC_REAL bound to: 1 - type: bool 
+	Parameter NORM_REAL bound to: 1 - type: bool 
+	Parameter NORM_W_IMAGE bound to: {"/home/labuser/elabclass/gen/norm_w_9b.hex"} - type: string 
+	Parameter SWG_REAL bound to: 1 - type: bool 
+	Parameter C_REAL bound to: 1 - type: bool 
+	Parameter C_KV_BLOCK bound to: 32 - type: integer 
+	Parameter C_N_ROT bound to: 64 - type: integer 
+	Parameter C_MAXPOS bound to: 65536 - type: integer 
+	Parameter C_KV_AXI bound to: 1 - type: bool 
+	Parameter C_CTXLEN bound to: 65536 - type: integer 
+	Parameter C_K_BASE_CH bound to: 282672640 - type: integer 
+	Parameter C_V_BASE_CH bound to: 318324224 - type: integer 
+	Parameter C_KV_ADDR_W bound to: 33 - type: integer 
+	Parameter C_QKN_IMAGE bound to: {"/home/labuser/elabclass/gen/qkn_9b.hex"} - type: string 
+	Parameter SMP_EN bound to: 1 - type: bool 
+	Parameter A_ROWS_IF bound to: 48 - type: integer 
+	Parameter A_JOB_STRIDE bound to: 262144 - type: integer 
+	Parameter B_CONST_HBM bound to: 1 - type: bool 
+	Parameter B_STATE_AXI bound to: 1 - type: bool 
+	Parameter HOST_WINDOW bound to: 0 - type: bool 
+	Parameter A_DESC bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'region_mem' [/home/labuser/elabclass/rtl/region_mem.vhd:128]
+	Parameter NREGION bound to: 14 - type: integer 
+	Parameter REGMAX bound to: 12288 - type: integer 
+	Parameter LANES bound to: 8 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter GA_W bound to: 11 - type: integer 
+	Parameter SZ bound to: 448'b0000000000000000000100000000000000000000000000000001000000000000000000000000000000100000000000000000000000000000000100000000000000000000000000000000000000100000000000000000000000000000001000000000000000000000001000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000011000000000000000000000000000000110000000000000000000000000000001100000000000000000000000000000001000000000000 
+	Parameter HOST_WINDOW bound to: 0 - type: bool 
+INFO: [Synth 8-256] done synthesizing module 'region_mem' (0#1) [/home/labuser/elabclass/rtl/region_mem.vhd:128]
+INFO: [Synth 8-638] synthesizing module 'seq_desc_fetch' [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:250]
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter EPOCH_W bound to: 4 - type: integer 
+	Parameter NUNIT bound to: 5 - type: integer 
+	Parameter NSUB_MAX bound to: 64 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter WDOG_LIMIT bound to: 4000000 - type: integer 
+	Parameter STRICT_PROTO bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:893]
+INFO: [Synth 8-256] done synthesizing module 'seq_desc_fetch' (0#1) [/home/labuser/elabclass/rtl/seq_desc_fetch.vhd:250]
+INFO: [Synth 8-638] synthesizing module 'seq_opdec' [/home/labuser/elabclass/rtl/seq_opdec.vhd:281]
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter SEGS bound to: 3 - type: integer 
+	Parameter ADDR_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter NUNIT bound to: 5 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter OPC_CONS bound to: 256'b0000000000000000000000000000000000000000000000000000000000111000000000000000000000000001100000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000010000000000000000000000000000000000000000000 
+	Parameter MSEG_REG bound to: 2 - type: integer 
+	Parameter MSEG_OFF1 bound to: 2048 - type: integer 
+	Parameter MSEG_OFF2 bound to: 4096 - type: integer 
+	Parameter REL_NAIVE bound to: 0 - type: bool 
+	Parameter HOST_REG bound to: 0 - type: integer 
+	Parameter HOST_ROWS bound to: 4096 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_opdec.vhd:685]
+INFO: [Synth 8-256] done synthesizing module 'seq_opdec' (0#1) [/home/labuser/elabclass/rtl/seq_opdec.vhd:281]
+INFO: [Synth 8-638] synthesizing module 'seq_region_lock' [/home/labuser/elabclass/rtl/seq_region_lock.vhd:208]
+	Parameter REG_SIZE bound to: 448'b0000000000000000000100000000000000000000000000000001000000000000000000000000000000100000000000000000000000000000000100000000000000000000000000000000000000100000000000000000000000000000001000000000000000000000001000000000000000000000000000000000010000000000000000000000000000000100000000000000000000000000000100000000000000000000000000000011000000000000000000000000000000110000000000000000000000000000001100000000000000000000000000000001000000000000 
+	Parameter SEGS bound to: 3 - type: integer 
+	Parameter ADDR_W bound to: 16 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_region_lock.vhd:527]
+INFO: [Synth 8-256] done synthesizing module 'seq_region_lock' (0#1) [/home/labuser/elabclass/rtl/seq_region_lock.vhd:208]
+INFO: [Synth 8-638] synthesizing module 'seq_vec_issue' [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:214]
+	Parameter NVOP bound to: 3 - type: integer 
+	Parameter OP_BASE bound to: 4 - type: integer 
+	Parameter MY_UNIT bound to: 4 - type: integer 
+	Parameter NREG bound to: 14 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter VN_W bound to: 14 - type: integer 
+	Parameter EPOCH_W bound to: 4 - type: integer 
+	Parameter STEP_W bound to: 11 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:490]
+INFO: [Synth 8-256] done synthesizing module 'seq_vec_issue' (0#1) [/home/labuser/elabclass/rtl/seq_vec_issue.vhd:214]
+INFO: [Synth 8-638] synthesizing module 'seq_vec_res' [/home/labuser/elabclass/rtl/seq_vec_res.vhd:221]
+	Parameter LANES bound to: 8 - type: integer 
+	Parameter MANT_W bound to: 16 - type: integer 
+	Parameter ACC_W bound to: 32 - type: integer 
+	Parameter EXP_W bound to: 16 - type: integer 
+	Parameter ADDR_W bound to: 14 - type: integer 
+	Parameter STRICT bound to: 1 - type: bool 
+WARNING: [Synth 8-614] signal 'rst' is read in the process but is not in the sensitivity list [/home/labuser/elabclass/rtl/seq_vec_res.vhd:644]
+INFO: [Synth 8-256] done synthesizing module 'seq_vec_res' (0#1) [/home/labuser/elabclass/rtl/seq_vec_res.vhd:221]
+ERROR: [Synth 8-3302] unable to open file '{"/home/labuser/elabclass/gen/norm_w_9b.hex"}' in 'r' mode [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2885]
+ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2921]
+ERROR: [Synth 8-285] failed synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:00:07 ; elapsed = 00:00:08 . Memory (MB): peak = 2925.707 ; gain = 538.973 ; free physical = 8655 ; free virtual = 57971
+---------------------------------------------------------------------------------
+RTL Elaboration failed
+17 Infos, 5 Warnings, 0 Critical Warnings and 4 Errors encountered.
+synth_design failed
+# set tel [expr {[clock seconds] - $t1}]
+# puts "ELABCHK_SECONDS tag=$tag elaborate=$tel total=[expr {[clock seconds]-$t0}]"
+ELABCHK_SECONDS tag=d_card elaborate=50 total=56
+# if {!$ok} {
+#     # Write the raw text out verbatim; a summary of an error is not the error.
+#     set fh [open [file join $outdir elabfail_$tag.txt] w]
+#     puts $fh $err
+#     close $fh
+#     puts "ELABCHK_ERRTEXT_BEGIN $tag"
+#     foreach l [split $err "\n"] { puts "  | $l" }
+#     puts "ELABCHK_ERRTEXT_END $tag"
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+ELABCHK_ERRTEXT_BEGIN d_card
+  | ERROR: [Vivado_Tcl 4-5] Elaboration failed - please see the console for details
+  | 
+ELABCHK_ERRTEXT_END d_card
+ELABCHK_FAIL d_card
+INFO: [Common 17-206] Exiting Vivado at Sun Sep 20 22:35:02 2026...

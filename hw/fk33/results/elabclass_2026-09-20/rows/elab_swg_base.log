@@ -1,0 +1,200 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source /home/labuser/elabclass/sim/elab_check.tcl
+# set part [expr {[info exists ::env(EC_PART)] ? $::env(EC_PART) : "xcvu33p-fsvh2104-2L-e"}]
+# proc envor {name def} {
+#     return [expr {[info exists ::env($name)] ? $::env($name) : $def}]
+# }
+# set tag    [envor EC_TAG   unnamed]
+# set top    [envor EC_TOP   ""]
+# set rtldir [envor EC_RTL   rtl]
+# set outdir [envor EC_OUT   .]
+# set gens   [envor EC_GEN   ""]
+# set mode   [envor EC_MODE  rtl]
+# set extra  [envor EC_EXTRA ""]
+# if {$top eq ""} { puts "ELABCHK_ABORT $tag: EC_TOP not set"; exit 9 }
+# file mkdir $outdir
+# set t0 [clock seconds]
+# puts "ELABCHK_BEGIN tag=$tag top=$top part=$part mode=$mode"
+ELABCHK_BEGIN tag=swg_base top=swiglu_mem part=xcvu33p-fsvh2104-2L-e mode=rtl
+# puts "ELABCHK_GENERICS tag=$tag gen=\"$gens\""
+ELABCHK_GENERICS tag=swg_base gen="N=12288 Q=12 LANES=1 WIDE_IO=false"
+# puts "ELABCHK_EXTRA tag=$tag extra=\"$extra\""
+ELABCHK_EXTRA tag=swg_base extra=""
+# create_project -in_memory -part $part
+create_project: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1320.918 ; gain = 0.027 ; free physical = 10634 ; free virtual = 59946
+# set nread 0;
+# set nskip 0;
+# set nexcl 0
+# foreach f [lsort [glob -nocomplain -directory $rtldir *.vhd]] {
+#     if {[string match "ooc_*_top.vhd" [file tail $f]]} { incr nexcl; continue }
+#     if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#         puts "ELABCHK_READ_SKIP $f : $e"; incr nskip
+#     } else { incr nread }
+# }
+# set nex 0
+# if {$extra ne ""} {
+#     foreach f [lsort [glob -nocomplain -directory $extra *.vhd]] {
+#         if {[catch {read_vhdl -vhdl2008 $f} e]} {
+#             puts "ELABCHK_READ_SKIP $f : $e"
+#         } else { incr nex; puts "ELABCHK_OVERRIDE tag=$tag [file tail $f]" }
+#     }
+# }
+# puts "ELABCHK_READ tag=$tag files=$nread skipped=$nskip excluded=$nexcl override=$nex"
+ELABCHK_READ tag=swg_base files=110 skipped=0 excluded=4 override=0
+# set gl {}
+# foreach g $gens { lappend gl -generic $g }
+# set ok 1
+# set t1 [clock seconds]
+# if {$mode eq "full"} {
+#     if {[catch {synth_design -mode out_of_context -top $top -part $part \
+#                     -flatten_hierarchy none {*}$gl} err]} { set ok 0 }
+# } else {
+#     if {[catch {synth_design -rtl -rtl_skip_ip -mode out_of_context \
+#                     -top $top -part $part {*}$gl} err]} { set ok 0 }
+# }
+Command: synth_design -rtl -rtl_skip_ip -mode out_of_context -top swiglu_mem -part xcvu33p-fsvh2104-2L-e -generic N=12288 -generic Q=12 -generic LANES=1 -generic WIDE_IO=false
+Starting synth_design
+INFO: [Device 21-403] Loading part xcvu33p-fsvh2104-2L-e
+INFO: [Synth 8-7079] Multithreading enabled for synth_design using a maximum of 4 processes.
+INFO: [Synth 8-7078] Launching helper process for spawning children vivado processes
+INFO: [Synth 8-7075] Helper process launched with PID 2196354
+---------------------------------------------------------------------------------
+Starting RTL Elaboration : Time (s): cpu = 00:00:04 ; elapsed = 00:00:04 . Memory (MB): peak = 2784.656 ; gain = 400.016 ; free physical = 8796 ; free virtual = 58108
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'swiglu_mem' [/home/labuser/elabclass/rtl/swiglu_mem.vhd:221]
+	Parameter N bound to: 12288 - type: integer 
+	Parameter Q bound to: 12 - type: integer 
+	Parameter LANES bound to: 1 - type: integer 
+	Parameter WIDE_IO bound to: 0 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'vec_mem' [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+	Parameter WORDS bound to: 12288 - type: integer 
+	Parameter W bound to: 16 - type: integer 
+INFO: [Synth 8-256] done synthesizing module 'vec_mem' (0#1) [/home/labuser/elabclass/rtl/vec_mem.vhd:29]
+WARNING: [Synth 8-7193] Integer conversion function is truncating input [/home/labuser/elabclass/rtl/fixed_pkg.vhd:215]
+INFO: [Synth 8-256] done synthesizing module 'swiglu_mem' (0#1) [/home/labuser/elabclass/rtl/swiglu_mem.vhd:221]
+WARNING: [Synth 8-6014] Unused sequential element o_rsel_reg was removed.  [/home/labuser/elabclass/rtl/swiglu_mem.vhd:416]
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[15] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[14] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[13] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[12] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[11] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[10] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[9] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[8] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[7] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[6] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[5] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[4] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[3] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[2] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[1] driven by constant 0
+WARNING: [Synth 8-3917] design swiglu_mem has port o_gdata[0] driven by constant 0
+WARNING: [Synth 8-7129] Port gw_we in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[13] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[12] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[11] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[10] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[9] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[8] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[7] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[6] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[5] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[4] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[3] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[2] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[1] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_addr[0] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[15] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[14] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[13] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[12] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[11] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[10] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[9] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[8] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[7] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[6] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[5] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[4] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[3] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[2] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[1] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_g[0] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[15] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[14] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[13] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[12] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[11] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[10] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[9] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[8] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[7] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[6] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[5] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[4] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[3] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[2] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[1] in module swiglu_mem is either unconnected or has no load
+WARNING: [Synth 8-7129] Port gw_u[0] in module swiglu_mem is either unconnected or has no load
+---------------------------------------------------------------------------------
+Finished RTL Elaboration : Time (s): cpu = 00:00:07 ; elapsed = 00:00:07 . Memory (MB): peak = 2929.625 ; gain = 544.984 ; free physical = 8647 ; free virtual = 57960
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Start Handling Custom Attributes
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished Handling Custom Attributes : Time (s): cpu = 00:00:07 ; elapsed = 00:00:07 . Memory (MB): peak = 2929.625 ; gain = 544.984 ; free physical = 8646 ; free virtual = 57960
+---------------------------------------------------------------------------------
+---------------------------------------------------------------------------------
+Finished RTL Optimization Phase 1 : Time (s): cpu = 00:00:07 ; elapsed = 00:00:07 . Memory (MB): peak = 2929.625 ; gain = 544.984 ; free physical = 8646 ; free virtual = 57960
+---------------------------------------------------------------------------------
+Netlist sorting complete. Time (s): cpu = 00:00:00.02 ; elapsed = 00:00:00.02 . Memory (MB): peak = 2929.633 ; gain = 0.000 ; free physical = 8975 ; free virtual = 58288
+INFO: [Project 1-570] Preparing netlist for logic optimization
+
+Processing XDC Constraints
+Initializing timing engine
+Completed Processing XDC Constraints
+
+Netlist sorting complete. Time (s): cpu = 00:00:00 ; elapsed = 00:00:00 . Memory (MB): peak = 3035.656 ; gain = 0.000 ; free physical = 8968 ; free virtual = 58281
+INFO: [Project 1-111] Unisim Transformation Summary:
+No Unisim elements were transformed.
+
+RTL Elaboration Complete:  : Time (s): cpu = 00:00:11 ; elapsed = 00:00:09 . Memory (MB): peak = 3035.691 ; gain = 651.051 ; free physical = 8969 ; free virtual = 58282
+10 Infos, 65 Warnings, 0 Critical Warnings and 0 Errors encountered.
+synth_design completed successfully
+synth_design: Time (s): cpu = 00:00:20 ; elapsed = 00:00:18 . Memory (MB): peak = 3035.691 ; gain = 1714.773 ; free physical = 8969 ; free virtual = 58282
+INFO: [Common 17-2834] synth_design peak Physical Memory [PSS] (MB): overall = 2506.370; main = 2506.370; forked = 0.000
+INFO: [Common 17-2834] synth_design peak Virtual Memory [VSS] (MB): overall = 3035.660; main = 3035.660; forked = 0.000
+# set tel [expr {[clock seconds] - $t1}]
+# puts "ELABCHK_SECONDS tag=$tag elaborate=$tel total=[expr {[clock seconds]-$t0}]"
+ELABCHK_SECONDS tag=swg_base elaborate=18 total=25
+# if {!$ok} {
+#     # Write the raw text out verbatim; a summary of an error is not the error.
+#     set fh [open [file join $outdir elabfail_$tag.txt] w]
+#     puts $fh $err
+#     close $fh
+#     puts "ELABCHK_ERRTEXT_BEGIN $tag"
+#     foreach l [split $err "\n"] { puts "  | $l" }
+#     puts "ELABCHK_ERRTEXT_END $tag"
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# set ncell [llength [get_cells -hier -quiet]]
+# set nport [llength [get_ports -quiet]]
+# puts "ELABCHK_SIZE tag=$tag rtl_cells=$ncell ports=$nport"
+ELABCHK_SIZE tag=swg_base rtl_cells=836 ports=319
+# if {$nport == 0} {
+#     puts "ELABCHK_FAIL $tag"
+#     exit 1
+# }
+# puts "ELABCHK_PASS $tag"
+ELABCHK_PASS swg_base
+INFO: [Common 17-206] Exiting Vivado at Sun Sep 20 22:32:21 2026...

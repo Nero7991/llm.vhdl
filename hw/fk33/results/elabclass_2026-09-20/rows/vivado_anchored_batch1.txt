@@ -1,0 +1,96 @@
+##### vivado_c_base.log
+30:ELABCHK_BEGIN tag=c_base top=attn_block part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=c_base gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_HDR_TREE=0"
+34:ELABCHK_EXTRA tag=c_base extra=""
+55:ELABCHK_READ tag=c_base files=110 skipped=0 excluded=4 override=0
+90:	Parameter SCORE_HDR_TREE bound to: 0 - type: integer 
+141:	Parameter HDR_TREE bound to: 0 - type: integer 
+233:ELABCHK_SECONDS tag=c_base elaborate=220 total=226
+248:ELABCHK_SIZE tag=c_base rtl_cells=135966 ports=9472
+254:ELABCHK_PASS c_base
+##### vivado_c_tree.log
+30:ELABCHK_BEGIN tag=c_tree top=attn_block part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=c_tree gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_HDR_TREE=1"
+34:ELABCHK_EXTRA tag=c_tree extra=""
+55:ELABCHK_READ tag=c_tree files=110 skipped=0 excluded=4 override=0
+90:	Parameter SCORE_HDR_TREE bound to: 1 - type: integer 
+141:	Parameter HDR_TREE bound to: 1 - type: integer 
+232:ELABCHK_SECONDS tag=c_tree elaborate=221 total=228
+247:ELABCHK_SIZE tag=c_tree rtl_cells=136430 ports=9472
+253:ELABCHK_PASS c_tree
+##### vivado_d_adw.log
+30:ELABCHK_BEGIN tag=d_adw top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_adw gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE={"/home/labuser/elabclass/gen/norm_w_9b.hex"} C_QKN_IMAGE={"/home/labuser/elabclass/gen/qkn_9b.hex"} A_DRAIN_WIDE=true"
+34:ELABCHK_EXTRA tag=d_adw extra=""
+55:ELABCHK_READ tag=d_adw files=110 skipped=0 excluded=4 override=0
+##### vivado_d_card.log
+30:ELABCHK_BEGIN tag=d_card top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_card gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE={"/home/labuser/elabclass/gen/norm_w_9b.hex"} C_QKN_IMAGE={"/home/labuser/elabclass/gen/qkn_9b.hex"}"
+34:ELABCHK_EXTRA tag=d_card extra=""
+55:ELABCHK_READ tag=d_card files=110 skipped=0 excluded=4 override=0
+97:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+106:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+164:ERROR: [Synth 8-3302] unable to open file '{"/home/labuser/elabclass/gen/norm_w_9b.hex"}' in 'r' mode [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2885]
+165:ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2921]
+166:ERROR: [Synth 8-285] failed synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+175:ELABCHK_SECONDS tag=d_card elaborate=50 total=56
+187:ELABCHK_ERRTEXT_BEGIN d_card
+190:ELABCHK_ERRTEXT_END d_card
+191:ELABCHK_FAIL d_card
+##### vivado_d_hostwin.log
+30:ELABCHK_BEGIN tag=d_hostwin top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_hostwin gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE={"/home/labuser/elabclass/gen/norm_w_9b.hex"} C_QKN_IMAGE={"/home/labuser/elabclass/gen/qkn_9b.hex"} HOST_WINDOW=true"
+34:ELABCHK_EXTRA tag=d_hostwin extra=""
+55:ELABCHK_READ tag=d_hostwin files=110 skipped=0 excluded=4 override=0
+97:	Parameter HOST_WINDOW bound to: 1 - type: bool 
+106:	Parameter HOST_WINDOW bound to: 1 - type: bool 
+164:ERROR: [Synth 8-3302] unable to open file '{"/home/labuser/elabclass/gen/norm_w_9b.hex"}' in 'r' mode [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2885]
+165:ERROR: [Synth 8-421] mismatched array sizes in rhs and lhs of assignment [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:2921]
+166:ERROR: [Synth 8-285] failed synthesizing module 'fk33_llama_top' [/home/labuser/elabclass/rtl/fk33_llama_top.vhd:1279]
+175:ELABCHK_SECONDS tag=d_hostwin elaborate=49 total=56
+187:ELABCHK_ERRTEXT_BEGIN d_hostwin
+190:ELABCHK_ERRTEXT_END d_hostwin
+191:ELABCHK_FAIL d_hostwin
+##### vivado_swg_base.log
+30:ELABCHK_BEGIN tag=swg_base top=swiglu_mem part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=swg_base gen="N=12288 Q=12 LANES=1 WIDE_IO=false"
+34:ELABCHK_EXTRA tag=swg_base extra=""
+55:ELABCHK_READ tag=swg_base files=110 skipped=0 excluded=4 override=0
+80:	Parameter WIDE_IO bound to: 0 - type: bool 
+182:ELABCHK_SECONDS tag=swg_base elaborate=18 total=25
+197:ELABCHK_SIZE tag=swg_base rtl_cells=836 ports=319
+203:ELABCHK_PASS swg_base
+##### vivado_swg_w1.log
+30:ELABCHK_BEGIN tag=swg_w1 top=swiglu_mem part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=swg_w1 gen="N=12288 Q=12 LANES=1 WIDE_IO=true"
+34:ELABCHK_EXTRA tag=swg_w1 extra=""
+55:ELABCHK_READ tag=swg_w1 files=110 skipped=0 excluded=4 override=0
+80:	Parameter WIDE_IO bound to: 1 - type: bool 
+181:ELABCHK_SECONDS tag=swg_w1 elaborate=18 total=25
+196:ELABCHK_SIZE tag=swg_w1 rtl_cells=836 ports=319
+202:ELABCHK_PASS swg_w1
+##### vivado_swg_w8.log
+30:ELABCHK_BEGIN tag=swg_w8 top=swiglu_mem part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=swg_w8 gen="N=12288 Q=12 LANES=8 WIDE_IO=true"
+34:ELABCHK_EXTRA tag=swg_w8 extra=""
+55:ELABCHK_READ tag=swg_w8 files=110 skipped=0 excluded=4 override=0
+80:	Parameter WIDE_IO bound to: 1 - type: bool 
+184:ELABCHK_SECONDS tag=swg_w8 elaborate=20 total=26
+199:ELABCHK_SIZE tag=swg_w8 rtl_cells=3796 ports=655
+205:ELABCHK_PASS swg_w8
+##### vivado_teeth.log
+30:ELABCHK_BEGIN tag=teeth top=attn_block part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=teeth gen="HEAD_DIM=256 N_QH=16 N_KVH=4 KV_BLOCK=32 N_ROT=64 LAYERS=8 POS_W=17 MANT_W=16 CM_W=8 EXP_W=8 NORM_LANES=1 STRICT_PRODUCER=true SWEEP_PIPE=true SCORE_HDR_TREE=1"
+34:ELABCHK_EXTRA tag=teeth extra="/home/labuser/elabclass/mutant"
+54:ELABCHK_OVERRIDE tag=teeth attn_score_q12.vhd
+56:ELABCHK_READ tag=teeth files=110 skipped=0 excluded=4 override=1
+77:CRITICAL WARNING: [Synth 8-9872] overwriting existing secondary unit 'rtl' [/home/labuser/elabclass/mutant/attn_score_q12.vhd:244]
+92:	Parameter SCORE_HDR_TREE bound to: 1 - type: integer 
+143:	Parameter HDR_TREE bound to: 1 - type: integer 
+145:ERROR: [Synth 8-11324] array index 8 out of range [/home/labuser/elabclass/mutant/attn_score_q12.vhd:488]
+146:ERROR: [Synth 8-285] failed synthesizing module 'attn_score_q12' [/home/labuser/elabclass/mutant/attn_score_q12.vhd:244]
+147:ERROR: [Synth 8-285] failed synthesizing module 'attn_block' [/home/labuser/elabclass/rtl/attn_block.vhd:486]
+156:ELABCHK_SECONDS tag=teeth elaborate=22 total=28
+168:ELABCHK_ERRTEXT_BEGIN teeth
+171:ELABCHK_ERRTEXT_END teeth
+172:ELABCHK_FAIL teeth

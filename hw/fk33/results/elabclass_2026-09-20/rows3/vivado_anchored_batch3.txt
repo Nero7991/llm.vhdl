@@ -1,0 +1,10 @@
+##### vivado_d_hostwin.log
+30:ELABCHK_BEGIN tag=d_hostwin top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_hostwin gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex HOST_WINDOW=true"
+34:ELABCHK_EXTRA tag=d_hostwin extra=""
+55:ELABCHK_READ tag=d_hostwin files=110 skipped=0 excluded=4 override=0
+97:	Parameter HOST_WINDOW bound to: 1 - type: bool 
+106:	Parameter HOST_WINDOW bound to: 1 - type: bool 
+976:ELABCHK_SECONDS tag=d_hostwin elaborate=754 total=761
+991:ELABCHK_SIZE tag=d_hostwin rtl_cells=247724 ports=6635
+997:ELABCHK_PASS d_hostwin

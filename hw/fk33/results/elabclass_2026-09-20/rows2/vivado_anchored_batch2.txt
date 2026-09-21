@@ -1,0 +1,79 @@
+##### vivado_a_base.log
+30:ELABCHK_BEGIN tag=a_base top=matvec_int4_desc_axi part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=a_base gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 FAST_POP=true DUAL_CLK=true CHECK_JOB_INDEX=false"
+34:ELABCHK_EXTRA tag=a_base extra=""
+55:ELABCHK_READ tag=a_base files=110 skipped=0 excluded=4 override=0
+89:	Parameter CHECK_JOB_INDEX bound to: 0 - type: bool 
+403:ELABCHK_SECONDS tag=a_base elaborate=101 total=107
+418:ELABCHK_SIZE tag=a_base rtl_cells=192015 ports=12167
+424:ELABCHK_PASS a_base
+##### vivado_a_chkjob.log
+30:ELABCHK_BEGIN tag=a_chkjob top=matvec_int4_desc_axi part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=a_chkjob gen="BLK=32 ROWS_IF=48 NPORTS_W=24 NPORTS_S=3 AXI_DW=256 ADDR_W=40 MAXCOLS=17408 MAXROWS_BFP=17408 FIFO_DEPTH=512 MAXB=16 MAXOUT=16 DESC_MAXB=16 FAST_POP=true DUAL_CLK=true CHECK_JOB_INDEX=true"
+34:ELABCHK_EXTRA tag=a_chkjob extra=""
+55:ELABCHK_READ tag=a_chkjob files=110 skipped=0 excluded=4 override=0
+89:	Parameter CHECK_JOB_INDEX bound to: 1 - type: bool 
+371:ELABCHK_SECONDS tag=a_chkjob elaborate=101 total=108
+386:ELABCHK_SIZE tag=a_chkjob rtl_cells=192030 ports=12167
+392:ELABCHK_PASS a_chkjob
+##### vivado_d_adw.log
+30:ELABCHK_BEGIN tag=d_adw top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_adw gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex A_DRAIN_WIDE=true"
+34:ELABCHK_EXTRA tag=d_adw extra=""
+55:ELABCHK_READ tag=d_adw files=110 skipped=0 excluded=4 override=0
+95:	Parameter A_DRAIN_WIDE bound to: 1 - type: bool 
+98:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+107:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+977:ELABCHK_SECONDS tag=d_adw elaborate=745 total=752
+992:ELABCHK_SIZE tag=d_adw rtl_cells=247970 ports=6635
+998:ELABCHK_PASS d_adw
+##### vivado_d_card.log
+30:ELABCHK_BEGIN tag=d_card top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_card gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex"
+34:ELABCHK_EXTRA tag=d_card extra=""
+55:ELABCHK_READ tag=d_card files=110 skipped=0 excluded=4 override=0
+97:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+106:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+976:ELABCHK_SECONDS tag=d_card elaborate=725 total=732
+991:ELABCHK_SIZE tag=d_card rtl_cells=247700 ports=6635
+997:ELABCHK_PASS d_card
+##### vivado_d_hostwin.log
+30:ELABCHK_BEGIN tag=d_hostwin top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_hostwin gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex HOST_WINDOW=true"
+34:ELABCHK_EXTRA tag=d_hostwin extra=""
+55:ELABCHK_READ tag=d_hostwin files=110 skipped=0 excluded=4 override=0
+##### vivado_d_normanchor.log
+30:ELABCHK_BEGIN tag=d_normanchor top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_normanchor gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex NORM_ANCHOR=true"
+34:ELABCHK_EXTRA tag=d_normanchor extra=""
+55:ELABCHK_READ tag=d_normanchor files=110 skipped=0 excluded=4 override=0
+79:	Parameter NORM_ANCHOR bound to: 1 - type: bool 
+98:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+107:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+977:ELABCHK_SECONDS tag=d_normanchor elaborate=766 total=772
+992:ELABCHK_SIZE tag=d_normanchor rtl_cells=247700 ports=6635
+998:ELABCHK_PASS d_normanchor
+##### vivado_d_swgw1.log
+30:ELABCHK_BEGIN tag=d_swgw1 top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_swgw1 gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex SWG_WIDE=true SWG_LANES=1"
+34:ELABCHK_EXTRA tag=d_swgw1 extra=""
+55:ELABCHK_READ tag=d_swgw1 files=110 skipped=0 excluded=4 override=0
+82:	Parameter SWG_LANES bound to: 1 - type: integer 
+83:	Parameter SWG_WIDE bound to: 1 - type: bool 
+99:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+108:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+978:ELABCHK_SECONDS tag=d_swgw1 elaborate=748 total=755
+993:ELABCHK_SIZE tag=d_swgw1 rtl_cells=247796 ports=6635
+999:ELABCHK_PASS d_swgw1
+##### vivado_d_swgw8.log
+30:ELABCHK_BEGIN tag=d_swgw8 top=fk33_llama_top part=xcvu33p-fsvh2104-2L-e mode=rtl
+32:ELABCHK_GENERICS tag=d_swgw8 gen="A_DESC=true B_STATE_AXI=true B_SRC_REAL=true B_CONST_HBM=true C_KV_AXI=true HOST_WINDOW=false C_REAL=true NORM_REAL=true SWG_REAL=true SMP_EN=true C_N_ROT=64 C_KV_BLOCK=32 C_KV_ADDR_W=33 C_K_BASE_CH=282672640 C_V_BASE_CH=318324224 C_MAXPOS=65536 C_CTXLEN=65536 WDOG_LIMIT=4000000 A_ROWS_IF=48 A_JOB_STRIDE=262144 NORM_W_IMAGE=/home/labuser/elabclass/gen/norm_w_9b.hex C_QKN_IMAGE=/home/labuser/elabclass/gen/qkn_9b.hex SWG_WIDE=true SWG_LANES=8"
+34:ELABCHK_EXTRA tag=d_swgw8 extra=""
+55:ELABCHK_READ tag=d_swgw8 files=110 skipped=0 excluded=4 override=0
+82:	Parameter SWG_LANES bound to: 8 - type: integer 
+83:	Parameter SWG_WIDE bound to: 1 - type: bool 
+99:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+108:	Parameter HOST_WINDOW bound to: 0 - type: bool 
+979:ELABCHK_SECONDS tag=d_swgw8 elaborate=743 total=750
+994:ELABCHK_SIZE tag=d_swgw8 rtl_cells=251000 ports=6635
+1000:ELABCHK_PASS d_swgw8
