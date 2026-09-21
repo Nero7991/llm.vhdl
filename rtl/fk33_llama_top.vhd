@@ -7611,7 +7611,14 @@ begin
         HEAD_DIM => C_HD, N_QH => C_NQH, N_KVH => C_NKVH,
         KV_BLOCK => C_KV_BLOCK, N_ROT => C_N_ROT, LAYERS => C_LAY,
         POS_W => POSW, MANT_W => MANT_W, CM_W => C_CM_W, EXP_W => 8,
-        NORM_LANES => 1, STRICT_PRODUCER => true)
+        NORM_LANES => 1, STRICT_PRODUCER => true,
+        -- Build 11's two C levers.  MEASURED 2026-09-20 by TRACK SCOREHDR,
+        -- sim/tb_csweep_rate.vhd, cycles per position per C job: neither
+        -- 355.17, both 231.17.  SCORE_HDR_TREE is deliberately LEFT AT 0 --
+        -- it overlaps SCORE_EARLY (SWEEP_PIPE + SCORE_HDR_TREE=1 is 231.11,
+        -- indistinguishable) and buys nothing here while its area and
+        -- routed-timing cost is unmeasured.
+        SWEEP_PIPE => true, SCORE_EARLY => true)
       port map(
         clk => clk, rst => rst,
         start => c_start, layer => c_layer, cur_pos => c_cpos,
