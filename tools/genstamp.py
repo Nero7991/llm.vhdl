@@ -45,6 +45,7 @@ and an absent variable are indistinguishable to the reader, and knowing that a
 knob EXISTS and was left alone is most of the value.
 """
 
+import re
 import shlex
 
 
@@ -122,3 +123,79 @@ def insert_after(text, marker, block):
 # Check the generator's exit status and let it print, and prefer a reproduction
 # test that must CHANGE something (regenerate under a different value first,
 # then back) over one that must change nothing.
+
+
+# ---------------------------------------------------------------------------
+# READING A STAMP BACK.  Added 2026-09-20 by TRACK GENGATE.
+#
+# WHY.  A `--check` row regenerates a committed file and diffs it, and that is
+# only a staleness test if it regenerates with the SAME inputs.  Two of this
+# tree's committed generated files take an argument whose committed value is
+# NOT the generator's default -- rtl/hbm_tg_ip.vhd is NPORT=30 against a
+# default of 16, hw/fk33/build_fk33_hbmbw.tcl is 30 300 against 15 300 -- so a
+# check written the obvious way reports STALE forever, on a tree that is
+# perfectly current.  A check that is always red is worse than no check: it
+# gets muted, and then the row is decoration.
+#
+# The stamp already records those values, which is the whole point of it, so
+# the check reads them back out of the file it is checking.  That makes the
+# committed file self-describing in both directions: a human reads the
+# reproduce line, and the gate reads the rows.
+_ROW_RE = re.compile(r"^\s*(?:--|#|//)\s+(env|argv)\s+(\S+)\s*=\s*(.*?)\s*$")
+_ROWS_HDR = "inputs ((unset) means"
+_NO_INPUTS = "inputs: NONE."
+
+
+def parse(text):
+    """Return the stamped [(kind, name, value)] rows, value None for (unset).
+
+    Raises ValueError when the text carries no GENSTAMP block at all, rather
+    than returning [] -- an unstamped file and a file stamped "inputs: NONE"
+    are DIFFERENT CLAIMS (nobody looked, versus someone looked and there is
+    nothing to record), and a caller that cannot tell them apart would fall
+    back to a generator default and call the result current.
+
+    The scan is BOUNDED to the rows immediately following the header line and
+    stops at the first line that is not a row.  An unbounded regex over a
+    whole generated file can match its body: a Tcl or VHDL comment of the form
+    `# env FOO = bar` is ordinary text, and CLAUDE.md records four separate
+    incidents in this project of a search matching something it was not
+    looking for.
+    """
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if _NO_INPUTS in line:
+            return []
+        if _ROWS_HDR in line:
+            rows = []
+            for line in lines[i + 1:]:
+                m = _ROW_RE.match(line)
+                if not m:
+                    break
+                rows.append((m.group(1), m.group(2),
+                             None if m.group(3) == "(unset)" else m.group(3)))
+            if not rows:
+                raise ValueError(
+                    "genstamp: the block header is present but no input rows "
+                    "follow it, so the file records the existence of inputs "
+                    "and not their values")
+            return rows
+    raise ValueError("genstamp: no GENSTAMP block found; this file does not "
+                     "record what produced it, so nothing can regenerate it "
+                     "with the right inputs")
+
+
+def read_inputs(path):
+    """parse() the file at `path`.  Errors name the path."""
+    try:
+        return parse(open(path).read())
+    except ValueError as e:
+        raise ValueError("%s: %s" % (path, e))
+
+
+def value(rows, kind, name, cast=str, default=None):
+    """One stamped value, or `default` when the stamp does not carry it."""
+    for k, n, v in rows:
+        if k == kind and n == name:
+            return default if v is None else cast(v)
+    return default

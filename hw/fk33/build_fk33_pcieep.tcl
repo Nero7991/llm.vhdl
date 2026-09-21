@@ -1,5 +1,21 @@
 # GENERATED from hw/fk33/build_fk33_i2cprobe.tcl by hw/fk33/gen_pcieep.py
 # -- do not hand-edit; regenerate so the probe build's fixes are not lost.
+# GENSTAMP -- the out-of-band inputs that produced THIS file, and
+# the only record of them.  This generator's output DEPENDS on the
+# values below: regenerating with different ones changes the
+# CONFIGURATION, not the formatting, and the diff looks like
+# ordinary drift.  Reproduce this exact file with
+#     FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py
+# inputs ((unset) means the generator's own default was taken):
+#     env  FK33_CARD          = 1
+#     env  FK33_CB_STYLE      = distributed
+#     env  FK33_ENG           = (unset)
+#     env  FK33_ENG_CORE_MHZ  = 75
+#     env  FK33_ENG_FAST_MHZ  = (unset)
+#     env  FK33_ENG_SPLIT_CLK = (unset)
+#     env  FK33_FLATTEN       = (unset)
+#     env  FK33_SYNTH_JOBS    = (unset)
+#     env  FK33_SYNTH_THREADS = (unset)
 #
 # PCIe Gen3 x4 XDMA endpoint for the FK33.  The first bitstream in this project
 # with a PCIe endpoint at all.
@@ -165,6 +181,30 @@ if {[file exists "$ProjectFolder"]} {
 
 # paths pinned to the upstream checkout -- see header note 7
 set scriptPath "/home/orencollaco/GitHub/SQRL_FK33/projects"
+
+# tgRoot -- the llama.vhdl repo root.  NOT $scriptPath above, which is SQRL's
+# vendor tree and a separate repository.
+#
+# Three candidates, tried in order, each accepted only if it really contains
+# the tree.  See the TGROOT_BLOCK comment in hw/fk33/gen_i2cprobe.py for why
+# this is not just [file dirname [info script]]: hw/fk33/pcieep_build.sh COPIES
+# the generated build script out of the repo before sourcing it, so the
+# script's own location is not the repo during a card build.
+set tgRoot ""
+foreach _cand [list \
+        [expr {[info exists ::env(FK33_TGROOT)] ? $::env(FK33_TGROOT) : ""}] \
+        [expr {[info script] eq "" ? "" : [file normalize [file join [file dirname [info script]] .. ..]]}] \
+        "/home/orencollaco/GitHub/llama.vhdl"] {
+    if {$_cand ne "" && [file exists [file join $_cand rtl util_pkg.vhd]]} {
+        set tgRoot [file normalize $_cand]
+        break
+    }
+}
+unset _cand
+if {$tgRoot eq ""} {
+    error "tgRoot: no candidate repo root contains rtl/util_pkg.vhd. Set FK33_TGROOT, or re-run hw/fk33/gen_pcieep.py from the checkout you mean to build."
+}
+puts "FK33_TGROOT $tgRoot"
 set sourceRoot "/home/orencollaco/GitHub/SQRL_FK33"
 #puts stdout $scriptPath
 #puts stdout [join [lrange [file split [file dirname [info script]]] 0 end-2] "/"]
@@ -1812,8 +1852,8 @@ if {$HBMGlobalSwitch == 1} {
 }
    
 #set_property PR_FLOW 1 [current_project]
-add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pcieep.xdc
-set_property target_constrs_file /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pcieep.xdc [current_fileset -constrset]
+add_files -fileset constrs_1 -norecurse $tgRoot/hw/fk33/fk33_pcieep.xdc
+set_property target_constrs_file $tgRoot/hw/fk33/fk33_pcieep.xdc [current_fileset -constrset]
 
 set_property synth_checkpoint_mode None [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]
 puts "FK33_CARD synth_checkpoint_mode = [get_property synth_checkpoint_mode [get_files ./$ProjectName/$ProjectName.srcs/sources_1/bd/bd/bd.bd]]"
@@ -1836,10 +1876,10 @@ if {[get_property strategy [get_runs impl_1]] ne $fk33_strategy} {
     error "FK33_STRATEGY FAIL: asked for '$fk33_strategy', run reports '[get_property strategy [get_runs impl_1]]'. set_property accepted it silently and it did not apply."
 }
 puts "FK33_IMPL_STRATEGY [get_property strategy [get_runs impl_1]]"
-add_files -fileset constrs_1 -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc
-set_property used_in_synthesis false [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
-set_property used_in_implementation true [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]
-if {[get_property used_in_synthesis [get_files /home/orencollaco/GitHub/llama.vhdl/hw/fk33/fk33_pblock.xdc]]} {
+add_files -fileset constrs_1 -norecurse $tgRoot/hw/fk33/fk33_pblock.xdc
+set_property used_in_synthesis false [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]
+set_property used_in_implementation true [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]
+if {[get_property used_in_synthesis [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]]} {
     error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the LINKED design, so synthesis would read it, match nothing, leave an empty pb_core behind and say so only as a Vivado 12-180 warning."
 }
 puts "FK33_PBLK fk33_pblock.xdc added, implementation only"
@@ -2214,6 +2254,70 @@ wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
 fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN
 puts "==== synthesis done ===="
 
+# ---- POST-PLACE REPORT HOOK ----------------------------------------------
+# Writes the PLACED per-subsystem area table from inside the implementation
+# run, immediately after place_design and before phys_opt.
+#
+# WHY A HOOK AND NOT A LINE AFTER open_run.  A build that FAILS in route is
+# exactly the build that most needs an area table, and it never reaches
+# open_run.  Build 10 is the recorded case: it closed place at +0.421 and
+# routed at -5.819, its postmortem attributed the failure to the levers' AREA,
+# and TRACK LEVERBOARD then found that attribution unsupported because the
+# control it needed -- build 9's placed report -- had never been kept.  A hook
+# here also makes the table PLACED, so it is comparable with the
+# bd_wrapper_utilization_placed.rpt that Vivado's own run strategy has been
+# writing all along and that two results directories already hold.
+#
+# EVERYTHING IS INSIDE A catch, IN BOTH DIRECTIONS.  Arming it cannot fail the
+# build, and the hook body cannot fail the run.  A reporting change that can
+# kill a four-hour build is worth less than the reports.  The sentinel says
+# which happened: "hook armed" means the placed table will exist, "HOOK NOT
+# ARMED" means it will not, and neither is silent.
+set fk33_hook [file normalize ./fk33_impl_post_place.tcl]
+if {[catch {
+    set fk33_hookfh [open $fk33_hook w]
+    puts $fk33_hookfh {# GENERATED by gen_pcieep.py -- post-place hook for impl_1. DO NOT HAND-EDIT.
+#
+# Runs INSIDE the implementation run, with impl_1's run directory as the
+# working directory, immediately after place_design and before phys_opt.
+#
+# The whole body is in a catch: a reporting hook must never be able to fail a
+# four-hour build.  If it breaks it says so on FK33_HIERUTIL and the run goes on.
+if {[catch {
+    report_utilization -hierarchical -file bd_wrapper_utilization_placed_hier.rpt
+    puts "FK33_HIERUTIL placed hierarchical utilization -> bd_wrapper_utilization_placed_hier.rpt"
+    if {[info exists ::env(FK33_REPORT_DIR)] && [file isdirectory $::env(FK33_REPORT_DIR)]} {
+        foreach fk33_f {bd_wrapper_utilization_placed_hier.rpt
+                        bd_wrapper_utilization_placed.rpt
+                        bd_wrapper_control_sets_placed.rpt
+                        bd_wrapper_io_placed.rpt} {
+            if {[file exists $fk33_f]} {
+                file copy -force $fk33_f $::env(FK33_REPORT_DIR)
+            }
+        }
+        puts "FK33_HIERUTIL placed reports copied to $::env(FK33_REPORT_DIR)"
+    } else {
+        puts "FK33_HIERUTIL FK33_REPORT_DIR unset or not a directory; the placed reports exist only in the run directory, which the next build overwrites"
+    }
+} fk33_hookerr]} {
+    puts "FK33_HIERUTIL FAILED (not fatal, the run continues): $fk33_hookerr"
+}
+}
+    close $fk33_hookfh
+    set_property STEPS.PLACE_DESIGN.TCL.POST $fk33_hook [get_runs impl_1]
+    # READ IT BACK.  set_property accepts a value it did not apply and says
+    # nothing; this flow has already been bitten by that on `strategy`
+    # (FK33_STRATEGY) and on FLATTEN_HIERARCHY.
+    set fk33_hookgot [get_property STEPS.PLACE_DESIGN.TCL.POST [get_runs impl_1]]
+    if {$fk33_hookgot ne $fk33_hook} {
+        error "set_property took silently but did not apply: run reports '$fk33_hookgot'"
+    }
+    puts "FK33_HIERUTIL post-place hook armed: $fk33_hook"
+} fk33_hookarmerr]} {
+    puts "FK33_HIERUTIL HOOK NOT ARMED (not fatal): $fk33_hookarmerr"
+    puts "FK33_HIERUTIL there will be NO placed hierarchical utilization for this build; the routed one after open_run is unaffected"
+}
+
 launch_runs impl_1 -to_step write_bitstream -jobs 8
 fk33_assert_run_started impl_1
 wait_on_run -timeout $FK33_IMPL_MAX_MIN impl_1
@@ -2415,6 +2519,29 @@ report_timing_summary -no_detailed_paths -file fk33_pcieep_timing.rpt
 report_clock_interaction -file fk33_pcieep_clkint.rpt
 report_design_analysis -congestion -file fk33_pcieep_congestion.rpt
 report_clock_utilization -file fk33_pcieep_clkutil.rpt
+
+# ---- PER-SUBSYSTEM AREA, ROUTED (gen_pcieep.py) ---------------------------
+# Until 2026-09-20 every build in this flow wrote report_utilization WITHOUT
+# -hierarchical, so NO per-subsystem card area figure existed anywhere in this
+# project.  Three separate attribution questions in one evening -- which lever
+# grew the design, whether the codebook fix frees CLBs, and whether build 10's
+# area story is true -- all failed on the same missing table, and the table is
+# produced for a few seconds by a build that has already run four hours.
+#
+# THIS ONE IS ROUTED, because open_run impl_1 opens the final checkpoint.  The
+# hook armed before launch_runs writes the PLACED one
+# (bd_wrapper_utilization_placed_hier.rpt) in the run directory.  DO NOT
+# subtract one from the other: post-route phys_opt replicates and remaps
+# cells, so they are two measurements of two netlists, which is the "the parts
+# do not sum across synthesis contexts" trap in CLAUDE.md.
+#
+# It is only a real attribution because the card build synthesises with
+# FLATTEN_HIERARCHY = none -- read FK33_CARD FLATTEN_HIERARCHY back from this
+# same log rather than assuming it.  Under Vivado's default `rebuilt` the
+# optimiser crosses every boundary and the hierarchy is reconstructed
+# afterwards, and then this table is an approximation.
+report_utilization -hierarchical -file fk33_pcieep_util_hier.rpt
+puts "FK33_HIERUTIL routed hierarchical utilization -> fk33_pcieep_util_hier.rpt"
 
 # ---- THE FLOORPLAN, verified on the implemented design (gen_pcieep.py) -----
 # Two things have to be true and neither is visible from the source files.

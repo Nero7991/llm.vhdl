@@ -72,6 +72,7 @@ because each is a decision:
 Regenerate with:  python3 hw/fk33/gen_fk33_engine.py
 """
 import os
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DST = os.path.join(HERE, "rtl", "fk33_engine.vhd")
@@ -799,7 +800,36 @@ end architecture rtl;
 '''
 
 
-def main():
+USAGE = """usage: python3 hw/fk33/gen_fk33_engine.py [--check]
+
+  (no arguments)  regenerate hw/fk33/rtl/fk33_engine.vhd in place
+  --check         regenerate in memory and compare; print
+                  GEN_FK33_ENGINE_CHECK: OK or STALE and exit 0 or 1.
+                  WRITES NOTHING.
+
+This generator takes no out-of-band input: its output depends only on this
+script and the constants at the top of it, so --check needs no arguments and
+no GENSTAMP block to recover.  Contrast tools/gen_hbm_tg_ip.py, whose
+committed NPORT=30 is not its default.
+"""
+
+
+def main(argv=None):
+    # UNTIL 2026-09-20 THIS SCRIPT PARSED NOTHING AND WROTE UNCONDITIONALLY,
+    # so `--help` rewrote the repo file -- CLAUDE.md records that as the
+    # reason it was left ungated, and the file it writes carries FAST_POP,
+    # which is in the failing build 11b.  A staleness here would be invisible
+    # and expensive.  Argument handling first, side effect afterwards.
+    argv = sys.argv[1:] if argv is None else list(argv)
+    check = "--check" in argv
+    rest = [a for a in argv if a != "--check"]
+    if rest:
+        sys.stdout.write(USAGE)
+        # Unknown arguments are an ERROR, not a silent regeneration.  The
+        # failure this closes is a typo like `--chek` quietly writing the file
+        # and the caller reading "wrote ..." as a passing check.
+        return 0 if ("--help" in rest or "-h" in rest) else 2
+
     txt = BODY.format(
         NLANE=NLANE, NMAST=NMAST, BLK=BLK, ROWS_IF=ROWS_IF,
         NPORTS_W=NPORTS_W, NPORTS_S=NPORTS_S, AXI_DW=AXI_DW, ADDR_W=ADDR_W,
@@ -812,11 +842,29 @@ def main():
         MASTER_PORTS=master_ports(),
         MASTER_WIRING=master_wiring(),
     )
+    if check:
+        have = open(DST).read() if os.path.exists(DST) else None
+        if have == txt:
+            print("GEN_FK33_ENGINE_CHECK: OK hw/fk33/rtl/fk33_engine.vhd "
+                  "(%d bytes, %d masters)" % (len(txt), NMAST))
+            return 0
+        print("GEN_FK33_ENGINE_CHECK: STALE hw/fk33/rtl/fk33_engine.vhd")
+        if have is None:
+            print("  the file does not exist")
+        else:
+            import difflib
+            for line in list(difflib.unified_diff(
+                    have.splitlines(), txt.splitlines(),
+                    "checked-in", "generated", lineterm=""))[:40]:
+                print("  " + line)
+        return 1
+
     os.makedirs(os.path.dirname(DST), exist_ok=True)
     with open(DST, "w") as f:
         f.write(txt)
     print("wrote %s (%d bytes, %d masters)" % (DST, len(txt), NMAST))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -173,6 +173,61 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
+
+# GENSTAMP.  This generator reads NINE environment variables and none of them
+# is an argument, so the file it writes has never recorded what produced it.
+# MEASURED 2026-09-20 (TRACK BUILDREPORT, TRACK GENSTAMP): regenerating
+# build_fk33_pcieep.tcl under the DEFAULT environment deletes 496 lines
+# including the whole lever-C block, and the diff reads as ordinary drift.  An
+# environment variable is invisible in shell history, in a `ps` listing and in
+# any log that does not print it; the stamp below is the only durable record.
+sys.path.insert(0, os.path.join(REPO, "tools"))
+import genstamp
+
+# ONE list, so the stamp and the behaviour cannot drift apart.  Every name here
+# is read by an `os.environ.get("NAME"` somewhere below, and `--selftest`
+# asserts the two sets are EQUAL in both directions -- a name read but not
+# stamped is a silent input, and a name stamped but not read is a false claim.
+#
+# NOT included, deliberately: FK33_SYNTH_MAX_MIN, FK33_IMPL_MAX_MIN,
+# FK33_TGROOT and FK33_REPORT_DIR.  Those are read by the GENERATED TCL at
+# Vivado run time, not by this script, so they do not change the bytes of the
+# file and a stamp naming them would be a claim this file cannot support.
+STAMP_ENV_NAMES = (
+    "FK33_CARD", "FK33_CB_STYLE", "FK33_ENG", "FK33_ENG_CORE_MHZ",
+    "FK33_ENG_FAST_MHZ", "FK33_ENG_SPLIT_CLK", "FK33_FLATTEN",
+    "FK33_SYNTH_JOBS", "FK33_SYNTH_THREADS",
+)
+
+
+def _stamp_inputs(env=None):
+    """The (kind, name, value) rows, from one mapping.  Takes `env` so the
+    selftest can build a REAL alternative environment and go down the same
+    code path the write goes down, rather than through a second expression
+    that could agree with the check while disagreeing with the file."""
+    env = os.environ if env is None else env
+    return [("env", n, env.get(n) or None) for n in STAMP_ENV_NAMES]
+
+
+def _stamp_cmd(inputs):
+    # DERIVED from the same list the rows are printed from, never from
+    # sys.argv or from the process environment at large.  TRACK GENSTAMP
+    # measured what the other form costs: a file stamped "inputs: NONE" grew
+    # by exactly the width of an environment prefix it does not depend on.
+    return ([f"{n}={v}" for (_, n, v) in sorted(inputs) if v]
+            + ["python3", "hw/fk33/gen_pcieep.py"])
+
+
+STAMP_INPUTS = _stamp_inputs()
+STAMP_CMD = _stamp_cmd(STAMP_INPUTS)
+
+
+def stamp_block(comment="#", inputs=None):
+    inputs = STAMP_INPUTS if inputs is None else inputs
+    return genstamp.stamp(_stamp_cmd(inputs), inputs, comment=comment)
+
+
 SRC = os.path.join(HERE, "build_fk33_i2cprobe.tcl")
 DST = os.path.join(HERE, "build_fk33_pcieep.tcl")
 XDC_SRC = os.path.join(HERE, "fk33_i2cprobe.xdc")
@@ -3981,6 +4036,89 @@ def _require_unique(names):
         seen.add(n)
 
 
+def _env_names_read_by(src):
+    """Every FK33_* the given PYTHON SOURCE reads from the process
+    environment, as a set.
+
+    The haystack cannot hold the needle: this function's own pattern is
+    written with backslash escapes (`os\\.environ`), so scanning this file
+    does not match the scanner.  CLAUDE.md records three separate incidents of
+    a search matching its own text -- `pgrep -f`, a /proc loop, and a log grep
+    that found the script echoed into the log -- and a fourth one here would
+    silently ADD a name that is never read, which is the exact false claim the
+    stamp exists to prevent."""
+    return set(re.findall(r'os\.environ\.get\("(FK33_[A-Z0-9_]*)"', src))
+
+
+def genstamp_teeth():
+    """Two properties, each with its mutant built from the THING.
+
+    (1) The stamped set and the set actually READ are EQUAL, both ways.  A
+        name read but not stamped is a silent input -- the whole defect.  A
+        name stamped but not read is a false claim, which is worse than no
+        stamp because it is a false negative in the one place someone looks.
+
+    (2) Different environments give different stamps; the same environment
+        gives identical bytes.  Determinism is a hard requirement, not a
+        preference: gate rows regenerate a file and compare it against the
+        committed bytes, so a stamp carrying a time, a user, a host or a
+        working directory turns them red on every machine.
+
+    The mutants are a REAL extra `os.environ.get` call appended to the source
+    text and a REAL alternative environment mapping, not the string the check
+    happens to look for.  This tree's recorded `seam_tieoff_teeth()` failure
+    was a check and a mutant wrong in the same direction, and it passed green
+    every day the build was dead."""
+    src = open(os.path.abspath(__file__)).read()
+    read = _env_names_read_by(src)
+    stamped = set(STAMP_ENV_NAMES)
+    print("-" * 62)
+    print("GENSTAMP env names read=%d stamped=%d" % (len(read), len(stamped)))
+    if read != stamped:
+        sys.exit("SELFTEST FAIL: gen_pcieep.py reads %r and stamps %r. "
+                 "read-but-not-stamped=%r is a silent input; "
+                 "stamped-but-not-read=%r is a claim the file cannot support."
+                 % (sorted(read), sorted(stamped),
+                    sorted(read - stamped), sorted(stamped - read)))
+
+    # THE SELF-MATCH TRAP FIRED HERE, MEASURED 2026-09-20, INSIDE THE
+    # FUNCTION WHOSE DOCSTRING SAYS THE HAYSTACK CANNOT HOLD THE NEEDLE.  The
+    # first version of this line spelled the mutant read site out in one
+    # literal, so THIS FILE contained a real-looking call and the control run
+    # reported read=10 stamped=9 and exited 1 on the committed tree.  Split so
+    # the pattern is never contiguous in the source: the scan sees the mutant
+    # only in the text it is handed, never in itself.
+    mutant_src = src + "\nos.environ." + 'get("FK33_MUTANT_NEVER_STAMPED", "")\n'
+    if _env_names_read_by(mutant_src) == stamped:
+        sys.exit("SELFTEST FAIL: the env-name scan did not see a real extra "
+                 "os.environ.get call, so it cannot see a real new input "
+                 "either.  The check has no teeth.")
+    mutant_stamped = stamped | {"FK33_MUTANT_NEVER_READ"}
+    if _env_names_read_by(src) == mutant_stamped:
+        sys.exit("SELFTEST FAIL: the scan matched a name nothing reads.")
+    print("GENSTAMP teeth: +1 real read site seen, +1 phantom name refused")
+
+    a = stamp_block("#", _stamp_inputs({}))
+    b = stamp_block("#", _stamp_inputs({}))
+    c = stamp_block("#", _stamp_inputs({"FK33_CARD": "1",
+                                        "FK33_CB_STYLE": "distributed"}))
+    if a != b:
+        sys.exit("SELFTEST FAIL: two stamps from the SAME environment differ. "
+                 "Something non-deterministic is in the block and every "
+                 "regenerate-and-compare gate row will be red.")
+    if a == c:
+        sys.exit("SELFTEST FAIL: FK33_CARD=1 FK33_CB_STYLE=distributed "
+                 "produced the same stamp as the empty environment, so the "
+                 "stamp does not record the two variables that MEASURED "
+                 "2026-09-20 change 496 lines of the output.")
+    for forbidden in (os.getcwd(), os.path.expanduser("~")):
+        if forbidden and forbidden in c:
+            sys.exit("SELFTEST FAIL: the stamp carries %r, which differs "
+                     "between machines and checkouts." % forbidden)
+    print("GENSTAMP teeth: same env -> identical bytes, different env -> "
+          "different stamp, no cwd/home in the block")
+
+
 def selftest():
     import subprocess
     import tempfile
@@ -4227,6 +4365,7 @@ def selftest():
     card_closure_teeth()
     cdc_pins_teeth()
     split_gate_teeth(built)
+    genstamp_teeth()
 
     print("SELFTEST PASS")
 
@@ -6104,7 +6243,9 @@ def main():
                          "plausible number.")
 
     text = assemble_script()
-    open(DST, "w").write(HEADER + text)
+    open(DST, "w").write(
+        genstamp.insert_after(HEADER, "do not hand-edit", stamp_block("#"))
+        + text)
     print(f"wrote {DST}")
 
     # ---- XDC ---------------------------------------------------------------
@@ -6226,7 +6367,29 @@ def main():
         "# after PERST# deasserts.  They are irrelevant while configuring over JTAG.",
         "",
     ]
-    open(XDC_DST, "w").write("\n".join(out) + "\n")
+    # THE XDC IS THIS GENERATOR'S SECOND COMMITTED OUTPUT, AND IT IS
+    # ENVIRONMENT-DEPENDENT TOO.  Until now it carried no banner at all: its
+    # first line is SQRL's, inherited from fk33_i2cprobe.xdc, so a reader had
+    # no way to tell it was generated, let alone with what.
+    #
+    # MEASURED 2026-09-20 (TRACK GENGATE): its bytes do NOT move with
+    # FK33_CARD, FK33_CB_STYLE or FK33_ENG_CORE_MHZ -- three regenerations
+    # under different values of those gave identical sha256 -- but ENG_XDC
+    # selects between two whole blocks on FK33_ENG, and ENG_SPLIT_XDC appears
+    # only under FK33_ENG_SPLIT_CLK.  So it gets the SAME nine-row stamp as
+    # the Tcl rather than an empty one: the honest statement is "these nine
+    # were the environment", not "this file has no inputs".
+    # The marker is on the LAST line of the banner on purpose.
+    # genstamp.insert_after splits after the FIRST matching line, so a marker
+    # in the middle of a multi-line banner leaves the banner's own tail
+    # stranded BELOW the stamp.  MEASURED here on the first attempt.
+    xdc_banner = (
+        "# GENERATED from hw/fk33/fk33_i2cprobe.xdc by hw/fk33/gen_pcieep.py.\n"
+        "# The probe build's pin and clock constraints, with the x4 lane, the\n"
+        "# sysref and the debug-hub edits applied -- do not hand-edit.\n")
+    open(XDC_DST, "w").write(
+        genstamp.insert_after(xdc_banner, "hand-edit", stamp_block("#"))
+        + "\n".join(out) + "\n")
     print(f"wrote {XDC_DST}  ({n_lane} lane constraints superseded, "
           f"{n_hub} debug-hub lines superseded, sysref kept)")
 

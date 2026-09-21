@@ -410,3 +410,351 @@ SAME environment produce identical bytes. Build the mutant from a real
 environment difference, not from the string the check looks for: this tree's
 recorded `seam_tieoff_teeth()` failure was a check and a mutant wrong in the
 same direction, and it passed green every day the build was dead.
+
+---
+
+# 2026-09-20, TRACK GENGATE: the handover applied, and the three unchecked generators gated
+
+Workstation, branch `fpga`, no Vivado, no hardware. Appended to GENSTAMP's file
+rather than started as a new one, because this is the same defect class and the
+same evidence chain.
+
+## The question, verbatim
+
+> "Apply GENSTAMP's prepared handover for `hw/fk33/gen_pcieep.py` ... Give
+> `rtl/hbm_tg_ip.vhd` and `build_fk33_hbmbw.tcl` a staleness gate ...
+> `hw/fk33/gen_fk33_engine.py` is ungated and rewrites the repo file even on
+> `--help`."
+
+## The answer, up front
+
+**The recovered environment is `FK33_CARD=1 FK33_CB_STYLE=distributed
+FK33_ENG_CORE_MHZ=75`, all three load-bearing, and under it the stamp costs
+`+16 -0`.** The committed `build_fk33_pcieep.tcl` was ALSO **117 lines behind its
+own generator** before this track touched it, in three unrelated blocks, so the
+full regeneration is `+133 -6`. The handover's estimate of "roughly `+12 -0`"
+was right about the stamp and did not know about the drift, and **the drift is
+the exact failure the whole track exists to make visible** -- it sat in the one
+generated file nobody could regenerate safely.
+
+**Three `--check` modes now exist and all three are gated** (row text handed to
+`sim/regress.sh`'s owner, not applied). Two of them recover their argument from
+the committed file's own GENSTAMP block, which is what makes them possible at
+all: with the generators' defaults, both report STALE on a current tree.
+
+## The procedure
+
+1. **`free -g`, and identify the live Vivado by `/proc/PID/exe`, never by a
+   command line.** Build 11b: PID 493310, `cwd=.../build11b/root/fk33_pcieep/
+   fk33_pcieep.runs/impl_1`, RSS 12.4 GiB; PID 387741 the launcher. **`ls -l
+   /proc/PID/fd | grep -c llama.vhdl` = 0 for both**, so regenerating committed
+   files in the repo cannot disturb it.
+2. **Recover the environment in a SCRATCH COPY, never the shared checkout.**
+   `git archive HEAD | tar -x -C /mnt/storage/fk33_builds/scratch/gengate/tree1`
+   -- 181 MB, tracked files only, no `.git` mutation, so no other track's index
+   or worktree is touched.
+3. **Run the DEFAULT first, as a reproduction test that must CHANGE something.**
+   GENSTAMP's trap is that an unwritten file compares equal to itself; a run
+   whose only evidence is an empty diff cannot distinguish "reproduced" from
+   "refused". Exit status read, generator allowed to print, every time.
+4. **Normalise the embedded absolute paths before diffing** (see trap 1) and
+   sweep the candidate environments, one variable at a time.
+5. **Apply the patch in the scratch copy, run `--selftest`, mutate the
+   selftest's own rows, restore.** Only then copy into the checkout.
+6. **For each `--check`: control green, three mutants red, tree restored and
+   md5-verified.** Then the same at the GATE level in the scratch tree, with the
+   two pre-existing `*stale` rows as the control that should NOT move.
+
+## The evidence
+
+### Recovering the environment: which variables are load-bearing
+
+Path-normalised (`@ROOT@`), against the committed file, pre-stamp generator:
+
+```
+env                                                          changed lines
+FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75       123
+FK33_CARD=1 FK33_CB_STYLE=distributed                            125
+FK33_CARD=1                           FK33_ENG_CORE_MHZ=75       137
+(default)                                                        641   (145 +, 496 -)
+```
+
+`CLKOUT3_REQUESTED_OUT_FREQ {75.000}` in the committed file is
+`ENG_CORE_MHZ` at `gen_pcieep.py:3667`, which is the read that pins 75.
+
+### The 123 residual lines are NOT configuration. They are three pending generator changes
+
+```
++24  the tgRoot block and 6 lines of $tgRoot substitution   (3219cb0, TRACK PATHFREE)
++70  the post-place report hook (STEPS.PLACE_DESIGN.TCL.POST) (TRACK BUILDREPORT, today)
++23  report_utilization -hierarchical after open_run          (TRACK BUILDREPORT, today)
+```
+
+Zero lever-C lines move, zero clock lines move, and the six deletions are the
+`add_files` of the XDC and the pblock becoming `$tgRoot/...`. So the environment
+is settled and the rest is drift.
+
+### The stamp, and the final diff
+
+```
+$ FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py
+rc=0
+$ git diff --numstat
+133  6  hw/fk33/build_fk33_pcieep.tcl      # 16 stamp + 117 drift
+ 19  0  hw/fk33/fk33_pcieep.xdc            # 3 banner + 16 stamp, body unchanged
+```
+
+```
+# GENERATED from hw/fk33/build_fk33_i2cprobe.tcl by hw/fk33/gen_pcieep.py
+# -- do not hand-edit; regenerate so the probe build's fixes are not lost.
+# GENSTAMP -- the out-of-band inputs that produced THIS file, and
+# ...
+#     FK33_CARD=1 FK33_CB_STYLE=distributed FK33_ENG_CORE_MHZ=75 python3 hw/fk33/gen_pcieep.py
+# inputs ((unset) means the generator's own default was taken):
+#     env  FK33_CARD          = 1
+#     env  FK33_CB_STYLE      = distributed
+#     env  FK33_ENG           = (unset)
+#     env  FK33_ENG_CORE_MHZ  = 75
+#     env  FK33_ENG_FAST_MHZ  = (unset)
+#     env  FK33_ENG_SPLIT_CLK = (unset)
+#     env  FK33_FLATTEN       = (unset)
+#     env  FK33_SYNTH_JOBS    = (unset)
+#     env  FK33_SYNTH_THREADS = (unset)
+```
+
+Three consecutive regenerations, byte-identical each time
+(`tcl=e8b5109068c4ee8476e0 xdc=10ba221c862eb8fe00d8`).
+
+### The XDC gets the SAME nine rows, not an empty stamp
+
+The handover said "if it does not [depend on the environment], stamp it with
+`[]`". MEASURED: it does.
+
+```
+FK33_ENG=0           35 body lines change (ENG_XDC selects the other block)
+FK33_ENG_SPLIT_CLK=1  8 body lines added  (ENG_SPLIT_XDC)
+FK33_CARD / FK33_CB_STYLE / FK33_ENG_CORE_MHZ   0 body lines, sha256 identical
+```
+
+So the honest statement is "these nine were the environment", not "this file has
+no inputs". The XDC also had **no banner at all** before this -- its first line
+is SQRL's, inherited from `fk33_i2cprobe.xdc`, so nothing said it was generated.
+
+### `gen_pcieep.py --selftest` gained `genstamp_teeth()`, and it bites three ways
+
+Control: `GENSTAMP env names read=9 stamped=9`, both teeth lines, `SELFTEST PASS`.
+
+| mutant | built from | result |
+|---|---|---|
+| `FK33_FLATTEN` dropped from `STAMP_ENV_NAMES` | a real read site left unstamped | `FAIL ... read-but-not-stamped=['FK33_FLATTEN']` rc=1 |
+| `FK33_PHANTOM` added to `STAMP_ENV_NAMES` | a real name nothing reads | `FAIL ... stamped-but-not-read=['FK33_PHANTOM']` rc=1 |
+| `os.getcwd()` spliced into the reproduce command | a real non-determinism | `FAIL: the stamp carries '/mnt/storage/...'` rc=1 |
+
+Attribution control: all three mutants are edits to code that did not exist
+before this change, so no pre-existing selftest row could have caught any of
+them, and none is being credited to an existing property.
+
+### The three new `--check` modes
+
+| check | committed argument | default | MEASURED runtime |
+|---|---|---|---|
+| `python3 tools/gen_hbm_tg_ip.py --check` | `NPORT=30` from its own stamp | 16 | **0.025 s** |
+| `python3 hw/fk33/gen_hbmbw.py --check` | `NPORT=30 FCLK_MHZ=300` from its own stamp | 15, 300 | **0.017 s** |
+| `python3 hw/fk33/gen_fk33_engine.py --check` | none; the generator has no out-of-band input | -- | **0.017 s** |
+
+**THE ATTRIBUTION CONTROL IS THE HEADLINE HERE, because it shows reading the
+stamp is load-bearing and not decoration.** The same check, on the same current
+tree, with the generator's DEFAULT argument instead of the stamped one:
+
+```
+$ python3 tools/gen_hbm_tg_ip.py --check 16
+HBMTG_CHECK: STALE rtl/hbm_tg_ip.vhd (NPORT=16 ...)          rc=1
+$ python3 hw/fk33/gen_hbmbw.py --check 15 300
+HBMBW_CHECK: STALE build_fk33_hbmbw.tcl (NPORT=15 FCLK_MHZ=300 ...)  rc=1
+```
+
+A row that is red on a correct tree gets muted, and a muted row is the
+"regenerated by a script nothing runs" defect with extra steps.
+
+### Teeth, per check, with the tree restored and md5-verified after each
+
+`HBMTG_CHECK` (`rtl/hbm_tg_ip.vhd` back to `1fa271d7b976f236b8f0fe79c68e3e60`):
+
+```
+control                                     OK   rc=0   (also from a foreign cwd)
+one body line changed                       STALE rc=1, diff names the line
+the stamp says NPORT=16, body still 30      STALE rc=1  <- proves the stamp is READ
+the stamp removed entirely                  ABORT rc=1  <- refuses, does not default
+```
+
+`HBMBW_CHECK` (`263544372deca43966575c887c0e3ad6`): same four rows, same
+verdicts, the body mutant's diff naming `set_property top bd_wrapperX`.
+
+`GEN_FK33_ENGINE_CHECK` (`0da4b4b6e20897e146eb23ec02cf7b77`):
+
+```
+control                                     OK   rc=0
+FAST_POP default flipped true -> false      STALE rc=1, diff names FAST_POP
+the file deleted                            STALE rc=1 "the file does not exist"
+```
+
+`FAST_POP` is the mutant on purpose: it is the lever build 11b carries, and it
+is the reason an ungated `fk33_engine.vhd` was worth closing tonight.
+
+**None of the three writes anything under `--check`** -- `git status --porcelain`
+empty on the target after every run, in both the OK and the STALE direction.
+
+### The `--help` write, MEASURED before and after
+
+`hw/fk33/gen_fk33_engine.py` parsed nothing and called `main()` unconditionally.
+In the pristine scratch tree, with the file's mtime pinned to 2000-01-01:
+
+```
+$ python3 hw/fk33/gen_fk33_engine.py --help
+wrote .../hw/fk33/rtl/fk33_engine.vhd (91191 bytes, 28 masters)
+$ stat -c '%y' hw/fk33/rtl/fk33_engine.vhd
+2026-09-20 20:48:21            <- --help rewrote the repo file
+```
+
+After: `--help` prints usage and returns 0 writing nothing; `--chek` prints
+usage and returns **2** rather than silently regenerating; the file's md5 is
+unchanged across all three. It was a small change (argument handling before the
+side effect, plus `sys.exit(main())`), so it was done rather than deferred.
+
+### The gate rows, at the gate
+
+Dry-run in the scratch tree with the handover lines applied to a COPY of
+`sim/regress.sh` (the live runner was never edited):
+
+```
+--only stale --jobs 1   OVERALL PASS 5 FAIL 0     REGRESSION: PASS
+  sim:c4stale     PASS  COMPOSE4_CHECK ok
+  sim:gdnstale    PASS  GDNADAPT_CHECK ok
+  sim:hbmtgstale  PASS  HBMTG_CHECK: OK rtl/hbm_tg_ip.vhd (NPORT=30 from its own GENSTAMP, 104184 bytes)
+  sim:hbmbwstale  PASS  HBMBW_CHECK: OK build_fk33_hbmbw.tcl (NPORT=30 FCLK_MHZ=300 from its own GENSTAMP, 88840 bytes)
+  sim:engstale    PASS  GEN_FK33_ENGINE_CHECK: OK hw/fk33/rtl/fk33_engine.vhd (91191 bytes, 28 masters)
+```
+
+Then one line appended to each of the three targets in the scratch tree:
+
+```
+--only stale --jobs 1   OVERALL PASS 2 FAIL 3     REGRESSION: FAIL
+  sim:c4stale     PASS   <- control, did not move
+  sim:gdnstale    PASS   <- control, did not move
+  sim:hbmtgstale  FAIL
+  sim:hbmbwstale  FAIL
+  sim:engstale    FAIL
+```
+
+In the real checkout, six self-check rows green after the change, `--jobs 1`,
+each `--only` read for its `OVERALL` line: `runguard`, `ipsync`, `c4stale`,
+`gdnstale`, `shapemirror`, `fk33card`, all `OVERALL PASS 1 FAIL 0`. Plus
+`hw/fk33/check_pcieep_xdc.py` -> `FK33_XDC_CHECK OK` against the restamped XDC.
+
+## The `sim/regress.sh` block, to be applied by that file's owner
+
+NOT applied here: three tracks were gating, and bash re-seeks a running script
+by byte offset. Verified end to end against a copy, as above.
+
+After the `printf 'c4stale\t...` line:
+
+```bash
+printf 'hbmtgstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+printf 'hbmbwstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+printf 'engstale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+```
+
+In `declare -A SELFCHECK_CMD`, after the `[c4stale]=` line:
+
+```bash
+  [hbmtgstale]="python3 $REPO/tools/gen_hbm_tg_ip.py --check"
+  [hbmbwstale]="python3 $REPO/hw/fk33/gen_hbmbw.py --check"
+  [engstale]="python3 $REPO/hw/fk33/gen_fk33_engine.py --check"
+```
+
+In `run_one`'s dispatch case, extend the existing alternation:
+
+```bash
+    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|hbmtgstale|hbmbwstale|engstale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock) run_selfcheck "$key"; return ;;
+```
+
+**And one comment correction, in the `c4stale` block around line 2046:** it says
+`gen_fk33_engine.py` "still does not" have a `--check` and that "even `--help`
+rewrites the repo file". Both statements are now false.
+
+## Measured and REJECTED -- do not retry
+
+- **Regenerating `build_fk33_pcieep.tcl` in a scratch tree and diffing it
+  against the committed file.** The generator writes ABSOLUTE `add_files` paths
+  for 104 sources plus the XDC and the pblock, so a scratch regeneration differs
+  from the committed file in ~110 lines that are pure path. The scratch run is
+  still the right place to DEVELOP; the comparison has to be either
+  path-normalised or done in the real checkout.
+- **Stamping `fk33_pcieep.xdc` with `[]`**, as the handover suggested as an
+  option. REJECTED on measurement: `FK33_ENG=0` moves 35 body lines. An empty
+  stamp there would have been a false claim of independence, which GENSTAMP's
+  own `fk33_bc_grant.vhd` incident says is worse than no stamp.
+- **A `--check` for `gen_pcieep.py` itself.** NOT DONE, and this is the one
+  place where the mechanism exists but the case is not closed -- see "open".
+  It would have to read its nine values back out of the stamp (the reader is
+  written and works) AND cope with the absolute paths above, which makes it
+  checkout-specific in a way the other three are not.
+- **Putting the stamp marker in the MIDDLE of the XDC's banner.**
+  `genstamp.insert_after` splits after the FIRST matching line, so the banner's
+  own third line ended up BELOW the stamp. Marker on the last line.
+- **Leaving `gen_hbmbw.py`'s output guards after the write.** They were, and the
+  gate row's detail line then read `guard: all 12 edits present` and never named
+  the check, because `run_selfcheck` reports the LAST non-empty line. Guards
+  moved ahead of the write, which also means the file is no longer written when
+  a guard fires.
+
+## Measurement traps hit
+
+1. **THE SELF-MATCH TRAP FIRED A FOURTH TIME, INSIDE THE FUNCTION WHOSE
+   DOCSTRING SAYS THE HAYSTACK CANNOT HOLD THE NEEDLE.** `genstamp_teeth()`
+   scans `gen_pcieep.py`'s own source for `os.environ.get("FK33_...` read sites.
+   The scanner's pattern is escaped (`os\.environ`) so it cannot match itself --
+   that reasoning is correct and was written down. Then the MUTANT was spelled
+   out as one literal, `'\nos.environ.get("FK33_MUTANT_NEVER_STAMPED", "")\n'`,
+   which put a real-looking read site in the file being scanned. The control run
+   reported `read=10 stamped=9` and exited 1 on a clean tree. Split so the
+   pattern is never contiguous in the source. **Escaping the needle is not
+   enough if you also write an unescaped copy of it nearby.**
+2. **`diff -u | grep -c '^+[^+]'` under-counts by the number of blank added
+   lines**, because a blank addition is a bare `+`. It disagreed with
+   `git diff --numstat` by exactly 3 and the gap was briefly read as a real
+   difference between the scratch and the checkout. Use `numstat`.
+3. **Three comments in this repo cite `build_fk33_pcieep.tcl` by LINE NUMBER,
+   and all three were ALREADY WRONG at HEAD.** `host/fk33_run_token.py:86` cites
+   `:781-782` for `DRAM_0_STAT_TEMP`, which at HEAD is line 902 (781 is an
+   `add_files`); `tcl/axi_select.tcl:45` cites `:251` for a `M_AXI_DATA_WIDTH
+   {64}` that is at 372. Checked BEFORE attributing anything to this
+   regeneration, which moves them a further +40. **A line-number citation into a
+   generated file is stale by construction**; they are recorded, not fixed,
+   because they belong to other files.
+
+## Open, not determined
+
+- **`hw/fk33/gen_pcieep.py` STILL HAS NO `--check`, and it is now the only
+  committed generator in this class without one.** The stamp makes it possible
+  (`genstamp.read_inputs` on the committed file returns all nine rows, MEASURED)
+  but the absolute `add_files` paths mean such a check passes only in the
+  checkout that wrote the file. That is a design decision about whether the
+  generator should emit `$tgRoot`-relative sources, which is TRACK PATHFREE's
+  territory and half-done already.
+- **Whether `NPORT=30` is the configuration anything currently wants** is still
+  not established -- GENSTAMP flagged it, this track deliberately did not answer
+  it, and the `--check` is explicitly a staleness test and not an endorsement.
+  The same question applies to `FCLK_MHZ=300`.
+- **The 117 lines of drift now committed into `build_fk33_pcieep.tcl` have never
+  been through a build.** They are three changes by two other tracks that their
+  authors regenerated into no committed file; the committed copy's only consumer
+  is a human reader, because `pcieep_build.sh:89` regenerates before every
+  build. Called out rather than absorbed, exactly as GENSTAMP called out the
+  `tgRoot` hunk in `build_fk33_hbmbw.tcl`.
+- **Nothing here is a silicon measurement, and no build was run.** The claim is
+  that the committed files now match their generators under a recorded
+  environment, not that any of them builds.
+- **`hw/fk33/rtl/compose4_top.vhd` remains UNSTAMPED** (13 argv switches,
+  `sim:c4stale` checks it against the DEFAULTS only). TRACK GATERED owns it.
+  Unchanged from GENSTAMP's open list.
