@@ -277,6 +277,43 @@ survives into `noASRT`, where both `wact_chk` and TRACK NORMURAM's
 **this row earns nothing for either assertion**, which is what the columns
 exist to say.
 
+### 4.6b The rows that landed after section 4.6 (MEASURED)
+
+```
+N1   KILLED     -- the real rmsnorm's learned-gain exponent is 20 octaves out
+        tb_llama_top: ... degenerate residuals=16 ... (every other counter 0)
+N1x  SURVIVED   -- the SAME mutation against the DEFAULT gate row, which does
+                   not elaborate the NORM_REAL adapter at all
+N2   KILLED     -- the real rmsnorm's writeback drops its last element
+        tb_llama_top.vhd:3092: P14 -- hash of the 64-completion step trace is
+        56838 and the recorded landmark is 17333
+        tb_llama_top: schedule mismatches=0 skew differences=0 degenerate
+        residuals=0 token position faults=0 KV sticky errors=0 KV faults=0
+```
+
+**N1's attribution is the harness's own designed control and it now works on
+the re-anchored row: N1 KILLED, N1x SURVIVED.**  The kill belongs to
+`tb_llama_top_real` and the default gate row is blind to it, which is the
+reason the N rows were added in the first place.  The discriminating check is
+`degenerate residuals=16` with every other counter at zero.
+
+**N2's attribution is sharper and is worth recording on its own: every
+STRUCTURAL counter is ZERO and only the P14 landmark hash fired.**  Dropping
+the last element of the norm write-back moves no schedule, no position, no
+KV placement and produces no degenerate residual.  The value landmark is the
+only thing in the bench that can see it.
+
+```
+TAG    FULL          noWACT        noASRT        onlyWA        WHAT
+R5b    K:landmarks   K:landmarks   K:landmarks   K:landmarks   w STREAM, m7 hazard: the bank write address REVERSED
+```
+
+**R5b is the row ADDED to carry the retired `normuram` U3, and it bites.**  The
+m7 reversal on the form that ships is caught -- and the four-column control
+says by the pre-existing token landmarks, not by `wact_chk` and not by TRACK
+NORMURAM's `wbusy` assertion.  So retiring U3 costs no coverage: the property
+is held, and it is held by the landmarks rather than by either assertion.
+
 ### 4.7 The vanished-row ledger, teeth both ways (MEASURED)
 
 `mutation_harness_audit.tsv` classifies `llama_top_kv` and `rmswire` SAFE and
@@ -377,12 +414,21 @@ row and not merely to fire.
   and U3 existed to attack.  Retiring normuram does not create this hole; the
   hole arrived with `c094867` and normuram's rows had been dead since then.  It
   is now visible.  **Nobody has teeth on `CBMAP`.**
-- **Nine re-anchored rows have verified anchors and no verdict yet.**  The
-  `tb_llama_top` rows cost about 13 minutes each and the budget for this track
-  ran out: `llama_top_kv` R7, R7b, R8, VR7, VR7b, VN2 and `rmswire` R5b, R8 are
-  re-anchored and replay-clean at HEAD and in the working tree, but have not
-  been RUN.  Their dispositions are DERIVED from the legend and the RTL, not
-  MEASURED.  See the per-row table in the WORKLOG entry for which is which.
+- **Seven re-anchored rows have verified anchors and no verdict yet.**  The
+  `tb_llama_top` rows cost 13 minutes or more each and the budget for this
+  track ran out: `llama_top_kv` R7, R7b, R8, VR7, VR7b, VN2 and `rmswire` R8
+  are re-anchored, replay-clean at HEAD **and** in the working tree, and have
+  their impossible-anchor teeth, but the row itself has not been RUN.  Their
+  verdicts are DERIVED from the legend and the RTL, not MEASURED.
+  (`llama_top_kv` N2x and `rmswire` R8 were still running when this was
+  written; if they landed, the numbers are in the run logs under
+  `/mnt/storage/fk33_builds/scratch/reanchor/{kv_b,rw_b}.log`.)
+- **R7/VR7 and R7b/VR7b carry a PREDICTION that was not tested here.**  Their
+  own legends, written by TRACK C1, say R7 survives on the fixed design
+  (`cmp` of the clean and R7 captures is IDENTICAL at NTOK 3, 5 and 8) and
+  R7b is KILLED(ABORT) by `attn_block`'s `vsh_neg`.  Those statements predate
+  `1b8d28f`, which is the commit that broke the anchor, and nothing here
+  re-establishes them.
 - **`gsr` is a copy-paste of `gvr` and nothing says so to a tool.**  The fix
   here scopes around it.  The underlying condition -- two identical state
   machines in one file, distinguished only by a comment -- will break the next
