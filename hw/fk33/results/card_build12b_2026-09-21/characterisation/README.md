@@ -161,3 +161,29 @@ rtl/b_*`.
   differs, and whether C's p = 0 cost depends on the token is not known.
 - Die-temperature rise is bounded below the sensor scatter; a longer run or a
   direct power measurement at the slot would be needed to see a rise at all.
+
+## CORRECTION 2026-09-21 19:35: B's halving is attributed, from git history alone
+
+Section 4 above says "12b has every lever OFF, so it is not a lever" and lists
+the cause as open. **Withdrawn.** The 30.1 M-cycle profile was taken on the
+kvreg bitstream (`3802ebd`, 0.406 s/token, B_JOB 660,600 per job). Commit
+`14fa888` (2026-09-20 10:06, "B mover: enable PIPE, WIDE and MAXOUT 8 on
+llama_top's u_state", `rtl/llama_top.vhd:5549-5551`) landed AFTER that
+profile and BEFORE 3e344a2, and build 12's 6-line patch turned off only
+`NWIDE`, the third B-mover lever, leaving `PIPE` and `WIDE` on. So build 12b
+carries two B levers, and `tb_bmover_phases` predicted exactly this state:
+"both 307,784" cycles per B job (`0fb7d40`) against 12b's MEASURED 324,211
+(7,781,075 / 24), bench under-reads silicon by 5.2%.
+
+Consequences:
+- The LEVERBOARD intercept is stale by exactly these two levers; the bench's
+  own prediction of the shipping B job was in the tree the whole time.
+- `NWIDE` is a **B** lever (gdn_state_store, `748ff91`: -84,979 cycles a job
+  on the bench, to 222,805). Build 13's prediction in
+  `/mnt/storage/fk33_builds/build13/COMPOSITION.md` said "FAST_POP, NWIDE act
+  on A/D"; corrected there. Expected from NWIDE alone: B_JOB about
+  24 x 222,805 x 1.052 = 5.63 M, i.e. -2.15 M cycles per token (-9.7% at p = 0,
+  ESTIMATE using the 5.2% bench-to-silicon factor above).
+- "12b has every lever off" was the same error as quoting the wrong build's
+  number: the lever state was read from the build 12 PATCH, not from the
+  TREE. The patch lists what was changed; the tree lists what is on.
