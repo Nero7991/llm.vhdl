@@ -13,6 +13,8 @@ image. Baseline is build 9, `hw/fk33/results/card_kvreg_2026-09-20`, routed
 
 ---
 
+**BUILD 13 (2026-09-21): L-A + L-B(NWIDE) + L-C1 + L-C2 together on 12b's tree FAILED TO ROUTE** (11,561 nets in resource conflict, no bitstream, congestion 13.09% Global against the 12.5 threshold, predicted). Nothing on this board is attributable from it: four levers changed at once. Build 12b (all four off) routed at +0.046. See `hw/fk33/results/card_build13_2026-09-21/README.md`.
+
 ## 0. What is already committed, and what build 11b is actually building
 
 This matters first, because three of the seven levers are already in the tree

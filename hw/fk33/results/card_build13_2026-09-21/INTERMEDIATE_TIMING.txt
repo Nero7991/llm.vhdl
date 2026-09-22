@@ -1,0 +1,36 @@
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.596  | TNS=0.000  | WHS=-0.454 | THS=-1143.581|
+
+
+Phase 2.5 Update Timing for Bus Skew
+
+Phase 2.5.1 Update Timing
+Phase 2.5.1 Update Timing | Checksum: 13b3c1a37
+
+Time (s): cpu = 00:08:55 ; elapsed = 00:04:57 . Memory (MB): peak = 14927.816 ; gain = 0.000 ; free physical = 7721 ; free virtual = 36993
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.596  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+
+Phase 2.5 Update Timing for Bus Skew | Checksum: 203545f76
+
+Time (s): cpu = 00:08:56 ; elapsed = 00:04:58 . Memory (MB): peak = 14927.816 ; gain = 0.000 ; free physical = 7725 ; free virtual = 36996
+
+Router Utilization Summary
+  Global Vertical Routing Utilization    = 0.00789913 %
+  Global Horizontal Routing Utilization  = 0.00436122 %
+  Routable Net Status*
+  *Does not include unroutable nets such as driverless and loadless.
+  Run report_route_status for detailed report.
+  Number of Failed Nets               = 682677
+--
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-1.364 | TNS=-2324.959| WHS=N/A    | THS=N/A    |
+
+Phase 4.2 Global Iteration 1 | Checksum: 1c5aaf7bb
+
+Time (s): cpu = 02:51:26 ; elapsed = 01:49:59 . Memory (MB): peak = 14927.816 ; gain = 0.000 ; free physical = 4595 ; free virtual = 36466
+
+Phase 4.3 Global Iteration 2
+ Number of Nodes with overlaps = 653292
+ Number of Nodes with overlaps = 494478
+ Number of Nodes with overlaps = 280713
+ Number of Nodes with overlaps = 152970
+ Number of Nodes with overlaps = 84277
+Phase 4.3 Global Iteration 2 | Checksum: 17987b735
