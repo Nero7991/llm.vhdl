@@ -1590,6 +1590,7 @@ SEAM_FROM_CARD = [
     ("smp_token",    "smp_token"),
     ("smp_n",        "smp_n"),
     ("smp_exp",      "smp_exp"),
+    ("d_x_exp_out",  "x_exp_out"),     # R_X's block exponent, 2026-09-21 (two-card hop)
     ("f_smp_ovf",    "err_smp_ovf"),
     ("f_lost_beat",  "err_lost_beat"),
     ("f_gate_drop",  "err_gate_drop"),

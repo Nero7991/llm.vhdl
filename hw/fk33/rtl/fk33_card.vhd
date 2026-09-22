@@ -14,7 +14,7 @@
 -- It changes NO logic: every port is the same signal in a type the
 -- packager accepts, converted at the boundary.
 --    101 ports passed through unchanged
---     30 vector widths folded to literals   [IP_Flow 19-627]
+--     31 vector widths folded to literals   [IP_Flow 19-627]
 --      4 integer/natural ports re-typed      [IP_Flow 19-734]
 --     11 flattened port(s) un-flattened into named interfaces
 library ieee;
@@ -32,6 +32,7 @@ entity fk33_card is
     rel_mask                 : in     std_logic_vector(13 downto 0);
     busy                     : out    std_logic;
     tok_done                 : out    std_logic;
+    x_exp_out                : out    signed(15 downto 0);
     tok_ack                  : in     std_logic;
     seq_rst                  : in     std_logic;
     err                      : out    std_logic;
@@ -261,6 +262,7 @@ begin
       rel_mask                 => rel_mask,
       busy                     => busy,
       tok_done                 => tok_done,
+      x_exp_out                => x_exp_out,
       tok_ack                  => tok_ack,
       seq_rst                  => seq_rst,
       err                      => err,
