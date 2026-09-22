@@ -326,6 +326,8 @@ entity fk33_seam is
     smp_token    : in  unsigned(31 downto 0) := (others => '0');
     smp_n        : in  unsigned(31 downto 0) := (others => '0');
     smp_exp      : in  signed(EXP_W-1 downto 0) := (others => '0');
+    -- llama_top's x_exp_out (R_X's block exponent); see A_XEXP_OUT.
+    d_x_exp_out  : in  signed(EXP_W-1 downto 0) := (others => '0');
 
     -- The five sticky seam faults `llama_top` publishes, plus the KV one.
     -- Every one of these is a DEFECT, not a statistic, and every one is
@@ -463,6 +465,11 @@ architecture rtl of fk33_seam is
   -- llama_top's u_kv), so a host that reads it here has the card's real
   -- geometry and not a second copy of it.
   constant A_KV_MAXPOS  : natural := 16#A0#;  -- R   MAXPOS
+  -- 2026-09-21, two-card pipeline: R_X's block exponent, latched from
+  -- llama_top's `x_exp_out` at a clean tok_done exactly as LOGIT_EXP is
+  -- latched from smp_exp.  Window 3 gives the mantissas; this is the
+  -- exponent, so a host can push the row into another card as an X row.
+  constant A_XEXP_OUT   : natural := 16#A4#;  -- R   x_exp_out at tok_done
 
   constant ID_MAGIC : std_logic_vector(31 downto 0) := x"4C4C4D32";
   constant VERSION2 : natural := 2;
@@ -500,7 +507,8 @@ architecture rtl of fk33_seam is
   -- here, so neither the claim nor its retraction can drift from the design.
   -- UPDATED 2026-09-20: bit 5 SET, the KV base registers and A_KV_MAXPOS
   -- exist (0x1D -> 0x3D).
-  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000003D";
+  -- bit 6 (2026-09-21): A_XEXP_OUT exists.  0x3D -> 0x7D.
+  constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000007D";
 
   -- seam error codes, `server/fk33_seam.h`
   constant EC_NONE  : natural := 0;
@@ -588,6 +596,7 @@ architecture rtl of fk33_seam is
   signal r_kvk_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_kvv_base : std_logic_vector(32 downto 0) := (others => '0');
   signal r_x_exp    : signed(EXP_W-1 downto 0) := (others => '0');
+  signal r_xexp_o   : signed(EXP_W-1 downto 0) := (others => '0');  -- A_XEXP_OUT
   signal r_win_sel  : unsigned(1 downto 0) := (others => '0');
   signal r_win_addr : unsigned(15 downto 0) := (others => '0');
 
@@ -792,6 +801,7 @@ begin
         r_cycles  <= (others => '0');
         r_argmax  <= (others => '0');
         r_logit_e <= (others => '0');
+        r_xexp_o  <= (others => '0');
         r_smp_n   <= (others => '0');
         st_dcode  <= (others => '0');
         st_dstep  <= (others => '0');
@@ -861,6 +871,7 @@ begin
               r_argmax <= smp_token;
               r_smp_n  <= smp_n;
               r_logit_e<= smp_exp;
+              r_xexp_o <= d_x_exp_out;
               if cur_pos < MAXPOS then
                 cur_pos <= cur_pos + 1;
               end if;
@@ -1112,6 +1123,7 @@ begin
             when A_TOK_POS    => rv := x"0000" & std_logic_vector(obs_tok_pos);
             when A_ARGMAX     => rv := std_logic_vector(r_argmax);
             when A_LOGIT_EXP  => rv := std_logic_vector(resize(r_logit_e, 32));
+            when A_XEXP_OUT   => rv := std_logic_vector(resize(r_xexp_o, 32));
             when A_SMP_N      => rv := std_logic_vector(r_smp_n);
             when A_FAULTS     =>
               rv(0) := f_smp_ovf;

@@ -89,6 +89,7 @@ SEAM_SEQ_POS    = SEAM_BASE + 0x20
 SEAM_CYCLES     = SEAM_BASE + 0x40
 SEAM_ARGMAX     = SEAM_BASE + 0x44
 SEAM_LOGIT_EXP  = SEAM_BASE + 0x48
+SEAM_XEXP_OUT   = SEAM_BASE + 0xA4      # R  R_X's block exponent at tok_done (2026-09-21)
 SEAM_CAPS_FLAGS = SEAM_BASE + 0x4C
 SEAM_TBL_LEN    = SEAM_BASE + 0x50
 SEAM_SMP_N      = SEAM_BASE + 0x64
@@ -109,7 +110,8 @@ SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 2, "SAMPLER   the card computes a running argmax"),
             (1 << 3, "LOGITS    the card writes the full logits row"),
             (1 << 4, "SEQ_RESET SEQ_RESET reaches the engine; TOK_POS exists"),
-            (1 << 5, "KV_BASE   C's KV base is a register (KVK/KVV); KV_MAXPOS exists"))
+            (1 << 5, "KV_BASE   C's KV base is a register (KVK/KVV); KV_MAXPOS exists"),
+            (1 << 6, "XEXP_OUT  R_X's block exponent is readable after tok_done (0xA4)"))
 SEAM_FAULT = ((1 << 0, "SMP_OVF    the logits FIFO lost beats"),
               (1 << 1, "LOST_BEAT  an unstallable producer beat was dropped"),
               (1 << 2, "GATE_DROP  the region lock refused a write"),
@@ -683,6 +685,8 @@ def cmd_seam(a):
           f"{m.rd(SEAM_CYCLES)}  argmax {m.rd(SEAM_ARGMAX)}  "
           f"logit_exp {m.rd(SEAM_LOGIT_EXP)}")
     print(f"           tbl_len {m.rd(SEAM_TBL_LEN)}  smp_n {m.rd(SEAM_SMP_N)}")
+    if caps & (1 << 6):
+        print(f"           x_exp_out {m.rd(SEAM_XEXP_OUT)}  (R_X's block exponent; window 3 holds the mantissas)")
     # Live progress (a bitstream before 2026-09-18 19:00 reads both as 0).
     si, ic, cy = m.rd(SEAM_STEPS_ISS), m.rd(SEAM_ISSUE_CYC), m.rd(SEAM_CYCLES)
     print(f"progress   steps issued {si}  last issue at cycle {ic}  "
@@ -744,6 +748,7 @@ def cmd_seam(a):
                 "FK33_SEAM_CYCLES": SEAM_CYCLES,
                 "FK33_SEAM_ARGMAX": SEAM_ARGMAX,
                 "FK33_SEAM_LOGIT_EXP": SEAM_LOGIT_EXP,
+                "FK33_SEAM_XEXP_OUT": SEAM_XEXP_OUT,
                 "FK33_SEAM_CAPS_FLAGS": SEAM_CAPS_FLAGS,
                 "FK33_SEAM_TBL_LEN": SEAM_TBL_LEN,
                 "FK33_SEAM_SMP_N": SEAM_SMP_N,

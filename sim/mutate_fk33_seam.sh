@@ -344,6 +344,14 @@ run_case M14 "the SEQ_POS refusal is deleted" \
   "$(mutate M14 '                elsif r_seq_pos /= cur_pos then' \
                  '                elsif false then')"
 
+# M15, 2026-09-21 (two-card pipeline, Task 3): A_XEXP_OUT latches the
+# sampler's exponent instead of llama_top's x_exp_out.  P8 compares the
+# register against the REFERENCE top's x_exp_out, so this must be KILLED by
+# P8 and not by any earlier property.
+run_case M15 "A_XEXP_OUT latches smp_exp instead of d_x_exp_out" \
+  "$(mutate M15 '              r_xexp_o <= d_x_exp_out;' \
+                 '              r_xexp_o <= smp_exp;')"
+
 # ---------------------------------------------------------------------------
 # THE FLOOR.  These two are EXPECTED to survive and are here to measure what
 # the bench cannot see.  Do not delete them because they are not kills; a

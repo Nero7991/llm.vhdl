@@ -260,6 +260,8 @@ architecture tb of tb_fk33_seam is
   signal s_obs_tok_pos : unsigned(15 downto 0);
   signal s_smp_token, s_smp_n : unsigned(31 downto 0);
   signal s_smp_exp : signed(EXP_W-1 downto 0);
+  -- P8: R_X's exponent as each top publishes it, and as the seam latches it
+  signal r_x_exp_out, s_x_exp_out : signed(EXP_W-1 downto 0);
   signal s_f_ovf, s_f_lost, s_f_gate, s_f_stub, s_f_ecoll, s_f_kv : std_logic;
 
   -- ============================== AXI4-Lite =============================
@@ -318,6 +320,7 @@ architecture tb of tb_fk33_seam is
   constant A_KVV_LO   : natural := 16#98#;
   constant A_KVV_HI   : natural := 16#9C#;
   constant A_KV_MAXPOS: natural := 16#A0#;
+  constant A_XEXP_OUT : natural := 16#A4#;   -- 2026-09-21, P8
   constant A_WIN_SEL  : natural := 16#58#;
   constant A_WIN_ADDR : natural := 16#5C#;
   constant A_WIN_DATA : natural := 16#60#;
@@ -377,7 +380,7 @@ begin
       hw_we => r_hw_we, hw_reg => r_hw_reg, hw_addr => r_hw_addr,
       hw_data => r_hw_data,
       hr_reg => r_hr_reg, hr_addr => r_hr_addr, hr_data => r_hr_data,
-      obs_issue => r_obs_issue);
+      obs_issue => r_obs_issue, x_exp_out => r_x_exp_out);
 
   -- The reference's descriptor memory, at one clocked state of latency, so
   -- it matches the seam's RAM and a difference cannot be a memory-timing
@@ -437,7 +440,7 @@ begin
       hw_data => s_hw_data,
       hr_reg => s_hr_reg, hr_addr => s_hr_addr, hr_data => s_hr_data,
       obs_tok_pos => s_obs_tok_pos,
-      obs_issue => s_obs_issue,
+      obs_issue => s_obs_issue, x_exp_out => s_x_exp_out,
       smp_token => s_smp_token, smp_n => s_smp_n, smp_exp => s_smp_exp,
       kv_err => s_f_kv,
       err_smp_ovf => s_f_ovf, err_lost_beat => s_f_lost,
@@ -479,7 +482,7 @@ begin
       d_kv_k_base => s_kv_k_base, d_kv_v_base => s_kv_v_base,
       d_busy => s_busy, d_tok_done => s_tok_done, d_err => s_err,
       d_err_code => s_err_code, d_err_step => s_err_step,
-      d_steps_done => s_steps_done,
+      d_steps_done => s_steps_done, d_x_exp_out => s_x_exp_out,
       d_raddr => s_draddr, d_ren => s_dren, d_rdata => s_drdata,
       d_rvalid => s_drvalid,
       hw_we => s_hw_we, hw_reg => sv_hw_reg, hw_addr => sv_hw_addr,
@@ -591,6 +594,7 @@ begin
     variable n_bad_bcb : natural := 0;
     -- P6g's (the KV bases), same discipline; 17 written below.
     variable n_chk_kv  : natural := 0;
+    variable n_chk_xo  : natural := 0;   -- P8
     variable n_bad_kv  : natural := 0;
     -- P6f's, same discipline.
     variable n_chk_sr  : natural := 0;
@@ -649,11 +653,11 @@ begin
     -- 2026-09-19, so 13 became 29.  Bit 5 (the KV cache base is a register,
     -- A_KVK_*/A_KVV_*, and A_KV_MAXPOS exists) added 2026-09-20, so 29
     -- became 61.
-    assert iv = 61
+    assert iv = 125
       report "tb_fk33_seam: CAPS_FLAGS reads " & integer'image(iv)
-           & ", expected 61 (windows + sampler + logits + engine seq reset "
-           & "+ KV base register; no HBM fetch)." severity error;
-    if iv /= 61 then n_bad_rback <= n_bad_rback + 1; end if;
+           & ", expected 125 (windows + sampler + logits + engine seq reset "
+           & "+ KV base register + XEXP_OUT; no HBM fetch)." severity error;
+    if iv /= 125 then n_bad_rback <= n_bad_rback + 1; end if;
 
     -- ==================================================================
     -- P6a: A GO BEFORE ANYTHING IS PROGRAMMED MUST BE REFUSED, and it must
@@ -1274,6 +1278,22 @@ begin
            & integer'image((iv / 65536) mod 2048) & " /= the DUT's "
            & integer'image(to_integer(s_steps_done)) severity error;
     end if;
+    -- P8 (2026-09-21): A_XEXP_OUT is the residual's block exponent the seam
+    -- latched at this token's clean completion, and it must equal what the
+    -- REFERENCE top published for the same program -- two independent
+    -- llama_top instances, so this is not the seam reading itself back.
+    if not EXPECT_WDOG then
+      axi_ri(A_XEXP_OUT, iv);
+      n_chk_xo := n_chk_xo + 1;
+      if iv /= to_integer(r_x_exp_out) then
+        n_bad_rback <= n_bad_rback + 1;
+        report "tb_fk33_seam: P8 -- A_XEXP_OUT reads " & integer'image(iv)
+             & " but the reference top's x_exp_out is "
+             & integer'image(to_integer(r_x_exp_out)) & " (seam DUT's: "
+             & integer'image(to_integer(s_x_exp_out)) & ") on token "
+             & integer'image(t) severity error;
+      end if;
+    end if;
     -- P4, the live-progress pair (added 2026-09-18).  STEPS_ISS counts
     -- `job_issue` pulses since GO.  END_TOKEN is a descriptor that starts
     -- no unit and never reaches S_ISSUE (seq_desc_fetch.vhd:768), so a
@@ -1471,6 +1491,12 @@ begin
            + n_bad_kv;
     report "tb_fk33_seam: P6e bcb checks=" & integer'image(n_chk_bcb)
          & " bad=" & integer'image(n_bad_bcb) severity note;
+    report "tb_fk33_seam: P8 x_exp_out checks=" & integer'image(n_chk_xo) severity note;
+    if (not EXPECT_WDOG and n_chk_xo /= NTOK) or (EXPECT_WDOG and n_chk_xo /= 0) then
+      n_bad_rback <= n_bad_rback + 1;
+      report "tb_fk33_seam: P8 ran " & integer'image(n_chk_xo)
+           & " checks, not one per clean token" severity error;
+    end if;
     report "tb_fk33_seam: P6g kv checks=" & integer'image(n_chk_kv)
          & " bad=" & integer'image(n_bad_kv) severity note;
     if n_chk_kv /= 17 then
