@@ -349,7 +349,8 @@ def lmhead_windows(s, build=None):
     return wins
 
 
-def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
+def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
+               blocks=None, lmhead=True):
     """The step sequence, per block, in order.  Independently written from the
     same D design spec sections 4.2 / 4.3 that `sim/seq_tbl_pkg.vhd` and
     `sim/llama_sched_pkg.vhd` implement; agreement with BOTH of those is the
@@ -357,7 +358,14 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
 
     `lm_windows` is the lm_head's row-window list; default is the single
     whole-tensor window the two VHDL generators encode, which is CORRECT only
-    where `vocab_shard <= floor(MAXROWS_BFP/ROWS_IF)*ROWS_IF`."""
+    where `vocab_shard <= floor(MAXROWS_BFP/ROWS_IF)*ROWS_IF`.
+
+    `blocks` = (lo, hi) inclusive, GLOBAL block numbers, emits the program
+    for a card that holds only those blocks (2026-09-21, two-card pipeline);
+    None is the whole model.  `lmhead=False` ends the program after the
+    last block's residual with no final norm, no lm_head and no sampler
+    step, leaving R_X for the host to carry to the next card.  `blk`
+    numbering stays global so KV and GDN state addressing is untouched."""
     steps = []
     lmw = list(lm_windows) if lm_windows else [(0, s.vocab_shard)]
     # Checked here rather than trusted, because a window list that does not
@@ -397,7 +405,10 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
         emit(opcode=OP_VEC_RES, src=R_X, src2=R_ER, dst=R_X, n_rows=s.hidden,
              blk=b)
 
-    for b in range(s.blocks):
+    lo, hi = (0, s.blocks - 1) if blocks is None else blocks
+    if not (0 <= lo <= hi < s.blocks):
+        raise LayerError("--blocks %d:%d outside 0..%d" % (lo, hi, s.blocks - 1))
+    for b in range(lo, hi + 1):
         p = tensor_prefix % b
         if s.is_attn(b):
             ao = (b - (s.attn_interval - 1)) // s.attn_interval
@@ -467,6 +478,13 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
     # The TAIL norm's ordinal is 0, not `blocks % 64`.  sim/seq_tbl_pkg.vhd
     # passes it explicitly; sim/llama_sched_pkg.vhd stamps `blk % 64` on every
     # step and therefore writes `blocks % 64` here.  The two disagree.
+    if not lmhead:
+        # A card that hands its residual to the next one: END_TOKEN carries
+        # the first block it does NOT hold, so the boundary is visible in
+        # the table (the split self-check keys on it).
+        emit(opcode=OP_END_TOKEN, blk=hi + 1)
+        build_rel(steps)
+        return steps
     emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
          blk=s.blocks, const_base=s.blocks, ordinal=0)
     # THE LM HEAD, one A job per row window.
@@ -495,11 +513,50 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None):
              tensor="output.weight", row_start=rs)
     emit(opcode=OP_END_TOKEN, blk=s.blocks)
 
-    if not qkv_fused and len(steps) != s.n_steps(len(lmw)):
+    if blocks is None and not qkv_fused and len(steps) != s.n_steps(len(lmw)):
         raise LayerError("emitted %d steps, n_steps() says %d"
                          % (len(steps), s.n_steps(len(lmw))))
     build_rel(steps)
     return steps
+
+
+def selfcheck_split(s, name="9b"):
+    """card0(0:k-1, no lm_head) + card1(k:blocks-1) == the whole token program,
+    for three cut points, field for field except `idx` (each card numbers its
+    own program) and `rel`, whose liveness is forward-looking: card 1's masks
+    must equal the whole's exactly; card 0's may differ ONLY inside its last
+    block, where the whole program still sees later consumers."""
+    lmw = lmhead_windows(s)
+    full = build_plan(s, lm_windows=lmw)
+    fields = [f for f in Step.__slots__ if f not in ("idx", "rel")]
+    for k in (1, s.blocks // 2, s.blocks - 1):
+        a = build_plan(s, lm_windows=lmw, blocks=(0, k - 1), lmhead=False)
+        b = build_plan(s, lm_windows=lmw, blocks=(k, s.blocks - 1), lmhead=True)
+        if not (a[-1].opcode == OP_END_TOKEN and a[-1].blk == k):
+            raise LayerError("split at %d: card 0 does not end with END_TOKEN blk %d" % (k, k))
+        joined = a[:-1] + b
+        if len(joined) != len(full):
+            raise LayerError("split at %d: %d steps joined, whole is %d"
+                             % (k, len(joined), len(full)))
+        for i, (x, y) in enumerate(zip(joined, full)):
+            for f in fields:
+                if getattr(x, f) != getattr(y, f):
+                    raise LayerError("split at %d: step %d field %s: %r vs %r"
+                                     % (k, i, f, getattr(x, f), getattr(y, f)))
+        na = len(a) - 1
+        for i in range(na, len(full)):
+            if joined[i].rel != full[i].rel:
+                raise LayerError("split at %d: card 1 step %d rel %r vs whole %r"
+                                 % (k, i - na, joined[i].rel, full[i].rel))
+        rel_diff = [i for i in range(na) if joined[i].rel != full[i].rel]
+        outside = [i for i in rel_diff if full[i].blk != k - 1]
+        if outside:
+            raise LayerError("split at %d: card 0 rel differs outside its last block at %r"
+                             % (k, outside[:8]))
+        print("SPLITPLAN %s cut %d: %d + %d steps == %d, rel differs on %d steps of block %d only"
+              % (name, k, na, len(b), len(full), len(rel_diff), k - 1))
+    print("SPLITPLAN_OK %s 3 splits" % name)
+    return 0
 
 
 def cons_mask(st):
@@ -1115,6 +1172,14 @@ def main(argv=None):
                          "tensor instead of three row windows.  Expressible "
                          "at ROWS_IF = 48, and it collapses R_QKV's three "
                          "exponent segments into one")
+    ap.add_argument("--blocks-range", dest="block_range", default=None, metavar="LO:HI",
+                    help="emit the program for blocks LO..HI only (inclusive, global "
+                         "numbering): one card of a layer-split pipeline")
+    ap.add_argument("--no-lmhead", action="store_true",
+                    help="end after the last block's residual: no final norm, no "
+                         "lm_head, no sampler step (the card hands R_X to the next one)")
+    ap.add_argument("--selfcheck-split", action="store_true",
+                    help="prove card0 + card1 programs equal the whole token program, then exit")
     ap.add_argument("--one-lmhead-job", action="store_true",
                     help="emit the lm_head as ONE A job over the whole "
                          "vocabulary instead of tile-aligned row windows.  "
@@ -1201,8 +1266,15 @@ def main(argv=None):
     else:
         s = QWEN35_9B
 
+    if a.selfcheck_split:
+        return selfcheck_split(s, a.shape)
+    blocks = None
+    if a.block_range:
+        lo, hi = (int(v) for v in a.block_range.split(":"))
+        blocks = (lo, hi)
     lmw = [(0, s.vocab_shard)] if a.one_lmhead_job else lmhead_windows(s)
-    steps = build_plan(s, qkv_fused=a.qkv_fused, lm_windows=lmw)
+    steps = build_plan(s, qkv_fused=a.qkv_fused, lm_windows=lmw,
+                       blocks=blocks, lmhead=not a.no_lmhead)
 
     # ---- the shape, checked against the packed tensors -------------------
     mani = None

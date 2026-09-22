@@ -1875,6 +1875,11 @@ printf 'pcieep\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # interrupted gate would destroy the artefact it is checking.  Reasoning and
 # the honest limits are at the top of ip_repo/check_ip_sync.py.
 printf 'ipsync\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# sim:splitplan -- 2026-09-21, two-card pipeline (Task 8): card0(0:k-1, no
+# lm_head) + card1(k:blocks-1) must equal the whole token program field for
+# field at three cut points, with release masks differing only inside card
+# 0's last block.  Pure Python over tools/gen_layer_program.py, no GHDL.
+printf 'splitplan\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
 # ---------------------------------------------------------------------------
 # THE DESCRIPTOR BASE-RULE ROW (2026-08-29, TRACK NOGUARD, defect DESC-RULE2).
@@ -2920,6 +2925,7 @@ run_graygate() {   # run_graygate <suite:name>
 declare -A SELFCHECK_CMD=(
   [runguard]="python3 $REPO/hw/fk33/gen_pcieep.py --selftest"
   [ipsync]="python3 $REPO/ip_repo/check_ip_sync.py"
+  [splitplan]="python3 $REPO/tools/gen_layer_program.py --selfcheck-split"
   [descrule]="python3 $REPO/tools/gen_mv4i_desc.py --selftest"
   [cardtop]="python3 $REPO/tools/gen_cardtop.py --check --bench"
   [srvseam]="make -s -C $REPO/server test"
@@ -3067,7 +3073,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|elabrows|pcieep|mutrms|mutbfm) run_selfcheck "$key"; return ;;
+    runguard|ipsync|splitplan|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|elabrows|pcieep|mutrms|mutbfm) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"
