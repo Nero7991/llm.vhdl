@@ -1,0 +1,46 @@
+Design Route Status
+                                               :      # nets :
+   ------------------------------------------- : ----------- :
+   # of logical nets.......................... :     2609207 :
+       # of nets not needing routing.......... :     1927682 :
+           # of internally routed nets........ :     1643325 :
+           # of nets with no loads............ :      284357 :
+       # of routable nets..................... :      681525 :
+           # of fully routed nets............. :      672593 :
+       # of nets with routing errors.......... :        8932 :
+           # of nets with resource conflicts.. :        8932 :
+   ------------------------------------------- : ----------- :
+
+
+Nets with Routing Errors: (only the first 10 nets are listed)
+  GLOBAL_LOGIC0
+    Conflicting Routing Nodes -- only the first 10 are listed, use -show_all to get the full list:
+      INT_X108Y79/INT_NODE_IMUX_28_INT_OUT1
+      INT_X117Y89/WW1_W_BEG4
+      INT_X120Y99/INT_NODE_SDQ_54_INT_OUT1
+      INT_X20Y58/EE4_E_BEG6
+      INT_X20Y75/EE4_W_BEG7
+      INT_X27Y81/INT_INT_SDQ_4_INT_OUT0
+      INT_X27Y82/INT_NODE_GLOBAL_2_INT_OUT1
+      INT_X27Y87/INT_NODE_IMUX_24_INT_OUT0
+      INT_X27Y89/BOUNCE_E_2_FT1
+      INT_X27Y89/SDQNODE_E_93_FT0
+  bd_i/bcgrant/inst/u/b_rdata[107]
+    Conflicting Routing Nodes: INT_X127Y27/SS2_W_BEG5
+  bd_i/bcgrant/inst/u/c_rdata[120]
+    Conflicting Routing Nodes: INT_X129Y65/INODE_W_5_FT1
+  bd_i/bcgrant/inst/u/c_rdata[135]
+    Conflicting Routing Nodes: INT_X120Y39/INT_NODE_IMUX_18_INT_OUT0
+  bd_i/bcgrant/inst/u/c_rdata[233]
+    Conflicting Routing Nodes: INT_X127Y71/NN2_W_BEG6
+  bd_i/bcgrant/inst/u/c_rdata[304]
+    Conflicting Routing Nodes: INT_X86Y64/WW4_W_BEG0
+  bd_i/bcgrant/inst/u/c_rdata[322]
+    Conflicting Routing Nodes: INT_X88Y31/INT_NODE_IMUX_50_INT_OUT1
+  bd_i/bcgrant/inst/u/c_rdata[372]
+    Conflicting Routing Nodes: INT_X92Y40/INT_NODE_IMUX_44_INT_OUT1
+  bd_i/bcgrant/inst/u/c_rdata[463]
+    Conflicting Routing Nodes: INT_X94Y13/INT_NODE_IMUX_16_INT_OUT0
+  bd_i/bcgrant/inst/u/c_rdata[69]
+    Conflicting Routing Nodes: INT_X124Y66/INT_NODE_SDQ_21_INT_OUT0
+
