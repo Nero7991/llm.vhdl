@@ -423,6 +423,7 @@ int pl_seq_pos(const pl_ctx *c);
  *      -1  argument error          -2  transport error
  *      -3  the card reported err   -4  timeout waiting for done
  *      -5  the embedding provider failed
+ *      -7  a GO issued by pl_go_async is still outstanding on this card
  * On -3, pl_last_error() gives the FK33_SEAM_ERR_* code and its text.
  * ------------------------------------------------------------------------- */
 int pl_prefill(pl_ctx *c, const int *ids, int n,
@@ -444,6 +445,22 @@ int pl_decode(pl_ctx *c, int id,
 int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp);
 int pl_decode_row(pl_ctx *c, const int16_t *mant, int32_t exp,
                   int32_t *logits, int32_t *logit_exp, int *argmax);
+
+/* THE NON-BLOCKING GO (2026-09-21, for the two-card prefill overlap).
+ * pl_go_async issues a GO of `n` steps at the current position and returns
+ * at once (0, or a negative code); pl_wait collects it: waits for done|err,
+ * advances the position, reads the argmax and the logit exponent, and
+ * returns n.  pl_decode_async / pl_decode_row_async are push + pl_go_async
+ * for one position.  While a GO is outstanding (pl_pending != 0) every verb
+ * that pushes a row, reads R_X or issues a GO returns -7, and pl_wait with
+ * nothing outstanding also returns -7; a card that is mid-token owns its
+ * windows and the residual is not there until it finishes.  No logits row
+ * on this path (v2 has none; use pl_decode for a v1 card). */
+int pl_go_async(pl_ctx *c, int n);
+int pl_wait(pl_ctx *c, int32_t *logit_exp, int *argmax);
+int pl_pending(const pl_ctx *c);
+int pl_decode_async(pl_ctx *c, int id);
+int pl_decode_row_async(pl_ctx *c, const int16_t *mant, int32_t exp);
 
 /* The last FK33_SEAM_ERR_* code and ERR_INFO the card reported. */
 unsigned    pl_last_error(const pl_ctx *c);

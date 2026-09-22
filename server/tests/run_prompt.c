@@ -211,6 +211,8 @@ static void usage(void)
       "                  [--dtbl2 <d.hex> --rel2 <r.bin> --manifest2 <m.json>]  a SECOND\n"
       "                        card (blocks k.. plus the LM head) driven through\n"
       "                        pl_pipeline; [--dev2 /dev/xdma1] its device prefix\n"
+      "  --serial-prefill      two cards: prefill serially (the baseline) instead of\n"
+      "                        overlapping card 0's next position with card 1\n"
       "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
       "                  [--teeth-argmax N]   self-test of --check-argmax\n"
       "                  [--sim-kv-maxpos N]  the SIMULATED card's C_MAXPOS\n"
@@ -283,6 +285,7 @@ int main(int argc, char **argv)
     const char *prompt_path = NULL, *ref_path = NULL, *qtk_path = NULL;
     const char *text = NULL;
     int stream = 0;
+    int serial_prefill = 0;
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
@@ -325,6 +328,7 @@ int main(int argc, char **argv)
         if      (!strcmp(a, "--prompt"))       NEXT(prompt_path);
         else if (!strcmp(a, "--text"))         NEXT(text);
         else if (!strcmp(a, "--stream"))       stream = 1;
+        else if (!strcmp(a, "--serial-prefill")) serial_prefill = 1;
         else if (!strcmp(a, "--reference"))    NEXT(ref_path);
         else if (!strcmp(a, "--qtk"))          NEXT(qtk_path);
         else if (!strcmp(a, "--mv4i"))         NEXT(mv4i_path);
@@ -538,6 +542,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "run_prompt: plp_open refused the pair (versions or n_embd differ)\n");
             status = 2; goto done;
         }
+        plp_set_serial(pp, serial_prefill);
         if (resume) {
             fprintf(stderr, "run_prompt: --resume is not supported across two cards\n");
             status = 2; goto done;
@@ -690,8 +695,8 @@ int main(int argc, char **argv)
     if (pp) {
         double hr = 0, hw = 0; unsigned long hops = 0;
         plp_hop_timing(&hr, &hw, &hops);
-        printf("hop        %lu hops: read R_X %.3f s, push+GO card 1 %.3f s; card 1 at pos %d\n",
-               hops, hr, hw, plp_seq_pos(pp));
+        printf("hop        %lu hops: read R_X %.3f s, push+GO card 1 %.3f s; card 1 at pos %d; prefill %s\n",
+               hops, hr, hw, plp_seq_pos(pp), plp_serial(pp) ? "serial" : "overlapped");
     }
     printf("bytes      h2c %llu, c2h %llu, go %llu (%s)\n",
            (unsigned long long)pl_bytes_to_card(c) - h2c0,

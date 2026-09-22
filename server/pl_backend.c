@@ -45,6 +45,13 @@ struct pl_ctx {
     uint64_t to_card, from_card, gos;
     int go_timeout_ms;
 
+    /* A GO issued by pl_go_async and not yet collected by pl_wait: the
+     * number of steps it covers, 0 when nothing is outstanding.  Every
+     * verb that touches the windows or issues a GO refuses with -7 while
+     * this is non-zero, because the card is reading those windows. */
+    int pending;
+    double t_go0;
+
     /* One activation staging buffer, reused.  x_stride bytes. */
     unsigned char *xbuf;
     /* One logits staging buffer, l_stride bytes, allocated lazily because a
@@ -1253,6 +1260,7 @@ static int push_x_inner(pl_ctx *c, int k, int token_id)
 {
     int32_t exp = 0;
     int rc;
+    if (c->pending) return -7;
     memset(c->xbuf, 0, (size_t)c->x_stride);
     rc = c->embed(c->embed_user, token_id,
                   (int16_t *)(c->xbuf + FK33_SEAM_HDR_BYTES), c->n_embd, &exp);
@@ -1288,6 +1296,101 @@ static int push_x_inner(pl_ctx *c, int k, int token_id)
     return 0;
 }
 
+static int push_row(pl_ctx *c, const int16_t *row, int32_t exp);
+
+/* THE GO IN TWO HALVES (2026-09-21, for the two-card prefill overlap).
+ * go_issue programs the position and step count and writes GO; go_finish
+ * waits for done|err, advances the position and reads the argmax and the
+ * logit exponent.  run_chunk is issue+finish+logits, exactly what it was
+ * before the split; pl_go_async/pl_wait expose the halves so a caller can
+ * run two cards at once.  `pending` is the outstanding step count. */
+static int go_issue(pl_ctx *c, int n)
+{
+    if (n <= 0 || n > c->max_chunk) return -1;
+    if (c->next_pos + n > c->max_ctx) return -1;
+    if (c->pending) return -7;
+
+    if (wr(c, FK33_SEAM_SEQ_POS, (uint32_t)c->next_pos)) return -2;
+    if (wr(c, FK33_SEAM_N_STEP,  (uint32_t)n)) return -2;
+    if (c->version < 2) {
+        if (wr64(c, FK33_SEAM_X_BASE_LO, FK33_SEAM_X_BASE_HI, c->x_base)) return -2;
+        if (wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, c->l_base)) return -2;
+        if (wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, c->desc_ptr)) return -2;
+    }
+    /* On v2 the three pointers were written as zero once, at open, and must
+     * STAY zero: rewriting them here is how a merge would reintroduce the
+     * EC_RSVD.  They are not touched per GO on purpose. */
+
+    c->gos++;
+    c->pending = n;
+    c->t_go0 = pl_now_s();
+    if (wr(c, FK33_SEAM_CTRL, FK33_CTRL_GO)) { c->pending = 0; return -2; }
+    return 0;
+}
+
+static int go_finish(pl_ctx *c, int32_t *logit_exp, int *argmax)
+{
+    uint32_t st = 0, v = 0;
+    int rc, n = c->pending;
+    if (!n) return -7;
+
+    rc = seam_wait(c, &st);
+    /* Whatever happened, the GO is no longer outstanding: on an error the
+     * card has drained (seam_wait waits for busy to drop) and on a timeout
+     * there is nothing more to collect. */
+    c->pending = 0;
+    if (rc) return rc;
+
+    c->next_pos += n;
+
+    if (argmax) {
+        if (rd(c, FK33_SEAM_ARGMAX, &v)) return -2;
+        *argmax = (int)v;
+    }
+    if (logit_exp) {
+        if (rd(c, FK33_SEAM_LOGIT_EXP, &v)) return -2;
+        *logit_exp = (int32_t)v;
+    }
+    return n;
+}
+
+int pl_go_async(pl_ctx *c, int n)
+{
+    if (!c) return -1;
+    return go_issue(c, n);
+}
+
+int pl_wait(pl_ctx *c, int32_t *logit_exp, int *argmax)
+{
+    int rc;
+    if (!c) return -1;
+    rc = go_finish(c, logit_exp, argmax);
+    if (rc >= 0) g_t_go += pl_now_s() - c->t_go0;
+    return rc;
+}
+
+int pl_pending(const pl_ctx *c) { return c ? c->pending : 0; }
+
+int pl_decode_async(pl_ctx *c, int id)
+{
+    int rc;
+    if (!c) return -1;
+    if (c->next_pos + 1 > c->max_ctx) return -1;
+    rc = push_x(c, 0, id);
+    if (rc) return rc;
+    return go_issue(c, 1);
+}
+
+int pl_decode_row_async(pl_ctx *c, const int16_t *mant, int32_t exp)
+{
+    int rc;
+    if (!c || !mant) return -1;
+    if (c->next_pos + 1 > c->max_ctx) return -1;
+    rc = push_row(c, mant, exp);
+    if (rc) return rc;
+    return go_issue(c, 1);
+}
+
 /* Run one GO covering `n` steps starting at c->next_pos.  `want_logits`
  * selects whether the ~1 MB C2H happens at all. */
 static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
@@ -1306,36 +1409,11 @@ static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
     uint32_t st = 0, v = 0;
     int rc;
 
-    if (n <= 0 || n > c->max_chunk) return -1;
-    if (c->next_pos + n > c->max_ctx) return -1;
-
-    if (wr(c, FK33_SEAM_SEQ_POS, (uint32_t)c->next_pos)) return -2;
-    if (wr(c, FK33_SEAM_N_STEP,  (uint32_t)n)) return -2;
-    if (c->version < 2) {
-        if (wr64(c, FK33_SEAM_X_BASE_LO, FK33_SEAM_X_BASE_HI, c->x_base)) return -2;
-        if (wr64(c, FK33_SEAM_L_BASE_LO, FK33_SEAM_L_BASE_HI, c->l_base)) return -2;
-        if (wr64(c, FK33_SEAM_DESC_PTR_LO, FK33_SEAM_DESC_PTR_HI, c->desc_ptr)) return -2;
-    }
-    /* On v2 the three pointers were written as zero once, at open, and must
-     * STAY zero: rewriting them here is how a merge would reintroduce the
-     * EC_RSVD.  They are not touched per GO on purpose. */
-
-    c->gos++;
-    if (wr(c, FK33_SEAM_CTRL, FK33_CTRL_GO)) return -2;
-
-    rc = seam_wait(c, &st);
+    rc = go_issue(c, n);
     if (rc) return rc;
-
-    c->next_pos += n;
-
-    if (argmax) {
-        if (rd(c, FK33_SEAM_ARGMAX, &v)) return -2;
-        *argmax = (int)v;
-    }
-    if (logit_exp) {
-        if (rd(c, FK33_SEAM_LOGIT_EXP, &v)) return -2;
-        *logit_exp = (int32_t)v;
-    }
+    rc = go_finish(c, logit_exp, argmax);
+    if (rc < 0) return rc;
+    (void)st; (void)v;
 
     if (want_logits && logits && c->version >= 2) {
         /* THERE IS NO LOGITS ROW ON v2 AND ASKING FOR ONE IS AN ERROR RATHER
@@ -1387,6 +1465,7 @@ int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp)
     uint32_t v = 0; int i;
     if (!c || !mant || !exp) return -1;
     if (c->version < 2 || !(c->caps & FK33_CAP_XEXP_OUT)) return -1;
+    if (c->pending) return -7;      /* R_X is not there until the GO ends */
     if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XOUT)) return -2;
     if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
     for (i = 0; i < c->n_embd; i++) {
@@ -1403,6 +1482,7 @@ static int push_row(pl_ctx *c, const int16_t *row, int32_t exp)
 {
     int i;
     if (c->version < 2) return -1;
+    if (c->pending) return -7;
     if (wr(c, FK33_SEAM_X_EXP, (uint32_t)exp)) return -2;
     if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XIN)) return -2;
     if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;

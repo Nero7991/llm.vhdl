@@ -1204,6 +1204,86 @@ static void t16_pipeline_matches_single(void)
     pl_close(a); pl_close(b); pl_close(c);
 }
 
+/* T17, 2026-09-21: prefill OVERLAP.  Card 0 runs position k+1 while card 1
+ * runs position k, through pl_go_async/pl_wait.  The overlapped pipeline
+ * must equal the serial pipeline and the single card token for token, the
+ * hop count must equal the position count, and the pending-GO guards must
+ * refuse the calls that would corrupt an in-flight token. */
+static void t17_prefill_overlap(void)
+{
+    fk33_sim_opts sa, sb, sc, sd, se;
+    pl_open_opts oa, ob, oc, od, oe;
+    pl_ctx *a = NULL, *b = NULL, *c = NULL, *d = NULL, *e = NULL;
+    plp_ctx *p = NULL, *q = NULL;
+    uint32_t prog[64], rel[8];
+    int ids[7] = { 11, 22, 33, 44, 55, 66, 77 };
+    int am1 = -1, am2 = -1, bm1 = -1, bm2 = -1, cm1 = -1, cm2 = -1, rc;
+    int16_t row[TE]; int32_t ex = 0;
+    unsigned long hops0 = 0, hops1 = 0; double tr = 0, tw = 0;
+
+    printf("T17 overlapped prefill equals serial prefill equals one card\n");
+    rc = open_v2(&sa, &oa, prog, rel, &a); CK(rc == 0 && a, "single open (%d)", rc);
+    rc = open_v2(&sb, &ob, prog, rel, &b); CK(rc == 0 && b, "card 0 open (%d)", rc);
+    rc = open_v2(&sc, &oc, prog, rel, &c); CK(rc == 0 && c, "card 1 open (%d)", rc);
+    rc = open_v2(&sd, &od, prog, rel, &d); CK(rc == 0 && d, "card 0' open (%d)", rc);
+    rc = open_v2(&se, &oe, prog, rel, &e); CK(rc == 0 && e, "card 1' open (%d)", rc);
+    if (!a || !b || !c || !d || !e) return;
+
+    rc = pl_prefill(a, ids, 7, NULL, NULL, &am1);
+    CK(rc == 7, "single prefill returned %d", rc);
+    rc = pl_decode(a, am1, NULL, NULL, &am2);
+    CK(rc == 1, "single decode returned %d", rc);
+
+    rc = plp_open(b, c, &p); CK(rc == 0 && p, "plp_open serial (%d)", rc);
+    rc = plp_open(d, e, &q); CK(rc == 0 && q, "plp_open overlap (%d)", rc);
+    if (!p || !q) return;
+    plp_set_serial(p, 1);
+    CK(plp_serial(p) == 1 && plp_serial(q) == 0, "serial flags %d %d", plp_serial(p), plp_serial(q));
+
+    plp_hop_timing(&tr, &tw, &hops0);
+    rc = plp_prefill(p, ids, 7, &bm1);
+    CK(rc == 7, "serial pipeline prefill returned %d", rc);
+    rc = plp_decode(p, bm1, &bm2);
+    CK(rc == 1, "serial pipeline decode returned %d", rc);
+    rc = plp_prefill(q, ids, 7, &cm1);
+    CK(rc == 7, "overlapped pipeline prefill returned %d", rc);
+    plp_hop_timing(&tr, &tw, &hops1);
+    CK(hops1 - hops0 == 15, "hops for 7+1 serial and 7 overlapped: %lu, want 15", hops1 - hops0);
+    rc = plp_decode(q, cm1, &cm2);
+    CK(rc == 1, "overlapped pipeline decode returned %d", rc);
+
+    CK(am1 == bm1 && bm1 == cm1, "prefill argmax: single %d serial %d overlap %d", am1, bm1, cm1);
+    CK(am2 == bm2 && bm2 == cm2, "decode argmax: single %d serial %d overlap %d", am2, bm2, cm2);
+    CK(plp_seq_pos(q) == pl_seq_pos(a), "positions: overlap %d, single %d", plp_seq_pos(q), pl_seq_pos(a));
+    CK(pl_seq_pos(d) == pl_seq_pos(e), "the overlapped cards diverged: %d vs %d", pl_seq_pos(d), pl_seq_pos(e));
+
+    /* The pending-GO guards.  While a GO is outstanding on a card, nothing
+     * that touches its windows or issues another GO may proceed, and a
+     * wait with nothing outstanding is an error, not a no-op. */
+    rc = pl_wait(d, NULL, &am1);
+    CK(rc == -7, "pl_wait with nothing pending returned %d, want -7", rc);
+    rc = pl_go_async(d, 1);
+    CK(rc == 0, "pl_go_async returned %d", rc);
+    CK(pl_pending(d) == 1, "pl_pending %d, want 1", pl_pending(d));
+    rc = pl_go_async(d, 1);
+    CK(rc == -7, "second pl_go_async while pending returned %d, want -7", rc);
+    rc = pl_read_xout(d, row, &ex);
+    CK(rc == -7, "pl_read_xout while pending returned %d, want -7", rc);
+    rc = pl_decode(d, 5, NULL, NULL, &am1);
+    CK(rc == -7, "pl_decode while pending returned %d, want -7", rc);
+    rc = pl_decode_row(d, row, 0, NULL, NULL, &am1);
+    CK(rc == -7, "pl_decode_row while pending returned %d, want -7", rc);
+    rc = pl_wait(d, NULL, &am1);
+    CK(rc == 1, "pl_wait returned %d, want 1", rc);
+    CK(pl_pending(d) == 0, "pl_pending after wait %d, want 0", pl_pending(d));
+    /* d advanced alone, so the pair is now diverged and refused. */
+    rc = plp_decode(q, 3, &cm1);
+    CK(rc == -6, "plp_decode on diverged overlapped pair returned %d, want -6", rc);
+
+    plp_close(p); plp_close(q);
+    pl_close(a); pl_close(b); pl_close(c); pl_close(d); pl_close(e);
+}
+
 int main(void)
 {
     t1_open_and_caps();
@@ -1222,6 +1302,7 @@ int main(void)
     t14_v2_backend();
     t15_xout_hop();
     t16_pipeline_matches_single();
+    t17_prefill_overlap();
 
     printf("\nSEAM_SELFTEST %s  (%d checks, %d failed)\n",
            fails ? "FAIL" : "PASS", checks, fails);

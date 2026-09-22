@@ -10,6 +10,7 @@ struct plp_ctx {
     pl_ctx  *c0, *c1;
     int      n_embd;
     int16_t *row;          /* n_embd, the hop buffer */
+    int      serial;       /* 1: the serial prefill baseline */
 };
 
 static double g_read = 0, g_write = 0;
@@ -58,10 +59,14 @@ int plp_seq_pos(const plp_ctx *p)
     return p ? pl_seq_pos(p->c1) : -1;
 }
 
-/* Card 0 has just completed position pos: carry R_X into card 1 and run it
- * at the same position.  The GO on card 1 is inside pl_decode_row and is
- * NOT counted as hop time; only the read and the push are. */
-static int hop_and_run1(plp_ctx *p, int *argmax)
+void plp_set_serial(plp_ctx *p, int serial) { if (p) p->serial = serial ? 1 : 0; }
+int  plp_serial(const plp_ctx *p) { return p ? p->serial : 0; }
+
+/* Card 0 has just completed a position: carry R_X into card 1 and ISSUE
+ * its GO.  Timed: the read of R_X, then the push plus the GO write.  The
+ * wait for card 1 is the caller's, so it can overlap card 0's next
+ * position with it. */
+static int hop_issue(plp_ctx *p)
 {
     int32_t e = 0;
     int rc;
@@ -71,14 +76,29 @@ static int hop_and_run1(plp_ctx *p, int *argmax)
     t1 = now_s();
     g_read += t1 - t0;
     if (rc) return rc;
-    /* The push is the first thing pl_decode_row does; the GO follows.  We
-     * cannot separate the two from here without a second entry point, so
-     * the write figure below includes card 1's GO and is an upper bound
-     * on the push.  pl_host_timing's per-card numbers give the GO share. */
-    rc = pl_decode_row(p->c1, p->row, e, NULL, NULL, argmax);
+    rc = pl_decode_row_async(p->c1, p->row, e);
     g_write += now_s() - t1;
+    if (rc) return rc;
     g_hops++;
-    return rc;
+    return 0;
+}
+
+/* The serial form: hop, then wait for card 1. */
+static int hop_and_run1(plp_ctx *p, int *argmax)
+{
+    int rc = hop_issue(p);
+    if (rc) return rc;
+    return pl_wait(p->c1, NULL, argmax);
+}
+
+/* On an error mid-overlap a GO may still be outstanding on either card.
+ * Collect it (result discarded) so the pair is left with nothing pending
+ * and the caller's next verb is refused for the divergence, not for -7. */
+static void drain(plp_ctx *p)
+{
+    int am = -1;
+    if (pl_pending(p->c0)) pl_wait(p->c0, NULL, &am);
+    if (pl_pending(p->c1)) pl_wait(p->c1, NULL, &am);
 }
 
 /* Both cards must be at the same position before every step; a skipped or
@@ -89,13 +109,10 @@ static int aligned(const plp_ctx *p)
     return pl_seq_pos(p->c0) == pl_seq_pos(p->c1);
 }
 
-int plp_prefill(plp_ctx *p, const int *ids, int n, int *argmax)
+static int prefill_serial(plp_ctx *p, const int *ids, int n, int *argmax)
 {
     int k, rc, am0 = -1;
-    if (!p || !ids || n <= 0) return -1;
-    if (!aligned(p)) return -6;
     for (k = 0; k < n; k++) {
-        /* SERIAL in phase 0; see the header. */
         rc = pl_decode(p->c0, ids[k], NULL, NULL, &am0);
         if (rc < 0) return rc;
         rc = hop_and_run1(p, argmax);
@@ -104,11 +121,61 @@ int plp_prefill(plp_ctx *p, const int *ids, int n, int *argmax)
     return n;
 }
 
+/* THE OVERLAP.  Per position k: wait for card 0 (position k), read R_X
+ * BEFORE re-issuing card 0 (the next GO overwrites the window), issue card
+ * 0 at k+1, wait for card 1 (position k-1) so its windows are free, then
+ * push R_X and issue card 1 at k.  Card 1's last GO is collected after the
+ * loop and carries the prompt's argmax.  Every wait is on the card whose
+ * GO was issued longest ago, so the host never stalls on the wrong one. */
+static int prefill_overlap(plp_ctx *p, const int *ids, int n, int *argmax)
+{
+    int k, rc, am0 = -1, am1 = -1;
+    rc = pl_decode_async(p->c0, ids[0]);
+    if (rc) return rc;
+    for (k = 0; k < n; k++) {
+        rc = pl_wait(p->c0, NULL, &am0);
+        if (rc < 0) { drain(p); return rc; }
+        {
+            int32_t e = 0;
+            double t0 = now_s();
+            rc = pl_read_xout(p->c0, p->row, &e);
+            g_read += now_s() - t0;
+            if (rc) { drain(p); return rc; }
+            if (k + 1 < n) {
+                rc = pl_decode_async(p->c0, ids[k + 1]);
+                if (rc) { drain(p); return rc; }
+            }
+            if (k > 0) {
+                rc = pl_wait(p->c1, NULL, &am1);
+                if (rc < 0) { drain(p); return rc; }
+            }
+            t0 = now_s();
+            rc = pl_decode_row_async(p->c1, p->row, e);
+            g_write += now_s() - t0;
+            if (rc) { drain(p); return rc; }
+            g_hops++;
+        }
+    }
+    rc = pl_wait(p->c1, NULL, argmax);
+    if (rc < 0) { drain(p); return rc; }
+    return n;
+}
+
+int plp_prefill(plp_ctx *p, const int *ids, int n, int *argmax)
+{
+    if (!p || !ids || n <= 0) return -1;
+    if (!aligned(p)) return -6;
+    if (pl_pending(p->c0) || pl_pending(p->c1)) return -7;
+    return p->serial ? prefill_serial(p, ids, n, argmax)
+                     : prefill_overlap(p, ids, n, argmax);
+}
+
 int plp_decode(plp_ctx *p, int id, int *argmax)
 {
     int rc, am0 = -1;
     if (!p) return -1;
     if (!aligned(p)) return -6;
+    if (pl_pending(p->c0) || pl_pending(p->c1)) return -7;
     rc = pl_decode(p->c0, id, NULL, NULL, &am0);
     if (rc < 0) return rc;
     return hop_and_run1(p, argmax);
