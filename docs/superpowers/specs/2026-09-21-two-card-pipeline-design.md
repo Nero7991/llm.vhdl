@@ -153,3 +153,18 @@ them, never a subagent.
   per-card variant; it is emitted per program, so it should follow the
   program, but this has not been checked.
 - How `fk33_reload.sh` and `fk33-pci` select a card when two enumerate.
+
+
+## CORRECTION 2026-09-22: window 3 carries no mantissas on the card
+
+Section 2's hop reads the residual mantissas from seam window 3 "already
+there". MEASURED on build 14 (the first bitstream carrying `XEXP_OUT`): the
+exponent register reads the reference's value (8) and window 3 reads ALL
+ZEROS, because every card is built with `HOST_WINDOW=false` and
+`region_mem` ties the host read port to zero in that configuration
+(`docs/debugging/2026-09-22_the-residual-window-reads-zero-on-silicon.md`).
+The premise is withdrawn. The hop needs a mantissa read path that does not
+exist yet: either the region file's registered group read port muxed to the
+host when the engine is idle (no memory) or a 2-BRAM shadow of R_X written
+beside the region file. Tasks 1-10, 12 and 13 stand as built; Task 11's pair
+steps wait on that path and on the second card.

@@ -201,6 +201,9 @@ static void usage(void)
       "                        prints each token's bytes as the card emits it\n"
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
       "                  [--dump-logits <p.r9bs>]  token 0's LOGITS (S32 +\n"
+      "                  [--dump-xout <file>]  after the LAST GO, the residual R_X\n"
+      "                        (window 3 mantissas + XEXP_OUT) as text: `exp E`, then\n"
+      "                        n_embd int16 one per line; needs FK33_CAP_XEXP_OUT\n"
       "                        the shared exponent), LOGIT_EXP and the card's\n"
       "                        own TOKEN, in the tools/ref9b stream format.\n"
       "                        A v2 card publishes no logits row, so there the\n"
@@ -286,6 +289,7 @@ int main(int argc, char **argv)
     const char *text = NULL;
     int stream = 0;
     int serial_prefill = 0;
+    const char *xout_path = NULL;
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
@@ -345,6 +349,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--stop"))       { const char *s; NEXT(s); stop_id = atoi(s); stop_given = 1; }
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
         else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
+        else if (!strcmp(a, "--dump-xout"))    NEXT(xout_path);
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
@@ -691,6 +696,31 @@ int main(int argc, char **argv)
         printf("timing     %d GOs: run_chunk %.3f s (of which STATUS wait %.3f s over %lu polls), "
                "X pushes %.3f s, wall since start %.3f s\n",
                (int)(pl_go_count(c)), tg, tw, np, tp, pl_now_wall() - t_start);
+    }
+    if (xout_path) {
+        /* THE RESIDUAL, READ BACK THROUGH THE SEAM (2026-09-22).  On one
+         * card this is the row the two-card hop would carry, and it can be
+         * checked against the reference stream's R_X-<last block> record
+         * (mantissas AND exponent) with no second card present. */
+        int n = pl_n_embd(c);
+        int16_t *m = (int16_t *)calloc((size_t)n, sizeof(int16_t));
+        int32_t xe = 0;
+        int rc2 = m ? pl_read_xout(pp ? c : c, m, &xe) : -1;
+        if (rc2 == 0) {
+            FILE *xf = fopen(xout_path, "w");
+            if (xf) {
+                int i;
+                fprintf(xf, "exp %d\n", (int)xe);
+                for (i = 0; i < n; i++) fprintf(xf, "%d\n", (int)m[i]);
+                fclose(xf);
+                printf("xout       R_X after the last GO: exp %d, %d mantissas -> %s\n", (int)xe, n, xout_path);
+            } else { fprintf(stderr, "run_prompt: cannot write %s\n", xout_path); status = 2; }
+        } else {
+            fprintf(stderr, "run_prompt: --dump-xout: pl_read_xout returned %d (%s)\n", rc2,
+                    rc2 == -1 ? "no FK33_CAP_XEXP_OUT on this card, or a GO is pending" : "transport");
+            status = 2;
+        }
+        free(m);
     }
     if (pp) {
         double hr = 0, hw = 0; unsigned long hops = 0;
