@@ -1,0 +1,36 @@
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.526  | TNS=0.000  | WHS=-0.471 | THS=-1051.954|
+
+
+Phase 2.5 Update Timing for Bus Skew
+
+Phase 2.5.1 Update Timing
+Phase 2.5.1 Update Timing | Checksum: da1d6f1e
+
+Time (s): cpu = 00:08:51 ; elapsed = 00:04:56 . Memory (MB): peak = 14914.855 ; gain = 0.000 ; free physical = 8045 ; free virtual = 37086
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=0.526  | TNS=0.000  | WHS=N/A    | THS=N/A    |
+
+Phase 2.5 Update Timing for Bus Skew | Checksum: 181d015f1
+
+Time (s): cpu = 00:08:52 ; elapsed = 00:04:57 . Memory (MB): peak = 14914.855 ; gain = 0.000 ; free physical = 8044 ; free virtual = 37085
+
+Router Utilization Summary
+  Global Vertical Routing Utilization    = 0.0070089 %
+  Global Horizontal Routing Utilization  = 0.00696981 %
+  Routable Net Status*
+  *Does not include unroutable nets such as driverless and loadless.
+  Run report_route_status for detailed report.
+  Number of Failed Nets               = 680664
+--
+INFO: [Route 35-416] Intermediate Timing Summary | WNS=-0.721 | TNS=-889.386| WHS=N/A    | THS=N/A    |
+
+WARNING: [Route 35-447] Congestion is preventing the router from routing all nets. The router will prioritize the successful completion of routing all nets over timing optimizations.
+ Number of Nodes with overlaps = 7681
+Phase 4.1 Global Iteration 0 | Checksum: 94446325
+
+Time (s): cpu = 02:24:01 ; elapsed = 01:30:13 . Memory (MB): peak = 14914.855 ; gain = 0.000 ; free physical = 7617 ; free virtual = 36927
+
+Phase 4.2 Global Iteration 1
+ Number of Nodes with overlaps = 453991
+ Number of Nodes with overlaps = 285850
+ Number of Nodes with overlaps = 131991
+ Number of Nodes with overlaps = 58321

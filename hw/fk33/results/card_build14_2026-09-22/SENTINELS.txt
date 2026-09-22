@@ -1,0 +1,60 @@
+FK33_TGROOT /mnt/storage/fk33_builds/wt14
+FK33_CARD 51 sources set to VHDL 2008 (the two wrapper tops stay VHDL-93)
+FK33_PCIE_IDS vendor=10EE device=9034
+FK33_LNKLED OK: LED 6 follows NOT(user_lnk_up)
+FK33_AUX LNK user_lnk_up wired into the aux status word
+FK33_CB_STYLE distributed
+FK33_XEXP_PORT true
+FK33_ENG ASSOCIATED_BUSIF eng/core_clk = s_axi:s_axix
+FK33_ENG ASSOCIATED_BUSIF eng/hbm_aclk = m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi
+FK33_CORE_MHZ 75.000 requested on clk_wiz_0/clk_out3
+FK33_SEAM REGMAX=12288 HADDR_W=14
+FK33_SEAM CAPS_VOCAB = 248320
+FK33_SEAM CAPS_EMBD = 4096
+FK33_SEAM CAPS_LAYER = 32
+FK33_SEAM CAPS_CTX = 65536
+FK33_SEAM MAXPOS = 65536
+FK33_CARD INTF card a
+FK33_CARD INTF card bst
+FK33_CARD INTF card kv
+FK33_CARD INTF card kv0
+FK33_CARD INTF card kv1
+FK33_CARD INTF card m
+FK33_CARD INTF bcgrant b
+FK33_CARD INTF bcgrant c
+FK33_CARD INTF bcgrant m0
+FK33_CARD INTF bcgrant m1
+FK33_SEAMWIRE 41 seam<->card pins exist on both cells
+FK33_CARD bc_cdc0 PROTOCOL AXI3 -> SAXI_30
+FK33_CARD bc_cdc1 PROTOCOL AXI3 -> SAXI_31
+FK33_CARD SAXI_30 ENABLED
+FK33_CARD SAXI_31 ENABLED
+FK33_GRANT_ADDR bcgrant/m0 maps 32 segments of SAXI_30
+FK33_GRANT_ADDR bcgrant/m1 maps 32 segments of SAXI_31
+FK33_CARD card/a maps /card/a/SEG_eng_reg0
+FK33_CARD synth_checkpoint_mode = None
+FK33_TOP bd_wrapper
+FK33_IMPL_STRATEGY Performance_RefinePlacement
+FK33_PBLK fk33_pblock.xdc added, implementation only
+FK33_SYSMON ENABLE_TEMP_BUS = true
+FK33_SYSMON USER_TEMP_ALARM = true
+FK33_SYSMON TEMPERATURE_ALARM_TRIGGER = 90
+FK33_SYSMON TEMPERATURE_ALARM_RESET = 75
+FK33_SYSMON TEMPERATURE_ALARM_OT_TRIGGER = 101
+FK33_SYSMON TEMPERATURE_ALARM_OT_RESET = 99
+FK33_SYSMON REFERENCE = External
+FK33_SYSMON INTERFACE_SELECTION = Enable_AXI
+FK33_THERM hbm/DRAM_0_STAT_TEMP connected
+FK33_THERM hbm/DRAM_1_STAT_TEMP connected
+FK33_THERM hbm/DRAM_0_STAT_CATTRIP connected
+FK33_THERM hbm/DRAM_1_STAT_CATTRIP connected
+FK33_UNCONNECTED count=0
+FK33_RUNBOUND synth=360 min impl=720 min
+FK33_CARD general.maxThreads = 2
+FK33_CARD FLATTEN_HIERARCHY = none
+FK33_RUNSTART synth_1 dir=/mnt/storage/fk33_builds/build14/root/fk33_pcieep/fk33_pcieep.runs/synth_1 status=Queued...
+FK33_RUNDONE synth_1 100% status=synth_design Complete!
+FK33_HIERUTIL post-place hook armed: /mnt/storage/fk33_builds/build14/root/fk33_impl_post_place.tcl
+FK33_RUNSTART impl_1 dir=/mnt/storage/fk33_builds/build14/root/fk33_pcieep/fk33_pcieep.runs/impl_1 status=Queued...
+FK33_HIERUTIL placed hierarchical utilization -> bd_wrapper_utilization_placed_hier.rpt
+FK33_HIERUTIL placed reports copied to /mnt/storage/fk33_builds/wt14/hw/fk33/results/build_card_20260921_233853

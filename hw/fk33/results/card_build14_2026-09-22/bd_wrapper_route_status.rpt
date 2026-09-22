@@ -1,0 +1,40 @@
+Design Route Status
+                                               :      # nets :
+   ------------------------------------------- : ----------- :
+   # of logical nets.......................... :     2608354 :
+       # of nets not needing routing.......... :     1927651 :
+           # of internally routed nets........ :     1643295 :
+           # of nets with no loads............ :      284356 :
+       # of routable nets..................... :      680703 :
+           # of fully routed nets............. :      680692 :
+       # of nets with routing errors.......... :          11 :
+           # of nets with resource conflicts.. :          11 :
+   ------------------------------------------- : ----------- :
+
+
+Nets with Routing Errors:
+  bd_i/card/inst/u/gcr.u_attn/ar_pve_reg[1]
+    Conflicting Routing Nodes: INT_X44Y97/INT_NODE_SDQ_29_INT_OUT0
+  bd_i/card/inst/u/gcr.u_attn/u_arr/acc[13][35]_i_1_n_0
+    Conflicting Routing Nodes:
+      INT_X36Y100/SS1_W_BEG3
+      INT_X45Y99/EE1_E_BEG4
+  bd_i/card/inst/u/gcr.u_attn/u_arr/acc[231][9]
+    Conflicting Routing Nodes: INT_X46Y101/INT_NODE_SDQ_21_INT_OUT1
+  bd_i/card/inst/u/gcr.u_attn/u_arr/acc_reg_n_0_[486][24]
+    Conflicting Routing Nodes: INT_X45Y99/EE1_E_BEG4
+  bd_i/card/inst/u/gcr.u_attn/u_arr/acc_reg_n_0_[836][2]
+    Conflicting Routing Nodes: INT_X49Y96/INT_NODE_SDQ_39_INT_OUT1
+  bd_i/card/inst/u/gcr.u_attn/u_arr/acc_reg_n_0_[870][23]
+    Conflicting Routing Nodes: INT_X49Y96/INT_NODE_SDQ_39_INT_OUT1
+  bd_i/card/inst/u/gcr.u_attn/u_arr/av[94][6]
+    Conflicting Routing Nodes: INT_X38Y115/INT_NODE_SDQ_63_INT_OUT0
+  bd_i/card/inst/u/gcr.u_attn/u_arr/p_reg_reg[33]0_i_13_n_0
+    Conflicting Routing Nodes: INT_X44Y97/INT_NODE_SDQ_29_INT_OUT0
+  bd_i/card/inst/u/gcr.u_attn/u_arr/p_reg_reg[33]0_i_4_n_0
+    Conflicting Routing Nodes: INT_X46Y101/INT_NODE_SDQ_21_INT_OUT1
+  bd_i/card/inst/u/u_regmem/g_region[11].wr_addr[5]
+    Conflicting Routing Nodes: INT_X38Y115/INT_NODE_SDQ_63_INT_OUT0
+  bd_i/eng/inst/eng/cb_data_reg_n_0_[2]
+    Conflicting Routing Nodes: INT_X36Y100/SS1_W_BEG3
+

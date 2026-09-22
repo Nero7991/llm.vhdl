@@ -1,0 +1,12 @@
+FK33_PROV date        2026-09-22T05:49:29-06:00
+FK33_PROV host        Oren-Dell-Ubuntu
+FK33_PROV source_tree /mnt/storage/fk33_builds/wt14/hw/fk33
+FK33_PROV build_root  /mnt/storage/fk33_builds/build14/root
+FK33_PROV git_head    330b70fbd3db321c5fd167a8f0267982ea4801a1
+FK33_PROV git_dirty   7 modified paths
+FK33_PROV exit_status 1
+FK33_PROV bd_only     0
+FK33_PROV env FK33_CARD=1
+FK33_PROV env FK33_CB_STYLE=distributed
+FK33_PROV env FK33_ENG_CORE_MHZ=75
+FK33_PROV env FK33_REPORT_DIR=/mnt/storage/fk33_builds/wt14/hw/fk33/results/build_card_20260921_233853

@@ -349,3 +349,19 @@ re-reading and the easiest to omit.
 
 `bash hw/fk33/congestion_guard.sh --selftest` reproduces the twelve-row table
 and needs no Vivado, no hardware and no `/mnt/storage`.
+
+
+## CORRECTION 2026-09-22: the separation is broken, from below
+
+Build 14 (`hw/fk33/results/card_build14_2026-09-22/`, build 12b's design plus
+the 17-flop `XEXP_OUT` register, no levers) scored max Global `% Tiles`
+**11.73** and FAILED TO ROUTE with 11 nets in resource conflict. That is
+inside the band this document called legal (6.96-11.95) and below build 12b's
+11.95, which routed. The claim that "every legal route so far had max Global
+% Tiles in 6.96-11.95 and every routing failure 12.78-17.36" is WITHDRAWN as a
+separation: the two bands now overlap by at least 0.22 points. What still
+holds after thirteen runs: nothing at or above 12.78 has routed (build 13 at
+13.09 failed, predicted), so a trip above ~12.5 remains a usable abort
+trigger; a figure below it is NOT evidence that a run will route. The
+false-positive rate was never bounded; the false-negative rate is now
+measured at one in the six runs below the threshold.
