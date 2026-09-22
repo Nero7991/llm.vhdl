@@ -86,7 +86,23 @@ entity region_mem is
     --                      infer BRAM.
     -- The two configurations differ by exactly one output port that is dead
     -- on the card.  Oren's call, 2026-09-02.
-    HOST_WINDOW : boolean := true              -- per-region element counts
+    HOST_WINDOW : boolean := true;             -- per-region element counts
+    -- THE SHADOW (2026-09-22).  With HOST_WINDOW false the host read port is
+    -- dead, and the two-card hop needs R_X's mantissas through it.  MEASURED
+    -- on build 14: the exponent register read the reference's value and
+    -- window 3 read 4,096 zeros (docs/debugging/2026-09-22_the-residual-
+    -- window-reads-zero-on-silicon.md).  So ONE region -- this one, R_X on
+    -- the card -- is mirrored into a second, single-write-port bank written
+    -- by the same merged write that lands in the real bank, and read back
+    -- with a ONE-CYCLE REGISTERED read, which is what lets it be a BRAM
+    -- where the combinational window could not.  -1 = no shadow (hr_data
+    -- reads zero exactly as before).  Ignored when HOST_WINDOW is true.
+    --
+    -- The consumer is fk33_seam's XOUT window, which presents hr_addr at
+    -- AR-accept and samples hr_data two clocked states later
+    -- (rtl/fk33_seam.vhd `rd_wait`), so one cycle of read latency is inside
+    -- the contract it already keeps.
+    SHADOW_REGION : integer := -1
   );
   port(
     clk      : in  std_logic;
@@ -168,6 +184,12 @@ architecture rtl of region_mem is
   signal el_lane_q : natural range 0 to LANES-1 := 0;
   signal ra_q      : natural range 0 to NREGION-1 := 0;
   signal rb_q      : natural range 0 to NREGION-1 := 0;
+
+  -- the shadow's registered read word, lane and region hit; driven only
+  -- inside g_shadow below, so without a shadow they hold their zeros
+  signal sh_word_r : word_t := (others => '0');
+  signal sh_lane_q : natural range 0 to LANES-1 := 0;
+  signal sh_hit_q  : std_logic := '0';
 
 begin
 
@@ -373,6 +395,45 @@ begin
         end if;
       end process;
     end generate;
+
+    -- THE SHADOW of this region (see the SHADOW_REGION generic).  Same
+    -- wr_en/wr_addr/wr_be/wr_data as the real bank, so every write that
+    -- lands there lands here in the same cycle with the same lane enables;
+    -- one write port, one registered read, no other reader: a simple
+    -- dual-port BRAM.  The lane and the region hit are registered at the
+    -- SAME edge as the word so hr_data is one consistent (word, lane)
+    -- sample even if hr_addr moves the cycle after.
+    g_shadow : if (not HOST_WINDOW) and r = SHADOW_REGION generate
+      signal shadow : bank_sized_t := (others => (others => '0'));
+      attribute ram_style of shadow : signal is "block";
+    begin
+      process(clk)
+        variable w : natural;
+      begin
+        if rising_edge(clk) then
+          if wr_en = '1' then
+            for i in 0 to LANES-1 loop
+              if wr_be(i) = '1' then
+                shadow(wr_addr)((i+1)*MANT_W-1 downto i*MANT_W)
+                  <= wr_data((i+1)*MANT_W-1 downto i*MANT_W);
+              end if;
+            end loop;
+          end if;
+          w := hr_addr / LANES;
+          if w < NW then
+            sh_word_r <= shadow(w);
+          else
+            sh_word_r <= (others => '0');
+          end if;
+          sh_lane_q <= hr_addr mod LANES;
+          if hr_reg = r then
+            sh_hit_q <= '1';
+          else
+            sh_hit_q <= '0';
+          end if;
+        end if;
+      end process;
+    end generate;
   end generate;
 
   -- the registered selects, captured at the same edge as the words
@@ -412,7 +473,16 @@ begin
   end generate;
 
   g_nohost : if not HOST_WINDOW generate
-    hr_data <= (others => '0');
+    -- zero without a shadow (sh_hit_q never rises), the shadow's registered
+    -- word otherwise; one cycle after hr_reg/hr_addr
+    process(sh_word_r, sh_lane_q, sh_hit_q)
+    begin
+      if sh_hit_q = '1' then
+        hr_data <= signed(sh_word_r((sh_lane_q+1)*MANT_W-1 downto sh_lane_q*MANT_W));
+      else
+        hr_data <= (others => '0');
+      end if;
+    end process;
   end generate;
 
 end architecture;

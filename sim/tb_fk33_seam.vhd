@@ -422,10 +422,19 @@ begin
   -- ======================================================================
   -- THE SEAM DUT.  Its whole host face comes from `fk33_seam`.
   -- ======================================================================
-  dut_seam : entity work.llama_top
+  -- THE SEAM'S TOP IS THE CARD'S TOP IN THE CARD'S CONFIGURATION (2026-09-22).
+  -- `fk33_llama_top` (generated from llama_top by tools/gen_cardtop.py, with
+  -- region_mem in place of the flat array) at HOST_WINDOW => false, which is
+  -- what hw/fk33/gen_fk33_card.py builds.  MEASURED on build 14: with
+  -- llama_top here, P1 read the residual through a combinational port the
+  -- card does not have, passed, and the card's window 3 returned 4,096
+  -- zeros.  The reference top stays llama_top, so P1 is the card's own
+  -- read path against the proven one.
+  dut_seam : entity work.fk33_llama_top
     generic map(SHAPE => SHAPE, A_BEHAV => A_BEHAV, NORM_ANCHOR => true,
                 C_MAXPOS => 4, MANT_W => MANT_W, EXP_W => EXP_W,
-                STEP_W => STEP_W, WDOG_LIMIT => WDOG_LIMIT)
+                STEP_W => STEP_W, WDOG_LIMIT => WDOG_LIMIT,
+                HOST_WINDOW => false)
     port map(
       clk => clk, rst => drst,
       go => s_go, abort => s_abort, tbl_len => s_tbl_len,

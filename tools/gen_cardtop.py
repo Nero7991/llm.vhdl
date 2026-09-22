@@ -148,7 +148,9 @@ D3_STMT_NEW = """  -- ==========================================================
       MANT_W  => MANT_W,
       GA_W    => GA_W,
       SZ      => SZ,
-      HOST_WINDOW => HOST_WINDOW)
+      HOST_WINDOW => HOST_WINDOW,
+      -- the R_X shadow that serves the card's window 3 (2026-09-22)
+      SHADOW_REGION => R_X)
     port map (
       clk      => clk,
       el_ren   => el_ren,   el_reg   => el_reg,   el_addr  => el_addr,
