@@ -1,4 +1,4 @@
-# Build 14: FAILED TO ROUTE by 11 nets, at a congestion figure INSIDE the legal band. The trigger's separation is broken.
+# Build 14: first draw FAILED TO ROUTE by 11 nets inside the trigger's legal band; the re-implementation from the same checkpoint CLOSED at 75 MHz with a bitstream
 
 FK33_CARD=1 card build, worktree `/mnt/storage/fk33_builds/wt14` at `330b70f`
 plus `build12_levers_off.patch` (build 12b's exact 4-file lever-off patch), so
@@ -84,15 +84,64 @@ is the per-draw packing scatter the project has already measured
 the plausible mechanism for a design at 99+% CLB routing on one draw and not
 the next. That is a hypothesis, not a measurement.
 
-## What is running now
+## The re-implementation: CLOSED (`reimpl/`)
 
-`reimpl.tcl` (in this directory): `impl_1` again from build 14's OWN
-`synth_1` checkpoint with the recipe that rescued `card_swg_2026-09-20` from
-its own checkpoint (13.45 -> 9.33 % Tiles, routed, WNS +0.050): strategy
+`reimpl.tcl`: `impl_1` again from build 14's OWN `synth_1` checkpoint with the
+recipe that rescued `card_swg_2026-09-20` from its own checkpoint: strategy
 `Congestion_SpreadLogic_high`, `place_design -directive ExtraNetDelay_high`,
-`route_design -directive AlternateCLBRouting`, phys_opt `AggressiveExplore`.
-No synthesis, so the netlist is identical by construction: a one-variable
-implementation control. Unit `card14-reimpl`, same caps, log `reimpl.log`.
+`route_design -directive AlternateCLBRouting`, phys_opt `AggressiveExplore`,
+all four read back from the run (`REIMPL_STRATEGY` sentinel). No synthesis:
+`opt_design`'s checksums are byte-identical to the first draw's, so this is
+one netlist under two implementation recipes. Launched 05:54, bitstream 07:46,
+**1h52m** against the first draw's 6h10m; `route_design` 1h15m against 4h49m.
+
+`reimpl/bd_wrapper_route_status.rpt`:
+
+```
+# of routable nets..................... :      681069 :
+    # of fully routed nets............. :      681069 :
+# of nets with routing errors.......... :           0 :
+```
+
+Routed timing summary, `clk_out3_bd_clk_wiz_0_0` 13.333 ns / 75.000 MHz:
+
+```
+WNS 0.056  TNS 0.000  failing endpoints 0 of 1,528,825  WHS 0.009  THS 0.000  hold failing 0
+```
+
+Phase 8 printed `Verification completed successfully` and nothing else. The
+router reached zero overlapping nodes in Iteration 3 and ran a fourth,
+timing-driven iteration; the first draw never reached zero.
+
+| metric, placed | first draw (default recipe) | **re-implementation** | build 12b |
+|---|---|---|---|
+| CLB tiles | 54,884 (99.86%) | **54,607 (99.36%)** | 54,451 |
+| CLB LUTs | 361,887 | 362,014 | 367,495 |
+| CLB Registers | 310,544 | 310,560 | 310,570 |
+| max Global % Tiles | 11.73 | **10.37** | 11.95 |
+| route_design wall | 4h49m | **1h15m** | ~2h |
+| routing errors | 11 | **0** | 0 |
+| routed WNS | (unrouted) | **+0.056** | +0.046 |
+
+Same netlist, 277 fewer CLB tiles under the spread-logic placer, 1.36 points
+less estimated congestion, and a legal route. **This is the first
+one-variable implementation control on the card build**, and the variable is
+the recipe. It does NOT say the default recipe cannot route this netlist on
+another draw; it says this recipe did, once.
+
+Memory: swap never above 5 GB, peak 15.2 GB resident (Vivado's own figure),
+guard never fired.
+
+**Bitstream:** `bd_wrapper.bit` (25,771,342 bytes), sha256 `d9f0cb13...` in
+`BITSTREAM.sha256`; loadable copy at
+`hw/fk33/bit/fk33_card_build14_xexp_75mhz_2026-09-22.bit` (gitignored).
+Synth, first-draw placed and routed, and re-implementation placed and routed
+DCPs plus the bitstream at `/mnt/storage/fk33_builds/KEEP_build14_dcp/`.
+
+**What it carries:** build 12b's design (all levers off, codebook reverted,
+`CB_STYLE=distributed`, 75 MHz) plus the two-card `XEXP_OUT` register at seam
+0xA4 with capability bit 6, so `fk33ctl.py seam` must read `CAPS_FLAGS
+0x7D`. Throughput is predicted identical to 12b to the 0.004% floor.
 
 ## Files
 

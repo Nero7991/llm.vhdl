@@ -18,3 +18,18 @@ Timing is NOT predicted from this figure; the pre-launch prediction (COMPOSITION
 (128x128) is higher than 13's level 6; that signal has never separated legal from failed routes here and
 is recorded, not used. Placed: CLB 54,884 (99.86%), 76 free tiles; LUT 361,887; BRAM 567; DSP 2,087.
 The verdict decides, not this file.
+
+## Re-implementation (card14-reimpl), written 2026-09-22 06:31 during Global Iteration 0
+
+Same netlist (opt_design checksums identical to the first draw), strategy Congestion_SpreadLogic_high,
+place ExtraNetDelay_high, route AlternateCLBRouting. Placed CLB 54,607 (99.36%, 353 free) against the
+first draw's 54,884. MEASURED `[Route 35-449]`:
+|      NORTH|   16x16|      3.41|   32x32|      8.15|   16x16|      5.37|
+|      SOUTH|   32x32|      9.41|   64x64|     19.18|     8x8|      5.80|
+|       EAST|   16x16|      4.77|   16x16|      5.70|   32x32|     13.43|
+|       WEST|   32x32|     10.37|   64x64|     15.21|   16x16|     13.92|
+max Global `% Tiles` = **10.37 WEST** against the first draw's 11.73 on the identical netlist.
+
+PREDICTION: after build 14 the figure below ~12.5 predicts nothing, so no route verdict is drawn from
+it; it is recorded as the directive's effect on the figure (card_swg: 13.45 -> 9.33 under this recipe).
+The verdict decides.
