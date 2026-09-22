@@ -1466,8 +1466,12 @@ def main(argv=None):
         if a.arena_image:
             # A truncated table (--upto) issues the first N jobs in order, so
             # a partial image of exactly those slots is what the card needs.
+            # A layer-split card (--blocks-range) runs FEWER A jobs per token
+            # than the arena has slots; the card's a_desc_adapter only bounds
+            # the index (u_index >= N_JOBS is the error), so a shorter dense
+            # image is exactly what it fetches.  2026-09-21.
             write_arena_image(a.arena_image, ajobs, desc_base, mani,
-                              partial_ok=a.upto is not None)
+                              partial_ok=(a.upto is not None or blocks is not None))
 
     # ---- report -----------------------------------------------------------
     if a.print:

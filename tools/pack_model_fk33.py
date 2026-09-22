@@ -1348,11 +1348,21 @@ def main():
         # so the search can be run against one value and the final block then
         # asserted to match it, which it is, below.
         lm = next((r for r in recs if r["name"] == "output.weight"), None)
-        if lm is None:
+        if lm is not None:
+            _hk, _hm = int(lm["K"]), int(lm["M"])
+        elif a.blocks:
+            # A layer-split card WITHOUT the head (2026-09-21): the host blocks
+            # are still needed -- this card takes an X row and the arena sits
+            # below them -- so n_embd and n_vocab come from the GGUF's own
+            # metadata, which is where output.weight's shape came from anyway.
+            _hk = int(gguf_kv(rd, "embedding_length"))
+            _hm = len(rd.fields["tokenizer.ggml.tokens"].data)
+            print(f"host     no output.weight on this card: host blocks modelled "
+                  f"from the GGUF metadata, n_embd={_hk} n_vocab={_hm}")
+        else:
             raise SystemExit("pack_model_fk33: --stripe-lanes needs "
                              "output.weight to model the host blocks")
-        _, _hostraw = HM.host_blocks(int(lm["K"]), int(lm["M"]), a.max_chunk,
-                                     HBM_SIZE)
+        _, _hostraw = HM.host_blocks(_hk, _hm, a.max_chunk, HBM_SIZE)
         _n_jobs = (a.desc_arena_jobs if a.desc_arena_jobs is not None
                    else a_descriptor_jobs([dict(kind="mv4i", tensor=r["name"],
                                                 M=r["M"], K=r["K"])
@@ -1564,8 +1574,15 @@ def main():
         region_files = files
         if a.stripe_lanes and not hasattr(HM, "file_pieces"):
             region_files = expand_pieces(files)
+        # A headless layer-split card has no output.weight to infer the host
+        # blocks from; the GGUF's own n_embd and vocabulary are passed instead
+        # (the same two numbers output.weight's shape carries).  2026-09-21.
+        _rb_kw = {}
+        if a.blocks and not any(e.get("tensor") == "output.weight" for e in files):
+            _rb_kw = dict(n_embd=int(gguf_kv(rd, "embedding_length")),
+                          n_vocab=len(rd.fields["tokenizer.ggml.tokens"].data))
         region_block = HM.derive_region_block(
-            dict(files=region_files, hbm=hbm_core), n_jobs, a.max_chunk)
+            dict(files=region_files, hbm=hbm_core), n_jobs, a.max_chunk, **_rb_kw)
         if a.stripe_lanes:
             # THE CLAIM THE WIDTH SEARCH RESTS ON, ASSERTED RATHER THAN
             # BELIEVED.  The search needed a KV ceiling before the placement

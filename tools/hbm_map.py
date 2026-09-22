@@ -540,15 +540,24 @@ def shape_of_manifest(mani):
     on a name written into the manifest."""
     lm = next((e for e in mani.get("files", [])
                if e.get("tensor") == "output.weight"), None)
-    if lm is None:
-        return None, None
+    if lm is not None:
+        k, m = int(lm["K"]), int(lm["M"])
+    else:
+        # A layer-split card without the head (2026-09-21, two-card pipeline)
+        # still records the model's n_embd and vocabulary in its host blocks,
+        # which the packer derived from the GGUF's own metadata; that is the
+        # same pair output.weight's shape would have given.
+        hbm = mani.get("hbm") or {}
+        if "host_n_embd" not in hbm or "host_n_vocab" not in hbm:
+            return None, None
+        k, m = int(hbm["host_n_embd"]), int(hbm["host_n_vocab"])
     try:
         txt = open(MODEL_CFG_VHD).read()
     except OSError:
         return None, None
     for nm in re.findall(r"constant\s+(\w+)\s*:\s*model_cfg_t\s*:=\s*\(", txt):
         cfg = scrape_model_cfg(nm)
-        if (int(lm["K"]), int(lm["M"])) == (cfg["hidden"], cfg["vocab"]):
+        if (k, m) == (cfg["hidden"], cfg["vocab"]):
             return nm, cfg
     return None, None
 
