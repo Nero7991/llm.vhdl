@@ -138,6 +138,7 @@
 #include "../embed_mv4i.h"
 #include "../qwen35_tok.h"
 #include "../qwen35_chat.h"
+#include "../pl_pipeline.h"
 
 /* <|im_end|>, the vocabulary's eos.  qwen35_tok.h:67 states it; when --qtk is
  * given the tokenizer's own answer replaces this, and a disagreement is
@@ -207,6 +208,9 @@ static void usage(void)
       "                        so; compare with tools/ref9b/logit_compare.py\n"
       "                  [--mv4i <t.mv4i> --manifest <m.json>]\n"
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
+      "                  [--dtbl2 <d.hex> --rel2 <r.bin> --manifest2 <m.json>]  a SECOND\n"
+      "                        card (blocks k.. plus the LM head) driven through\n"
+      "                        pl_pipeline; [--dev2 /dev/xdma1] its device prefix\n"
       "                  [--v2 --dtbl <t.dtbl> --rel <t.rel>]  the window seam\n"
       "                  [--teeth-argmax N]   self-test of --check-argmax\n"
       "                  [--sim-kv-maxpos N]  the SIMULATED card's C_MAXPOS\n"
@@ -283,6 +287,18 @@ int main(int argc, char **argv)
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
     int n_dprog = 0, n_drel = 0, want_v2 = 0;
+    /* THE SECOND CARD (2026-09-21, two-card pipeline).  Given --dtbl2/--rel2,
+     * the run goes through pl_pipeline: this card is card 0 (blocks 0..k-1,
+     * no LM head) and the second is card 1 (the rest plus the head). */
+    const char *dtbl2_path = NULL, *rel2_path = NULL, *manifest2_path = NULL;
+    const char *dev2_prefix = "/dev/xdma1";
+    uint32_t *dprog2 = NULL, *drel2 = NULL;
+    int n_dprog2 = 0, n_drel2 = 0;
+    char dev2_user[256], dev2_h2c[256], dev2_c2h[256];
+    fk33_sim_opts sim2;
+    pl_open_opts o2;
+    pl_ctx *c2 = NULL;
+    plp_ctx *pp = NULL;
     const char *dump_path = NULL;
     int max_new = 0, max_chunk = 0, check_argmax = 0, quiet = 0;
     int teeth_bias = 0;
@@ -315,6 +331,10 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--manifest"))     NEXT(manifest_path);
         else if (!strcmp(a, "--dtbl"))         NEXT(dtbl_path);
         else if (!strcmp(a, "--rel"))          NEXT(rel_path);
+        else if (!strcmp(a, "--dtbl2"))        NEXT(dtbl2_path);
+        else if (!strcmp(a, "--rel2"))         NEXT(rel2_path);
+        else if (!strcmp(a, "--manifest2"))    NEXT(manifest2_path);
+        else if (!strcmp(a, "--dev2"))         NEXT(dev2_prefix);
         else if (!strcmp(a, "--v2"))           want_v2 = 1;
         else if (!strcmp(a, "--max-new"))    { const char *s; NEXT(s); max_new = atoi(s); }
         else if (!strcmp(a, "--max-chunk"))  { const char *s; NEXT(s); max_chunk = atoi(s); }
@@ -407,6 +427,20 @@ int main(int argc, char **argv)
         printf("program    %s: %d 32-bit halves (%d descriptors of 8 64-bit "
                "words)\n", dtbl_path, n_dprog, n_dprog / 16);
         printf("release    %s: %d entries\n", rel_path, n_drel);
+        if (dtbl2_path || rel2_path || manifest2_path) {
+            if (!dtbl2_path || !rel2_path || !manifest2_path) {
+                fprintf(stderr, "run_prompt: a second card needs --dtbl2, --rel2 AND --manifest2\n");
+                status = 2; goto done;
+            }
+            n_dprog2 = pl_load_hex_words(dtbl2_path, PL_FMT_HEX64, &dprog2);
+            n_drel2  = pl_load_hex_words(rel2_path, PL_FMT_BIN, &drel2);
+            if (n_dprog2 <= 0 || n_drel2 <= 0) { status = 2; goto done; }
+            printf("program2   %s: %d 32-bit halves (%d descriptors)\n", dtbl2_path, n_dprog2, n_dprog2 / 16);
+            printf("release2   %s: %d entries\n", rel2_path, n_drel2);
+        }
+    } else if (dtbl2_path) {
+        fprintf(stderr, "run_prompt: --dtbl2 needs --v2\n");
+        status = 2; goto done;
     }
 
     fk33_sim_opts_default(&sim);
@@ -477,11 +511,44 @@ int main(int argc, char **argv)
         status = 1; goto done;
     }
     printf("card       %s\n", pl_describe(c));
+    if (dtbl2_path) {
+        /* Card 1: the same options with its own program, manifest and devices.
+         * The embedding provider is never called on it (pl_decode_row bypasses
+         * it) but pl_open requires one, so card 0's is reused. */
+        sim2 = sim;
+        o2 = o;
+        o2.sim_opts = &sim2;
+        o2.desc_prog = dprog2; o2.desc_words = n_dprog2;
+        o2.rel_tbl   = drel2;  o2.rel_words  = n_drel2;
+        o2.tbl_len   = n_drel2;
+        o2.manifest_path = manifest2_path;
+        if (hw_token) {
+            snprintf(dev2_user, sizeof dev2_user, "%s_user",  dev2_prefix);
+            snprintf(dev2_h2c,  sizeof dev2_h2c,  "%s_h2c_0", dev2_prefix);
+            snprintf(dev2_c2h,  sizeof dev2_c2h,  "%s_c2h_0", dev2_prefix);
+            o2.dev_user = dev2_user; o2.dev_h2c = dev2_h2c; o2.dev_c2h = dev2_c2h;
+            printf("transport2 %s_user + h2c_0/c2h_0 (LIVE CARD 1)\n", dev2_prefix);
+        }
+        if (pl_open(&o2, &c2) != 0 || !c2) {
+            fprintf(stderr, "run_prompt: pl_open refused card 1\n");
+            status = 2; goto done;
+        }
+        printf("card2      %s\n", pl_describe(c2));
+        if (plp_open(c, c2, &pp) != 0 || !pp) {
+            fprintf(stderr, "run_prompt: plp_open refused the pair (versions or n_embd differ)\n");
+            status = 2; goto done;
+        }
+        if (resume) {
+            fprintf(stderr, "run_prompt: --resume is not supported across two cards\n");
+            status = 2; goto done;
+        }
+        printf("pipeline   card 0 -> host (R_X + exponent) -> card 1; card 1's argmax decides\n");
+    }
     if (seq_reset) {
         /* The SEAM's position only.  The card's own tok_pos (attention
          * history, B's tk0) is NOT reset by this; only a reconfiguration
          * does that.  Fine for a probe program that never reaches C or B. */
-        int r = pl_seq_reset(c);
+        int r = pp ? plp_seq_reset(pp) : pl_seq_reset(c);
         if (r == 0)
             printf("seq-reset  seam AND engine positions cleared (TOK_POS "
                    "read back 0): the next token is a first token\n");
@@ -534,7 +601,8 @@ int main(int argc, char **argv)
     {
         int argmax = -1;
         int32_t lexp = 0;
-        rc = pl_prefill(c, prompt, n_prompt, logits, &lexp, &argmax);
+        rc = pp ? plp_prefill(pp, prompt, n_prompt, &argmax)
+                : pl_prefill(c, prompt, n_prompt, logits, &lexp, &argmax);
         if (rc != n_prompt) {
             uint32_t info = pl_last_error_info(c);
             fprintf(stderr, "run_prompt: prefill returned %d for %d ids (%s)\n",
@@ -586,7 +654,8 @@ int main(int argc, char **argv)
         int argmax = -1;
         int32_t lexp = 0;
         int fed = got[n_got - 1];
-        rc = pl_decode(c, fed, logits, &lexp, &argmax);
+        rc = pp ? plp_decode(pp, fed, &argmax)
+                : pl_decode(c, fed, logits, &lexp, &argmax);
         if (rc != 1) {
             fprintf(stderr, "run_prompt: decode %d returned %d (%s)\n",
                     n_got, rc, pl_last_error_str(c));
@@ -617,6 +686,12 @@ int main(int argc, char **argv)
         printf("timing     %d GOs: run_chunk %.3f s (of which STATUS wait %.3f s over %lu polls), "
                "X pushes %.3f s, wall since start %.3f s\n",
                (int)(pl_go_count(c)), tg, tw, np, tp, pl_now_wall() - t_start);
+    }
+    if (pp) {
+        double hr = 0, hw = 0; unsigned long hops = 0;
+        plp_hop_timing(&hr, &hw, &hops);
+        printf("hop        %lu hops: read R_X %.3f s, push+GO card 1 %.3f s; card 1 at pos %d\n",
+               hops, hr, hw, plp_seq_pos(pp));
     }
     printf("bytes      h2c %llu, c2h %llu, go %llu (%s)\n",
            (unsigned long long)pl_bytes_to_card(c) - h2c0,
@@ -691,10 +766,12 @@ int main(int argc, char **argv)
     }
 
 done:
+    if (pp)  plp_close(pp);
+    if (c2)  pl_close(c2);
     if (c)   pl_close(c);
     if (emb) pl_embed_mv4i_close(emb);
     if (tok) qwen35_tok_free(tok);
     free(logits); free(prompt); free(ref); free(got);
-    free(dprog); free(drel);
+    free(dprog); free(drel); free(dprog2); free(drel2);
     return status;
 }

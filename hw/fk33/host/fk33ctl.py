@@ -42,9 +42,13 @@ import struct
 import sys
 import time
 
-USER = "/dev/xdma0_user"
-H2C = "/dev/xdma0_h2c_0"
-C2H = "/dev/xdma0_c2h_0"
+# A SECOND CARD (2026-09-21, two-card pipeline) is the same three devices
+# under /dev/xdma1_*.  These follow the environment the way
+# fk33_load_weights.py and fk33_imgfp.py already do for FK33_H2C/FK33_C2H,
+# so one script can address either card by exporting three names.
+USER = os.environ.get("FK33_USER", "/dev/xdma0_user")
+H2C = os.environ.get("FK33_H2C", "/dev/xdma0_h2c_0")
+C2H = os.environ.get("FK33_C2H", "/dev/xdma0_c2h_0")
 
 HBM_SIZE = 0x2_0000_0000          # 8 GB, 0 .. 0x1FFFFFFFF
 SYSMON_TEMP = 0x3400
