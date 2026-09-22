@@ -1056,6 +1056,26 @@ def a_descriptor_jobs(files):
     return best
 
 
+def refuse_symlink_target(path):
+    """Refuse to (re)write a side file through a symlink.
+
+    MEASURED 2026-09-22: two per-card image directories had inherited the
+    seg27 image's `nonmatvec_f32.bin` SYMLINK (pointing at the base image's
+    file).  Their sizes did not match, so this packer opened the path for
+    writing, and `open(..., "wb")` follows the link: the base image's
+    4,571,136-byte side file, shared by every image through that link,
+    became one card's 2,277,376-byte file.  The loader's size check caught
+    it; nothing here did.  A directory that holds a symlink named like an
+    output is not an output directory for that file, so refuse rather than
+    write through it.  (`os.path.lexists` sees a dangling link too.)"""
+    if os.path.islink(path) or (os.path.lexists(path) and not os.path.isfile(path)):
+        raise SystemExit(
+            f"pack_model_fk33: REFUSING to write {path}: it is a symlink "
+            f"(-> {os.readlink(path) if os.path.islink(path) else '?'}). "
+            "Writing would go THROUGH the link into another image's file. "
+            "Remove the link first if this directory is meant to own its own copy.")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1227,6 +1247,7 @@ def main():
 
     if a.only is None and (a.force or not os.path.exists(nm_path)
                            or os.path.getsize(nm_path) != nm_size):
+        refuse_symlink_target(nm_path)
         t0 = time.perf_counter()
         with open(nm_path, "wb") as f:
             f.truncate(nm_size)

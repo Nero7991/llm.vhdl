@@ -151,3 +151,39 @@ summary, DRC, methodology, clock utilization, control sets, IO; `runme.log.gz`;
 `SENTINELS.txt`; `PROVENANCE.txt`; `COMPOSITION.md`; `PREDICTION_congestion.md`;
 `phase8_nets.txt`; `reimpl.tcl`; `watch.log`. Synth, placed and routed DCPs at
 `/mnt/storage/fk33_builds/KEEP_build14_dcp/` with `SHA256SUMS`.
+
+## On silicon (2026-09-22 07:51 onward, `silicon/`)
+
+Loaded by the main session with `fk33_reload.sh` (no VCCINT change; VCCINT
+0.7160 V, die 41.8 C after reload). `fk33ctl.py seam`: id `LLM2`, version 2,
+**cap flags 0x0000007d** with `XEXP_OUT yes`, 26 offsets agree with
+`server/fk33_seam.h`, no fault. The striped seg27 image was reloaded and
+verified, 251 of 251 objects read back.
+
+**Control, the 12b recipe exactly** (`fk33_chat.sh "What is a DC-DC
+converter?" 64`, 20 prompt ids, argmax fast path, three consecutive runs):
+
+| run | GOs | run_chunk (s) | build 12b |
+|---|---|---|---|
+| 1 | 83 | 24.578 | 24.579 |
+| 2 | 83 | 24.578 | 24.578 |
+| 3 | 83 | 24.578 | 24.579 |
+
+`prefill 20 ids, pos 20, first argmax 32, exp 15` and `decode 64 ids, pos 83`
+in all three, the same trace as 12b; the generated text opens with the same
+sentence 12b's record quotes; the three stdouts differ only in the `timing`
+line's host-side figures (`diff12.txt`, `diff13.txt`). **Throughput identical
+to build 12b within the 0.004% silicon floor, as predicted.** The last job's
+`x_exp_out` reads **8** with `logit_exp 15` at `seq_pos 83`: the register
+is live and holds a plausible block exponent for the residual. Whether it is
+the RIGHT exponent is Task 11's two-card oracle question and is not settled
+by a single card.
+
+**The weight load first REFUSED**, and the refusal was correct: the shared
+`nonmatvec_f32.bin` was 2,277,376 bytes against the manifest's 4,571,136.
+Yesterday's per-card packs had written their (half-size) side file THROUGH a
+symlink that the card directories had inherited from the seg27 image, and
+that symlink pointed at the base image's file. Restored by re-running the
+base pack (all 250 matvec files KEPT, side file rewritten, blake2b_128
+`4468d2d1806bf29776f739360daae563` == the seg27 manifest). The two card
+directories now hold real side files with the hashes their manifests record.

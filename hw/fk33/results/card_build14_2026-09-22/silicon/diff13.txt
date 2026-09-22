@@ -1,0 +1,4 @@
+16c16
+< timing     83 GOs: run_chunk 24.578 s (of which STATUS wait 24.577 s over 228038 polls), X pushes 0.142 s, wall since start 24.765 s
+---
+> timing     83 GOs: run_chunk 24.578 s (of which STATUS wait 24.577 s over 228188 polls), X pushes 0.093 s, wall since start 24.706 s
