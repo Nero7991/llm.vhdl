@@ -233,6 +233,13 @@ QWEN35_9B = Shape(blocks=32, attn_interval=4, hidden=4096, ffn=12288,
                   key_heads=16, val_heads=32, head_dim=128,
                   attn_q_heads=16, attn_kv_heads=4, attn_head_dim=256,
                   vocab_shard=248320)
+# rtl/model_cfg_pkg.vhd's QWEN38_27B, transcribed 2026-09-21 for the two-card
+# pipeline (Task 12): 64 blocks, 48 GDN + 16 attention, hidden 5120, FFN 17408,
+# 16 key / 48 value heads of 128, 24 query / 4 KV heads of 256, same vocabulary.
+QWEN38_27B = Shape(blocks=64, attn_interval=4, hidden=5120, ffn=17408,
+                   key_heads=16, val_heads=48, head_dim=128,
+                   attn_q_heads=24, attn_kv_heads=4, attn_head_dim=256,
+                   vocab_shard=248320)
 
 
 def mk_shape_scaled(blocks, attn_interval, attn_hd=32):
@@ -1121,7 +1128,7 @@ def main(argv=None):
                     help="emit the program for this transformer block only")
     ap.add_argument("--token", action="store_true",
                     help="emit the whole token's D table instead of one layer")
-    ap.add_argument("--shape", choices=("9b", "sim"), default="9b")
+    ap.add_argument("--shape", choices=("9b", "27b", "sim"), default="9b")
     ap.add_argument("--blocks", type=int, default=4, help="--shape sim only")
     ap.add_argument("--attn-int", type=int, default=4, help="--shape sim only")
     ap.add_argument("--attn-hd", type=int, default=32, help="--shape sim only")
@@ -1263,11 +1270,14 @@ def main(argv=None):
     if a.shape == "sim":
         s = mk_shape_scaled(a.blocks, a.attn_int, a.attn_hd)
         a.no_a = True
+    elif a.shape == "27b":
+        s = QWEN38_27B
     else:
         s = QWEN35_9B
 
     if a.selfcheck_split:
-        return selfcheck_split(s, a.shape)
+        rc = selfcheck_split(QWEN35_9B, "9b")
+        return rc or selfcheck_split(QWEN38_27B, "27b")
     blocks = None
     if a.block_range:
         lo, hi = (int(v) for v in a.block_range.split(":"))
