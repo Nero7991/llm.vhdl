@@ -708,6 +708,6 @@ Expected: two manifests; `python3 tools/weights_residency.py` (or the manifest's
 
 ## Self-review notes
 
-- Spec section 5's prefill overlap is NOT delivered by Task 7's loop, which is serial; the overlap needs a non-blocking GO in `pl_backend` (`pl_go_async`/`pl_wait`) that does not exist. Task 7 says so in its comment and Task 11 measures the serial hop first. Add the async pair as Task 13 after the oracle passes; it is a pure host change.
+- Spec section 5's prefill overlap: DELIVERED 2026-09-21 as follow-on Task 13 (commit f0b9d81): `pl_go_async`/`pl_wait` in `pl_backend`, overlapped `plp_prefill` by default, serial baseline behind `plp_set_serial`.
 - Every register offset and cap bit appears in exactly one place per side and the `fk33ctl` cross-check compares them.
 - Task 4 depends on the width the wrapper emits; the plan stops if it is not 16 bits rather than guessing.
