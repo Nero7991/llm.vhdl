@@ -972,6 +972,13 @@ entity fk33_llama_top is
 
     busy       : out std_logic;
     tok_done   : out std_logic;
+    -- THE RESIDUAL'S BLOCK EXPONENT, 2026-09-21 (two-card pipeline, Task 2).
+    -- R_X's exponent as of its last VEC_RES commit, held until the next one
+    -- and zero after `rst`.  A host reading R_X back (the seam's window 3)
+    -- gets mantissas only; this is the other half, so the row can be pushed
+    -- into a second card exactly as an embedding row is.  Sourced from the
+    -- region lock's own capture (`cap_*`), never re-read from a live port.
+    x_exp_out  : out signed(EXP_W-1 downto 0);
     tok_ack    : in  std_logic;
     -- THE PER-SEQUENCE RESET, 2026-09-19.  One-cycle pulse, honoured only
     -- while idle: clears `tok_pos` and re-arms C's `kv_seq_rst`, which
@@ -1498,6 +1505,11 @@ architecture rtl of fk33_llama_top is
   signal exp_rd_seg    : unsigned(1 downto 0);
   signal exp_rd_data   : signed(EXP_W-1 downto 0);
   signal exp_rd_valid  : std_logic;
+  -- the lock's capture observation, and the published R_X exponent
+  signal cap_valid     : std_logic;
+  signal cap_region    : unsigned(7 downto 0);
+  signal cap_exp       : signed(EXP_W-1 downto 0);
+  signal x_exp_r       : signed(EXP_W-1 downto 0) := (others => '0');
   signal vi_exp_region : unsigned(7 downto 0);
   signal vi_exp_seg    : unsigned(1 downto 0);
   -- Claimed by whichever NON-D-vec unit is active, at the same instant it
@@ -2300,6 +2312,7 @@ begin
       xw_exp => (others => '0'), xw_gate => open,
       exp_rd_region => exp_rd_region, exp_rd_seg => exp_rd_seg,
       exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      cap_valid => cap_valid, cap_region => cap_region, cap_exp => cap_exp,
       lock_state => lock_state,
       viol => viol, viol_ack => viol_ack, viol_code => viol_code,
       viol_region => viol_reg);
@@ -2389,6 +2402,22 @@ begin
   exp_rd_seg    <= a_exp_seg    when act_unit = U_A else
                    b_exp_seg    when act_unit = U_B else
                    c_exp_seg    when act_unit = U_C else vi_exp_seg;
+
+  -- R_X's published exponent: latched from the lock's capture pulse when the
+  -- captured region is R_X.  That includes seq_opdec's T_PUB of the host's
+  -- exponent at token start, so after a token with no residual at all the
+  -- port still reads what the host supplied.
+  p_xexp : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        x_exp_r <= (others => '0');
+      elsif cap_valid = '1' and cap_region = to_unsigned(R_X, 8) then
+        x_exp_r <= cap_exp;
+      end if;
+    end if;
+  end process;
+  x_exp_out <= x_exp_r;
 
   -- THE RESIDUAL.  Real RTL.  X <- X + ER, in place, twice per block.  This
   -- is the spine and it is the one arithmetic unit in the block loop that is

@@ -985,6 +985,15 @@ architecture tb of tb_llama_top is
   signal n_bad_res : natural := 0;
   signal obs_cmp_exp : signed(EXP_W-1 downto 0);
   signal obs_wsum    : unsigned(31 downto 0);
+  -- Task 2 of docs/superpowers/plans/2026-09-21-two-card-pipeline.md: the
+  -- top publishes R_X's block exponent for a host that carries the residual
+  -- to another card.  Its oracle is the lock's own capture as observed here:
+  -- the LAST `obs_cmp` naming R_X carried the exponent `x_exp_out` must hold
+  -- after `tok_done`.
+  signal x_exp_out    : signed(EXP_W-1 downto 0);
+  signal last_rx_exp  : integer := 0;
+  signal n_chk_xexp   : natural := 0;
+  signal n_bad_xexp   : natural := 0;
 
   -- The per-completion trace: the exponent the lock captured, and the running
   -- write hash at that instant.  Compared across runs to find the FIRST step
@@ -1483,6 +1492,7 @@ begin
       go => go, abort => abort, tbl_len => tbl_len,
       host_x_exp => host_x_exp, rel_mask => rel_mask,
       busy => busy, tok_done => tok_done, tok_ack => tok_ack,
+      x_exp_out => x_exp_out,
       err => err, err_code => err_code, err_step => err_step,
       steps_done => steps_done,
       d_raddr => d_raddr, d_ren => d_ren, d_rdata => d_rdata,
@@ -2152,6 +2162,17 @@ begin
     end if;
   end process;
 
+  -- The last exponent the lock captured for R_X, from the observation face.
+  rx_track : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if rst = '0' and tb_reset = '0' and obs_cmp = '1'
+         and obs_dst = to_unsigned(R_X, 8) then
+        last_rx_exp <= to_integer(obs_cmp_exp);
+      end if;
+    end if;
+  end process;
+
   trace : process(clk) is
   begin
     if rising_edge(clk) then
@@ -2615,6 +2636,18 @@ begin
 
         dump(rv);
         results(run)(t) <= rv;
+        wait until rising_edge(clk);
+
+        -- ---- x_exp_out: the published residual exponent is the lock's ----
+        n_chk_xexp <= n_chk_xexp + 1;
+        if to_integer(x_exp_out) /= last_rx_exp then
+          n_bad_xexp <= n_bad_xexp + 1;
+          report "tb_llama_top: run " & integer'image(run) & " token "
+               & integer'image(t) & " x_exp_out = "
+               & integer'image(to_integer(x_exp_out))
+               & " but the lock's last R_X capture was "
+               & integer'image(last_rx_exp) severity error;
+        end if;
         wait until rising_edge(clk);
 
         -- ---- P13: THE CAPTURE IS THE SAME REGION FILE THE DRIVER READS ----
@@ -3125,6 +3158,7 @@ begin
     fail <= n_bad_sched + n_bad_skew + n_bad_res + n_bad_pos + n_bad_kverr
           + kv_bad_wr + kv_bad_rd + kv_bad_dat + kv_bad_cov + kv_bad_bresp
           + n_bad_cap + n_smp_hole + n_smp_ovr + n_smp_cnt + n_bad_land
+          + n_bad_xexp
           -- bst_bad is FOLDED IN, not merely printed.  A protocol counter the
           -- verdict does not read is decoration: it would let the state store
           -- violate AXI3 on every burst while the row stayed green.  It is 0
@@ -3167,6 +3201,8 @@ begin
         report "tb_llama_top: the logits FIFO overflowed, so beats were LOST "
              & "and the captured LOGITS record is incomplete." severity failure;
     end if;
+    report "tb_llama_top: x_exp_out checks=" & integer'image(n_chk_xexp)
+         & " bad=" & integer'image(n_bad_xexp) severity note;
     report "tb_llama_top: schedule mismatches=" & integer'image(n_bad_sched)
          & " skew differences=" & integer'image(n_bad_skew)
          & " degenerate residuals=" & integer'image(n_bad_res)
