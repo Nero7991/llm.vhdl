@@ -462,6 +462,16 @@ architecture sim of tb_seq_vec_seam is
   signal n_completed : natural := 0;
   signal n_chk       : natural := 0;
   signal n_res_done  : natural := 0;   -- residual steps verified
+  -- Task 1 of docs/superpowers/plans/2026-09-21-two-card-pipeline.md: the
+  -- lock's capture observation port.  One pulse per producer completion,
+  -- naming the LATCHED destination and the captured exponent; here it must
+  -- fire NRES+1 times for R_X: once at T_PUB with the host's exponent, then
+  -- once per residual with seq_vec_res's own o_exp.
+  signal cap_valid   : std_logic;
+  signal cap_region  : unsigned(7 downto 0);
+  signal cap_exp     : signed(EXP_W-1 downto 0);
+  signal n_cap       : natural := 0;   -- R_X captures seen
+  signal n_cap_bad   : natural := 0;   -- of which the exponent disagreed
   signal n_bad_data  : natural := 0;   -- region contents wrong after a residual
   signal n_bad_iss   : natural := 0;   -- n / exponents / regions wrong at issue
   signal n_bad_beat  : natural := 0;   -- write-beat identity broken
@@ -581,6 +591,7 @@ begin
       xw_exp => xw_exp, xw_gate => xw_gate,
       exp_rd_region => exp_rd_region, exp_rd_seg => exp_rd_seg,
       exp_rd_data => exp_rd_data, exp_rd_valid => exp_rd_valid,
+      cap_valid => cap_valid, cap_region => cap_region, cap_exp => cap_exp,
       lock_state => lock_state,
       viol => viol, viol_ack => viol_ack, viol_code => viol_code,
       viol_region => viol_reg);
@@ -1302,6 +1313,34 @@ begin
     end if;
   end process;
 
+  -- The lock's capture observation for R_X: counted once per pulse (one
+  -- pulse per clock at most, so a signal counter is exact here), and the
+  -- captured exponent compared against seq_vec_res's own output, which is
+  -- what `cmp_y_exp` carried for this step.
+  p_cap : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if cap_valid = '1' and cap_region = to_unsigned(R_X, 8) then
+        n_cap <= n_cap + 1;
+        -- The FIRST capture for R_X is seq_opdec's T_PUB publishing the HOST's
+        -- exponent (the token's input row); every later one is a residual.
+        if n_cap = 0 then
+          if cap_exp /= host_x_exp then
+            n_cap_bad <= n_cap_bad + 1;
+            report "tb_seq_vec_seam: lock's first R_X capture is "
+                 & integer'image(to_integer(cap_exp)) & ", host_x_exp is "
+                 & integer'image(to_integer(host_x_exp)) severity error;
+          end if;
+        elsif cap_exp /= vres_exp then
+          n_cap_bad <= n_cap_bad + 1;
+          report "tb_seq_vec_seam: lock captured exponent "
+               & integer'image(to_integer(cap_exp)) & " for R_X but seq_vec_res produced "
+               & integer'image(to_integer(vres_exp)) severity error;
+        end if;
+      end if;
+    end if;
+  end process;
+
   hb : process(clk) is
   begin
     if rising_edge(clk) and HEARTBEAT > 0 then
@@ -1386,6 +1425,8 @@ begin
         chk("jobs completed", n_completed, TBL_STEPS-1);
         chk("descriptor checks", n_chk, TBL_STEPS);
         chk("residuals verified", n_res_done, NRES);
+        chk("lock R_X captures", n_cap, NRES + 1);   -- T_PUB of the host row, then NRES residuals
+        chk("lock R_X capture exponent mismatches", n_cap_bad, 0);
         chk("adapter latch instants", n_iss_lat, 5*NBLK);
         chk("adapter exponent lookups", n_exp_lat, 5*NBLK);
         chk("lock violations", sl2i(viol_seen), 0);

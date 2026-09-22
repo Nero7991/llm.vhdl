@@ -195,6 +195,17 @@ entity seq_region_lock is
     exp_rd_data   : out signed(EXP_W-1 downto 0);
     exp_rd_valid  : out std_logic;   -- the slot has been captured since reset
 
+    -- OBSERVATION ONLY, 2026-09-21 (two-card pipeline, Task 1): what the lock
+    -- just captured.  `cap_valid` pulses for one cycle on the cycle a
+    -- producer's exponent is captured; `cap_region` is the LATCHED
+    -- destination `jb_dst` and `cap_exp` the captured `cmp_y_exp`.  A top that
+    -- publishes a region's final exponent (llama_top's `x_exp_out`, for R_X)
+    -- reads these.  Nothing inside the lock reads them back, and every
+    -- existing instance leaves them open.
+    cap_valid   : out std_logic;
+    cap_region  : out unsigned(7 downto 0);
+    cap_exp     : out signed(EXP_W-1 downto 0);
+
     lock_state  : out std_logic_vector(2*REG_SIZE'length-1 downto 0);
     -- `viol` is a LEVEL held until `viol_ack`, and the first offender is
     -- sticky.  See the header.
@@ -398,6 +409,9 @@ begin
   begin
     if rising_edge(clk) then
       if rst = '1' then
+        cap_valid  <= '0';
+        cap_region <= (others => '0');
+        cap_exp    <= (others => '0');
         lock       <= (others => L_FREE);
         fill_ptr   <= (others => (others => '0'));
         exp_cap    <= (others => (others => '0'));
@@ -415,6 +429,7 @@ begin
         viol_reg_r <= (others => '0');
         req_seen   <= '0';
       else
+        cap_valid <= '0';
 
         -- ---- violation capture, UNCONDITIONAL -------------------------
         -- Runs in every cycle regardless of what else this unit is doing, and
@@ -495,6 +510,9 @@ begin
             end if;
             exp_cap(jb_slot) <= cmp_y_exp;
             exp_vld(jb_slot) <= '1';
+            cap_valid  <= '1';
+            cap_region <= to_unsigned(jb_dst, 8);
+            cap_exp    <= cmp_y_exp;
           end if;
 
           -- Consumer: every region it held goes back to VALID -- its contents
