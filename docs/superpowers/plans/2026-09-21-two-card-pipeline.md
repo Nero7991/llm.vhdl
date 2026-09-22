@@ -34,7 +34,7 @@
 - Produces: three new OUTPUT ports on `seq_region_lock`, all defaulted so no existing instance changes:
   `cap_valid : out std_logic; cap_region : out unsigned(7 downto 0); cap_exp : out signed(EXP_W-1 downto 0)`. `cap_valid` is a one-cycle pulse on the cycle the lock captures a producer's exponent; `cap_region` is the LATCHED destination `jb_dst`; `cap_exp` is the captured `cmp_y_exp`.
 
-- [ ] **Step 1: Add the failing check to `tb_seq_vec_seam`**
+- [x] **Step 1: Add the failing check to `tb_seq_vec_seam`**
 
 Find the residual instance (`o_exp => vres_exp`) and the lock instance in the bench. Add signals and a check that on every residual completion the lock's capture pulse names `R_X` with the residual's own exponent:
 
@@ -68,12 +68,12 @@ Find the residual instance (`o_exp => vres_exp`) and the lock instance in the be
 ```
 Use the bench's own end-of-run signal and its residual count (grep `OP_VEC_RES` in the bench's table) for `done_pulse` and `N_RESIDUALS`.
 
-- [ ] **Step 2: Run it to verify it fails to elaborate**
+- [x] **Step 2: Run it to verify it fails to elaborate**
 
 Run: `REGRESS_SCRATCH=/mnt/storage/fk33_builds/scratch/twocard/r1 bash sim/regress.sh --only tb_seq_vec_seam --keep`
 Expected: FAIL, "no port named cap_valid" (or equivalent) on the lock instance.
 
-- [ ] **Step 3: Add the ports and the pulse to `seq_region_lock`**
+- [x] **Step 3: Add the ports and the pulse to `seq_region_lock`**
 
 In the entity, after `exp_rd_valid`:
 ```vhdl
@@ -93,16 +93,16 @@ In the clocked process, default `cap_valid <= '0';` at the top of the `rising_ed
 ```
 Reset both `cap_region` and `cap_exp` to zero in the reset branch.
 
-- [ ] **Step 4: Run the three benches**
+- [x] **Step 4: Run the three benches**
 
 Run: `REGRESS_SCRATCH=/mnt/storage/fk33_builds/scratch/twocard/r1 bash sim/regress.sh --only tb_seq_vec_seam --keep; bash sim/regress.sh --only tb_seq_region_lock; bash sim/regress.sh --only tb_seq_opdec`
 Expected: each prints ` OVERALL PASS 1`; the seam bench prints `cap checks=<N_RESIDUALS>`.
 
-- [ ] **Step 5: Teeth, with the attribution control**
+- [x] **Step 5: Teeth, with the attribution control**
 
 Mutant: in the lock, `cap_region <= jb_src;` (or `jb_dst + 1`). Run `--only tb_seq_vec_seam`: expected FAIL on the new assert. Control: same mutant with the `p_cap` process commented out: expected PASS (proves the kill belongs to the new check). Record both lines in the commit message.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add rtl/seq_region_lock.vhd sim/tb_seq_vec_seam.vhd
@@ -122,16 +122,16 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg1.txt
 - Consumes: `cap_valid/cap_region/cap_exp` from Task 1.
 - Produces: `x_exp_out : out signed(EXP_W-1 downto 0)` on `llama_top` and (regenerated) on `fk33_llama_top`: the block exponent of R_X as of its last VEC_RES commit, held until the next one; zero after `rst`.
 
-- [ ] **Step 1: Write the failing bench check**
+- [x] **Step 1: Write the failing bench check**
 
 `sim/tb_llama_top.vhd` already reads R_X back after `tok_done` and knows the final residual it expects (its landmark checks). Add, in the same place it reads R_X, a check that `x_exp_out` equals the exponent its model holds for the final residual (the bench's variable that it uses to scale R_X for comparison; grep `R_X` and `exp` near the landmark check). Count it in the bench's existing check variable.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `REGRESS_SCRATCH=/mnt/storage/fk33_builds/scratch/twocard/r2 bash sim/regress.sh --only tb_llama_top --keep`
 Expected: FAIL, no port `x_exp_out`.
 
-- [ ] **Step 3: Implement in `llama_top`**
+- [x] **Step 3: Implement in `llama_top`**
 
 Port, after `steps_done`:
 ```vhdl
@@ -163,7 +163,7 @@ Signals and process, next to the lock instance:
 ```
 `R_X` is `rtl/llama_map_pkg.vhd:72`, already visible in `llama_top`.
 
-- [ ] **Step 4: Regenerate the card top and run the benches**
+- [x] **Step 4: Regenerate the card top and run the benches**
 
 ```bash
 python3 tools/gen_cardtop.py && python3 tools/gen_cardtop.py --check --bench && git diff --stat rtl/fk33_llama_top.vhd
@@ -172,11 +172,11 @@ bash sim/regress.sh --only cardtop; bash sim/regress.sh --only tb_fk33_cardtop_i
 ```
 Expected: `--check` exits 0; the diff of `fk33_llama_top.vhd` shows only the new port, signals and process; all three rows ` OVERALL PASS 1`.
 
-- [ ] **Step 5: Teeth**
+- [x] **Step 5: Teeth**
 
 Mutant: `cap_region = to_unsigned(R_ER, 8)` in `p_xexp`. `tb_llama_top` must FAIL on the new check; with the check removed it must PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add rtl/llama_top.vhd rtl/fk33_llama_top.vhd sim/tb_llama_top.vhd
@@ -199,7 +199,7 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg2.txt
 - Consumes: nothing from the card yet; the seam port `d_x_exp_out : in signed(EXP_W-1 downto 0) := (others => '0')` is driven by Task 4's wiring.
 - Produces: register `FK33_SEAM_XEXP_OUT 0xA4u` (R, i32, the residual's block exponent latched at `tok_done` on a clean completion, like `LOGIT_EXP`); `FK33_CAP_XEXP_OUT (1u << 6)`; `CAPS_FLAGS_V` becomes `x"0000007D"` (125).
 
-- [ ] **Step 1: Failing bench checks**
+- [x] **Step 1: Failing bench checks**
 
 In `sim/tb_fk33_seam.vhd`: change the caps assertion to 125 and its message to add "+ residual exponent register"; add signal `s_xexp_out : signed(EXP_W-1 downto 0)` mapped to `d_x_exp_out`; in the block that drives `s_smp_exp` before raising `s_tok_done`, drive `s_xexp_out <= to_signed(-7, EXP_W)` with `s_smp_exp` at a DIFFERENT value, and after completion:
 ```vhdl
@@ -210,12 +210,12 @@ In `sim/tb_fk33_seam.vhd`: change the caps assertion to 125 and its message to a
 ```
 with `constant A_XEXP_OUT : natural := 16#A4#;` in the bench and `n_chk_xo` a variable reported at the end like `n_chk_kv`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bash sim/regress.sh --only tb_fk33_seam`
 Expected: FAIL (no port `d_x_exp_out`).
 
-- [ ] **Step 3: Implement the seam**
+- [x] **Step 3: Implement the seam**
 
 ```vhdl
   constant A_XEXP_OUT  : natural := 16#A4#;  -- R   x_exp_out latched at tok_done
@@ -232,7 +232,7 @@ Expected: FAIL (no port `d_x_exp_out`).
 ```
 Reset `r_xexp_o` where `r_logit_e` is reset (line 794).
 
-- [ ] **Step 4: Header and fk33ctl**
+- [x] **Step 4: Header and fk33ctl**
 
 `server/fk33_seam.h`:
 ```c
@@ -241,7 +241,7 @@ Reset `r_xexp_o` where `r_logit_e` is reset (line 794).
 ```
 `hw/fk33/host/fk33ctl.py`: `SEAM_XEXP_OUT = SEAM_BASE + 0xA4`; caps row `(1 << 6, "XEXP_OUT  R_X's block exponent is readable after tok_done")`; print `x_exp_out {m.rd(SEAM_XEXP_OUT)}` next to `logit_exp`; add `"FK33_SEAM_XEXP_OUT": SEAM_XEXP_OUT` to the cross-check dict.
 
-- [ ] **Step 5: Run the bench, the ctl tests and the mutation script**
+- [x] **Step 5: Run the bench, the ctl tests and the mutation script**
 
 ```bash
 bash sim/regress.sh --only tb_fk33_seam
@@ -250,11 +250,11 @@ bash sim/mutate_fk33_seam.sh
 ```
 Expected: ` OVERALL PASS 1`; ctl tests pass (the header cross-check sees the new define); mutation table unchanged plus the new row below.
 
-- [ ] **Step 6: Teeth**
+- [x] **Step 6: Teeth**
 
 Add to `sim/mutate_fk33_seam.sh` a row `XEXP_LATCH_SMP`: replace `r_xexp_o <= d_x_exp_out;` with `r_xexp_o <= smp_exp;`. Expected verdict KILLED by P8 (the bench drives the two at different values), and NOT `KILLED(PRIOR)`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add rtl/fk33_seam.vhd server/fk33_seam.h hw/fk33/host/fk33ctl.py sim/tb_fk33_seam.vhd sim/mutate_fk33_seam.sh
@@ -274,14 +274,14 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg3.txt
 - Consumes: `x_exp_out` on `fk33_llama_top` (Task 2), `d_x_exp_out` on the seam (Task 3).
 - Produces: `x_exp_out : out signed(15 downto 0)` on `fk33_card`; the BD net `card/x_exp_out -> seam/d_x_exp_out`.
 
-- [ ] **Step 1: Regenerate the card and read the diff**
+- [x] **Step 1: Regenerate the card and read the diff**
 
 ```bash
 python3 hw/fk33/gen_fk33_card.py && git diff --stat hw/fk33/rtl/fk33_card.vhd && git diff hw/fk33/rtl/fk33_card.vhd | grep -E '^[+-].*x_exp_out'
 ```
 Expected: exactly the new port and its map, width `signed(15 downto 0)` (the same as `smp_exp`); if the width differs, the wrapper's rule for `signed` widths is wrong and the task stops here.
 
-- [ ] **Step 2: Add the pin to the seam wiring list and regenerate the build script with its stamp**
+- [x] **Step 2: Add the pin to the seam wiring list and regenerate the build script with its stamp**
 
 Append `("d_x_exp_out", "x_exp_out"),` after `("smp_exp", "smp_exp")` in `SEAM_FROM_CARD`. Read the stamp:
 ```bash
@@ -289,7 +289,7 @@ sed -n '/GENSTAMP/,/^# *$/p' hw/fk33/build_fk33_pcieep.tcl | head -30
 ```
 Regenerate with exactly those values as environment, then `git diff --stat hw/fk33/build_fk33_pcieep.tcl`. Expected: the diff is the one new `connect_bd_net` line and the pin in the `foreach fk33_sp` list, nothing else. A larger diff means a stamp value was wrong; revert and redo.
 
-- [ ] **Step 3: Run the selftests and gate rows**
+- [x] **Step 3: Run the selftests and gate rows**
 
 ```bash
 python3 hw/fk33/gen_pcieep.py --selftest
@@ -297,7 +297,7 @@ for r in fk33card runguard bdports tb_fk33_cardtop_adesc; do bash sim/regress.sh
 ```
 Expected: all ` OVERALL PASS 1`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add hw/fk33/gen_pcieep.py hw/fk33/rtl/fk33_card.vhd hw/fk33/build_fk33_pcieep.tcl
@@ -316,16 +316,16 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg4.txt
 **Interfaces:**
 - Produces: on a v2 simulated card, after every GO, `win_xout[i] = win_xin[i]` for `i < n_embd` and `reg[FK33_SEAM_XEXP_OUT/4] = reg[FK33_SEAM_X_EXP/4]`; `caps_flags` default gains `FK33_CAP_XEXP_OUT`.
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 In `seam_selftest.c`, add `static int test_xout_identity(void)`: open a v2 FILE-transport card via `pl_open` with `pl_embed_synthetic`, call `pl_decode(c, 17, NULL, NULL, &argmax)`, then read back through the transport: `WIN_SEL=3`, `WIN_ADDR=0`, `n_embd` reads of `WIN_DATA`, and `FK33_SEAM_XEXP_OUT`. Assert the row equals what `pl_embed_synthetic(17)` produced (call it again into a local buffer) and the exponent equals its `exp`. Register the case in `main`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `make -s -C server test`
 Expected: FAIL, window 3 reads zeros.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In the v2 GO completion branch of `fk33_sim.c`, after the argmax registers are set:
 ```c
@@ -338,7 +338,7 @@ In the v2 GO completion branch of `fk33_sim.c`, after the argmax registers are s
 ```
 and add `| FK33_CAP_XEXP_OUT` to the v2 default caps at ~line 196.
 
-- [ ] **Step 4: Run to verify it passes, commit**
+- [x] **Step 4: Run to verify it passes, commit**
 
 ```bash
 make -s -C server test
@@ -368,13 +368,13 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg5.txt
                     int32_t *logits, int32_t *logit_exp, int *argmax);
   ```
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 `test_xout_roundtrip`: v2 FILE card; `int16_t row[n_embd]` filled with `i*7-3`; `pl_decode_row(c, row, 5, NULL, NULL, &am)`; `pl_read_xout(c, back, &e)`; assert `memcmp(row, back) == 0` and `e == 5`. Second assertion: with `sim.caps_flags` forced to the v2 default WITHOUT bit 6, `pl_read_xout` returns -1.
 
-- [ ] **Step 2: Run to verify it fails** (`make -s -C server test`, link error on the new symbols).
+- [x] **Step 2: Run to verify it fails** (`make -s -C server test`, link error on the new symbols).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```c
 int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp)
@@ -420,7 +420,7 @@ int pl_decode_row(pl_ctx *c, const int16_t *mant, int32_t exp,
 ```
 If `pl_ctx` does not already keep the caps word read at open, add `uint32_t caps;` and set it where `FK33_SEAM_CAPS_FLAGS` is read in `pl_open`.
 
-- [ ] **Step 4: Run, commit**
+- [x] **Step 4: Run, commit**
 
 ```bash
 make -s -C server test
@@ -452,13 +452,13 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg6.txt
   void plp_hop_timing(double *read_s, double *write_s, unsigned long *hops);
   ```
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 `test_pipeline_matches_single`: three v2 FILE cards (`file_dir` A, B, C), all identity engines. Single: `pl_prefill(A, ids, 5, &am1)` then `pl_decode(A, am1, &am2)`. Pipeline over B and C: `plp_prefill(p, ids, 5, &bm1)`, `plp_decode(p, bm1, &bm2)`. Assert `am1 == bm1`, `am2 == bm2`, and `plp_seq_pos(p) == pl_seq_pos(A)`. With the identity engine card 1 sees exactly the embedding, so equality is the oracle for the hop and the position bookkeeping.
 
-- [ ] **Step 2: Run to verify it fails** (link error).
+- [x] **Step 2: Run to verify it fails** (link error).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```c
 /* server/pl_pipeline.c -- two cards, one model, the host carries R_X. */
@@ -535,7 +535,7 @@ void plp_hop_timing(double *r, double *w, unsigned long *h){ if(r)*r=g_read; if(
 ```
 Note the card-0 `pl_decode` is used for the embedding push and GO; its argmax is ignored because card 0's program has no LM head.
 
-- [ ] **Step 4: Run, commit**
+- [x] **Step 4: Run, commit**
 
 ```bash
 make -s -C server test
@@ -555,7 +555,7 @@ git commit -F /mnt/storage/fk33_builds/scratch/twocard/msg7.txt
 **Interfaces:**
 - Produces: CLI `--blocks LO:HI` (inclusive, global numbering), `--no-lmhead`; `build_plan(s, ..., blocks=(lo, hi), lmhead=False)`; `END_TOKEN` is emitted with `blk=hi+1` on a no-LM-head program.
 
-- [ ] **Step 1: Failing self-check**
+- [x] **Step 1: Failing self-check**
 
 Add to `main`:
 ```python
@@ -583,9 +583,9 @@ def selfcheck_split(s):
 ```
 Steps must compare by value; if the step class has no `__eq__`, compare `vars(x) == vars(y)`.
 
-- [ ] **Step 2: Run to verify it fails**: `python3 tools/gen_layer_program.py --selfcheck-split` -> TypeError (`build_plan` has no `blocks`).
+- [x] **Step 2: Run to verify it fails**: `python3 tools/gen_layer_program.py --selfcheck-split` -> TypeError (`build_plan` has no `blocks`).
 
-- [ ] **Step 3: Implement in `build_plan`**
+- [x] **Step 3: Implement in `build_plan`**
 
 Signature `def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None, blocks=None, lmhead=True):`. Replace `for b in range(s.blocks):` with
 ```python
@@ -596,7 +596,7 @@ Signature `def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_window
 ```
 Guard the final-norm + LM head + sampler emission with `if lmhead:` and emit `END_TOKEN` with `blk=(s.blocks if lmhead else hi + 1)`. Change the `n_steps` equality check to run only when `blocks is None and lmhead`. In `main`, parse `--blocks` into a tuple and pass both through; `--no-lmhead` without `--blocks` is allowed (a whole model with no head, useful for the identity bench).
 
-- [ ] **Step 4: Prove the default output did not move**
+- [x] **Step 4: Prove the default output did not move**
 
 ```bash
 python3 tools/gen_layer_program.py --token --shape 9b --manifest /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27/manifest.json --x-exp 0 --d-table /mnt/storage/fk33_builds/scratch/twocard/after.dtbl --rel-file /mnt/storage/fk33_builds/scratch/twocard/after.rel --arena-image /mnt/storage/fk33_builds/scratch/twocard/after.arena
@@ -605,7 +605,7 @@ python3 tools/gen_layer_program.py --selfcheck-split
 ```
 Expected: `UNCHANGED`, `SPLITPLAN_OK 3 splits`.
 
-- [ ] **Step 5: Gate row, teeth, commit**
+- [x] **Step 5: Gate row, teeth, commit**
 
 Add the `splitplan` row to `SELFCHECK_CMD` (confirm no gate is running first: no `ghdl` process by `/proc/PID/exe`). Teeth: temporarily make card 0 emit `END_TOKEN` with `blk=hi` -> the self-check must fail on the `blk == k` assert. Commit `tools/gen_layer_program.py sim/regress.sh`.
 
@@ -620,7 +620,7 @@ Add the `splitplan` row to `SELFCHECK_CMD` (confirm no gate is running first: no
 **Interfaces:**
 - Produces: `--blocks LO:HI` expands to `--drop` of every `blk.N.*` tensor with N outside the range, and, when HI is not the last block, also drops `output_norm.weight` and `output.weight`. Refuses a range that covers no block. Two images: `/mnt/storage/llama-models/qwen35-9b-card0-b0-15/` and `.../qwen35-9b-card1-b16-31/`, each with `manifest.json`.
 
-- [ ] **Step 1: Failing selftest**
+- [x] **Step 1: Failing selftest**
 
 ```python
 def blocks_to_drop(names, lo, hi, n_blocks):
@@ -642,11 +642,11 @@ def selftest_blocks():
 ```
 Wire `--selftest-blocks` in `main` to call it and exit.
 
-- [ ] **Step 2: Run to verify it fails** (NameError).
+- [x] **Step 2: Run to verify it fails** (NameError).
 
-- [ ] **Step 3: Implement** `blocks_to_drop` with a regex `^blk\.(\d+)\.` and the head rule; in `main`, if `a.blocks` is given, parse `LO:HI`, refuse `lo > hi` or `hi >= n_blocks` (read `n_blocks` from the GGUF metadata the packer already loads), and extend `a.drop` with `blocks_to_drop(...)` BEFORE the existing dedup line.
+- [x] **Step 3: Implement** `blocks_to_drop` with a regex `^blk\.(\d+)\.` and the head rule; in `main`, if `a.blocks` is given, parse `LO:HI`, refuse `lo > hi` or `hi >= n_blocks` (read `n_blocks` from the GGUF metadata the packer already loads), and extend `a.drop` with `blocks_to_drop(...)` BEFORE the existing dedup line.
 
-- [ ] **Step 4: Selftest, then pack both 9B images (long; run under `nohup`, log to the scratch dir)**
+- [x] **Step 4: Selftest, then pack both 9B images (long; run under `nohup`, log to the scratch dir)**
 
 ```bash
 python3 tools/pack_model_fk33.py --selftest-blocks
@@ -656,7 +656,7 @@ python3 tools/pack_model_fk33.py "$GG" /mnt/storage/llama-models/qwen35-9b-card1
 ```
 Expected: two manifests; `python3 tools/weights_residency.py` (or the manifest's own byte totals) shows card 0 at about half the seg27 image minus the head, card 1 at half plus 0.5 GB. Record the totals.
 
-- [ ] **Step 5: Commit** `tools/pack_model_fk33.py` (images are data, not committed).
+- [x] **Step 5: Commit** `tools/pack_model_fk33.py` (images are data, not committed).
 
 ---
 
@@ -670,15 +670,15 @@ Expected: two manifests; `python3 tools/weights_residency.py` (or the manifest's
 **Interfaces:**
 - Produces: `run_prompt` options `--dtbl2 <path> --rel2 <path> --manifest2 <path> --dev2 <prefix>` (default `/dev/xdma1`); when present, the run goes through `plp_*` and prints `hop        %lu hops: read %.3f s, write %.3f s` after the `timing` line.
 
-- [ ] **Step 1: Failing check**: `run_prompt --help` must list `--dtbl2`; grep it. (Fails today.)
+- [x] **Step 1: Failing check**: `run_prompt --help` must list `--dtbl2`; grep it. (Fails today.)
 
-- [ ] **Step 2: Implement**: parse the four options; after the first `pl_open`, if `dtbl2_path`, fill a second `pl_open_opts` identical except `dev_user/h2c/c2h` from the `--dev2` prefix (`<prefix>_user`, `<prefix>_h2c_0`, `<prefix>_c2h_0`), `manifest_path = manifest2`, `dtbl/rel` from the `2` paths; `plp_open(c, c2, &p)`; replace `pl_prefill`/`pl_decode` calls with `plp_prefill`/`plp_decode` when `p != NULL`; print the hop line from `plp_hop_timing`. Program loading for card 2 follows whatever `run_prompt` does for card 1's `--dtbl/--rel` (the same helper, second context).
+- [x] **Step 2: Implement**: parse the four options; after the first `pl_open`, if `dtbl2_path`, fill a second `pl_open_opts` identical except `dev_user/h2c/c2h` from the `--dev2` prefix (`<prefix>_user`, `<prefix>_h2c_0`, `<prefix>_c2h_0`), `manifest_path = manifest2`, `dtbl/rel` from the `2` paths; `plp_open(c, c2, &p)`; replace `pl_prefill`/`pl_decode` calls with `plp_prefill`/`plp_decode` when `p != NULL`; print the hop line from `plp_hop_timing`. Program loading for card 2 follows whatever `run_prompt` does for card 1's `--dtbl/--rel` (the same helper, second context).
 
-- [ ] **Step 3: Simulated two-card run** on FILE transport: two `file_dir`s, both identity engines, prompt of 5 ids, `--max-new 3`; expected output tokens equal a single-card FILE run of the same prompt. Expected line `hop        7 hops: ...`.
+- [x] **Step 3: Simulated two-card run** on FILE transport: two `file_dir`s, both identity engines, prompt of 5 ids, `--max-new 3`; expected output tokens equal a single-card FILE run of the same prompt. Expected line `hop        7 hops: ...`.
 
-- [ ] **Step 4: `fk33_chat2.sh`**: copy `fk33_chat.sh`; loop `for i in 0 1` over `FK33_MODEL_DIR$i` doing the record check (`fk33_imgfp.py check`), `gen_layer_program --token --blocks ${RANGE[$i]} $( [ $i = 0 ] && echo --no-lmhead )`, arena load and GDN zero with `fk33ctl.py --dev /dev/xdma${i}_user` (add a `--dev` option to `fk33ctl.py` defaulting to `/dev/xdma0_user` if it has none); finally `exec run_prompt ... --dtbl2 ... --rel2 ... --manifest2 ... --dev2 /dev/xdma1`. Block ranges: `0:15` and `16:31` from the manifests' block lists, not hardcoded.
+- [x] **Step 4: `fk33_chat2.sh`**: copy `fk33_chat.sh`; loop `for i in 0 1` over `FK33_MODEL_DIR$i` doing the record check (`fk33_imgfp.py check`), `gen_layer_program --token --blocks ${RANGE[$i]} $( [ $i = 0 ] && echo --no-lmhead )`, arena load and GDN zero with `fk33ctl.py --dev /dev/xdma${i}_user` (add a `--dev` option to `fk33ctl.py` defaulting to `/dev/xdma0_user` if it has none); finally `exec run_prompt ... --dtbl2 ... --rel2 ... --manifest2 ... --dev2 /dev/xdma1`. Block ranges: `0:15` and `16:31` from the manifests' block lists, not hardcoded.
 
-- [ ] **Step 5: Commit** `server/tests/run_prompt.c hw/fk33/host/fk33_chat2.sh hw/fk33/host/fk33ctl.py`.
+- [x] **Step 5: Commit** `server/tests/run_prompt.c hw/fk33/host/fk33_chat2.sh hw/fk33/host/fk33ctl.py`.
 
 ---
 
@@ -700,9 +700,9 @@ Expected: two manifests; `python3 tools/weights_residency.py` (or the manifest's
 - Modify: `tools/gen_layer_program.py` (`QWEN38_27B = Shape(...)` next to `QWEN35_9B`; `--shape 27b`)
 - Test: `python3 tools/gen_layer_program.py --shape 27b --token --print --no-a` and `--selfcheck-split` at that shape
 
-- [ ] **Step 1**: `QWEN38_27B = Shape(blocks=64, attn_interval=4, hidden=5120, ffn=17408, key_heads=16, val_heads=48, head_dim=128, attn_q_heads=24, attn_kv_heads=4, attn_head_dim=256, vocab_shard=248320)`; add `"27b"` to the `--shape` choices; select it in `main`. Extend `selfcheck_split` to run over both shapes.
-- [ ] **Step 2**: Run both commands; expected `token 64 blocks ...` with `48 GDN x 16, 16 attn x 13` and `SPLITPLAN_OK` for both shapes. The manifest check is skipped when no 27B manifest exists (the existing `os.path.exists` guard).
-- [ ] **Step 3**: Commit. The 27B images, the `MODEL := QWEN38_27B` build and its fit are the next plan, not this one.
+- [x] **Step 1**: `QWEN38_27B = Shape(blocks=64, attn_interval=4, hidden=5120, ffn=17408, key_heads=16, val_heads=48, head_dim=128, attn_q_heads=24, attn_kv_heads=4, attn_head_dim=256, vocab_shard=248320)`; add `"27b"` to the `--shape` choices; select it in `main`. Extend `selfcheck_split` to run over both shapes.
+- [x] **Step 2**: Run both commands; expected `token 64 blocks ...` with `48 GDN x 16, 16 attn x 13` and `SPLITPLAN_OK` for both shapes. The manifest check is skipped when no 27B manifest exists (the existing `os.path.exists` guard).
+- [x] **Step 3**: Commit. The 27B images, the `MODEL := QWEN38_27B` build and its fit are the next plan, not this one.
 
 ---
 
