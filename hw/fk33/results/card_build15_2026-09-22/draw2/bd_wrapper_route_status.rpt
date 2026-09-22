@@ -1,0 +1,50 @@
+Design Route Status
+                                               :      # nets :
+   ------------------------------------------- : ----------- :
+   # of logical nets.......................... :     2609060 :
+       # of nets not needing routing.......... :     1927647 :
+           # of internally routed nets........ :     1643291 :
+           # of nets with no loads............ :      284356 :
+       # of routable nets..................... :      681413 :
+           # of fully routed nets............. :      668975 :
+       # of nets with routing errors.......... :       12438 :
+           # of nets with resource conflicts.. :       12438 :
+   ------------------------------------------- : ----------- :
+
+
+Nets with Routing Errors: (only the first 10 nets are listed)
+  GLOBAL_LOGIC0
+    Conflicting Routing Nodes -- only the first 10 are listed, use -show_all to get the full list:
+      INT_X100Y131/BYPASS_E1
+      2x    INT_X100Y133/BOUNCE_W_2_FT1 (SLICE_X156Y133/CX)
+      INT_X100Y139/BYPASS_E8 (DSP48E2_X21Y49/MSCAN_ENABLE)
+      INT_X100Y139/INT_NODE_SDQ_58_INT_OUT1
+      INT_X100Y140/INODE_W_9_FT1
+      INT_X100Y141/SS4_E_BEG5
+      INT_X100Y142/BOUNCE_W_2_FT1 (SLICE_X156Y142/CX)
+      INT_X100Y143/INT_NODE_SDQ_72_INT_OUT1
+      INT_X100Y143/SS1_W_BEG2
+      INT_X100Y143/SS2_W_BEG2
+  bd_i/axi_gpio_0/U0/gpio_core_1/GPIO2_IO_O[1]
+    Conflicting Routing Nodes: INT_X60Y33/INT_NODE_IMUX_61_INT_OUT1
+  bd_i/axil2eng/inst/m01_nodes/m01_aw_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[217]
+    Conflicting Routing Nodes: INT_X85Y108/INT_NODE_SDQ_43_INT_OUT1
+  bd_i/axil2eng/inst/m01_nodes/m01_r_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[45]
+    Conflicting Routing Nodes: INT_X98Y120/EE2_E_BEG4
+  bd_i/axil2eng/inst/m01_nodes/m01_r_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[49]
+    Conflicting Routing Nodes: INT_X97Y112/INT_NODE_IMUX_48_INT_OUT0
+  bd_i/axil2eng/inst/m01_nodes/m01_r_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[53]
+    Conflicting Routing Nodes: INT_X92Y112/NN2_E_BEG5
+  bd_i/axil2eng/inst/m01_nodes/m01_w_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_en
+    Conflicting Routing Nodes:
+      INT_X86Y135/EE4_E_BEG2
+      INT_X88Y131/EE4_W_BEG3
+  bd_i/axil2eng/inst/m01_nodes/m01_w_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[21]
+    Conflicting Routing Nodes: INT_X85Y124/INT_NODE_IMUX_6_INT_OUT1
+  bd_i/axil2eng/inst/m01_nodes/m01_w_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[25]
+    Conflicting Routing Nodes:
+      INT_X85Y130/INT_NODE_SDQ_61_INT_OUT1
+      INT_X85Y130/NN1_W_BEG3
+  bd_i/axil2eng/inst/m01_nodes/m01_w_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/gen_reg_fifo_async.inst_reg_fifo_async/gen_xpm_cdc_handshake_array[0].inst_cdc_handshake/dest_hsdata_ff[30]
+    Conflicting Routing Nodes: INT_X90Y147/EE4_W_BEG6
+
