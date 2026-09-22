@@ -929,6 +929,53 @@ def dequant_f32(t) -> np.ndarray:
     return np.ascontiguousarray(P.tensor_as_mk(t).reshape(-1), dtype="<f4")
 
 
+def blocks_to_drop(names, lo, hi, n_blocks):
+    """The tensor names to DROP so that only blocks lo..hi (inclusive, global
+    numbering) remain and, iff hi is the model's last block, the head tensors
+    (`output_norm.weight`, `output.weight`) with them.  `token_embd.weight`
+    is never touched here: it is the host's, and the noembd images drop it
+    separately.  Pure, so it is tested without a GGUF (--selftest-blocks).
+    2026-09-21, two-card pipeline (Task 9)."""
+    import re as _re
+    if not (0 <= lo <= hi < n_blocks):
+        raise SystemExit(f"--blocks {lo}:{hi}: outside 0..{n_blocks - 1}")
+    out = []
+    for n in names:
+        m = _re.match(r"^blk\.(\d+)\.", n)
+        if m:
+            b = int(m.group(1))
+            if b < lo or b > hi:
+                out.append(n)
+        elif n in ("output_norm.weight", "output.weight") and hi != n_blocks - 1:
+            out.append(n)
+    return out
+
+
+def selftest_blocks():
+    names = ["token_embd.weight", "output_norm.weight", "output.weight"] + \
+            ["blk.%d.%s" % (b, t) for b in range(4) for t in ("attn_q.weight", "ffn_up.weight")]
+    d0 = set(blocks_to_drop(names, 0, 1, 4)); d1 = set(blocks_to_drop(names, 2, 3, 4))
+    assert "output.weight" in d0 and "output_norm.weight" in d0, "card 0 keeps the head"
+    assert "output.weight" not in d1 and "output_norm.weight" not in d1, "card 1 loses the head"
+    assert "blk.2.attn_q.weight" in d0 and "blk.1.attn_q.weight" in d1, "block filter"
+    assert "token_embd.weight" not in d0 and "token_embd.weight" not in d1, "embedding touched"
+    kept0 = set(names) - d0; kept1 = set(names) - d1
+    assert (kept0 & kept1) == {"token_embd.weight"}, "the two cards must partition every non-embedding tensor"
+    assert (kept0 | kept1) == set(names), "a tensor fell through both cards"
+    # a single card holding everything drops nothing
+    assert blocks_to_drop(names, 0, 3, 4) == [], "0:3 of 4 must drop nothing"
+    # refusals
+    for lo, hi in ((2, 1), (0, 4), (-1, 2)):
+        try:
+            blocks_to_drop(names, lo, hi, 4)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("range %d:%d was accepted" % (lo, hi))
+    print("PACK_BLOCKS_OK")
+    return 0
+
+
 def gguf_kv(rd, suffix: str):
     """One GGUF metadata value, addressed by key SUFFIX so the architecture
     prefix (`qwen35.`) does not have to be assumed.  Raises if it is missing or
@@ -1012,8 +1059,8 @@ def a_descriptor_jobs(files):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("gguf")
-    ap.add_argument("outdir")
+    ap.add_argument("gguf", nargs="?", default=None)
+    ap.add_argument("outdir", nargs="?", default=None)
     ap.add_argument("--rows-if", type=int, default=48)
     ap.add_argument("--axi-dw", type=int, default=256)
     ap.add_argument("--only", default=None,
@@ -1084,6 +1131,13 @@ def main():
                          "still applies afterwards, so this cannot be used to "
                          "sneak a sub-target layout out; lower "
                          "--stripe-min-context on purpose for that")
+    ap.add_argument("--blocks", default=None, metavar="LO:HI",
+                    help="keep only transformer blocks LO..HI (inclusive, global "
+                         "numbering) and, unless HI is the last block, drop the head "
+                         "tensors too: one card of a layer-split pipeline.  Sugar over "
+                         "--drop; the names it adds are listed in the manifest like any drop.")
+    ap.add_argument("--selftest-blocks", action="store_true",
+                    help="test the --blocks name filter without a GGUF, then exit")
     ap.add_argument("--drop", action="append", default=[], metavar="TENSOR",
                     help="exact GGUF tensor name to leave OUT of the image: not "
                          "packed, not placed, not in the manifest's files. "
@@ -1094,6 +1148,10 @@ def main():
                          "the embedding gather and nothing on the card reads "
                          "that tensor")
     a = ap.parse_args()
+    if a.selftest_blocks:
+        return selftest_blocks()
+    if not a.gguf or not a.outdir:
+        ap.error("the following arguments are required: gguf, outdir")
 
     rows_if, axi_dw = a.rows_if, a.axi_dw
     nports = P.check_geometry(rows_if, axi_dw, emitting=True)
@@ -1116,6 +1174,13 @@ def main():
     # no-op that still reports success, i.e. an image nobody notices is full
     # size.  Done before classification so a dropped tensor is invisible to
     # everything downstream: it is not packed, not placed, not counted.
+    if a.blocks:
+        lo, hi = (int(v) for v in a.blocks.split(":"))
+        n_blocks = int(gguf_kv(rd, "block_count"))
+        extra = blocks_to_drop([t.name for t in all_tensors], lo, hi, n_blocks)
+        print(f"blocks   {lo}:{hi} of {n_blocks}: dropping {len(extra)} tensors of other "
+              f"blocks{' and the head' if hi != n_blocks - 1 else ''}")
+        a.drop = list(a.drop) + extra
     drop_names = list(dict.fromkeys(a.drop))          # dedup, keep order
     by_name = {}
     for t in all_tensors:
