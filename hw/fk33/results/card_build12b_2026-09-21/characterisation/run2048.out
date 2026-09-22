@@ -1,0 +1,102 @@
+resident   /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27  (image record on the card, not assumed)
+text       37 ids from the chat template (thinking off)
+embedding  mv4i /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i M=248320 K=4096 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=128 tiles=5174 w_exp=8 recipe=wide read=4096B x2
+program    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat_run/token.dtbl: 8080 32-bit halves (505 descriptors of 8 64-bit words)
+release    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat_run/token.rel: 505 entries
+transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator token supplied)
+card       seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ctx=65536 chunk=1 x_stride=8256 l_stride=993344 | chardev user=/dev/xdma0_user h2c=/dev/xdma0_h2c_0 c2h=/dev/xdma0_c2h_0
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    37 ids, pos 37, first argmax 2, exp 16
+# From Mercury to Nitride: The Evolution of Power Electronics
+
+The history of power electronics is not merely a chronicle of technological advancement; it is the story of humanity's increasing ability to control, shape, and distribute energy with precision. It is a narrative that spans from the chaotic, toxic alchemy of early 20th-century industrial rectification to the silent, high-frequency efficiency of modern wide-bandgap semiconductors. This journey reflects a fundamental shift in engineering philosophy: moving from bulky, low-frequency, passive conversion to compact, high-frequency, active control.
+
+To understand where we are going, we must first trace the path from the mercury-arc rectifier to Gallium Nitride (GaN), examining the physical constraints that drove each generation of technology and the innovations that overcame them.
+
+---
+
+## Part I: The Age of Arcs and Vacuum (1900–1950)
+### The Mercury-Arc Rectifier
+
+The story of power electronics begins not with a chip, but with a glass bulb filled with mercury and argon gas. The **mercury-arc rectifier**, invented in the late 19th century and perfected in the early 20th, was the workhorse of the industrial world for nearly a century.
+
+Before the advent of solid-state devices, converting high-voltage AC from the grid into the DC required by electric motors and electroplating baths was a mechanical challenge. Early solutions involved rotary converters—large, noisy, and inefficient machines that used a motor to drive a commutator. The mercury-arc rectifier solved this by using the ionization of mercury vapor to conduct current in only one direction.
+
+**The Mechanics of the Arc**
+When a high voltage was applied to the mercury pool at the bottom of the tube, it vaporized. When a secondary electrode (the anode) was brought close to the pool, an electric arc jumped across the gap, ionizing the gas and allowing current to flow. By arranging multiple tubes in a bridge configuration, engineers could achieve full-wave rectification.
+
+**The Downside: Size and Toxicity**
+While revolutionary for its time, the mercury-arc rectifier had severe limitations. The physics of the arc required high voltages to initiate conduction, meaning these devices could not handle low-voltage DC applications well. Furthermore, the tubes were massive, fragile, and required significant cooling. Perhaps most critically, they contained mercury, a potent neurotoxin. The disposal of these devices and the safety hazards they posed to workers made them unsustainable in the long term.
+
+Despite these flaws, the mercury-arc rectifier dominated the landscape until the mid-20th century. It was the "internal combustion engine" of the power electronics world: robust, widely used, but inherently inefficient and polluting.
+
+---
+
+## Part II: The Silicon Revolution (1950s–1970s)
+### The Birth of Solid-State Control
+
+The turning point in power electronics history arrived with the invention of the **Silicon Controlled Rectifier (SCR)** in 1957 by M. Chalmers and J. M. Bowers at Bell Labs. The SCR was a game-changer because it was a solid-state device that could control high power levels without moving parts, without toxic fluids, and with a much smaller footprint than mercury arcs.
+
+### The Thyristor Era
+The SCR, or thyristor, is a four-layer semiconductor device (PNPN) that acts as a switch. Once triggered into the "on" state, it remains conducting until the current drops below a certain threshold. This property made it ideal for controlling the speed of large industrial motors and regulating power in high-voltage transmission.
+
+**The Limitations of Silicon**
+While the SCR was a massive leap forward, it introduced new challenges. Because the device relies on the movement of charge carriers (holes and electrons) through the silicon lattice, it has a relatively low switching speed. You cannot turn an SCR on and off rapidly; it is essentially a latching switch.
+
+This limitation dictated the architecture of power electronics for decades. To convert AC to DC efficiently using SCRs, engineers had to use large, heavy iron-core transformers to step down voltages and bulky inductors to smooth the output. The switching frequency was limited to the line frequency (50/60 Hz) or slightly higher. Consequently, power supplies were enormous, inefficient, and generated significant heat.
+
+The era of the thyristor defined the "heavy" power electronics industry. It was an era of brute force, where size was the primary determinant of power handling capability.
+
+---
+
+## Part III: The MOSFET and IGBT Expansion (1970s–2000s)
+### High-Speed Switching and Integrated Control
+
+As the demand for smaller, more efficient power supplies grew—driven by the rise of consumer electronics, computers, and telecommunications—the limitations of thyristors became apparent. The industry needed devices that could switch on and off rapidly, not just once per cycle.
+
+Enter the **Metal-Oxide-Semiconductor Field-Effect Transistor (MOSFET)** and the **Insulated Gate Bipolar Transistor (IGBT)**.
+
+### The Rise of the MOSFET
+Invented in the 1960s but not widely adopted for power until the 1970s, the MOSFET is a voltage-controlled device. Unlike the current-controlled thyristor, the MOSFET has a very high input impedance, meaning it requires very little gate current to switch. This made it perfect for driving logic circuits and creating compact switching regulators.
+
+However, silicon MOSFETs have a physical limit. As the voltage rating increases, the device becomes difficult to manufacture and loses efficiency due to "on-resistance" ($R_{DS(on)}$). A silicon MOSFET trying to block high voltage while handling high current becomes prohibitively large and hot.
+
+### The Hybrid Solution: The IGBT
+To overcome the limitations of the MOSFET at high voltages, engineers developed the IGBT in the 1980s. The IGBT combines the easy drive of a MOSFET with the high-voltage blocking capability of a thyristor. It is essentially a MOSFET driving a bipolar transistor.
+
+**The Impact of the IGBT**
+The IGBT revolutionized the industry. It allowed for:
+1.  **Higher Switching Frequencies:** While still limited compared to modern standards, IGBTs could switch faster than thyristors, allowing for smaller magnetic components.
+2.  **Higher Voltage Ratings:** They could handle thousands of volts, making them ideal for traction (trains, electric vehicles), renewable energy (wind turbines, solar inverters), and industrial motor drives.
+
+**The Frequency Wall**
+Despite these advances, silicon-based power electronics hit a wall in the 21st century. The fundamental physics of silicon limits the maximum operating temperature to about 150°C to 175°C. Beyond this temperature, the semiconductor material degrades. Furthermore, as switching frequencies increased to reduce the size of inductors and capacitors, the switching losses in silicon devices began to dominate, generating excessive heat that required massive cooling systems.
+
+The industry was stuck in a "frequency wall." To get more power density, you had to accept more heat, which required bigger heat sinks, which negated the size benefits of higher frequency.
+
+---
+
+## Part IV: The Wide Bandgap Revolution (2000s–Present)
+### Enter Gallium Nitride and Silicon Carbide
+
+The late 20th and early 21st centuries saw the emergence of **Wide Bandgap (WBG)** semiconductors. Materials like **Silicon Carbide (SiC)** and **Gallium Nitride (GaN)** possess atomic structures that are fundamentally different from silicon, allowing them to operate under extreme conditions that silicon cannot survive.
+
+### The Physics of Wide Bandgap
+Why are these materials special?
+*   **Bandgap:** Silicon has a bandgap of 1.1 eV. SiC has a bandgap of 3.26 eV, and GaN has a bandgap of 3.4 eV. A wider bandgap means the material is more stable at high temperatures and can withstand higher electric fields.
+*   **Thermal Conductivity:** SiC conducts heat much better than silicon, allowing it to dissipate heat more efficiently.
+*   **Electron Mobility:** GaN has extremely high electron mobility, allowing for very fast switching speeds.
+
+### The Rise of Gallium Nitride (GaN)
+While SiC is often used for high-voltage applications (like EV chargers and grid inverters), **Gallium Nitride (GaN)** has carved out a unique niche in low-to-medium voltage, high-frequency applications.
+
+GaN HEMTs (High Electron Mobility Transistors) operate on a different principle than traditional transistors. They use a heterojunction between two different semiconductor layers to create a channel of electrons. This structure allows for incredibly fast switching speeds—orders of magnitude faster than silicon or even SiC.
+
+**The GaN Advantage**
+Because GaN devices can switch so fast, they can operate at frequencies in the hundreds of kilohertz or even megahertz range. This has profound implications:
+1.  **Magnetic Component Reduction:** Inductors and transformers work based on magnetic saturation. By switching at higher frequencies, the magnetic components can be made much smaller.
+2.  **System Density:** The reduction in passive components (inductors, capacitors, transformers) leads to a drastic reduction in the overall size and weight of the power supply.
+3.  **Efficiency:** The fast switching reduces the time the device spends in the
+decode     2048 ids generated, pos 2084, stopped at --max-new
+timing     2084 GOs: run_chunk 694.716 s (of which STATUS wait 694.707 s over 6442342 polls), X pushes 3.690 s, wall since start 698.451 s
+bytes      h2c 34144256, c2h 0, go 2084 (argmax fast path)

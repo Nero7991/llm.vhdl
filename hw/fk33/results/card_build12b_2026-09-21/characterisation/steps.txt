@@ -1,0 +1,827 @@
+shape cross-checked against 9 packed-tensor dimensions
+A descriptor arena 0x1_ffad_d000 .. 0x1_ffb0_4000 (159744 B, 311 jobs in the full token program, 311 selected here); READ FROM manifest hbm.desc_arena_base; checked disjoint against 6980 regions from 4 allocators
+A arena image /mnt/storage/fk33_builds/scratch/b12b_char/steps.arena: 311 descriptors x 512 B stride = 159232 B; load at HBM 0x1FFADD000 (hbm.desc_arena_base)
+model     blocks=32 attn_interval=4 hidden=4096 ffn=12288 key_dim=2048 val_dim=4096 att_q=4096 att_kv=1024
+token     505 steps (24 GDN x 16, 8 attn x 13, +2, +15 lm_head windows)
+D header  nsub_w=24 nsub_s=3  stamp=manifest
+
+  # step  opcode     src  src2 dst  off      n_rows  n_cols  ord  rel            tensor
+      0  VEC_NORM  X    -    XN   0        4096    0       0    00000000000000 
+      1  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.0.attn_qkv.weight
+      2  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.0.attn_qkv.weight
+      3  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.0.attn_qkv.weight
+      4  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.0.attn_gate.weight
+      5  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.0.ssm_beta.weight
+      6  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.0.ssm_alpha.weight
+      7  B_JOB     QKV  -    Y    0        4096    0       0    00000000111100 
+      8  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.0.ssm_out.weight
+      9  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     10  VEC_NORM  X    -    XN   0        4096    0       0    00000000000000 
+     11  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.0.ffn_gate.weight
+     12  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.0.ffn_up.weight
+     13  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     14  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.0.ffn_down.weight
+     15  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     16  VEC_NORM  X    -    XN   0        4096    0       1    00000000000000 
+     17  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.1.attn_qkv.weight
+     18  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.1.attn_qkv.weight
+     19  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.1.attn_qkv.weight
+     20  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.1.attn_gate.weight
+     21  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.1.ssm_beta.weight
+     22  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.1.ssm_alpha.weight
+     23  B_JOB     QKV  -    Y    0        4096    0       1    00000000111100 
+     24  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.1.ssm_out.weight
+     25  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     26  VEC_NORM  X    -    XN   0        4096    0       1    00000000000000 
+     27  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.1.ffn_gate.weight
+     28  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.1.ffn_up.weight
+     29  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     30  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.1.ffn_down.weight
+     31  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     32  VEC_NORM  X    -    XN   0        4096    0       2    00000000000000 
+     33  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.2.attn_qkv.weight
+     34  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.2.attn_qkv.weight
+     35  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.2.attn_qkv.weight
+     36  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.2.attn_gate.weight
+     37  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.2.ssm_beta.weight
+     38  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.2.ssm_alpha.weight
+     39  B_JOB     QKV  -    Y    0        4096    0       2    00000000111100 
+     40  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.2.ssm_out.weight
+     41  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     42  VEC_NORM  X    -    XN   0        4096    0       2    00000000000000 
+     43  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.2.ffn_gate.weight
+     44  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.2.ffn_up.weight
+     45  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     46  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.2.ffn_down.weight
+     47  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     48  VEC_NORM  X    -    XN   0        4096    0       3    00000000000000 
+     49  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.3.attn_q.weight
+     50  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.3.attn_k.weight
+     51  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.3.attn_v.weight
+     52  C_JOB     QG   -    Y    0        4096    0       0    00000111000000 
+     53  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.3.attn_output.weight
+     54  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     55  VEC_NORM  X    -    XN   0        4096    0       3    00000000000000 
+     56  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.3.ffn_gate.weight
+     57  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.3.ffn_up.weight
+     58  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     59  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.3.ffn_down.weight
+     60  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     61  VEC_NORM  X    -    XN   0        4096    0       4    00000000000000 
+     62  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.4.attn_qkv.weight
+     63  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.4.attn_qkv.weight
+     64  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.4.attn_qkv.weight
+     65  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.4.attn_gate.weight
+     66  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.4.ssm_beta.weight
+     67  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.4.ssm_alpha.weight
+     68  B_JOB     QKV  -    Y    0        4096    0       3    00000000111100 
+     69  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.4.ssm_out.weight
+     70  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     71  VEC_NORM  X    -    XN   0        4096    0       4    00000000000000 
+     72  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.4.ffn_gate.weight
+     73  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.4.ffn_up.weight
+     74  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     75  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.4.ffn_down.weight
+     76  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     77  VEC_NORM  X    -    XN   0        4096    0       5    00000000000000 
+     78  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.5.attn_qkv.weight
+     79  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.5.attn_qkv.weight
+     80  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.5.attn_qkv.weight
+     81  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.5.attn_gate.weight
+     82  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.5.ssm_beta.weight
+     83  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.5.ssm_alpha.weight
+     84  B_JOB     QKV  -    Y    0        4096    0       4    00000000111100 
+     85  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.5.ssm_out.weight
+     86  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     87  VEC_NORM  X    -    XN   0        4096    0       5    00000000000000 
+     88  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.5.ffn_gate.weight
+     89  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.5.ffn_up.weight
+     90  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+     91  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.5.ffn_down.weight
+     92  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+     93  VEC_NORM  X    -    XN   0        4096    0       6    00000000000000 
+     94  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.6.attn_qkv.weight
+     95  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.6.attn_qkv.weight
+     96  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.6.attn_qkv.weight
+     97  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.6.attn_gate.weight
+     98  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.6.ssm_beta.weight
+     99  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.6.ssm_alpha.weight
+    100  B_JOB     QKV  -    Y    0        4096    0       5    00000000111100 
+    101  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.6.ssm_out.weight
+    102  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    103  VEC_NORM  X    -    XN   0        4096    0       6    00000000000000 
+    104  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.6.ffn_gate.weight
+    105  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.6.ffn_up.weight
+    106  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    107  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.6.ffn_down.weight
+    108  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    109  VEC_NORM  X    -    XN   0        4096    0       7    00000000000000 
+    110  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.7.attn_q.weight
+    111  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.7.attn_k.weight
+    112  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.7.attn_v.weight
+    113  C_JOB     QG   -    Y    0        4096    0       1    00000111000000 
+    114  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.7.attn_output.weight
+    115  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    116  VEC_NORM  X    -    XN   0        4096    0       7    00000000000000 
+    117  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.7.ffn_gate.weight
+    118  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.7.ffn_up.weight
+    119  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    120  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.7.ffn_down.weight
+    121  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    122  VEC_NORM  X    -    XN   0        4096    0       8    00000000000000 
+    123  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.8.attn_qkv.weight
+    124  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.8.attn_qkv.weight
+    125  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.8.attn_qkv.weight
+    126  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.8.attn_gate.weight
+    127  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.8.ssm_beta.weight
+    128  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.8.ssm_alpha.weight
+    129  B_JOB     QKV  -    Y    0        4096    0       6    00000000111100 
+    130  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.8.ssm_out.weight
+    131  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    132  VEC_NORM  X    -    XN   0        4096    0       8    00000000000000 
+    133  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.8.ffn_gate.weight
+    134  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.8.ffn_up.weight
+    135  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    136  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.8.ffn_down.weight
+    137  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    138  VEC_NORM  X    -    XN   0        4096    0       9    00000000000000 
+    139  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.9.attn_qkv.weight
+    140  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.9.attn_qkv.weight
+    141  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.9.attn_qkv.weight
+    142  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.9.attn_gate.weight
+    143  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.9.ssm_beta.weight
+    144  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.9.ssm_alpha.weight
+    145  B_JOB     QKV  -    Y    0        4096    0       7    00000000111100 
+    146  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.9.ssm_out.weight
+    147  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    148  VEC_NORM  X    -    XN   0        4096    0       9    00000000000000 
+    149  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.9.ffn_gate.weight
+    150  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.9.ffn_up.weight
+    151  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    152  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.9.ffn_down.weight
+    153  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    154  VEC_NORM  X    -    XN   0        4096    0       10   00000000000000 
+    155  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.10.attn_qkv.weight
+    156  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.10.attn_qkv.weight
+    157  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.10.attn_qkv.weight
+    158  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.10.attn_gate.weight
+    159  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.10.ssm_beta.weight
+    160  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.10.ssm_alpha.weight
+    161  B_JOB     QKV  -    Y    0        4096    0       8    00000000111100 
+    162  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.10.ssm_out.weight
+    163  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    164  VEC_NORM  X    -    XN   0        4096    0       10   00000000000000 
+    165  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.10.ffn_gate.weight
+    166  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.10.ffn_up.weight
+    167  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    168  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.10.ffn_down.weight
+    169  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    170  VEC_NORM  X    -    XN   0        4096    0       11   00000000000000 
+    171  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.11.attn_q.weight
+    172  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.11.attn_k.weight
+    173  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.11.attn_v.weight
+    174  C_JOB     QG   -    Y    0        4096    0       2    00000111000000 
+    175  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.11.attn_output.weight
+    176  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    177  VEC_NORM  X    -    XN   0        4096    0       11   00000000000000 
+    178  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.11.ffn_gate.weight
+    179  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.11.ffn_up.weight
+    180  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    181  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.11.ffn_down.weight
+    182  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    183  VEC_NORM  X    -    XN   0        4096    0       12   00000000000000 
+    184  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.12.attn_qkv.weight
+    185  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.12.attn_qkv.weight
+    186  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.12.attn_qkv.weight
+    187  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.12.attn_gate.weight
+    188  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.12.ssm_beta.weight
+    189  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.12.ssm_alpha.weight
+    190  B_JOB     QKV  -    Y    0        4096    0       9    00000000111100 
+    191  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.12.ssm_out.weight
+    192  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    193  VEC_NORM  X    -    XN   0        4096    0       12   00000000000000 
+    194  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.12.ffn_gate.weight
+    195  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.12.ffn_up.weight
+    196  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    197  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.12.ffn_down.weight
+    198  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    199  VEC_NORM  X    -    XN   0        4096    0       13   00000000000000 
+    200  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.13.attn_qkv.weight
+    201  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.13.attn_qkv.weight
+    202  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.13.attn_qkv.weight
+    203  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.13.attn_gate.weight
+    204  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.13.ssm_beta.weight
+    205  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.13.ssm_alpha.weight
+    206  B_JOB     QKV  -    Y    0        4096    0       10   00000000111100 
+    207  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.13.ssm_out.weight
+    208  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    209  VEC_NORM  X    -    XN   0        4096    0       13   00000000000000 
+    210  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.13.ffn_gate.weight
+    211  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.13.ffn_up.weight
+    212  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    213  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.13.ffn_down.weight
+    214  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    215  VEC_NORM  X    -    XN   0        4096    0       14   00000000000000 
+    216  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.14.attn_qkv.weight
+    217  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.14.attn_qkv.weight
+    218  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.14.attn_qkv.weight
+    219  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.14.attn_gate.weight
+    220  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.14.ssm_beta.weight
+    221  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.14.ssm_alpha.weight
+    222  B_JOB     QKV  -    Y    0        4096    0       11   00000000111100 
+    223  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.14.ssm_out.weight
+    224  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    225  VEC_NORM  X    -    XN   0        4096    0       14   00000000000000 
+    226  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.14.ffn_gate.weight
+    227  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.14.ffn_up.weight
+    228  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    229  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.14.ffn_down.weight
+    230  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    231  VEC_NORM  X    -    XN   0        4096    0       15   00000000000000 
+    232  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.15.attn_q.weight
+    233  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.15.attn_k.weight
+    234  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.15.attn_v.weight
+    235  C_JOB     QG   -    Y    0        4096    0       3    00000111000000 
+    236  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.15.attn_output.weight
+    237  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    238  VEC_NORM  X    -    XN   0        4096    0       15   00000000000000 
+    239  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.15.ffn_gate.weight
+    240  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.15.ffn_up.weight
+    241  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    242  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.15.ffn_down.weight
+    243  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    244  VEC_NORM  X    -    XN   0        4096    0       16   00000000000000 
+    245  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.16.attn_qkv.weight
+    246  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.16.attn_qkv.weight
+    247  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.16.attn_qkv.weight
+    248  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.16.attn_gate.weight
+    249  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.16.ssm_beta.weight
+    250  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.16.ssm_alpha.weight
+    251  B_JOB     QKV  -    Y    0        4096    0       12   00000000111100 
+    252  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.16.ssm_out.weight
+    253  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    254  VEC_NORM  X    -    XN   0        4096    0       16   00000000000000 
+    255  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.16.ffn_gate.weight
+    256  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.16.ffn_up.weight
+    257  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    258  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.16.ffn_down.weight
+    259  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    260  VEC_NORM  X    -    XN   0        4096    0       17   00000000000000 
+    261  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.17.attn_qkv.weight
+    262  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.17.attn_qkv.weight
+    263  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.17.attn_qkv.weight
+    264  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.17.attn_gate.weight
+    265  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.17.ssm_beta.weight
+    266  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.17.ssm_alpha.weight
+    267  B_JOB     QKV  -    Y    0        4096    0       13   00000000111100 
+    268  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.17.ssm_out.weight
+    269  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    270  VEC_NORM  X    -    XN   0        4096    0       17   00000000000000 
+    271  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.17.ffn_gate.weight
+    272  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.17.ffn_up.weight
+    273  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    274  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.17.ffn_down.weight
+    275  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    276  VEC_NORM  X    -    XN   0        4096    0       18   00000000000000 
+    277  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.18.attn_qkv.weight
+    278  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.18.attn_qkv.weight
+    279  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.18.attn_qkv.weight
+    280  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.18.attn_gate.weight
+    281  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.18.ssm_beta.weight
+    282  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.18.ssm_alpha.weight
+    283  B_JOB     QKV  -    Y    0        4096    0       14   00000000111100 
+    284  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.18.ssm_out.weight
+    285  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    286  VEC_NORM  X    -    XN   0        4096    0       18   00000000000000 
+    287  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.18.ffn_gate.weight
+    288  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.18.ffn_up.weight
+    289  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    290  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.18.ffn_down.weight
+    291  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    292  VEC_NORM  X    -    XN   0        4096    0       19   00000000000000 
+    293  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.19.attn_q.weight
+    294  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.19.attn_k.weight
+    295  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.19.attn_v.weight
+    296  C_JOB     QG   -    Y    0        4096    0       4    00000111000000 
+    297  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.19.attn_output.weight
+    298  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    299  VEC_NORM  X    -    XN   0        4096    0       19   00000000000000 
+    300  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.19.ffn_gate.weight
+    301  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.19.ffn_up.weight
+    302  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    303  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.19.ffn_down.weight
+    304  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    305  VEC_NORM  X    -    XN   0        4096    0       20   00000000000000 
+    306  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.20.attn_qkv.weight
+    307  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.20.attn_qkv.weight
+    308  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.20.attn_qkv.weight
+    309  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.20.attn_gate.weight
+    310  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.20.ssm_beta.weight
+    311  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.20.ssm_alpha.weight
+    312  B_JOB     QKV  -    Y    0        4096    0       15   00000000111100 
+    313  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.20.ssm_out.weight
+    314  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    315  VEC_NORM  X    -    XN   0        4096    0       20   00000000000000 
+    316  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.20.ffn_gate.weight
+    317  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.20.ffn_up.weight
+    318  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    319  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.20.ffn_down.weight
+    320  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    321  VEC_NORM  X    -    XN   0        4096    0       21   00000000000000 
+    322  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.21.attn_qkv.weight
+    323  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.21.attn_qkv.weight
+    324  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.21.attn_qkv.weight
+    325  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.21.attn_gate.weight
+    326  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.21.ssm_beta.weight
+    327  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.21.ssm_alpha.weight
+    328  B_JOB     QKV  -    Y    0        4096    0       16   00000000111100 
+    329  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.21.ssm_out.weight
+    330  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    331  VEC_NORM  X    -    XN   0        4096    0       21   00000000000000 
+    332  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.21.ffn_gate.weight
+    333  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.21.ffn_up.weight
+    334  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    335  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.21.ffn_down.weight
+    336  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    337  VEC_NORM  X    -    XN   0        4096    0       22   00000000000000 
+    338  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.22.attn_qkv.weight
+    339  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.22.attn_qkv.weight
+    340  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.22.attn_qkv.weight
+    341  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.22.attn_gate.weight
+    342  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.22.ssm_beta.weight
+    343  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.22.ssm_alpha.weight
+    344  B_JOB     QKV  -    Y    0        4096    0       17   00000000111100 
+    345  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.22.ssm_out.weight
+    346  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    347  VEC_NORM  X    -    XN   0        4096    0       22   00000000000000 
+    348  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.22.ffn_gate.weight
+    349  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.22.ffn_up.weight
+    350  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    351  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.22.ffn_down.weight
+    352  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    353  VEC_NORM  X    -    XN   0        4096    0       23   00000000000000 
+    354  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.23.attn_q.weight
+    355  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.23.attn_k.weight
+    356  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.23.attn_v.weight
+    357  C_JOB     QG   -    Y    0        4096    0       5    00000111000000 
+    358  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.23.attn_output.weight
+    359  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    360  VEC_NORM  X    -    XN   0        4096    0       23   00000000000000 
+    361  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.23.ffn_gate.weight
+    362  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.23.ffn_up.weight
+    363  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    364  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.23.ffn_down.weight
+    365  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    366  VEC_NORM  X    -    XN   0        4096    0       24   00000000000000 
+    367  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.24.attn_qkv.weight
+    368  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.24.attn_qkv.weight
+    369  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.24.attn_qkv.weight
+    370  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.24.attn_gate.weight
+    371  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.24.ssm_beta.weight
+    372  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.24.ssm_alpha.weight
+    373  B_JOB     QKV  -    Y    0        4096    0       18   00000000111100 
+    374  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.24.ssm_out.weight
+    375  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    376  VEC_NORM  X    -    XN   0        4096    0       24   00000000000000 
+    377  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.24.ffn_gate.weight
+    378  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.24.ffn_up.weight
+    379  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    380  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.24.ffn_down.weight
+    381  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    382  VEC_NORM  X    -    XN   0        4096    0       25   00000000000000 
+    383  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.25.attn_qkv.weight
+    384  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.25.attn_qkv.weight
+    385  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.25.attn_qkv.weight
+    386  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.25.attn_gate.weight
+    387  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.25.ssm_beta.weight
+    388  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.25.ssm_alpha.weight
+    389  B_JOB     QKV  -    Y    0        4096    0       19   00000000111100 
+    390  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.25.ssm_out.weight
+    391  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    392  VEC_NORM  X    -    XN   0        4096    0       25   00000000000000 
+    393  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.25.ffn_gate.weight
+    394  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.25.ffn_up.weight
+    395  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    396  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.25.ffn_down.weight
+    397  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    398  VEC_NORM  X    -    XN   0        4096    0       26   00000000000000 
+    399  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.26.attn_qkv.weight
+    400  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.26.attn_qkv.weight
+    401  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.26.attn_qkv.weight
+    402  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.26.attn_gate.weight
+    403  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.26.ssm_beta.weight
+    404  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.26.ssm_alpha.weight
+    405  B_JOB     QKV  -    Y    0        4096    0       20   00000000111100 
+    406  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.26.ssm_out.weight
+    407  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    408  VEC_NORM  X    -    XN   0        4096    0       26   00000000000000 
+    409  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.26.ffn_gate.weight
+    410  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.26.ffn_up.weight
+    411  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    412  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.26.ffn_down.weight
+    413  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    414  VEC_NORM  X    -    XN   0        4096    0       27   00000000000000 
+    415  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.27.attn_q.weight
+    416  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.27.attn_k.weight
+    417  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.27.attn_v.weight
+    418  C_JOB     QG   -    Y    0        4096    0       6    00000111000000 
+    419  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.27.attn_output.weight
+    420  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    421  VEC_NORM  X    -    XN   0        4096    0       27   00000000000000 
+    422  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.27.ffn_gate.weight
+    423  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.27.ffn_up.weight
+    424  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    425  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.27.ffn_down.weight
+    426  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    427  VEC_NORM  X    -    XN   0        4096    0       28   00000000000000 
+    428  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.28.attn_qkv.weight
+    429  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.28.attn_qkv.weight
+    430  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.28.attn_qkv.weight
+    431  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.28.attn_gate.weight
+    432  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.28.ssm_beta.weight
+    433  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.28.ssm_alpha.weight
+    434  B_JOB     QKV  -    Y    0        4096    0       21   00000000111100 
+    435  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.28.ssm_out.weight
+    436  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    437  VEC_NORM  X    -    XN   0        4096    0       28   00000000000000 
+    438  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.28.ffn_gate.weight
+    439  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.28.ffn_up.weight
+    440  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    441  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.28.ffn_down.weight
+    442  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    443  VEC_NORM  X    -    XN   0        4096    0       29   00000000000000 
+    444  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.29.attn_qkv.weight
+    445  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.29.attn_qkv.weight
+    446  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.29.attn_qkv.weight
+    447  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.29.attn_gate.weight
+    448  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.29.ssm_beta.weight
+    449  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.29.ssm_alpha.weight
+    450  B_JOB     QKV  -    Y    0        4096    0       22   00000000111100 
+    451  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.29.ssm_out.weight
+    452  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    453  VEC_NORM  X    -    XN   0        4096    0       29   00000000000000 
+    454  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.29.ffn_gate.weight
+    455  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.29.ffn_up.weight
+    456  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    457  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.29.ffn_down.weight
+    458  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    459  VEC_NORM  X    -    XN   0        4096    0       30   00000000000000 
+    460  A_JOB     XN   -    QKV  0        2048    4096    0    00000000000000 blk.30.attn_qkv.weight
+    461  A_JOB     XN   -    QKV  2048     2048    4096    0    00000000000000 blk.30.attn_qkv.weight
+    462  A_JOB     XN   -    QKV  4096     4096    4096    0    00000000000000 blk.30.attn_qkv.weight
+    463  A_JOB     XN   -    Z    0        4096    4096    0    00000000000000 blk.30.attn_gate.weight
+    464  A_JOB     XN   -    BETA 0        32      4096    0    00000000000000 blk.30.ssm_beta.weight
+    465  A_JOB     XN   -    ALPHA 0        32      4096    0    00000000000010 blk.30.ssm_alpha.weight
+    466  B_JOB     QKV  -    Y    0        4096    0       23   00000000111100 
+    467  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.30.ssm_out.weight
+    468  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    469  VEC_NORM  X    -    XN   0        4096    0       30   00000000000000 
+    470  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.30.ffn_gate.weight
+    471  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.30.ffn_up.weight
+    472  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    473  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.30.ffn_down.weight
+    474  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    475  VEC_NORM  X    -    XN   0        4096    0       31   00000000000000 
+    476  A_JOB     XN   -    QG   0        8192    4096    0    00000000000000 blk.31.attn_q.weight
+    477  A_JOB     XN   -    KIN  0        1024    4096    0    00000000000000 blk.31.attn_k.weight
+    478  A_JOB     XN   -    VIN  0        1024    4096    0    00000000000010 blk.31.attn_v.weight
+    479  C_JOB     QG   -    Y    0        4096    0       7    00000111000000 
+    480  A_JOB     Y    -    ER   0        4096    4096    0    00001000000000 blk.31.attn_output.weight
+    481  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    482  VEC_NORM  X    -    XN   0        4096    0       31   00000000000000 
+    483  A_JOB     XN   -    G    0        12288   4096    0    00000000000000 blk.31.ffn_gate.weight
+    484  A_JOB     XN   -    U    0        12288   4096    0    00000000000010 blk.31.ffn_up.weight
+    485  VEC_SWG   G    U    H    0        12288   0       0    00110000000000 
+    486  A_JOB     H    -    ER   0        4096    12288   0    01000000000000 blk.31.ffn_down.weight
+    487  VEC_RES   X    ER   X    0        4096    0       0    10000000000000 
+    488  VEC_NORM  X    -    XN   0        4096    0       0    00000000000001 
+    489  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    490  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    491  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    492  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    493  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    494  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    495  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    496  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    497  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    498  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    499  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    500  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    501  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    502  A_JOB     XN   -    -    0        17376   4096    0    00000000000000 output.weight
+    503  A_JOB     XN   -    -    0        5056    4096    0    00000000000010 output.weight
+    504  END_TOKEN -    -    -    0        0       0       0    00000000000000 
+
+subsystem A descriptors, FK33 geometry (ROWS_IF=48 AXI_DW=256 nsub_w=24 nsub_s=3):
+  step 1    blk.0.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADD000
+  step 2    blk.0.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADD200
+  step 3    blk.0.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADD400
+  step 4    blk.0.attn_gate.weight       rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADD600
+  step 5    blk.0.ssm_beta.weight        rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFADD800
+  step 6    blk.0.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFADDA00
+  step 8    blk.0.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADDC00
+  step 11   blk.0.ffn_gate.weight        rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFADDE00
+  step 12   blk.0.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFADE000
+  step 14   blk.0.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFADE200
+  step 17   blk.1.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADE400
+  step 18   blk.1.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADE600
+  step 19   blk.1.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADE800
+  step 20   blk.1.attn_gate.weight       rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADEA00
+  step 21   blk.1.ssm_beta.weight        rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFADEC00
+  step 22   blk.1.ssm_alpha.weight       rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFADEE00
+  step 24   blk.1.ssm_out.weight         rows 0..4095 of 4096  w_exp=6 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADF000
+  step 27   blk.1.ffn_gate.weight        rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFADF200
+  step 28   blk.1.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFADF400
+  step 30   blk.1.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFADF600
+  step 33   blk.2.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADF800
+  step 34   blk.2.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFADFA00
+  step 35   blk.2.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADFC00
+  step 36   blk.2.attn_gate.weight       rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFADFE00
+  step 37   blk.2.ssm_beta.weight        rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE0000
+  step 38   blk.2.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE0200
+  step 40   blk.2.ssm_out.weight         rows 0..4095 of 4096  w_exp=6 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE0400
+  step 43   blk.2.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE0600
+  step 44   blk.2.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE0800
+  step 46   blk.2.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE0A00
+  step 49   blk.3.attn_q.weight          rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAE0C00
+  step 50   blk.3.attn_k.weight          rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAE0E00
+  step 51   blk.3.attn_v.weight          rows 0..1023 of 1024  w_exp=9 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAE1000
+  step 53   blk.3.attn_output.weight     rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE1200
+  step 56   blk.3.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE1400
+  step 57   blk.3.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE1600
+  step 59   blk.3.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE1800
+  step 62   blk.4.attn_qkv.weight        rows 0..2047 of 8224  w_exp=9 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE1A00
+  step 63   blk.4.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=9 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE1C00
+  step 64   blk.4.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE1E00
+  step 65   blk.4.attn_gate.weight       rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE2000
+  step 66   blk.4.ssm_beta.weight        rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE2200
+  step 67   blk.4.ssm_alpha.weight       rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE2400
+  step 69   blk.4.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE2600
+  step 72   blk.4.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE2800
+  step 73   blk.4.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE2A00
+  step 75   blk.4.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE2C00
+  step 78   blk.5.attn_qkv.weight        rows 0..2047 of 8224  w_exp=9 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE2E00
+  step 79   blk.5.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=9 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE3000
+  step 80   blk.5.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE3200
+  step 81   blk.5.attn_gate.weight       rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE3400
+  step 82   blk.5.ssm_beta.weight        rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE3600
+  step 83   blk.5.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE3800
+  step 85   blk.5.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE3A00
+  step 88   blk.5.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE3C00
+  step 89   blk.5.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE3E00
+  step 91   blk.5.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE4000
+  step 94   blk.6.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE4200
+  step 95   blk.6.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE4400
+  step 96   blk.6.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE4600
+  step 97   blk.6.attn_gate.weight       rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE4800
+  step 98   blk.6.ssm_beta.weight        rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE4A00
+  step 99   blk.6.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE4C00
+  step 101  blk.6.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE4E00
+  step 104  blk.6.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE5000
+  step 105  blk.6.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE5200
+  step 107  blk.6.ffn_down.weight        rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE5400
+  step 110  blk.7.attn_q.weight          rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAE5600
+  step 111  blk.7.attn_k.weight          rows 0..1023 of 1024  w_exp=9 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAE5800
+  step 112  blk.7.attn_v.weight          rows 0..1023 of 1024  w_exp=9 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAE5A00
+  step 114  blk.7.attn_output.weight     rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE5C00
+  step 117  blk.7.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE5E00
+  step 118  blk.7.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE6000
+  step 120  blk.7.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE6200
+  step 123  blk.8.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE6400
+  step 124  blk.8.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE6600
+  step 125  blk.8.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE6800
+  step 126  blk.8.attn_gate.weight       rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE6A00
+  step 127  blk.8.ssm_beta.weight        rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE6C00
+  step 128  blk.8.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE6E00
+  step 130  blk.8.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE7000
+  step 133  blk.8.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE7200
+  step 134  blk.8.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE7400
+  step 136  blk.8.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE7600
+  step 139  blk.9.attn_qkv.weight        rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE7800
+  step 140  blk.9.attn_qkv.weight        rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE7A00
+  step 141  blk.9.attn_qkv.weight        rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE7C00
+  step 142  blk.9.attn_gate.weight       rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE7E00
+  step 143  blk.9.ssm_beta.weight        rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE8000
+  step 144  blk.9.ssm_alpha.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE8200
+  step 146  blk.9.ssm_out.weight         rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE8400
+  step 149  blk.9.ffn_gate.weight        rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE8600
+  step 150  blk.9.ffn_up.weight          rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE8800
+  step 152  blk.9.ffn_down.weight        rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE8A00
+  step 155  blk.10.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE8C00
+  step 156  blk.10.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAE8E00
+  step 157  blk.10.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE9000
+  step 158  blk.10.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE9200
+  step 159  blk.10.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE9400
+  step 160  blk.10.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAE9600
+  step 162  blk.10.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAE9800
+  step 165  blk.10.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE9A00
+  step 166  blk.10.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAE9C00
+  step 168  blk.10.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAE9E00
+  step 171  blk.11.attn_q.weight         rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAEA000
+  step 172  blk.11.attn_k.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAEA200
+  step 173  blk.11.attn_v.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAEA400
+  step 175  blk.11.attn_output.weight    rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEA600
+  step 178  blk.11.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEA800
+  step 179  blk.11.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEAA00
+  step 181  blk.11.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAEAC00
+  step 184  blk.12.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEAE00
+  step 185  blk.12.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEB000
+  step 186  blk.12.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEB200
+  step 187  blk.12.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEB400
+  step 188  blk.12.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAEB600
+  step 189  blk.12.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAEB800
+  step 191  blk.12.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEBA00
+  step 194  blk.12.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEBC00
+  step 195  blk.12.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEBE00
+  step 197  blk.12.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAEC000
+  step 200  blk.13.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEC200
+  step 201  blk.13.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEC400
+  step 202  blk.13.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEC600
+  step 203  blk.13.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEC800
+  step 204  blk.13.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAECA00
+  step 205  blk.13.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAECC00
+  step 207  blk.13.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAECE00
+  step 210  blk.13.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAED000
+  step 211  blk.13.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAED200
+  step 213  blk.13.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAED400
+  step 216  blk.14.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAED600
+  step 217  blk.14.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAED800
+  step 218  blk.14.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEDA00
+  step 219  blk.14.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEDC00
+  step 220  blk.14.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAEDE00
+  step 221  blk.14.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAEE000
+  step 223  blk.14.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEE200
+  step 226  blk.14.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEE400
+  step 227  blk.14.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEE600
+  step 229  blk.14.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAEE800
+  step 232  blk.15.attn_q.weight         rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAEEA00
+  step 233  blk.15.attn_k.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAEEC00
+  step 234  blk.15.attn_v.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAEEE00
+  step 236  blk.15.attn_output.weight    rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEF000
+  step 239  blk.15.ffn_gate.weight       rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEF200
+  step 240  blk.15.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAEF400
+  step 242  blk.15.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAEF600
+  step 245  blk.16.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEF800
+  step 246  blk.16.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAEFA00
+  step 247  blk.16.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEFC00
+  step 248  blk.16.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAEFE00
+  step 249  blk.16.ssm_beta.weight       rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF0000
+  step 250  blk.16.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF0200
+  step 252  blk.16.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF0400
+  step 255  blk.16.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF0600
+  step 256  blk.16.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF0800
+  step 258  blk.16.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF0A00
+  step 261  blk.17.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF0C00
+  step 262  blk.17.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF0E00
+  step 263  blk.17.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF1000
+  step 264  blk.17.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF1200
+  step 265  blk.17.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF1400
+  step 266  blk.17.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF1600
+  step 268  blk.17.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF1800
+  step 271  blk.17.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF1A00
+  step 272  blk.17.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF1C00
+  step 274  blk.17.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF1E00
+  step 277  blk.18.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF2000
+  step 278  blk.18.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF2200
+  step 279  blk.18.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF2400
+  step 280  blk.18.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF2600
+  step 281  blk.18.ssm_beta.weight       rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF2800
+  step 282  blk.18.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF2A00
+  step 284  blk.18.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF2C00
+  step 287  blk.18.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF2E00
+  step 288  blk.18.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF3000
+  step 290  blk.18.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF3200
+  step 293  blk.19.attn_q.weight         rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAF3400
+  step 294  blk.19.attn_k.weight         rows 0..1023 of 1024  w_exp=9 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAF3600
+  step 295  blk.19.attn_v.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAF3800
+  step 297  blk.19.attn_output.weight    rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF3A00
+  step 300  blk.19.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF3C00
+  step 301  blk.19.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF3E00
+  step 303  blk.19.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF4000
+  step 306  blk.20.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF4200
+  step 307  blk.20.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF4400
+  step 308  blk.20.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF4600
+  step 309  blk.20.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF4800
+  step 310  blk.20.ssm_beta.weight       rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF4A00
+  step 311  blk.20.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF4C00
+  step 313  blk.20.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF4E00
+  step 316  blk.20.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF5000
+  step 317  blk.20.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF5200
+  step 319  blk.20.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF5400
+  step 322  blk.21.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF5600
+  step 323  blk.21.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF5800
+  step 324  blk.21.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF5A00
+  step 325  blk.21.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF5C00
+  step 326  blk.21.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF5E00
+  step 327  blk.21.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF6000
+  step 329  blk.21.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF6200
+  step 332  blk.21.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF6400
+  step 333  blk.21.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF6600
+  step 335  blk.21.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF6800
+  step 338  blk.22.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF6A00
+  step 339  blk.22.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF6C00
+  step 340  blk.22.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF6E00
+  step 341  blk.22.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF7000
+  step 342  blk.22.ssm_beta.weight       rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF7200
+  step 343  blk.22.ssm_alpha.weight      rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF7400
+  step 345  blk.22.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF7600
+  step 348  blk.22.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF7800
+  step 349  blk.22.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF7A00
+  step 351  blk.22.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF7C00
+  step 354  blk.23.attn_q.weight         rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAF7E00
+  step 355  blk.23.attn_k.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAF8000
+  step 356  blk.23.attn_v.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAF8200
+  step 358  blk.23.attn_output.weight    rows 0..4095 of 4096  w_exp=6 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF8400
+  step 361  blk.23.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF8600
+  step 362  blk.23.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF8800
+  step 364  blk.23.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF8A00
+  step 367  blk.24.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF8C00
+  step 368  blk.24.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAF8E00
+  step 369  blk.24.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF9000
+  step 370  blk.24.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF9200
+  step 371  blk.24.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF9400
+  step 372  blk.24.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAF9600
+  step 374  blk.24.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAF9800
+  step 377  blk.24.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF9A00
+  step 378  blk.24.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAF9C00
+  step 380  blk.24.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAF9E00
+  step 383  blk.25.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFA000
+  step 384  blk.25.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFA200
+  step 385  blk.25.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFA400
+  step 386  blk.25.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFA600
+  step 387  blk.25.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFA800
+  step 388  blk.25.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFAA00
+  step 390  blk.25.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFAC00
+  step 393  blk.25.ffn_gate.weight       rows 0..12287 of 12288  w_exp=7 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFAE00
+  step 394  blk.25.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFB000
+  step 396  blk.25.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAFB200
+  step 399  blk.26.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFB400
+  step 400  blk.26.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFB600
+  step 401  blk.26.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFB800
+  step 402  blk.26.attn_gate.weight      rows 0..4095 of 4096  w_exp=9 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFBA00
+  step 403  blk.26.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFBC00
+  step 404  blk.26.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFBE00
+  step 406  blk.26.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFC000
+  step 409  blk.26.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFC200
+  step 410  blk.26.ffn_up.weight         rows 0..12287 of 12288  w_exp=9 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFC400
+  step 412  blk.26.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAFC600
+  step 415  blk.27.attn_q.weight         rows 0..8191 of 8192  w_exp=8 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFAFC800
+  step 416  blk.27.attn_k.weight         rows 0..1023 of 1024  w_exp=8 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAFCA00
+  step 417  blk.27.attn_v.weight         rows 0..1023 of 1024  w_exp=7 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFAFCC00
+  step 419  blk.27.attn_output.weight    rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFCE00
+  step 422  blk.27.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFD000
+  step 423  blk.27.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFD200
+  step 425  blk.27.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAFD400
+  step 428  blk.28.attn_qkv.weight       rows 0..2047 of 8224  w_exp=7 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFD600
+  step 429  blk.28.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=7 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFD800
+  step 430  blk.28.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFDA00
+  step 431  blk.28.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFDC00
+  step 432  blk.28.ssm_beta.weight       rows 0..31 of 32  w_exp=10 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFDE00
+  step 433  blk.28.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFE000
+  step 435  blk.28.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFE200
+  step 438  blk.28.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFE400
+  step 439  blk.28.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFE600
+  step 441  blk.28.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAFE800
+  step 444  blk.29.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFEA00
+  step 445  blk.29.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFEC00
+  step 446  blk.29.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFEE00
+  step 447  blk.29.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFF000
+  step 448  blk.29.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFF200
+  step 449  blk.29.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFAFF400
+  step 451  blk.29.ssm_out.weight        rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFAFF600
+  step 454  blk.29.ffn_gate.weight       rows 0..12287 of 12288  w_exp=7 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFF800
+  step 455  blk.29.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFAFFA00
+  step 457  blk.29.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFAFFC00
+  step 460  blk.30.attn_qkv.weight       rows 0..2047 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFAFFE00
+  step 461  blk.30.attn_qkv.weight       rows 2064..4111 of 8224  w_exp=8 out_shift=3 w_beats=5504 s_beats=5504  @0x1FFB00000
+  step 462  blk.30.attn_qkv.weight       rows 4128..8223 of 8224  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFB00200
+  step 463  blk.30.attn_gate.weight      rows 0..4095 of 4096  w_exp=8 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFB00400
+  step 464  blk.30.ssm_beta.weight       rows 0..31 of 32  w_exp=9 out_shift=3 w_beats=128 s_beats=128  @0x1FFB00600
+  step 465  blk.30.ssm_alpha.weight      rows 0..31 of 32  w_exp=8 out_shift=3 w_beats=128 s_beats=128  @0x1FFB00800
+  step 467  blk.30.ssm_out.weight        rows 0..4095 of 4096  w_exp=6 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFB00A00
+  step 470  blk.30.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFB00C00
+  step 471  blk.30.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFB00E00
+  step 473  blk.30.ffn_down.weight       rows 0..4095 of 4096  w_exp=7 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFB01000
+  step 476  blk.31.attn_q.weight         rows 0..8191 of 8192  w_exp=7 out_shift=3 w_beats=21888 s_beats=21888  @0x1FFB01200
+  step 477  blk.31.attn_k.weight         rows 0..1023 of 1024  w_exp=9 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFB01400
+  step 478  blk.31.attn_v.weight         rows 0..1023 of 1024  w_exp=7 out_shift=3 w_beats=2816 s_beats=2816  @0x1FFB01600
+  step 480  blk.31.attn_output.weight    rows 0..4095 of 4096  w_exp=7 out_shift=3 w_beats=11008 s_beats=11008  @0x1FFB01800
+  step 483  blk.31.ffn_gate.weight       rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFB01A00
+  step 484  blk.31.ffn_up.weight         rows 0..12287 of 12288  w_exp=8 out_shift=3 w_beats=32768 s_beats=32768  @0x1FFB01C00
+  step 486  blk.31.ffn_down.weight       rows 0..4095 of 4096  w_exp=8 out_shift=5 w_beats=33024 s_beats=33024  @0x1FFB01E00
+  step 489  output.weight                rows 0..17375 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02000
+  step 490  output.weight                rows 17376..34751 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02200
+  step 491  output.weight                rows 34752..52127 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02400
+  step 492  output.weight                rows 52128..69503 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02600
+  step 493  output.weight                rows 69504..86879 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02800
+  step 494  output.weight                rows 86880..104255 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02A00
+  step 495  output.weight                rows 104256..121631 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02C00
+  step 496  output.weight                rows 121632..139007 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB02E00
+  step 497  output.weight                rows 139008..156383 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03000
+  step 498  output.weight                rows 156384..173759 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03200
+  step 499  output.weight                rows 173760..191135 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03400
+  step 500  output.weight                rows 191136..208511 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03600
+  step 501  output.weight                rows 208512..225887 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03800
+  step 502  output.weight                rows 225888..243263 of 248320  w_exp=8 out_shift=3 w_beats=46336 s_beats=46336  @0x1FFB03A00
+  step 503  output.weight                rows 243264..248319 of 248320  w_exp=8 out_shift=3 w_beats=13568 s_beats=13568  @0x1FFB03C00
+  311 of 311 A jobs emitted, 0 refused
