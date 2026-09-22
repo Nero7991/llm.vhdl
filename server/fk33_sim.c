@@ -195,7 +195,7 @@ static uint32_t caps_of(const sim_ctx *s)
     if (s->o.caps_flags) return s->o.caps_flags;
     return s->o.version >= 2 ? (FK33_CAP_WINDOWS | FK33_CAP_SAMPLER
                                 | FK33_CAP_LOGITS | FK33_CAP_ENG_SEQ_RESET
-                                | FK33_CAP_ENG_KV_BASE) : 0u;
+                                | FK33_CAP_ENG_KV_BASE | FK33_CAP_XEXP_OUT) : 0u;
 }
 
 static void fail(sim_ctx *s, unsigned code, uint32_t info)
@@ -413,6 +413,20 @@ static void run_go(sim_ctx *s, uint32_t ctrl)
             if (!s->o.fault_stale_argmax) {
                 s->reg[FK33_SEAM_ARGMAX / 4]    = (uint32_t)am;
                 s->reg[FK33_SEAM_LOGIT_EXP / 4] = (uint32_t)lexp;
+            }
+            /* THE HOP MODEL (2026-09-21).  The simulated engine is the
+             * IDENTITY on the residual: what came in through window 2 is
+             * what window 3 reads back, and XEXP_OUT echoes X_EXP.  That is
+             * enough for the two-card pipeline layer to be tested end to
+             * end with no engine, because card 1 then sees exactly what
+             * card 0 was given.  Only when the card advertises the
+             * capability, so a test of an OLD card sees the register stay 0. */
+            if (s->win_xin && s->win_xout && (caps_of(s) & FK33_CAP_XEXP_OUT)) {
+                int i;
+                for (i = 0; i < s->o.n_embd; i++)
+                    s->win_xout[i] = (int16_t)(s->win_xin[i] + s->o.hop_shift);
+                s->reg[FK33_SEAM_XEXP_OUT / 4] =
+                    (uint32_t)((int32_t)s->reg[FK33_SEAM_X_EXP / 4] + s->o.hop_shift);
             }
         }
     }

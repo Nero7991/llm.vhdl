@@ -431,6 +431,20 @@ int pl_prefill(pl_ctx *c, const int *ids, int n,
 int pl_decode(pl_ctx *c, int id,
               int32_t *logits, int32_t *logit_exp, int *argmax);
 
+/* THE TWO-CARD HOP (2026-09-21).
+ * pl_read_xout: after a completed GO, the residual R_X -- n_embd int16
+ * mantissas through window 3 and its block exponent from XEXP_OUT.  Returns
+ * 0; -1 if the card lacks FK33_CAP_XEXP_OUT (an old bitstream: the
+ * mantissas alone are meaningless, so refuse rather than guess); -2 on a
+ * transport error.
+ * pl_decode_row: push a caller-supplied row (bypassing the embedding
+ * provider) as the X row with `exp`, and run one GO at the current
+ * position.  Same contract and return values as pl_decode otherwise.  This
+ * is how card 1 of a pipeline takes card 0's residual as its input. */
+int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp);
+int pl_decode_row(pl_ctx *c, const int16_t *mant, int32_t exp,
+                  int32_t *logits, int32_t *logit_exp, int *argmax);
+
 /* The last FK33_SEAM_ERR_* code and ERR_INFO the card reported. */
 unsigned    pl_last_error(const pl_ctx *c);
 uint32_t    pl_last_error_info(const pl_ctx *c);

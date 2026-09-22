@@ -623,6 +623,11 @@ typedef struct {
     int fault_err_on_go;    /* set err (and NOT done) on the next GO */
     int fault_short_logits; /* write only half the logits row */
     int fault_stale_argmax; /* leave the previous step's argmax in place */
+    /* The hop model is the IDENTITY (window 3 = window 2, XEXP_OUT = X_EXP),
+     * which cannot tell a driver reading the RIGHT window from one reading
+     * the wrong one.  This adds `hop_shift` to every mantissa and to the
+     * exponent so that a test can. 0 = identity. */
+    int hop_shift;
 
     /* Add this to the argmax written to the row header AND to the register,
      * so the two AGREE with each other and both disagree with the row's own

@@ -1015,6 +1015,129 @@ static void t12_hardware_tripwire(void)
     if (t) { t->close(t->ctx); free(t); }
 }
 
+/* ------------------------------------------------------------------------
+ * T15 (2026-09-21, two-card pipeline, Tasks 5 and 6): the residual hop.
+ * The simulated engine is the IDENTITY on the residual -- what came in
+ * through window 2 is what window 3 reads back, and XEXP_OUT echoes X_EXP --
+ * so pl_read_xout must return exactly the row pl_decode_row pushed, and a
+ * card without FK33_CAP_XEXP_OUT must be refused rather than read as zeros.
+ * ---------------------------------------------------------------------- */
+static int open_v2(fk33_sim_opts *s, pl_open_opts *o, uint32_t *prog,
+                   uint32_t *rel, pl_ctx **c)
+{
+    int i;
+    for (i = 0; i < 64; i++) prog[i] = 0x1000u + (uint32_t)i;
+    for (i = 0; i < 8; i++)  rel[i] = 0x3Fu;
+    small_opts(s, o);
+    s->version = 2;
+    o->desc_prog = prog; o->desc_words = 64;
+    o->rel_tbl = rel;    o->rel_words = 8;
+    o->tbl_len = 4;
+    o->desc_arena_base = 0x1FFADD000ull;
+    o->gdn_state_base  = 0x10C006000ull;
+    o->kv_base = 0x10D93E000ull;
+    o->kv_bytes_per_token = 17408;
+    *c = NULL;
+    return pl_open(o, c);
+}
+
+static void t15_xout_hop(void)
+{
+    fk33_sim_opts s;
+    pl_open_opts o;
+    pl_ctx *c = NULL;
+    uint32_t prog[64], rel[8];
+    int16_t row[TE], back[TE];
+    int32_t e = 0;
+    int argmax = -1, i, rc;
+
+    printf("T15 the residual hop: pl_decode_row -> pl_read_xout on the identity engine\n");
+
+    rc = open_v2(&s, &o, prog, rel, &c);
+    CK(rc == 0 && c != NULL, "a complete v2 open was refused (%d)", rc);
+    if (!c) return;
+
+    for (i = 0; i < TE; i++) row[i] = (int16_t)(i * 7 - 3);
+    rc = pl_decode_row(c, row, 5, NULL, NULL, &argmax);
+    CK(rc == 1, "pl_decode_row returned %d, want 1", rc);
+    memset(back, 0, sizeof back);
+    rc = pl_read_xout(c, back, &e);
+    CK(rc == 0, "pl_read_xout returned %d", rc);
+    CK(memcmp(row, back, sizeof row) == 0, "window 3 did not read back the pushed row");
+    CK(e == 5, "XEXP_OUT read %d, want the pushed exponent 5", (int)e);
+
+    /* the embedding path feeds the same hop: decode a token, read the row
+     * the provider produced */
+    {
+        int16_t want[TE]; int32_t wexp = 0;
+        CK(pl_embed_synthetic(NULL, 17, want, TE, &wexp) == 0, "synthetic embed");
+        rc = pl_decode(c, 17, NULL, NULL, &argmax);
+        CK(rc == 1, "pl_decode returned %d", rc);
+        rc = pl_read_xout(c, back, &e);
+        CK(rc == 0 && memcmp(want, back, sizeof want) == 0 && e == wexp,
+           "after pl_decode(17) the hop did not return the embedding row (rc %d, exp %d vs %d)",
+           rc, (int)e, (int)wexp);
+    }
+    pl_close(c);
+
+    /* ---- the shifted engine: window 3 and XEXP_OUT are DISTINGUISHABLE
+     * from window 2 and X_EXP, so a driver reading the wrong side fails
+     * here and nowhere else in this file. */
+    rc = open_v2(&s, &o, prog, rel, &c);
+    if (c) { pl_close(c); c = NULL; }
+    small_opts(&s, &o);
+    s.version = 2; s.hop_shift = 1;
+    o.desc_prog = prog; o.desc_words = 64;
+    o.rel_tbl = rel;    o.rel_words = 8;
+    o.tbl_len = 4;
+    o.desc_arena_base = 0x1FFADD000ull;
+    o.gdn_state_base  = 0x10C006000ull;
+    o.kv_base = 0x10D93E000ull;
+    o.kv_bytes_per_token = 17408;
+    c = NULL;
+    rc = pl_open(&o, &c);
+    CK(rc == 0 && c != NULL, "shifted v2 open refused (%d)", rc);
+    if (c) {
+        int nbad = 0;
+        rc = pl_decode_row(c, row, 5, NULL, NULL, &argmax);
+        CK(rc == 1, "pl_decode_row on the shifted card returned %d", rc);
+        rc = pl_read_xout(c, back, &e);
+        CK(rc == 0, "pl_read_xout on the shifted card returned %d", rc);
+        for (i = 0; i < TE; i++) if (back[i] != (int16_t)(row[i] + 1)) nbad++;
+        CK(nbad == 0, "%d of %d mantissas are not row+1: the driver is not reading window 3", nbad, TE);
+        CK(e == 6, "XEXP_OUT read %d, want X_EXP+1 = 6: the driver is not reading XEXP_OUT", (int)e);
+        pl_close(c); c = NULL;
+    }
+
+    /* ---- a card WITHOUT the capability is refused, not read as zeros ---- */
+    rc = open_v2(&s, &o, prog, rel, &c);
+    CK(rc == 0 && c != NULL, "second v2 open refused (%d)", rc);
+    if (c) { pl_close(c); c = NULL; }
+    s.caps_flags = FK33_CAP_WINDOWS | FK33_CAP_SAMPLER | FK33_CAP_LOGITS
+                 | FK33_CAP_ENG_SEQ_RESET | FK33_CAP_ENG_KV_BASE;   /* no bit 6 */
+    small_opts(&s, &o);
+    s.version = 2;
+    s.caps_flags = FK33_CAP_WINDOWS | FK33_CAP_SAMPLER | FK33_CAP_LOGITS
+                 | FK33_CAP_ENG_SEQ_RESET | FK33_CAP_ENG_KV_BASE;
+    o.desc_prog = prog; o.desc_words = 64;
+    o.rel_tbl = rel;    o.rel_words = 8;
+    o.tbl_len = 4;
+    o.desc_arena_base = 0x1FFADD000ull;
+    o.gdn_state_base  = 0x10C006000ull;
+    o.kv_base = 0x10D93E000ull;
+    o.kv_bytes_per_token = 17408;
+    c = NULL;
+    rc = pl_open(&o, &c);
+    CK(rc == 0 && c != NULL, "v2 open without CAP_XEXP_OUT refused (%d)", rc);
+    if (c) {
+        rc = pl_decode_row(c, row, 5, NULL, NULL, &argmax);
+        CK(rc == 1, "pl_decode_row on the old card returned %d", rc);
+        rc = pl_read_xout(c, back, &e);
+        CK(rc == -1, "pl_read_xout on a card without CAP_XEXP_OUT returned %d, want -1", rc);
+        pl_close(c);
+    }
+}
+
 int main(void)
 {
     t1_open_and_caps();
@@ -1031,6 +1154,7 @@ int main(void)
     t12_hardware_tripwire();
     t13_v2_windows();
     t14_v2_backend();
+    t15_xout_hop();
 
     printf("\nSEAM_SELFTEST %s  (%d checks, %d failed)\n",
            fails ? "FAIL" : "PASS", checks, fails);

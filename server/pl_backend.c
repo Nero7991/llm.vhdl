@@ -1380,6 +1380,49 @@ static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
     return n;
 }
 
+/* ---------------------------------------------------------------- the hop
+ * 2026-09-21, two-card pipeline.  See pl_backend.h. */
+int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp)
+{
+    uint32_t v = 0; int i;
+    if (!c || !mant || !exp) return -1;
+    if (c->version < 2 || !(c->caps & FK33_CAP_XEXP_OUT)) return -1;
+    if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XOUT)) return -2;
+    if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
+    for (i = 0; i < c->n_embd; i++) {
+        if (rd(c, FK33_SEAM_WIN_DATA, &v)) return -2;
+        mant[i] = (int16_t)(uint16_t)(v & 0xFFFFu);
+    }
+    if (rd(c, FK33_SEAM_XEXP_OUT, &v)) return -2;
+    *exp = (int32_t)v;
+    c->from_card += (uint64_t)c->n_embd * 4u;
+    return 0;
+}
+
+static int push_row(pl_ctx *c, const int16_t *row, int32_t exp)
+{
+    int i;
+    if (c->version < 2) return -1;
+    if (wr(c, FK33_SEAM_X_EXP, (uint32_t)exp)) return -2;
+    if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XIN)) return -2;
+    if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
+    for (i = 0; i < c->n_embd; i++)
+        if (wr(c, FK33_SEAM_WIN_DATA, (uint32_t)(uint16_t)row[i])) return -2;
+    c->to_card += (uint64_t)c->n_embd * 4u;
+    return 0;
+}
+
+int pl_decode_row(pl_ctx *c, const int16_t *mant, int32_t exp,
+                  int32_t *logits, int32_t *logit_exp, int *argmax)
+{
+    int rc;
+    if (!c || !mant) return -1;
+    if (c->next_pos + 1 > c->max_ctx) return -1;
+    rc = push_row(c, mant, exp);
+    if (rc) return rc;
+    return run_chunk(c, 1, logits != NULL, logits, logit_exp, argmax);
+}
+
 int pl_prefill(pl_ctx *c, const int *ids, int n,
                int32_t *logits, int32_t *logit_exp, int *argmax)
 {
