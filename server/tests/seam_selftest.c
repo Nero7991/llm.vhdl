@@ -43,6 +43,7 @@
 #include <unistd.h>
 
 #include "../pl_backend.h"
+#include "../pl_pipeline.h"
 #include "../fk33_transport.h"
 #include "../fk33_seam.h"
 
@@ -1138,6 +1139,71 @@ static void t15_xout_hop(void)
     }
 }
 
+/* ------------------------------------------------------------------------
+ * T16 (Task 7): the pipeline over two simulated cards equals one card.
+ * With the identity hop card 1 sees exactly the embedding a single card
+ * would, and the simulated engine folds the row and the position only, so
+ * argmax-for-argmax equality is the oracle for the hop, the ordering and the
+ * position bookkeeping.
+ * ---------------------------------------------------------------------- */
+static void t16_pipeline_matches_single(void)
+{
+    fk33_sim_opts sa, sb, sc;
+    pl_open_opts oa, ob, oc;
+    pl_ctx *a = NULL, *b = NULL, *c = NULL;
+    plp_ctx *p = NULL;
+    uint32_t prog[64], rel[8];
+    int ids[5] = { 11, 22, 33, 44, 55 };
+    int am1 = -1, am2 = -1, am3 = -1, bm1 = -1, bm2 = -1, bm3 = -1, rc;
+    double tr = 0, tw = 0; unsigned long hops = 0;
+
+    printf("T16 two simulated cards through pl_pipeline equal one card\n");
+    rc = open_v2(&sa, &oa, prog, rel, &a);
+    CK(rc == 0 && a, "single card open (%d)", rc);
+    rc = open_v2(&sb, &ob, prog, rel, &b);
+    CK(rc == 0 && b, "card 0 open (%d)", rc);
+    rc = open_v2(&sc, &oc, prog, rel, &c);
+    CK(rc == 0 && c, "card 1 open (%d)", rc);
+    if (!a || !b || !c) return;
+
+    rc = pl_prefill(a, ids, 5, NULL, NULL, &am1);
+    CK(rc == 5, "single prefill returned %d", rc);
+    rc = pl_decode(a, am1, NULL, NULL, &am2);
+    CK(rc == 1, "single decode returned %d", rc);
+    rc = pl_decode(a, am2, NULL, NULL, &am3);
+    CK(rc == 1, "single decode 2 returned %d", rc);
+
+    rc = plp_open(b, c, &p);
+    CK(rc == 0 && p, "plp_open (%d)", rc);
+    if (!p) return;
+    rc = plp_prefill(p, ids, 5, &bm1);
+    CK(rc == 5, "pipeline prefill returned %d", rc);
+    rc = plp_decode(p, bm1, &bm2);
+    CK(rc == 1, "pipeline decode returned %d", rc);
+    rc = plp_decode(p, bm2, &bm3);
+    CK(rc == 1, "pipeline decode 2 returned %d", rc);
+
+    CK(am1 == bm1, "prefill argmax: single %d, pipeline %d", am1, bm1);
+    CK(am2 == bm2, "decode argmax: single %d, pipeline %d", am2, bm2);
+    CK(am3 == bm3, "decode 2 argmax: single %d, pipeline %d", am3, bm3);
+    CK(plp_seq_pos(p) == pl_seq_pos(a), "positions: pipeline %d, single %d",
+       plp_seq_pos(p), pl_seq_pos(a));
+    CK(pl_seq_pos(b) == pl_seq_pos(c), "the two cards diverged: %d vs %d",
+       pl_seq_pos(b), pl_seq_pos(c));
+    plp_hop_timing(&tr, &tw, &hops);
+    CK(hops == 7, "hops %lu, want 7 (5 prefill + 2 decode)", hops);
+    CK(tr >= 0 && tw >= 0, "hop timing negative");
+
+    /* a diverged pair is refused, not silently run */
+    rc = pl_decode(c, 1, NULL, NULL, &am1);        /* card 1 alone advances */
+    CK(rc == 1, "advance card 1 alone (%d)", rc);
+    rc = plp_decode(p, 3, &bm1);
+    CK(rc == -6, "plp_decode on diverged cards returned %d, want -6", rc);
+
+    plp_close(p);
+    pl_close(a); pl_close(b); pl_close(c);
+}
+
 int main(void)
 {
     t1_open_and_caps();
@@ -1155,6 +1221,7 @@ int main(void)
     t13_v2_windows();
     t14_v2_backend();
     t15_xout_hop();
+    t16_pipeline_matches_single();
 
     printf("\nSEAM_SELFTEST %s  (%d checks, %d failed)\n",
            fails ? "FAIL" : "PASS", checks, fails);

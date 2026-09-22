@@ -30,7 +30,7 @@ INC       := -I../ref
 ARM_CC    ?= aarch64-linux-gnu-gcc
 ARM_CXX   ?= aarch64-linux-gnu-g++
 
-CSRC := pl_backend_axu3eg.c pl_backend.c fk33_transport.c fk33_sim.c \
+CSRC := pl_backend_axu3eg.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
         fk33_imglock.c \
         fk33_manifest.c embed_mv4i.c embed_bf16.c \
         qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
@@ -61,10 +61,10 @@ board: $(DEPS)
 # ---------------------------------------------------------------------------
 # The seam self-test.  No card, no driver, no FPGA; see tests/seam_selftest.c
 # for what it can and cannot prove.
-seam_selftest: tests/seam_selftest.c pl_backend.c fk33_transport.c fk33_sim.c \
-               fk33_manifest.c fk33_imglock.c pl_backend.h fk33_transport.h fk33_seam.h \
+seam_selftest: tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
+               fk33_manifest.c fk33_imglock.c pl_backend.h pl_pipeline.h fk33_transport.h fk33_seam.h \
                fk33_manifest.h fk33_imglock.h
-	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c fk33_transport.c \
+	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c \
 	      fk33_sim.c fk33_manifest.c fk33_imglock.c
 
 # ---------------------------------------------------------------------------
@@ -127,10 +127,10 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 # The goal harness: a committed prompt through the real seam, its ids compared
 # against a committed reference.  Simulated transport only; see the header of
 # tests/run_prompt.c for what that does and does not prove.
-run_prompt: tests/run_prompt.c pl_backend.c fk33_transport.c fk33_sim.c \
+run_prompt: tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
             fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
             qwen35_chat.c qwen35_unicode_data.c
-	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c fk33_transport.c \
+	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c \
 	      fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
 	      qwen35_chat.c qwen35_unicode_data.c -lm
 
