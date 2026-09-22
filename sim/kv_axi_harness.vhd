@@ -790,14 +790,27 @@ begin
         if r_hd(r) = hd and r < 2*N_KVH*v_cpos then
           do_read(r_sel(r), r_hd(r), r_ps(r), r);
           nrh := nrh + 1;
-          -- A `start` here, six records into the sweep, is the ONLY point in
+          -- A `start` here, a few records into the sweep, is the ONLY point in
           -- this test where the fetcher is still running ahead: at the end of
           -- a head's sweep it has already reached the last readable record and
           -- has nothing outstanding, so a flush there drains an idle unit.
           -- MEASURED: with the flush only at the end of a head, ARVALID was
           -- pending during a flush on ZERO cycles of the whole run, and the
           -- ARVALID-stability check could not fire however correct it was.
-          if nrh = 6 then
+          --
+          -- THREE flushes per head, not one, because WHICH record leaves an
+          -- AR pending is a property of the prefetch geometry and changes
+          -- with KV_BLOCK.  MEASURED 2026-09-22 (scratch sweeps, each run
+          -- bit-exact on both widths, the only failure being the coverage
+          -- assert at the end): a single flush after record 6 gives
+          -- ARVALID-pending-under-flush cycles dw256/dw128 = 19/24 at
+          -- KV_BLOCK 32 but 0/15 at KV_BLOCK 16, at EVERY placement delay
+          -- from 0 to 12 ticks; a single flush after record 8 gives 59/21 at
+          -- 16 but 0/13 at 32; after record 3, 6/21 at 16.  Flushing after
+          -- records 3, 6 and 8 gives 31/32 at 16 and 5/114 at 32, so the
+          -- drain-then-flush axis is judged on the FK33 width at both
+          -- geometries with one harness.
+          if nrh = 3 or nrh = 6 or nrh = 8 then
             -- Line the flush up with a PENDING AR on purpose.  Leaving it to
             -- chance does not work: MEASURED, with the flush placed at an
             -- arbitrary instant, ARVALID was high during a flush on ZERO
