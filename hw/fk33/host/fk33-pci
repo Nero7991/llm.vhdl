@@ -2,9 +2,18 @@
 # fk33-pci -- the ONLY root-needing part of a bitstream reload, as a helper
 # with a two-word vocabulary, so the reload itself can run without a password.
 #
-#     fk33-pci down     remove the PCI device, then rmmod xdma
-#     fk33-pci up       rescan the bus, then insmod the pinned xdma.ko
-#     fk33-pci status   print what is loaded and bound; exit 0 (the probe)
+#     fk33-pci down <addr>  remove THAT PCI device (one of the pinned two), then rmmod xdma
+#     fk33-pci up           rescan the bus, then insmod the pinned xdma.ko (binds every card)
+#     fk33-pci status       print what is loaded and bound, per card; exit 0 (the probe)
+#
+# TWO CARDS SINCE 2026-09-23 (the second FK33 on the MCIO cable from the free
+# chipset slot).  The addresses are still literals, now two of them, and the
+# sudoers rule lists each `down <addr>` form verbatim so nothing this helper
+# accepts is chosen by the caller.  `down` removes ONE device; the rmmod that
+# follows drops the OTHER card's /dev/xdma* nodes too, and `up` re-binds both,
+# so a reload of either card needs nothing to hold any /dev/xdma* node.
+# WHICH ADDRESS IS WHICH CARD is recorded in host/fk33_reload.sh's table and
+# cross-checked there (the other card must stay on the bus through a reload).
 #
 # INSTALL (once, as root; see hw/fk33/host/fk33-pci.sudoers):
 #     sudo install -o root -g root -m 0755 hw/fk33/host/fk33-pci /usr/local/sbin/fk33-pci
@@ -32,19 +41,24 @@ set -euo pipefail
 # misread fk33_reload.sh recorded on 2026-08-29 and worked around by
 # capturing first.  Capture, then test the text.
 xdma_loaded () { [[ -n "$(lsmod 2>/dev/null | grep -E '^xdma ' || true)" ]]; }
-DEV=0000:06:00.0
+CARDS="0000:06:00.0 0000:07:00.0"   # pinned literals; see the sudoers rule
 KO=/usr/local/lib/fk33/xdma.ko
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 [[ $EUID -eq 0 ]] || { echo "fk33-pci: must run as root (via sudo)" >&2; exit 1; }
 case "${1:-}" in
   status)
-    echo "device   $(lspci -s "${DEV#0000:}" 2>/dev/null || echo absent)"
+    for DEV in $CARDS; do
+      echo "device   $DEV  $(lspci -s "${DEV#0000:}" 2>/dev/null | cut -d' ' -f2- || echo absent)"
+      echo "bound    $DEV  $([[ -e /sys/bus/pci/drivers/xdma/$DEV ]] && echo yes || echo no)  xdma_index $(for u in /sys/class/xdma/xdma*_user; do [[ -e $u ]] || continue; [[ "$(basename "$(readlink -f "$u/device")")" == "$DEV" ]] && basename "$u" | sed 's/_user//'; done)"
+    done
     echo "driver   $(lsmod | grep -E '^xdma ' || echo 'xdma not loaded')"
-    echo "bound    $([[ -e /sys/bus/pci/drivers/xdma/$DEV ]] && echo yes || echo no)"
     echo "module   $KO $(md5sum "$KO" 2>/dev/null | cut -d' ' -f1)"
     ;;
   down)
+    DEV="${2:-}"
+    ok=0; for c in $CARDS; do [[ "$DEV" == "$c" ]] && ok=1; done
+    [[ $ok -eq 1 ]] || { echo "fk33-pci down: '$DEV' is not one of the pinned addresses ($CARDS)" >&2; exit 1; }
     if [[ -e /sys/bus/pci/devices/$DEV/remove ]]; then
       echo "--- removing $DEV (this also unbinds the driver) ---"
       echo 1 > "/sys/bus/pci/devices/$DEV/remove"
@@ -68,20 +82,25 @@ case "${1:-}" in
     else
       echo "  xdma not loaded (nothing to rmmod)"
     fi
-    lspci -d 10ee: || echo "  Xilinx device gone from the bus (expected)"
-    echo "FK33_PCI_DOWN"
+    lspci -d 10ee: || echo "  no Xilinx device left on the bus"
+    echo "FK33_PCI_DOWN $DEV"
     ;;
   up)
     echo 1 > /sys/bus/pci/rescan || true
     sleep 2
     if [[ -n "$(lspci -d 10ee: || true)" ]]; then
       lspci -d 10ee:
-      lspci -vv -s "${DEV#0000:}" 2>/dev/null | grep -iE 'LnkSta:|LnkCap:|Region 0' || true
+      for DEV in $CARDS; do
+        echo "--- $DEV ---"
+        lspci -vv -s "${DEV#0000:}" 2>/dev/null | grep -iE 'LnkSta:|LnkCap:|Region 0' || echo "  absent"
+      done
       if ! xdma_loaded; then
         echo "--- insmod $KO poll_mode=1 ---"
         insmod "$KO" poll_mode=1 || echo "INSMOD_FAILED"
       fi
-      ls -la /dev/xdma0_control /dev/xdma0_user 2>/dev/null || echo "NO /dev/xdma* NODES"
+      sleep 1
+      ls -la /dev/xdma*_user 2>/dev/null || echo "NO /dev/xdma* NODES"
+      for u in /sys/class/xdma/xdma*_user; do [[ -e $u ]] && echo "  $(basename "$u" | sed 's/_user//') <- $(basename "$(readlink -f "$u/device")")"; done
       echo "FK33_PCI_UP"
     else
       echo "NO XILINX DEVICE AFTER RESCAN."
@@ -89,5 +108,5 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: fk33-pci down|up|status" >&2; exit 1 ;;
+    echo "usage: fk33-pci down <addr>|up|status" >&2; exit 1 ;;
 esac

@@ -33,8 +33,21 @@
 # The sudo form above still works and is used whenever the helper is absent.
 set -euo pipefail
 
-CARD_SERIAL="${FK33_CARD:-153300000607A}"     # card 1, the one in the slot
-DEV="${FK33_PCI_DEV:-0000:06:00.0}"
+CARD_SERIAL="${FK33_CARD:-153300000607A}"     # card 1 unless told otherwise
+# WHICH CARD SITS AT WHICH ADDRESS.  MEASURED 2026-09-23 after the second FK33
+# went in on the MCIO cable: card 1 (JTAG serial 153300000607A) kept its slot
+# on chipset port 00:1d.0 and is now 0000:07:00.0 (the bus numbers shifted);
+# card 2 (153300001366A) is on port 00:1c.4 via the riser at 0000:06:00.0.
+# The helper accepts only these two literals.  Re-measure this table whenever
+# a card moves: the check below (the OTHER card must stay on the bus through
+# the reload) catches a swapped table, because programming the wrong FPGA
+# drops the wrong link.
+case "$CARD_SERIAL" in
+    153300000607A) DEV_DEFAULT=0000:07:00.0; OTHER=0000:06:00.0 ;;
+    153300001366A) DEV_DEFAULT=0000:06:00.0; OTHER=0000:07:00.0 ;;
+    *) echo "fk33_reload.sh: FK33_CARD=$CARD_SERIAL is not in the serial->address table; add it after measuring." >&2; exit 1 ;;
+esac
+DEV="${FK33_PCI_DEV:-$DEV_DEFAULT}"
 WITH_VCCINT=0
 BIT=""
 
@@ -116,7 +129,7 @@ echo "=== pre-flight ==="
 # lsmod is /usr/sbin/lsmod and this runs under sudo's secure_path.  Hence both
 # the absolute-path lookup and the loud reporting below -- the next run
 # diagnoses itself instead of failing silently again.
-HOLDERS="$(lsof /dev/xdma0_* 2>/dev/null || true)"
+HOLDERS="$(lsof /dev/xdma* 2>/dev/null || true)"
 if [[ -n "$HOLDERS" ]]; then
     echo "REFUSING: something still holds a /dev/xdma* node:" >&2
     printf '%s\n' "$HOLDERS" >&2
@@ -158,7 +171,7 @@ bring_bus_up () {
             echo "--- insmod $(basename "$KO") poll_mode=1 ---"
             "$INSMOD" "$KO" poll_mode=1 || echo "INSMOD_FAILED"
         fi
-        ls -la /dev/xdma0_control /dev/xdma0_user 2>/dev/null || echo "NO /dev/xdma* NODES"
+        ls -la /dev/xdma*_user 2>/dev/null || echo "NO /dev/xdma* NODES"
         echo "BUS_UP_OK"
     else
         echo "NO XILINX DEVICE AFTER RESCAN."
@@ -173,8 +186,13 @@ trap '[[ $BUS_IS_DOWN = 1 ]] && bring_bus_up' EXIT
 echo
 echo "=== bus down ==="
 if [[ $MODE = helper ]]; then
-    sudo -n "$HELPER" down
+    sudo -n "$HELPER" down "$DEV"
     BUS_IS_DOWN=1
+    if lspci -s "${OTHER#0000:}" 2>/dev/null | grep -q .; then
+        OTHER_PRESENT=1; echo "  other card $OTHER still on the bus (must remain so through the reload)"
+    else
+        OTHER_PRESENT=0; echo "  other card $OTHER not on the bus (single-card reload)"
+    fi
 fi
 # ORDER IS LOAD-BEARING: REMOVE THE DEVICE FIRST, THEN rmmod.
 #
@@ -234,5 +252,12 @@ PCIEEP_ARGS=()
 asuser env FK33_TARGET="$CARD_SERIAL" FK33_XSDB_TARGET="$CARD_SERIAL" \
            EP_BIT="$BIT" \
            bash -c "cd '$FK33_DIR' && ./pcieep.sh ${PCIEEP_ARGS[*]}" </dev/null
+if [[ ${OTHER_PRESENT:-0} -eq 1 ]]; then
+    if lspci -s "${OTHER#0000:}" 2>/dev/null | grep -q .; then
+        echo "  OTHER_CARD_INTACT $OTHER (the right FPGA was programmed)"
+    else
+        echo "OTHER_CARD_DROPPED $OTHER: the WRONG FPGA may have been programmed, or its link fell. Check the serial->address table." >&2
+    fi
+fi
 
 # bring_bus_up runs from the EXIT trap
