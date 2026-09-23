@@ -89,3 +89,21 @@ itself evidence that the attention path does something different, not faster.
 **The card holds build 14 again.** Build 17's bitstream is NOT to be loaded except as a diagnostic.
 Attribution in progress: draw 3b's checkpoint (the shadow WITHOUT the counters, WNS -0.028) written to a
 diagnostic bitstream, and `tb_llama_top_real` (real weights against the reference stream) on the counters RTL.
+
+**ATTRIBUTED 23:48 (MEASURED): THE R_X SHADOW, NOT THE KV COUNTERS.** Draw 3b's checkpoint (build 15: the shadow
+WITHOUT the counters, WNS -0.028) was written to a DIAGNOSTIC bitstream and loaded (`silicon_diag3b/`): control
+`first argmax 0, exp 44`, run_chunk **24.521 s**, token 0 `argmax 0, exp 43`, XEXP_OUT 14, window zero: the same
+numbers as build 17 to the digit. The only RTL commit between build 14's tree (330b70f) and build 15's (f0fcb37) is
+the shadow itself (`rtl/region_mem.vhd` + the `SHADOW_REGION => R_X` generic in the card top). The KV counters
+(f14121d) are exonerated on silicon by this control; in simulation they were already bit-exact on the fetcher's
+oracle bench and left `tb_llama_top_kvport`'s pinned landmarks unchanged. The card holds build 14 again (23:49,
+weights verified 251 of 251).
+
+Mechanism: OPEN. In GHDL the card top with the shadow reproduces the reference residual through the seam
+(`tb_fk33_seam` P1, and P1 FAILED on the pre-shadow RTL with `R_X(0) reference -17280, seam 0`), so the RTL is
+right and the difference is synthesis. Synthesis made the shadow a 512 x 128 block RAM (`READ_FIRST`, +2 tiles,
+as predicted) and still recognised region 0's `bank_reg` as a "true dual port RAM template" in both builds. A
+netlist census of region 0 in the build 17 and build 14 routed checkpoints is running (`census/`). The
+symptom shape (an all-zero residual with a garbage exponent, argmax 0, a 0.23% SHORTER token) says region 0
+never receives its writes on silicon, the host's X push included; what synthesis did to that write path is the
+question.
