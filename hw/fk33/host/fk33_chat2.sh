@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# fk33_chat2.sh "question" [max_new]  -- ask a model split across TWO cards.
+# fk33_chat2.sh "question" [max_new] [run_prompt args...]  -- ask a model split across TWO cards.
+#   Anything after max_new goes to run_prompt verbatim (--reference, --ids-out).
 #
 # 2026-09-21, docs/superpowers/specs/2026-09-21-two-card-pipeline-design.md.
 # Card 0 (/dev/xdma0_*) holds blocks 0..k-1 and ends with the residual in
@@ -91,4 +92,4 @@ exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
     --dtbl2 "${RUN[1]}/token.dtbl" --rel2 "${RUN[1]}/token.rel" \
     --manifest "${M[0]}/manifest.json" --manifest2 "${M[1]}/manifest.json" --dev2 /dev/xdma1 \
     --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
-    --mv4i "$EMB" --quiet
+    --mv4i "$EMB" --quiet "${@:3}"

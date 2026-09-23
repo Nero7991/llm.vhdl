@@ -201,6 +201,9 @@ static void usage(void)
       "                        prints each token's bytes as the card emits it\n"
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
       "                  [--dump-logits <p.r9bs>]  token 0's LOGITS (S32 +\n"
+      "                  [--ids-out <file>]   the generated ids, one per line, in the\n"
+      "                        format --reference reads: record a single-card run,\n"
+      "                        then hand it to the two-card run as its reference\n"
       "                  [--dump-xout <file>]  after the LAST GO, the residual R_X\n"
       "                        (window 3 mantissas + XEXP_OUT) as text: `exp E`, then\n"
       "                        n_embd int16 one per line; needs FK33_CAP_XEXP_OUT\n"
@@ -290,6 +293,7 @@ int main(int argc, char **argv)
     int stream = 0;
     int serial_prefill = 0;
     const char *xout_path = NULL;
+    const char *ids_path  = NULL;   /* --ids-out: the generated ids, one per line */
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
@@ -350,6 +354,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
         else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
         else if (!strcmp(a, "--dump-xout"))    NEXT(xout_path);
+        else if (!strcmp(a, "--ids-out"))      NEXT(ids_path);
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
@@ -733,6 +738,23 @@ int main(int argc, char **argv)
            (unsigned long long)pl_bytes_from_card(c) - c2h0,
            (unsigned long long)pl_go_count(c),
            logits ? "full logits row per position" : "argmax fast path");
+
+    /* ------------------------------------------------------------ ids out */
+    if (ids_path) {
+        /* THE ORACLE FILE FOR THE TWO-CARD RUN (2026-09-23).  A detokenized
+         * transcript can hide an id difference (two ids can render the same
+         * bytes), so the pair is judged on ids: this file, recorded from the
+         * single card, is what --reference reads.  The header is a comment
+         * read_ids() skips. */
+        FILE *idf = fopen(ids_path, "w");
+        if (idf) {
+            fprintf(idf, "# run_prompt: %d prompt ids, %d generated ids, one generated id per line\n",
+                    n_prompt, n_got);
+            for (i = 0; i < n_got; i++) fprintf(idf, "%d\n", got[i]);
+            fclose(idf);
+            printf("ids        %d generated ids -> %s\n", n_got, ids_path);
+        } else { fprintf(stderr, "run_prompt: cannot write %s\n", ids_path); status = 2; }
+    }
 
     /* --------------------------------------------------- first divergence */
     if (ref) {

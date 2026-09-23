@@ -149,4 +149,4 @@ python3 "$REPO/hw/fk33/host/fk33ctl.py" load "$RUN/gdn_zero.bin" --offset "$1" -
 exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
     --dtbl "$RUN/token.dtbl" --rel "$RUN/token.rel" \
     --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
-    --manifest "$M/manifest.json" --mv4i "$EMB" --quiet
+    --manifest "$M/manifest.json" --mv4i "$EMB" --quiet "${@:3}"
