@@ -126,7 +126,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pack_int4 as P                                        # noqa: E402
 import hbm_map as HM              # noqa: E402  the ONE HBM address space
-import gen_mv4i_desc as G         # noqa: E402  window_granule (2026-09-23)
+import gen_mv4i_desc as MVD       # noqa: E402  window_granule (2026-09-23); G is a local GiB constant in main
 from gguf.gguf_reader import GGUFReader                       # noqa: E402
 
 ALIGN = 4096
@@ -1505,7 +1505,7 @@ def main():
             # segment start must be a multiple of 192 rows (2026-09-23,
             # gen_mv4i_desc.window_granule; 48 at K = 4096, unchanged).
             M, seg_plan = P.segment_row_plan(
-                seg_rows, G.window_granule(rows_if, axi_dw, K))
+                seg_rows, MVD.window_granule(rows_if, axi_dw, K))
             segs = [dict(name=nm, row_start=q["row_start"], n_rows=q["n_rows"],
                          pad_rows=q["pad"], logical_row=q["src_start"])
                     for nm, q in zip(seg_names, seg_plan)]
