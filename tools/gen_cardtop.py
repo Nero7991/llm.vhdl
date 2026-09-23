@@ -111,6 +111,8 @@ D3_DECL_NEW = """  -- D3: the flat NREGION*REGMAX array is gone; see the region_
   signal cm_rega : unsigned(7 downto 0);
   signal cm_regb : unsigned(7 downto 0);
   signal cm_regd : unsigned(7 downto 0);
+  -- region_mem's own host window: the value when HOST_WINDOW, zero on the card
+  signal hr_data_rm : signed(MANT_W-1 downto 0);
 """
 
 D3_STMT_START = "  memp : process(clk) is"
@@ -148,9 +150,7 @@ D3_STMT_NEW = """  -- ==========================================================
       MANT_W  => MANT_W,
       GA_W    => GA_W,
       SZ      => SZ,
-      HOST_WINDOW => HOST_WINDOW,
-      -- the R_X shadow that serves the card's window 3 (2026-09-22)
-      SHADOW_REGION => R_X)
+      HOST_WINDOW => HOST_WINDOW)
     port map (
       clk      => clk,
       el_ren   => el_ren,   el_reg   => el_reg,   el_addr  => el_addr,
@@ -161,7 +161,19 @@ D3_STMT_NEW = """  -- ==========================================================
       r_addr   => r_addr,   x_rdata  => x_rdata,  e_rdata  => e_rdata,
       w_we     => w_we,     w_regd   => cm_regd,  w_addr   => w_addr,
       w_be     => w_be,     w_data   => w_data,
-      hr_reg   => hr_reg,   hr_addr  => hr_addr,  hr_data  => hr_data);
+      hr_reg   => hr_reg,   hr_addr  => hr_addr,  hr_data  => hr_data_rm);
+
+  -- THE CARD'S WINDOW 3.  With HOST_WINDOW false region_mem's own window is
+  -- zero (a combinational full-range read port cannot be a BRAM), and the
+  -- card reads R_X through the element read port instead: llama_top's elmux
+  -- hands that port to (hr_reg, hr_addr) on every cycle no unit requests it
+  -- and hr_win_q marks the cycles el_rdata carries the host's word.  One
+  -- registered cycle of latency, inside fk33_seam's rd_wait.  A second copy
+  -- of the region was tried first and withdrawn (2026-09-23): synthesis tied
+  -- the real bank's write enables to ground beside it.
+  hr_data <= hr_data_rm when HOST_WINDOW
+             else el_rdata when hr_win_q = '1'
+             else (others => '0');
 """
 
 GENERIC_ADD = """    B_STATE_AXI : boolean := false;

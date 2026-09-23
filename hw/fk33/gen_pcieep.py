@@ -3546,6 +3546,55 @@ wait_on_run -timeout $FK33_SYNTH_MAX_MIN synth_1
 fk33_assert_run_done synth_1 $FK33_SYNTH_MAX_MIN
 puts "==== synthesis done ===="
 
+# ---- POST-SYNTH NETLIST REFUSAL: REGION 0 MUST HAVE A LIVE WRITE PORT ------
+# MEASURED 2026-09-22/23, builds 15 and 17: a second array mirroring R_X,
+# written from the same wr_* port (a BRAM "shadow" for the host window), made
+# synth_design keep the write decode on the shadow and tie EVERY write enable
+# of the region's own four RAMB36E2 to ground.  The engine read a never-
+# written residual, the card answered argmax 0, and every simulation row
+# passed, because in GHDL both arrays are written.  A closed route with
+# +0.373 ns of margin carried it to silicon.  The construct is withdrawn, and
+# this is the refusal that makes the CLASS unbuildable: after synthesis, open
+# the netlist, find region 0's block RAMs, and error if any of them has all
+# its write-enable pins on constant nets.  No hardware, no report parsing;
+# the nets themselves, which a log line cannot misstate.  Validated on
+# build 17's synthesis checkpoint (4 BRAMs, all constant: FAIL) and build
+# 14's routed netlist (live enables: OK).  An engine-only build has no
+# region file and is skipped with its own sentinel.
+# No close_design and no error INSIDE the catch: MEASURED 2026-09-23, a
+# close_design followed by error inside the catch body crashed Vivado
+# ("Called UpdateStringOfFsPath with invalid object, Abnormal program
+# termination (6)") on the very netlist it had just correctly judged.  The
+# census only records; the verdict is pronounced after the design is closed.
+set fk33_r0_dead {}
+set fk33_r0_n 0
+set fk33_r0_msg ""
+if {[catch {
+  open_run synth_1
+  set fk33_r0 [get_cells -hier -quiet -filter {NAME =~ *u_regmem/g_region[0].bank_reg* && REF_NAME =~ RAMB*}]
+  set fk33_r0_n [llength $fk33_r0]
+  foreach c $fk33_r0 {
+    set live 0
+    foreach pin [get_pins -of $c -filter {REF_PIN_NAME =~ WEBWE* || REF_PIN_NAME =~ WEA*}] {
+      set n [get_nets -of $pin -quiet]
+      if {$n ne "" && [get_property TYPE $n] ne "GROUND" && [get_property TYPE $n] ne "POWER"} { incr live }
+    }
+    puts "FK33_REGION0_WE bram [file tail $c] live_write_pins=$live"
+    if {$live == 0} { lappend fk33_r0_dead [file tail $c] }
+  }
+} fk33_r0_err]} { set fk33_r0_msg $fk33_r0_err }
+catch {close_design}
+if {$fk33_r0_msg ne ""} {
+  error "FK33_REGION0_WE NOT CHECKED, and an unchecked netlist is not implemented: $fk33_r0_msg"
+}
+if {$fk33_r0_n == 0} {
+  puts "FK33_REGION0_WE skipped: no region-0 block RAM in this netlist (engine-only build?)"
+} elseif {[llength $fk33_r0_dead] > 0} {
+  error "FK33_REGION0_WE FAIL: [llength $fk33_r0_dead] of $fk33_r0_n region-0 block RAMs have every write enable on a constant net ($fk33_r0_dead).  The engine would read a never-written R_X (builds 15/17).  Do not implement this netlist."
+} else {
+  puts "FK33_REGION0_WE OK: $fk33_r0_n region-0 block RAMs, every one with live write enables"
+}
+
 # ---- POST-PLACE REPORT HOOK ----------------------------------------------
 # Writes the PLACED per-subsystem area table from inside the implementation
 # run, immediately after place_design and before phys_opt.

@@ -1,0 +1,11 @@
+FK33_REGION0_WE bram g_region[0].bank_reg_1_0 live_write_pins=0
+FK33_REGION0_WE bram g_region[0].bank_reg_1_1 live_write_pins=0
+FK33_REGION0_WE bram g_region[0].bank_reg_2_0 live_write_pins=0
+FK33_REGION0_WE bram g_region[0].bank_reg_2_1 live_write_pins=0
+R0CHECK synth17 RESULT: FK33_REGION0_WE FAIL: 4 of 4 region-0 block RAMs have every write enable on a constant net ({g_region[0].bank_reg_1_0} {g_region[0].bank_reg_1_1} {g_region[0].bank_reg_2_0} {g_region[0].bank_reg_2_1}).  The engine would read a never-written R_X (builds 15/17).  Do not implement this netlist.
+FK33_REGION0_WE bram g_region[0].bank_reg_1_0 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_1_1 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_2_0 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_2_1 live_write_pins=8
+R0CHECK routed14 RESULT: FK33_REGION0_WE OK: 4 region-0 block RAMs, every one with live write enables
+R0CHECK_ALL_DONE

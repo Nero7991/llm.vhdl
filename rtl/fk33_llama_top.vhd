@@ -1653,6 +1653,8 @@ architecture rtl of fk33_llama_top is
   signal cm_rega : unsigned(7 downto 0);
   signal cm_regb : unsigned(7 downto 0);
   signal cm_regd : unsigned(7 downto 0);
+  -- region_mem's own host window: the value when HOST_WINDOW, zero on the card
+  signal hr_data_rm : signed(MANT_W-1 downto 0);
 
   -- Per-CLIENT element ports, muxed below.  A client is not a unit: unit V is
   -- an ADAPTER in front of NVOP engines, and each engine needs its own port
@@ -1674,6 +1676,12 @@ architecture rtl of fk33_llama_top is
   signal el_reg   : natural range 0 to NREGION-1 := 0;
   signal el_addr  : natural range 0 to REGMAX-1 := 0;
   signal el_rdata : signed(MANT_W-1 downto 0) := (others => '0');
+  -- '1' when the element read port was handed to the HOST WINDOW on the
+  -- previous edge, i.e. el_rdata now holds mem(hr_reg, hr_addr).  The card
+  -- top (tools/gen_cardtop.py) serves its window 3 from this; llama_top's own
+  -- hr_data stays the combinational window below, so the two are identical
+  -- in value and differ in latency by the one cycle fk33_seam already waits.
+  signal hr_win_q : std_logic := '0';
   signal el_we    : std_logic := '0';
   signal el_wreg  : natural range 0 to NREGION-1 := 0;
   signal el_waddr : natural range 0 to REGMAX-1 := 0;
@@ -2071,11 +2079,26 @@ begin
   end process;
 
   elmux : process(ur_en, ur_reg, ur_addr, uw_en, uw_reg, uw_addr, uw_data,
-                  act_port, hw_we, hw_reg, hw_addr, hw_data) is
+                  act_port, hw_we, hw_reg, hw_addr, hw_data, hr_reg, hr_addr) is
   begin
-    el_ren   <= ur_en(act_port);
-    el_reg   <= ur_reg(act_port);
-    el_addr  <= ur_addr(act_port);
+    -- THE HOST WINDOW RIDES THE ELEMENT READ PORT WHEN NO UNIT WANTS IT.  A
+    -- unit's request always wins the cycle; on every other cycle the port
+    -- reads (hr_reg, hr_addr) so el_rdata tracks the host's address one
+    -- cycle behind, which is the window the card's seam samples after
+    -- tok_done, when no unit is running.  This replaces a second copy of the
+    -- region (the shadow, withdrawn 2026-09-23: synthesis tied the real
+    -- bank's write enables to ground next to it).  No unit samples el_rdata
+    -- without having requested the read the cycle before, so the extra reads
+    -- are invisible to the engine.
+    if ur_en(act_port) = '1' then
+      el_ren   <= '1';
+      el_reg   <= ur_reg(act_port);
+      el_addr  <= ur_addr(act_port);
+    else
+      el_ren   <= '1';
+      el_reg   <= hr_reg;
+      el_addr  <= hr_addr;
+    end if;
     if hw_we = '1' then
       el_we    <= '1';
       el_wreg  <= hw_reg;
@@ -2086,6 +2109,14 @@ begin
       el_wreg  <= uw_reg(act_port);
       el_waddr <= uw_addr(act_port);
       el_wdata <= uw_data(act_port);
+    end if;
+  end process;
+
+  -- hr_win_q: el_rdata belongs to the host window this cycle.
+  hrwin : process(clk) is
+  begin
+    if rising_edge(clk) then
+      if ur_en(act_port) = '1' then hr_win_q <= '0'; else hr_win_q <= '1'; end if;
     end if;
   end process;
 
@@ -2207,9 +2238,7 @@ begin
       MANT_W  => MANT_W,
       GA_W    => GA_W,
       SZ      => SZ,
-      HOST_WINDOW => HOST_WINDOW,
-      -- the R_X shadow that serves the card's window 3 (2026-09-22)
-      SHADOW_REGION => R_X)
+      HOST_WINDOW => HOST_WINDOW)
     port map (
       clk      => clk,
       el_ren   => el_ren,   el_reg   => el_reg,   el_addr  => el_addr,
@@ -2220,7 +2249,19 @@ begin
       r_addr   => r_addr,   x_rdata  => x_rdata,  e_rdata  => e_rdata,
       w_we     => w_we,     w_regd   => cm_regd,  w_addr   => w_addr,
       w_be     => w_be,     w_data   => w_data,
-      hr_reg   => hr_reg,   hr_addr  => hr_addr,  hr_data  => hr_data);
+      hr_reg   => hr_reg,   hr_addr  => hr_addr,  hr_data  => hr_data_rm);
+
+  -- THE CARD'S WINDOW 3.  With HOST_WINDOW false region_mem's own window is
+  -- zero (a combinational full-range read port cannot be a BRAM), and the
+  -- card reads R_X through the element read port instead: llama_top's elmux
+  -- hands that port to (hr_reg, hr_addr) on every cycle no unit requests it
+  -- and hr_win_q marks the cycles el_rdata carries the host's word.  One
+  -- registered cycle of latency, inside fk33_seam's rd_wait.  A second copy
+  -- of the region was tried first and withdrawn (2026-09-23): synthesis tied
+  -- the real bank's write enables to ground beside it.
+  hr_data <= hr_data_rm when HOST_WINDOW
+             else el_rdata when hr_win_q = '1'
+             else (others => '0');
 
 
   -- ======================================================================

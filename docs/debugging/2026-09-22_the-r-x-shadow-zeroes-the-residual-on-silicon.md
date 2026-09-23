@@ -123,3 +123,72 @@ Trap for the record: `tb_fk33_seam` P1 reads R_X through the seam (the shadow) A
 `llama_top`, and both were right in GHDL because in GHDL both arrays are written. On silicon the shadow was also
 written, so a window-only test on the shadow would have PASSED while the engine read zeros; the discriminator
 was the engine's own output (argmax, XEXP_OUT), never the window.
+
+## APPENDED 23:59: the stage is SYNTHESIS (MEASURED, `census_synth.tcl` on `KEEP_build17_dcp/bd_wrapper_synth.dcp`)
+
+```
+synth17  bank_reg_1_0 / _1_1 / _2_0 / _2_1 (RAMB36E2 x4):  ENBWREN=<const1>  WEA[3..0]=<const0>  WEBWE[7..0]=<const0>
+synth17  g_shadow.shadow_reg_0 / _1 (RAMB36E2 x2):        ENBWREN=g_region[0].wr_en  WEBWE[7..0]=shadow_reg_*_i_76.._79 (real)
+```
+
+Straight out of `synth_design`, before opt_design or power optimisation, the engine's four R_X BRAMs have no
+write path and the two shadow BRAMs have the only one. `report_ram_utilization` listed only the shadow for
+region 0 in builds 15 and 17 and the log said `bank_reg` "was recognized as a true dual port RAM template" in
+every build; neither line says whether the template's write port survived. **Two arrays written from one
+`wr_*` port, both `ram_style = "block"`, in the same generate scope: Vivado 2023.2 synthesis kept the write
+logic on one and tied the other's enables to ground.** Whether that is a defect or a consequence of some
+inference rule is not settled here and does not need to be: the construct is withdrawn.
+
+## Measured and REJECTED -- do not retry (appended)
+
+- **A shadow copy of a region written from the region's own write signals.** This construct. Any fix that keeps
+  two RTL arrays with one writer re-invites the same inference, `DONT_TOUCH` or not, and the only proof would be
+  a netlist census on every build.
+
+## What the fix must do (the replacement, to be measured)
+
+Serve the seam's window from the engine's EXISTING element read port of `region_mem` (`el_ren/el_reg/el_addr ->
+el_rdata`, one registered cycle) whenever that port is idle, in `llama_top`'s `elmux`, with engine reads keeping
+priority and the window data gated to zero on any cycle the engine held the port. No new array, no new RAM
+port, no new seam pin; the host reads R_X after `tok_done`, when the port is idle by construction. Then a
+build-flow refusal that reads region 0's bank write-enable nets after synthesis and errors if they are constant,
+so that this class cannot reach place-and-route again.
+
+## APPENDED 2026-09-23 00:10: the replacement, its teeth, and the flow refusal
+
+**Replacement (RTL):** `rtl/region_mem.vhd` reverted to its pre-shadow text (f0fcb37^) with a header note;
+`rtl/llama_top.vhd`'s `elmux` hands the element read port to `(hr_reg, hr_addr)` on every cycle no unit
+requests it (a unit's request always wins) and a one-bit `hr_win_q` marks the cycles on which `el_rdata`
+carries the host's word; `tools/gen_cardtop.py` drops the `SHADOW_REGION` generic and emits the card's window
+as `hr_data <= el_rdata when hr_win_q = '1' else 0` (region_mem's own window stays zero when `HOST_WINDOW`
+is false). One registered cycle of latency, inside `fk33_seam`'s `rd_wait`. No second array, no new RAM port,
+no new seam pin. `GEN_CARDTOP_CHECK: OK`.
+
+**Teeth, MEASURED:** `tb_fk33_seam` (the card top in the card configuration, `HOST_WINDOW => false`) PASS
+with the new window and **FAIL** with mutant `M_WINCUT` (`hr_win_q` held at '0' in the generated top: P1 at
+`tb_fk33_seam.vhd:1377`); `tb_region_mem`, `tb_fk33_cardtop_ident`, `tb_fk33_cardtop_adesc`, `sim:cardtop`
+PASS. The remaining `llama_top` rows are appended below.
+
+**Flow refusal:** `hw/fk33/gen_pcieep.py` emits, after `wait_on_run synth_1`, an `open_run synth_1` census of
+region 0's block RAMs: `FK33_REGION0_WE bram <name> live_write_pins=<n>` per BRAM, `FK33_REGION0_WE OK` or
+`error FK33_REGION0_WE FAIL` if any BRAM has every `WEBWE`/`WEA` pin on a `GROUND`/`POWER` net, and
+`FK33_REGION0_WE NOT CHECKED` plus an error if the census itself fails (an unchecked netlist is not
+implemented). Regenerated `hw/fk33/build_fk33_pcieep.tcl` with the stamp's environment: 44 insertions, 0
+deletions. Its validation on build 17's synthesis checkpoint (expected FAIL) and build 14's routed netlist
+(expected OK) is appended below when it lands.
+
+## APPENDED 00:14: the refusal validated on both checkpoints (MEASURED, `r0check2.tcl`, `r0check_validation.txt`)
+
+```
+synth17   bank_reg_1_0 / 1_1 / 2_0 / 2_1  live_write_pins=0 0 0 0
+          R0CHECK synth17 RESULT: FK33_REGION0_WE FAIL: 4 of 4 region-0 block RAMs have every write enable on a constant net
+routed14  bank_reg_1_0 / 1_1 / 2_0 / 2_1  live_write_pins=8 8 8 8
+          R0CHECK routed14 RESULT: FK33_REGION0_WE OK: 4 region-0 block RAMs, every one with live write enables
+```
+
+The first draft of the check judged synth17 correctly and then crashed Vivado (`close_design` followed by
+`error` inside the `catch`: "Called UpdateStringOfFsPath with invalid object, Abnormal program termination
+(6)"), which in the build flow would have read as a mysterious synthesis-stage crash rather than the refusal
+it was. The census now only records inside the catch; the design is closed and the verdict pronounced
+afterwards. This is the same shape as every other "a check that fails for the wrong reason" entry: a refusal
+that takes the tool down with it is not a refusal, it is a crash with a good excuse.

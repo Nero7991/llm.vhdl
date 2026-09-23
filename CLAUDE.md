@@ -653,6 +653,26 @@ The same hazard is not confined to `rm`: that agent also flagged, unprompted,
 a `cp "$SD/tree/$f" "$f"` loop overwriting four repo files, with a variable on
 **both** sides of the path. Naming it was the right call and is the standard.
 
+**A SECOND ARRAY WRITTEN FROM THE SAME WRITE PORT AS THE FIRST CAN LEAVE THE
+FIRST ONE NEVER WRITTEN, AND NO BENCH CAN SEE IT.** MEASURED 2026-09-22/23,
+builds 15 and 17: `rtl/region_mem.vhd` mirrored R_X into a `ram_style=block`
+"shadow" array written from the region's own `wr_*` signals, to give the host
+window a registered BRAM read. GHDL: every row green, the seam bench in the
+card configuration reproducing the reference residual. Silicon: argmax 0,
+all-zero residual, token 0.23% SHORTER. The synthesis checkpoint's netlist
+(`get_pins` on the four region-0 `RAMB36E2`): **every `WEBWE`/`WEA` pin on
+`<const0>`**, the write decode alive only on the shadow BRAMs. `synth_design`
+kept one writer and grounded the other, and `report_ram_utilization` plus
+"recognized as a true dual port RAM template" said nothing either way. It took
+a closed route (+0.373 ns), a load, and a one-variable silicon control (the
+shadow without the other change) to attribute. **Never mirror a region; serve
+a second reader from an existing port at idle** (the card's window now rides
+the element read port in `llama_top`'s `elmux`), and gate the flow on the
+NETS: `hw/fk33/gen_pcieep.py` now opens the synthesized run and errors
+(`FK33_REGION0_WE FAIL`) if any region-0 BRAM has all its write enables on a
+constant net. See
+`docs/debugging/2026-09-22_the-r-x-shadow-zeroes-the-residual-on-silicon.md`.
+
 **BEFORE WRITING A MODULE, GREP THE ENTITY DECLARATIONS FOR THE SHAPE YOU ARE
 ABOUT TO BUILD, NOT FOR THE WORDS A DOCUMENT USED.** A null grep for one
 spelling is not evidence about the design. MEASURED, twice in one day
