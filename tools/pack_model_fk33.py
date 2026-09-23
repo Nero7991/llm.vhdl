@@ -1198,15 +1198,21 @@ def a_descriptor_jobs(files):
             "--no-region-block and accept that fk33_manifest.c refuses the "
             "result.  A partial pack (--only) is not a loadable set, so "
             "--no-region-block is the right answer there.")
-    s = GL.QWEN35_9B
+    # The shape --model names (2026-09-23; this used to be QWEN35_9B outright,
+    # and the first 27B base pack packed all 498 tensors and then refused
+    # HERE, at the manifest, an hour and a half in).
+    shapes = {"QWEN35_9B": GL.QWEN35_9B, "QWEN38_27B": GL.QWEN38_27B}
+    if MODEL_NAME not in shapes:
+        raise SystemExit("pack_model_fk33: gen_layer_program.py has no Shape "
+                         "for %s.  Pass --desc-arena-jobs N." % MODEL_NAME)
+    s = shapes[MODEL_NAME]
     if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
         raise SystemExit(
             "pack_model_fk33: this set's output.weight is %d x %d and "
-            "tools/gen_layer_program.py describes %d x %d.  The A descriptor "
-            "count is a property of the PROGRAM, and that generator is the "
-            "only thing that knows it; it does not describe this model.  Pass "
-            "--desc-arena-jobs N."
-            % (int(lm["M"]), int(lm["K"]), s.vocab_shard, s.hidden))
+            "tools/gen_layer_program.py's %s is %d x %d.  The A descriptor "
+            "count is a property of the PROGRAM; pass the record this GGUF "
+            "is (--model), or --desc-arena-jobs N."
+            % (int(lm["M"]), int(lm["K"]), MODEL_NAME, s.vocab_shard, s.hidden))
     best, how = 0, None
     for one_lm in (False, True):
         for fused in (False, True):
