@@ -49,8 +49,8 @@ run_arm() {  # tag script sentinel [ENV=VAL ...]
   grep -E '^\| (CLB LUTs|CLB Registers|CARRY8|F7 Muxes|F8 Muxes|Block RAM Tile|URAM|DSPs) ' "$log" | head -8 | sed "s/^/PROBE27_UTIL $tag /"
   grep -E '^RESULT ' "$log" | sed "s/^/PROBE27_/"
 }
-run_arm attn27 "$ROOT/sim/ooc_scorehdr.tcl" SCOREHDR_SDONE SH_TAG=attn27 SH_OUT="$OUT" SH_RTL="$ROOT/rtl" SH_PERIOD=13.333 SH_GEN="$CGEN N_QH=24 LAYERS=16"
-run_arm attn9  "$ROOT/sim/ooc_scorehdr.tcl" SCOREHDR_SDONE SH_TAG=attn9  SH_OUT="$OUT" SH_RTL="$ROOT/rtl" SH_PERIOD=13.333 SH_GEN="$CGEN N_QH=16 LAYERS=8"
+# CHAINED on the first run's sentinel (gdn9 is the last arm there), then the
+# presence check as the safety net.  Sentinel of this file: PROBE27_GDN27_DONE.
+until grep -q '^PROBE27_DONE' "$HOME/probe27b/run27b.log"; do sleep 60; done
 run_arm gdn27  "$GDN27" OOC_GDN_BLOCK_DONE
-run_arm gdn9   "$ROOT/sim/ooc_gdn_block.tcl"  OOC_GDN_BLOCK_DONE
-echo "PROBE27_DONE $(date -Is)"
+echo "PROBE27_GDN27_DONE"
