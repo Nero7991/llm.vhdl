@@ -1,0 +1,5 @@
+FK33_REGION0_WE bram g_region[0].bank_reg_1_0 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_1_1 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_2_0 live_write_pins=8
+FK33_REGION0_WE bram g_region[0].bank_reg_2_1 live_write_pins=8
+FK33_REGION0_WE OK: 4 region-0 block RAMs, every one with live write enables
