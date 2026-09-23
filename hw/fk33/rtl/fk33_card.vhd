@@ -9,6 +9,8 @@
 -- inputs ((unset) means the generator's own default was taken):
 --     env  FK33_A_ROWS_IF  = (unset)
 --     env  FK33_C_KV_BLOCK = (unset)
+--     env  FK33_C_MAXPOS   = (unset)
+--     env  FK33_MODEL      = (unset)
 --
 -- A BLOCK-DESIGN-LEGAL face for an entity the IP packager refuses.
 -- It changes NO logic: every port is the same signal in a type the

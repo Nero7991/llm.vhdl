@@ -65,7 +65,20 @@ SRC = os.path.join(REPO, "rtl", "fk33_llama_top.vhd")
 # lanes.  Refused here if absent: a missing image fails only at elaboration,
 # hours in, as `file_open ... severity failure`, which synthesis may not even
 # honour.
-NORM_W_HEX = os.path.join(REPO, "hw", "fk33", "gen", "norm_w_9b.hex")
+# THE MODEL, 2026-09-23 (27B prep).  See tools/model_cfg.py.  FK33_MODEL names
+# the rtl/model_cfg_pkg.vhd record this card is built for; unset, it is the
+# package's own binding (QWEN35_9B today) and nothing below changes.  It
+# selects the two images and the REGMAX port-range constant, and it is
+# STAMPED, so hw/fk33/gen_pcieep.py can refuse to wire a seam for one model
+# around a card generated for another.  A non-default model ALSO needs the
+# package the build compiles rebound, which gen_pcieep.py does from the same
+# variable (hw/fk33/gen/model_cfg_pkg_<NAME>.vhd); this file only picks images.
+import model_cfg  # noqa: E402
+MODEL_ENV = os.environ.get("FK33_MODEL") or None
+MODEL_PKG, MODEL_NAME = model_cfg.load(MODEL_ENV)
+MODEL_SFX = MODEL_PKG.image_suffix(MODEL_NAME)
+MODEL_REGMAX = MODEL_PKG.regmax(MODEL_NAME)
+NORM_W_HEX = os.path.join(REPO, "hw", "fk33", "gen", "norm_w_%s.hex" % MODEL_SFX)
 if not os.path.exists(NORM_W_HEX):
     sys.exit("gen_fk33_card.py: NORM_W_IMAGE %s does not exist; the card "
              "would elaborate the synthetic norm gain ramp, or fail at "
@@ -76,7 +89,7 @@ if not os.path.exists(NORM_W_HEX):
 # 2026-09-18; the last stand-in after docs/2026-09-18_b-constants-path.md).
 # Same absolute-path and refuse-if-absent rules as NORM_W_HEX, for the same
 # reasons.  Held to its generator by sim:qknimage.
-QKN_HEX = os.path.join(REPO, "hw", "fk33", "gen", "qkn_9b.hex")
+QKN_HEX = os.path.join(REPO, "hw", "fk33", "gen", "qkn_%s.hex" % MODEL_SFX)
 if not os.path.exists(QKN_HEX):
     sys.exit("gen_fk33_card.py: C_QKN_IMAGE %s does not exist; the card "
              "would elaborate the synthetic QK-norm gain ramp, or fail at "
@@ -129,7 +142,9 @@ ARGS = [
     "--entity", "fk33_llama_top",
     "--wrapper", "fk33_card",
     "--const", "NREGION=14",
-    "--const", "REGMAX=12288",
+    # region_max(mk_shape(MODEL, 1)): 12288 at 9B, 17408 at 27B, both MEASURED
+    # by GHDL 2026-09-23 and pinned in tools/model_cfg.py.
+    "--const", "REGMAX=%d" % MODEL_REGMAX,
     "--const", "A_NPORTS=5",
     # A_DESC = true IS THE WHOLE POINT OF THIS CELL and it was missing from
     # the first version of this list, which is worth recording because nothing
@@ -482,9 +497,23 @@ LEGAL = {
     # A_ROWS_IF has no legal set recorded anywhere in the tree.  Left unchecked
     # DELIBERATELY rather than guessed at: a fabricated bound would be worse
     # than none, because it would read as authoritative.
+    # C_MAXPOS (2026-09-23, 27B prep): the KV arena a card must be given,
+    # 2 * C_MAXPOS * 8704 B.  A 27B card carries ~7.4 GB of weights and cannot
+    # hold the 9B's 65,536; the packer's --card-maxpos must be given the same
+    # value.  Powers of two only, so POSW = clog2(C_MAXPOS+1) and the arena
+    # arithmetic stay the shapes every measurement so far was taken at.
+    "C_MAXPOS": (
+        (4096, 8192, 16384, 32768, 65536, 131072, 262144),
+        "the KV arena is 2 * C_MAXPOS * 8704 B and the packer sizes it from"
+        " the same number (--card-maxpos); C_CTXLEN follows it.",
+    ),
 }
 
-TRIMMABLE = ("C_KV_BLOCK", "A_ROWS_IF")
+TRIMMABLE = ("C_KV_BLOCK", "A_ROWS_IF", "C_MAXPOS")
+# A trim that must move TWO generics together.  The RTL requires
+# C_CTXLEN <= C_MAXPOS and the card sets them equal (see the C_MAXPOS comment
+# below), so trimming one and not the other is never what is meant.
+COUPLED = {"C_MAXPOS": ("C_MAXPOS", "C_CTXLEN")}
 _trims = []
 for _k in TRIMMABLE:
     _v = os.environ.get("FK33_" + _k)
@@ -496,17 +525,18 @@ for _k in TRIMMABLE:
         sys.exit("FK33_%s=%s is NOT in the legal set %s.\n  %s\n"
                  "  Refusing here rather than letting synthesis discover it hours in."
                  % (_k, _v, list(LEGAL[_k][0]), LEGAL[_k][1]))
-    _hit = 0
-    for _i in range(len(ARGS) - 1):
-        if ARGS[_i] == "--generic" and ARGS[_i + 1].startswith(_k + "="):
-            _was = ARGS[_i + 1].split("=", 1)[1]
-            ARGS[_i + 1] = "%s=%s" % (_k, _v)
-            _trims.append("%s %s -> %s" % (_k, _was, _v))
-            _hit += 1
-    # Exactly one, or the override silently did nothing (or too much).
-    if _hit != 1:
-        sys.exit("FK33_%s: expected exactly 1 generic to override, matched %d"
-                 % (_k, _hit))
+    for _g in COUPLED.get(_k, (_k,)):
+        _hit = 0
+        for _i in range(len(ARGS) - 1):
+            if ARGS[_i] == "--generic" and ARGS[_i + 1].startswith(_g + "="):
+                _was = ARGS[_i + 1].split("=", 1)[1]
+                ARGS[_i + 1] = "%s=%s" % (_g, _v)
+                _trims.append("%s %s -> %s" % (_g, _was, _v))
+                _hit += 1
+        # Exactly one, or the override silently did nothing (or too much).
+        if _hit != 1:
+            sys.exit("FK33_%s: expected exactly 1 generic %s to override, matched %d"
+                     % (_k, _g, _hit))
 # THE STAMP.  The banner two lines into the generated file says it is
 # GENERATED; it does not say WITH WHAT, and this generator's output depends on
 # the environment above.  MEASURED 2026-09-20 (TRACK BUILDREPORT), on the
@@ -519,8 +549,9 @@ for _k in TRIMMABLE:
 # reads (`grep -n 'os.environ' hw/fk33/gen_fk33_card.py`), and an input that is
 # not read cannot change the output.  An UNSET one is stamped rather than
 # omitted, so the reader learns the knob exists.
-STAMP_INPUTS = [("env", "FK33_" + _k, os.environ.get("FK33_" + _k) or None)
-                for _k in TRIMMABLE]
+STAMP_INPUTS = ([("env", "FK33_MODEL", MODEL_ENV)]
+                + [("env", "FK33_" + _k, os.environ.get("FK33_" + _k) or None)
+                   for _k in TRIMMABLE])
 
 
 def stamp_cmd(inputs):

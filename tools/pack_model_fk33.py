@@ -1144,6 +1144,15 @@ def main():
                          "refuses it.  Its only use is a layout experiment "
                          "that will be paired with a card rebuilt at a smaller "
                          "C_MAXPOS")
+    ap.add_argument("--card-maxpos", type=int, default=None, metavar="TOKENS",
+                    help="the C_MAXPOS the card this image is FOR was built at, "
+                         "when it is not the committed default that this tool "
+                         "scrapes out of hw/fk33/gen_fk33_card.py -- i.e. a "
+                         "card generated under FK33_C_MAXPOS=N (2026-09-23, 27B "
+                         "prep: a 27B card cannot hold the 9B's 65,536 beside "
+                         "~7.4 GB of weights).  The KV-extent refusal then uses "
+                         "N; verify the built card with "
+                         "`grep C_MAXPOS hw/fk33/rtl/fk33_card.vhd`")
     ap.add_argument("--stripe-stack1-segments", type=int, default=None,
                     metavar="N",
                     help="override the width search and put the 12 stack-1 "
@@ -1635,6 +1644,13 @@ def main():
     # cross-check against the RTL's own generics stays
     # `python3 tools/check_kv_map.py`.
     card_maxpos = scrape_card_maxpos()
+    if a.card_maxpos is not None:
+        if a.card_maxpos <= 0:
+            raise SystemExit("pack_model_fk33: --card-maxpos must be positive")
+        print("*** --card-maxpos %d OVERRIDES the scraped default %s: this image "
+              "is for a card generated under FK33_C_MAXPOS=%d ***"
+              % (a.card_maxpos, card_maxpos, a.card_maxpos))
+        card_maxpos = a.card_maxpos
     kv_ceiling = (region_block["desc_arena_base"] if region_block
                   else HBM_SIZE)
     card_tokens = max(0, (kv_ceiling - kv_base) // KV_BYTES_PER_TOKEN)

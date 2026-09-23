@@ -276,5 +276,6 @@ set_clock_groups -asynchronous \
 #     env  FK33_ENG_FAST_MHZ  = (unset)
 #     env  FK33_ENG_SPLIT_CLK = (unset)
 #     env  FK33_FLATTEN       = (unset)
+#     env  FK33_MODEL         = (unset)
 #     env  FK33_SYNTH_JOBS    = (unset)
 #     env  FK33_SYNTH_THREADS = (unset)
