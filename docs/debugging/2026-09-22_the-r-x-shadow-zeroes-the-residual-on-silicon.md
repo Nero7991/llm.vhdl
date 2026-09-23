@@ -192,3 +192,15 @@ The first draft of the check judged synth17 correctly and then crashed Vivado (`
 it was. The census now only records inside the catch; the design is closed and the verdict pronounced
 afterwards. This is the same shape as every other "a check that fails for the wrong reason" entry: a refusal
 that takes the tool down with it is not a refusal, it is a crash with a good excuse.
+
+## CLOSED 2026-09-23 04:36: build 18 on silicon
+
+Build 18 (the replacement window + the counters, levers off) routed on its first default draw (core clock
++0.225, 0 failing, 0 routing errors), passed `FK33_REGION0_WE` with 8 live write pins on each of the four
+region-0 BRAMs, and on the card reproduces build 14 exactly: control `argmax 32, exp 15`, 24.578 s three
+times, token 0 `argmax 846`, `XEXP_OUT 8`. Window 3 reads 4,093 non-zero mantissas under exponent 8,
+correlation 0.9965 with the llama.cpp anchor's `R_X-31`. The question this document opened is answered
+in full: attribution (the shadow), mechanism (synthesis grounded the bank's write enables), fix (no second
+array; the window on the element read port), and the refusal that keeps the class out. Open, carried to
+Task 11: whether the window is bit-identical to the card's internal R_X, which only the pair-versus-single
+oracle can say.
