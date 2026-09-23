@@ -357,7 +357,7 @@ def lmhead_windows(s, build=None):
 
 
 def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
-               blocks=None, lmhead=True):
+               blocks=None, lmhead=True, pad_norms=0):
     """The step sequence, per block, in order.  Independently written from the
     same D design spec sections 4.2 / 4.3 that `sim/seq_tbl_pkg.vhd` and
     `sim/llama_sched_pkg.vhd` implement; agreement with BOTH of those is the
@@ -415,6 +415,45 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
     lo, hi = (0, s.blocks - 1) if blocks is None else blocks
     if not (0 <= lo <= hi < s.blocks):
         raise LayerError("--blocks %d:%d outside 0..%d" % (lo, hi, s.blocks - 1))
+    # PAD NORMS (2026-09-23, two-card pipeline, a PROBE and a WORKAROUND).
+    # MEASURED on silicon: rtl/llama_top.vhd serves the RMSNorm gain from
+    # NORM_W_IMAGE indexed by a per-token COUNTER of OP_VEC_NORMs ("one entry
+    # per OP_VEC_NORM of the token, in SCHEDULE ORDER"), not by this step's
+    # `const_base`.  A card whose program starts at block lo therefore feeds
+    # block lo's norm the gain of block 0's, and every later norm the gain
+    # two blocks-worth behind, silently; card 1 of the 9B pair diverged from
+    # the single card at its very first step (3,825 of 4,096 XN elements).
+    # `pad_norms` = 2*lo throwaway X -> XN norms advance that counter to the
+    # entry the real block lo needs.  Zero cost in correctness (XN is
+    # rewritten by the block's own norm), ~2*lo norm passes in time.  The
+    # real fix is to index the gain by `const_base` in the RTL; until that
+    # build lands this is what makes the split exact.
+    # The lock refuses a producer whose offset is not the region's fill
+    # pointer (MEASURED: the second X -> XN pad was DESC-refused at step 1),
+    # so only the first pad reads X; the rest are IN-PLACE XN -> XN, which the
+    # lock's in-place arm permits at offset 0, and the liveness pass releases
+    # XN on the last one because block lo's own norm rewrites it.  The pads'
+    # values are never read by anything real.
+    for i in range(pad_norms):
+        emit(opcode=OP_VEC_NORM, src=(R_X if i == 0 else R_XN), dst=R_XN,
+             n_rows=s.hidden, blk=lo, const_base=lo, ordinal=lo % 64)
+    if pad_norms:
+        # An in-place destination is never released by its own step
+        # (rtl/seq_region_lock.vhd:54), so XN would still be VALID at block
+        # lo's own norm and that norm would be DESC-refused at offset 0
+        # (MEASURED: ERR_INFO D code 3 at step 32).  A consumer that produces
+        # NOTHING releases it: the smallest matvec of block lo, aimed at
+        # R_NONE like the lm_head windows, with no sampler flag.  Its result
+        # is discarded by the A unit (j_dst >= NREGION -> S_DONE).
+        # rtl/seq_desc_fetch.vhd:494: a job with no destination must carry a
+        # route flag (bit 0 to E, bit 1 to the sampler).  E is inert at
+        # NCARDS = 1 and the card's A unit reads only bit 1, so FLG_TO_E is
+        # the discard route; FLG_TO_SMP would fold 32 garbage logits into the
+        # token's argmax and shift every real logit id by 32.
+        emit(opcode=OP_A_JOB, flags=FLG_TO_E, src=R_XN, dst=R_NONE,
+             n_rows=s.val_heads, n_cols=s.hidden, blk=lo,
+             tensor=(tensor_prefix % lo) + "ssm_beta.weight",
+             note="pad release")
     for b in range(lo, hi + 1):
         p = tensor_prefix % b
         if s.is_attn(b):
@@ -1182,6 +1221,12 @@ def main(argv=None):
     ap.add_argument("--blocks-range", dest="block_range", default=None, metavar="LO:HI",
                     help="emit the program for blocks LO..HI only (inclusive, global "
                          "numbering): one card of a layer-split pipeline")
+    ap.add_argument("--pad-norms", type=int, default=0, metavar="N",
+                    help="emit N throwaway OP_VEC_NORM X->XN steps before the "
+                         "first block.  The card's norm gain table is indexed "
+                         "by a per-token norm counter, so a program starting at "
+                         "block lo needs 2*lo of these (MEASURED 2026-09-23); "
+                         "prints loudly, never for a whole-model program")
     ap.add_argument("--no-lmhead", action="store_true",
                     help="end after the last block's residual: no final norm, no "
                          "lm_head, no sampler step (the card hands R_X to the next one)")
@@ -1284,7 +1329,9 @@ def main(argv=None):
         blocks = (lo, hi)
     lmw = [(0, s.vocab_shard)] if a.one_lmhead_job else lmhead_windows(s)
     steps = build_plan(s, qkv_fused=a.qkv_fused, lm_windows=lmw,
-                       blocks=blocks, lmhead=not a.no_lmhead)
+                       blocks=blocks, lmhead=not a.no_lmhead, pad_norms=a.pad_norms)
+    if a.pad_norms:
+        sys.stderr.write("gen_layer_program: PAD NORMS %d: %d throwaway OP_VEC_NORMs precede block %s (norm-gain counter alignment)\n" % (a.pad_norms, a.pad_norms, a.block_range))
 
     # ---- the shape, checked against the packed tensors -------------------
     mani = None

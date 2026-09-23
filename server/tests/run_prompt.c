@@ -204,6 +204,9 @@ static void usage(void)
       "                  [--ids-out <file>]   the generated ids, one per line, in the\n"
       "                        format --reference reads: record a single-card run,\n"
       "                        then hand it to the two-card run as its reference\n"
+      "                  [--x-row <file>]     single card: push this row (the --dump-xout\n"
+      "                        format, exp then n_embd int16) as position 0 in place of the\n"
+      "                        prompt id's embedding: the card-1-alone oracle for the hop\n"
       "                  [--dump-xout <file>]  after the LAST GO, the residual R_X\n"
       "                        (window 3 mantissas + XEXP_OUT) as text: `exp E`, then\n"
       "                        n_embd int16 one per line; needs FK33_CAP_XEXP_OUT\n"
@@ -214,6 +217,7 @@ static void usage(void)
       "                        so; compare with tools/ref9b/logit_compare.py\n"
       "                  [--mv4i <t.mv4i> --manifest <m.json>]\n"
       "                  [--max-chunk N] [--stop ID] [--quiet]\n"
+      "                  [--dev /dev/xdmaN]   the (first) card's device prefix, default /dev/xdma0\n"
       "                  [--dtbl2 <d.hex> --rel2 <r.bin> --manifest2 <m.json>]  a SECOND\n"
       "                        card (blocks k.. plus the LM head) driven through\n"
       "                        pl_pipeline; [--dev2 /dev/xdma1] its device prefix\n"
@@ -294,6 +298,7 @@ int main(int argc, char **argv)
     int serial_prefill = 0;
     const char *xout_path = NULL;
     const char *ids_path  = NULL;   /* --ids-out: the generated ids, one per line */
+    const char *x_row_path = NULL;  /* --x-row: push this residual row as position 0, no embedding */
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
     uint32_t *dprog = NULL, *drel = NULL;
@@ -303,6 +308,8 @@ int main(int argc, char **argv)
      * no LM head) and the second is card 1 (the rest plus the head). */
     const char *dtbl2_path = NULL, *rel2_path = NULL, *manifest2_path = NULL;
     const char *dev2_prefix = "/dev/xdma1";
+    const char *dev_prefix  = NULL;        /* --dev: the FIRST card's prefix (default /dev/xdma0) */
+    char dev_user[64], dev_h2c[64], dev_c2h[64];
     uint32_t *dprog2 = NULL, *drel2 = NULL;
     int n_dprog2 = 0, n_drel2 = 0;
     char dev2_user[256], dev2_h2c[256], dev2_c2h[256];
@@ -347,6 +354,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--rel2"))         NEXT(rel2_path);
         else if (!strcmp(a, "--manifest2"))    NEXT(manifest2_path);
         else if (!strcmp(a, "--dev2"))         NEXT(dev2_prefix);
+        else if (!strcmp(a, "--dev"))          NEXT(dev_prefix);
         else if (!strcmp(a, "--v2"))           want_v2 = 1;
         else if (!strcmp(a, "--max-new"))    { const char *s; NEXT(s); max_new = atoi(s); }
         else if (!strcmp(a, "--max-chunk"))  { const char *s; NEXT(s); max_chunk = atoi(s); }
@@ -355,6 +363,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
         else if (!strcmp(a, "--dump-xout"))    NEXT(xout_path);
         else if (!strcmp(a, "--ids-out"))      NEXT(ids_path);
+        else if (!strcmp(a, "--x-row"))        NEXT(x_row_path);
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
         else if (!strcmp(a, "--quiet"))        quiet = 1;
@@ -474,6 +483,12 @@ int main(int argc, char **argv)
     }
     pl_open_opts_default(&o);
     o.sim_opts = &sim;                 /* simulated transport; see the header */
+    if (dev_prefix) {
+        snprintf(dev_user, sizeof dev_user, "%s_user",  dev_prefix);
+        snprintf(dev_h2c,  sizeof dev_h2c,  "%s_h2c_0", dev_prefix);
+        snprintf(dev_c2h,  sizeof dev_c2h,  "%s_c2h_0", dev_prefix);
+        o.dev_user = dev_user; o.dev_h2c = dev_h2c; o.dev_c2h = dev_c2h;
+    }
     if (hw_token) {
         /* The operator's word, packed big-endian: "HOST" -> 0x484F5354.  No
          * constant from fk33_transport.h appears here on purpose; if the word
@@ -616,6 +631,26 @@ int main(int argc, char **argv)
     {
         int argmax = -1;
         int32_t lexp = 0;
+        if (x_row_path) {
+            /* THE CARD-1-ALONE ORACLE (2026-09-23).  The pair diverged from the
+             * single card; card 0's half matched the reference stream, so the
+             * question is whether card 1 given EXACTLY card 0's row (a
+             * --dump-xout file) reproduces the pair's answer, and whether given
+             * the reference's row it reproduces the reference's. */
+            int ne = pl_n_embd(c), nx = 0; int32_t xe = 0;
+            int16_t *xm = (int16_t *)malloc((size_t)ne * sizeof *xm);
+            FILE *xf = fopen(x_row_path, "r");
+            if (pp) { fprintf(stderr, "run_prompt: --x-row is single-card only\n"); status = 2; goto done; }
+            if (!xf || !xm || fscanf(xf, "exp %d", &xe) != 1) { fprintf(stderr, "run_prompt: --x-row: cannot read %s\n", x_row_path); status = 2; goto done; }
+            while (nx < ne && fscanf(xf, "%hd", &xm[nx]) == 1) nx++;
+            fclose(xf);
+            if (nx != ne) { fprintf(stderr, "run_prompt: --x-row: %d mantissas in %s, need %d\n", nx, x_row_path, ne); status = 2; goto done; }
+            if (n_prompt != 1) { fprintf(stderr, "run_prompt: --x-row needs a one-id --prompt (the id is bookkeeping only)\n"); status = 2; goto done; }
+            printf("x-row      %s: exp %d, %d mantissas pushed as position 0's X (no embedding)\n", x_row_path, (int)xe, nx);
+            rc = pl_decode_row(c, xm, xe, logits, &lexp, &argmax);
+            free(xm);
+            if (rc >= 0) rc = 1;
+        } else
         rc = pp ? plp_prefill(pp, prompt, n_prompt, &argmax)
                 : pl_prefill(c, prompt, n_prompt, logits, &lexp, &argmax);
         if (rc != n_prompt) {

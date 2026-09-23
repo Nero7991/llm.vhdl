@@ -66,16 +66,24 @@ for i in 0 1; do
     export FK33_USER=/dev/xdma${i}_user FK33_H2C=/dev/xdma${i}_h2c_0 FK33_C2H=/dev/xdma${i}_c2h_0
     R="${RUN[$i]}"; MAN="${M[$i]}/manifest.json"
     # THE CACHED TOKEN PROGRAM BELONGS TO ONE MANIFEST.
-    if [[ ! -f "$R/manifest.used" ]] || [[ "$(cat "$R/manifest.used")" != "$MAN" ]]; then
+    if [[ ! -f "$R/manifest.used" ]] || [[ "$(cat "$R/manifest.used")" != "$MAN" ]] || [[ ! -f "$R/pad.used" ]] || [[ "$(cat "$R/pad.used")" != "padnorms-v1" ]]; then
         rm -f "$R/token.dtbl" "$R/token.rel" "$R/token.arena"
     fi
     if [[ ! -f "$R/token.dtbl" ]]; then
         HEAD=(); [[ $i -eq 0 ]] && HEAD=(--no-lmhead)
+        # THE NORM GAIN TABLE IS INDEXED BY A PER-TOKEN NORM COUNTER, not by
+        # the block (rtl/llama_top.vhd, NORM_W_IMAGE: "one entry per
+        # OP_VEC_NORM of the token, in SCHEDULE ORDER").  MEASURED 2026-09-23:
+        # card 1's first norm served block 0's gain and the pair diverged from
+        # the single card at position 0/7/28; with 2*lo throwaway norms ahead
+        # of block lo it reproduces the single card bit for bit.  See
+        # docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-counter.md
+        LO="${RANGE[$i]%:*}"; PAD=(); [[ "$LO" -gt 0 ]] && PAD=(--pad-norms $((2 * LO)))
         python3 "$REPO/tools/gen_layer_program.py" --token --shape 9b --manifest "$MAN" \
-            --blocks-range "${RANGE[$i]}" "${HEAD[@]}" \
+            --blocks-range "${RANGE[$i]}" "${HEAD[@]}" "${PAD[@]}" \
             --x-exp 0 --d-table "$R/token.dtbl" --rel-file "$R/token.rel" \
             --arena-image "$R/token.arena" > "$R/gen.log" 2>&1
-        printf '%s\n' "$MAN" > "$R/manifest.used"
+        printf '%s\n' "$MAN" > "$R/manifest.used"; printf 'padnorms-v1\n' > "$R/pad.used"
     fi
     ARENA=$(python3 -c "import json;print(hex(json.load(open('$MAN'))['hbm']['desc_arena_base']))")
     python3 "$CTL" load "$R/token.arena" --offset "$ARENA" --verify > "$R/arena.log" 2>&1 \
