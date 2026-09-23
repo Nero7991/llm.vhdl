@@ -289,13 +289,32 @@ def scrape_card_maxpos(path=GEN_FK33_CARD):
 # DERIVES every term from `rtl/model_cfg_pkg.vhd` and from the format constants
 # in the RTL that implements each arena, and hard-fails if a scrape stops
 # matching.  A figure derived from the shape cannot be a different model's.
-_ARENA = HM.arena_sizes()
-GDN_STATE_LAYERS = _ARENA["gdn_layers"]
-GDN_STATE_BYTES_PER_LAYER = _ARENA["gdn_state_bytes_per_layer"]
-GDN_STATE_BYTES = _ARENA["gdn_state_bytes"]
-KV_LAYERS = _ARENA["attn_layers"]
-KV_BYTES_PER_LAYER_PER_TOKEN = _ARENA["kv_bytes_per_layer_per_token"]
-KV_BYTES_PER_TOKEN = _ARENA["kv_bytes_per_token"]
+# WHICH MODEL (2026-09-23, 27B prep).  The arenas used to be sized at import
+# from the package's own `MODEL` binding, which is the 9B for every bench and
+# gate row and will stay so; a 27B image packed that way would reserve a 9B
+# GDN state (26.4 MB against 79.3 MB for 48 value heads x 48 layers) and B
+# would overrun the KV cache -- the 2026-09-18 arena class again.  `--model`
+# names the record; the default is still the build target, so every existing
+# invocation is unchanged.  The manifest records it as `hbm.model`, and the
+# lm_head's (K, M) is REFUSED if it is not that record's (hidden, vocab).
+MODEL_NAME = HM.scrape_build_model()
+
+
+def _apply_model(name):
+    global MODEL_NAME, _ARENA, GDN_STATE_LAYERS, GDN_STATE_BYTES_PER_LAYER
+    global GDN_STATE_BYTES, KV_LAYERS, KV_BYTES_PER_LAYER_PER_TOKEN
+    global KV_BYTES_PER_TOKEN
+    MODEL_NAME = name
+    _ARENA = HM.arena_sizes(HM.scrape_model_cfg(name))
+    GDN_STATE_LAYERS = _ARENA["gdn_layers"]
+    GDN_STATE_BYTES_PER_LAYER = _ARENA["gdn_state_bytes_per_layer"]
+    GDN_STATE_BYTES = _ARENA["gdn_state_bytes"]
+    KV_LAYERS = _ARENA["attn_layers"]
+    KV_BYTES_PER_LAYER_PER_TOKEN = _ARENA["kv_bytes_per_layer_per_token"]
+    KV_BYTES_PER_TOKEN = _ARENA["kv_bytes_per_token"]
+
+
+_apply_model(MODEL_NAME)
 
 
 def check_arena_substructure(files):
@@ -336,28 +355,37 @@ def check_arena_substructure(files):
                     _ARENA["gdn_state_conv_bytes_per_layer"]),
                 arena_sizing="derived from rtl/model_cfg_pkg.vhd by "
                              "tools/hbm_map.py arena_sizes()")
-    if lm is None:
-        return base
+    base["model"] = MODEL_NAME
     import gen_layer_program as GL
-    s = GL.QWEN35_9B
-    if (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
-        return base
+    shapes = {"QWEN35_9B": GL.QWEN35_9B, "QWEN38_27B": GL.QWEN38_27B}
+    if MODEL_NAME not in shapes:
+        raise SystemExit("pack_model_fk33: gen_layer_program.py has no Shape "
+                         "for %s; the descriptors could not be emitted for it"
+                         % MODEL_NAME)
+    s = shapes[MODEL_NAME]
+    if lm is not None and (int(lm["K"]), int(lm["M"])) != (s.hidden, s.vocab_shard):
+        raise SystemExit(
+            "pack_model_fk33: output.weight is %d x %d but --model %s has "
+            "hidden %d and vocab %d.  This GGUF is not that model; pass the "
+            "record it is (--model), or the arenas would be sized for the "
+            "wrong shape." % (int(lm["K"]), int(lm["M"]), MODEL_NAME,
+                              s.hidden, s.vocab_shard))
     n_gdn, n_attn = s.n_gdn(), s.n_attn()
     if (n_gdn, n_attn) != (GDN_STATE_LAYERS, KV_LAYERS):
         raise SystemExit(
-            "pack_model_fk33: gen_layer_program.QWEN35_9B says %d GDN and %d "
+            "pack_model_fk33: gen_layer_program.%s says %d GDN and %d "
             "attention blocks, and rtl/model_cfg_pkg.vhd says %d and %d.  The "
             "descriptors are emitted from the first and the arenas are "
             "reserved from the second, so one of them is about a different "
             "model.  The RTL is the oracle; fix the mirror."
-            % (n_gdn, n_attn, GDN_STATE_LAYERS, KV_LAYERS))
+            % (MODEL_NAME, n_gdn, n_attn, GDN_STATE_LAYERS, KV_LAYERS))
     if (s.attn_kv_heads, s.attn_head_dim) != (
             _ARENA["kv_heads_per_card"], _ARENA["attn_head_dim"]):
         raise SystemExit(
-            "pack_model_fk33: gen_layer_program.QWEN35_9B has attn_kv_heads "
+            "pack_model_fk33: gen_layer_program.%s has attn_kv_heads "
             "%d / attn_head_dim %d against the RTL's %d / %d.  The KV record "
             "is sized on the second pair."
-            % (s.attn_kv_heads, s.attn_head_dim,
+            % (MODEL_NAME, s.attn_kv_heads, s.attn_head_dim,
                _ARENA["kv_heads_per_card"], _ARENA["attn_head_dim"]))
     base.update(gdn_state_layers_used=n_gdn, kv_layers_used=n_attn)
     return base
@@ -1280,6 +1308,13 @@ def main():
                          "refuses it.  Its only use is a layout experiment "
                          "that will be paired with a card rebuilt at a smaller "
                          "C_MAXPOS")
+    ap.add_argument("--model", default=None, metavar="RECORD",
+                    help="the rtl/model_cfg_pkg.vhd record this GGUF is "
+                         "(QWEN35_9B or QWEN38_27B); sizes the GDN state and "
+                         "KV arenas.  Default: the package's own MODEL "
+                         "binding (%s).  The lm_head's (K, M) must match the "
+                         "record's (hidden, vocab) or the pack is refused"
+                         % MODEL_NAME)
     ap.add_argument("--card-maxpos", type=int, default=None, metavar="TOKENS",
                     help="the C_MAXPOS the card this image is FOR was built at, "
                          "when it is not the committed default that this tool "
@@ -1333,6 +1368,12 @@ def main():
         return selftest_stripe(a.rows_if, a.axi_dw)
     if not a.gguf or not a.outdir:
         ap.error("the following arguments are required: gguf, outdir")
+    if a.model:
+        _apply_model(a.model)
+        print("model    --model %s: GDN state %d B (%d layers x %d), KV %d B "
+              "per token (%d attention layers)"
+              % (MODEL_NAME, GDN_STATE_BYTES, GDN_STATE_LAYERS,
+                 GDN_STATE_BYTES_PER_LAYER, KV_BYTES_PER_TOKEN, KV_LAYERS))
 
     rows_if, axi_dw = a.rows_if, a.axi_dw
     nports = P.check_geometry(rows_if, axi_dw, emitting=True)

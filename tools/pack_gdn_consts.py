@@ -163,6 +163,43 @@ class Layout(object):
                    self.bytes_total))
 
 
+def layout_real(name="QWEN35_9B", ncards=1):
+    """The real shape for a named rtl/model_cfg_pkg.vhd record (2026-09-23:
+    generalised from layout_9b; the 27B row is gen_layer_program.QWEN38_27B).
+    Same two-authority cross-check as before."""
+    shapes = {"QWEN35_9B": GLP.QWEN35_9B, "QWEN38_27B": GLP.QWEN38_27B}
+    if name not in shapes:
+        raise SystemExit("pack_gdn_consts: no gen_layer_program Shape for %s"
+                         % name)
+    cfg = HM.scrape_model_cfg(name)
+    s = shapes[name]
+    pairs = (("blocks", s.blocks), ("attn_interval", s.attn_interval),
+             ("lin_key_heads", s.key_heads), ("lin_val_heads", s.val_heads),
+             ("lin_head_dim", s.head_dim))
+    bad = [(k, cfg[k], v) for k, v in pairs if cfg[k] != v]
+    if bad:
+        raise SystemExit("pack_gdn_consts: rtl/model_cfg_pkg.vhd and "
+                         "tools/gen_layer_program.py disagree on the %s "
+                         "shape: %r" % (name, bad))
+    if ncards != 1:
+        raise SystemExit("pack_gdn_consts: only NCARDS = 1 is packed; the "
+                         "per-card head split is out of scope")
+    lay = Layout(s, cfg["conv_kernel"], name)
+    sz = HM.arena_sizes(cfg, ncards)
+    if (lay.bytes_per_layer, lay.layers, lay.bytes_total) != (
+            sz["gdn_const_bytes_per_layer"], sz["gdn_const_layers"],
+            sz["gdn_const_bytes"]):
+        raise SystemExit("pack_gdn_consts: this layout (%d B x %d) disagrees "
+                         "with hbm_map.arena_sizes() (%d B x %d)"
+                         % (lay.bytes_per_layer, lay.layers,
+                            sz["gdn_const_bytes_per_layer"],
+                            sz["gdn_const_layers"]))
+    return lay
+
+
+SHAPE_RECORD = {"9b": "QWEN35_9B", "27b": "QWEN38_27B"}
+
+
 def layout_9b(ncards=1):
     """The real shape, from BOTH authorities, cross-checked: rtl/model_cfg_pkg
     (via hbm_map's scrape, which is where KCONV lives) and
@@ -537,10 +574,11 @@ def check_manifest(mani, lay, image, out_path, mani_path):
 # ------------------------------------------------------------------ main
 
 def run(a):
-    if a.shape == "9b":
-        lay, real = layout_9b(), None
+    if a.shape in SHAPE_RECORD:
+        lay, real = layout_real(SHAPE_RECORD[a.shape]), None
         if not a.manifest:
-            raise SystemExit("pack_gdn_consts: --shape 9b needs --manifest")
+            raise SystemExit("pack_gdn_consts: --shape %s needs --manifest"
+                             % a.shape)
     else:
         real = layout_9b()
         lay = layout_sim(a.blocks, a.attn_interval)
@@ -601,7 +639,7 @@ def run(a):
     if a.hex:
         n = write_hex(a.hex, image)
         print("wrote %s: %d words" % (a.hex, n))
-    if a.manifest and a.shape == "9b":
+    if a.manifest and a.shape in SHAPE_RECORD:
         with open(a.manifest) as f:
             mani = json.load(f)
         blk = HM.derive_gdn_const_block(mani)
@@ -887,7 +925,7 @@ def main(argv=None):
     ap.add_argument("--hex", default=None,
                     help="also write the image as text, one 16-bit word per "
                          "line as 4 hex digits, word 0 first, no header")
-    ap.add_argument("--shape", choices=("9b", "sim"), default="9b")
+    ap.add_argument("--shape", choices=("9b", "27b", "sim"), default="9b")
     ap.add_argument("--blocks", type=int, default=4,
                     help="--shape sim: blocks of the scaled shape")
     ap.add_argument("--attn-interval", type=int, default=4)
