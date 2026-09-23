@@ -437,7 +437,7 @@ def _assign_group(segs, lanes, fill):
 
 
 def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
-                     n_stack1=None, digests=True):
+                     n_stack1=None, digests=True, wide=False):
     """THE LANE ARENA.  One pseudo-channel per AXI read master, compacted only
     as far as the context target demands.
 
@@ -534,10 +534,31 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
                          "got stacks %r" % sorted(groups))
     own = {st: sorted({port_map[i] for i in ls}) for st, ls in groups.items()}
     n1 = len(own[1]) if n_stack1 is None else int(n_stack1)
-    if not 1 <= n1 <= len(own[1]):
+    # SEGMENT 0 FOR STACK-0 LANES (2026-09-23, 27B prep).  The 27 lanes are 15
+    # on stack 0 and 12 on stack 1, so 15/27 of every image lands on stack 0,
+    # and with segments 1..15 that is 4.03 GB of capacity.  Half of the 27B is
+    # 7.09 to 7.37 GB (DERIVED from the packed sizes, docs/superpowers/plans/
+    # 2026-09-23-27b-two-card.md section 3), 3.94 to 4.09 GB of it on stack 0:
+    # it does not fit without segment 0, whose common block (headers plus
+    # nonmatvec_f32.bin) is about 13 MB.  Opt-in (`wide`), recorded in the
+    # manifest as `all_segments`, and the lanes start ABOVE a reserve sized
+    # from the record count, which the header loop below must agree with.
+    # AND ALL OF STACK 1 (same change).  12/27 of a 27B half is 3.28 GB and
+    # the 12 own segments (17..28) hold 3.22 GB, so the stack-1 lanes need a
+    # 13th segment: the candidates become the own segments first, then the
+    # other stack-1 segments (16, then 29..31), and `n_stack1` may exceed 12.
+    # 16 comes first so the KV arena above the weights stays contiguous.
+    # With `wide` off, both lists are exactly what they were: the 9B images
+    # re-pack byte-identical.
+    common_reserve = align_up(len(recs) * P.HDR_BYTES) + nm_size
+    stack1_all = [sg for sg in range(N_SEGMENTS)
+                  if stack_of(sg * SEGMENT_BYTES) == 1]
+    cand1 = own[1] + ([sg for sg in stack1_all if sg not in own[1]]
+                      if wide else [])
+    if not 1 <= n1 <= len(cand1):
         raise SystemExit("pack_model_fk33: --stripe-stack1-segments %d is "
-                         "outside 1..%d" % (n1, len(own[1])))
-    gsegs = {0: own[0], 1: own[1][:n1]}
+                         "outside 1..%d" % (n1, len(cand1)))
+    gsegs = {0: ([0] if wide else []) + own[0], 1: cand1[:n1]}
     share = max(-(-len(groups[st]) // len(gsegs[st])) for st in (0, 1))
     if share > 2:
         raise SystemExit(
@@ -549,6 +570,8 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
 
     allsegs = gsegs[0] + gsegs[1]
     fill = {s: 0 for s in allsegs}
+    if wide:
+        fill[0] = align_up(common_reserve)
     com = 0
     files, weights_end = [], 0
 
@@ -615,6 +638,13 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
     nm_base = align_up(com)
     com = nm_base + nm_size
     weights_end = max(weights_end, com)
+    if wide and com > common_reserve:
+        # The reserve was DERIVED from the same record count the loop walked;
+        # disagreement means a lane piece was placed over a header.
+        raise SystemExit("pack_model_fk33: the common block ends at %d B but "
+                         "the segment-0 lane reserve was %d B; lane pieces "
+                         "would overlap the headers.  Nothing was written."
+                         % (com, common_reserve))
     if com > SEGMENT_BYTES:
         raise SystemExit("pack_model_fk33: the headers and nonmatvec_f32.bin "
                          "need %d B and segment 0 holds %d"
@@ -630,8 +660,10 @@ def lane_stripe_plan(recs, rows_if, axi_dw, port_map, outdir, nm_size,
                     capacity=SEGMENT_BYTES,
                     stack=stack_of(s * SEGMENT_BYTES)) for s in allsegs]
     common = dict(segment=0, base=0, bytes=com, capacity=SEGMENT_BYTES,
-                  holds="mv4i headers and nonmatvec_f32.bin")
+                  holds="mv4i headers and nonmatvec_f32.bin",
+                  lane_reserve=(align_up(common_reserve) if wide else None))
     return files, lane, common, nm_base, weights_end, dict(
+        all_segments=bool(wide),
         max_lanes_per_segment=share,
         derived_cycles_per_beat=max(DATAPATH_FLOOR_CPB, share / BEATS_PER_CORE_CYCLE),
         memory_cycles_per_beat=share / BEATS_PER_CORE_CYCLE,
@@ -655,7 +687,8 @@ def stripe_context_tokens(weights_end, gdn_bytes, kv_top, per_token):
 
 
 def choose_stripe_width(recs, rows_if, axi_dw, port_map, outdir, nm_size,
-                        gdn_bytes, kv_top, per_token, min_tokens, out=None):
+                        gdn_bytes, kv_top, per_token, min_tokens, out=None,
+                        wide=False):
     """How many stack-1 segments to stripe over: the WIDEST that still meets
     the context target.
 
@@ -674,11 +707,15 @@ def choose_stripe_width(recs, rows_if, axi_dw, port_map, outdir, nm_size,
                                                             emitting=False)
                                            + P.n_scale_sub(rows_if, axi_dw))
                 if stack_of(port_map[i] * SEGMENT_BYTES) == 1})
+    if wide:
+        # every stack-1 segment is a candidate (own first, see lane_stripe_plan)
+        nmax = sum(1 for sg in range(N_SEGMENTS)
+                   if stack_of(sg * SEGMENT_BYTES) == 1)
     for n in range(nmax, 0, -1):
         try:
             _, _, _, _, we, sh = lane_stripe_plan(
                 recs, rows_if, axi_dw, port_map, outdir, nm_size,
-                n_stack1=n, digests=False)
+                n_stack1=n, digests=False, wide=wide)
         except SystemExit as e:
             rows.append(dict(n=n, tokens=None, why=str(e).split(".")[0]))
             continue
@@ -951,6 +988,105 @@ def blocks_to_drop(names, lo, hi, n_blocks):
     return out
 
 
+def selftest_stripe(rows_if=48, axi_dw=256):
+    """TEETH for --stripe-all-segments, on synthetic record sets built from
+    the real layout function and the real ENG_PORT_MAP.
+
+    kill:     a 27B-half-sized set (147 x 17408x5120, about 7.4 GB) must be
+              REFUSED without segment 0 (a stack-0 segment overflows) and must
+              place, pass every stripe check and use segment 0 with it.
+    control:  a 9B-sized set (50 x 12288x4096, about 1.4 GB on stack 0) with
+              the flag OFF puts no lane piece in segment 0 and places exactly
+              as before; with the flag ON it still passes every check.
+    identity: with the flag ON, the common block ends inside the reserve."""
+    port_map = scrape_eng_port_map()
+    npw = P.check_geometry(rows_if, axi_dw, emitting=False)
+
+    def recs(n, M, K):
+        out = []
+        for i in range(n):
+            lay = P.packed_layout(M, K, rows_if, axi_dw, emitting=False)
+            out.append(dict(name="syn.%d" % i, M=M, K=K, m_logical=M,
+                            w_exp=8, out_shift=4, nbytes=lay[6]))
+        return out
+
+    nm = 11227136
+    big = recs(147, 17408, 5120)
+    tot = sum(r["nbytes"] for r in big)
+    print("STRIPETEETH 27B-half set: %d records, %.3f GB" % (len(big), tot / 1e9))
+    try:
+        lane_stripe_plan(big, rows_if, axi_dw, port_map, ".", nm,
+                         n_stack1=None, digests=False, wide=False)
+    except SystemExit as e:
+        if "overflows" not in str(e):
+            sys.exit("STRIPETEETH FAIL: refused for another reason: %s" % e)
+        print("STRIPETEETH kill: without segment 0, %s" % str(e).split(".")[0])
+    else:
+        sys.exit("STRIPETEETH FAIL: a 27B half placed WITHOUT segment 0; the "
+                 "premise of the flag is wrong or the set is too small")
+    try:
+        lane_stripe_plan(big, rows_if, axi_dw, port_map, ".", nm,
+                         n_stack1=None, digests=False, wide=True)
+    except SystemExit as e:
+        print("STRIPETEETH kill: with all segments but the 12 own stack-1 "
+              "segments, %s" % str(e).split(".")[0])
+    else:
+        sys.exit("STRIPETEETH FAIL: 12/27 of a 27B half placed on 12 stack-1 "
+                 "segments; the stack-1 premise is wrong")
+    files, lane, common, nm_base, we, share = lane_stripe_plan(
+        big, rows_if, axi_dw, port_map, ".", nm, n_stack1=13, digests=False,
+        wide=True)
+    tok, gdn, kv = stripe_context_tokens(we, 39665664, 8584548352,
+                                         KV_BYTES_PER_TOKEN)
+    used1 = sorted({x["segment"] for f in files for x in f["pieces"]
+                    if x["kind"] in ("w", "s") and x["segment"] >= 16})
+    print("STRIPETEETH 27B half on 13 stack-1 segments %s: weights_end %.3f GB, "
+          "GDN at %#x, KV at %#x, %d tokens" % (used1, we / 1e9, gdn, kv, tok))
+    if tok < 32768:
+        sys.exit("STRIPETEETH FAIL: only %d KV tokens above the weights; the "
+                 "C_MAXPOS 32768 premise fails" % tok)
+    chk = check_lane_stripe(files, lane, common, port_map, rows_if, axi_dw, share)
+    for n_, ok, det in chk:
+        print("STRIPETEETH   %s %s  %s" % ("PASS" if ok else "FAIL", n_, det))
+    if not all(ok for _, ok, _ in chk):
+        sys.exit("STRIPETEETH FAIL: the segment-0 placement fails its own checks")
+    in0 = sum(1 for f in files for x in f["pieces"]
+              if x["kind"] in ("w", "s") and x["segment"] == 0)
+    low = min(x["hbm_offset"] for f in files for x in f["pieces"]
+              if x["kind"] in ("w", "s") and x["segment"] == 0)
+    if in0 == 0 or low < common["bytes"] or low < common["lane_reserve"]:
+        sys.exit("STRIPETEETH FAIL: segment 0 lanes: %d pieces, lowest %#x, "
+                 "common ends %#x, reserve %#x"
+                 % (in0, low, common["bytes"], common["lane_reserve"]))
+    fill0 = [x for x in share["segments"] if x["segment"] == 0][0]["bytes"]
+    print("STRIPETEETH with segment 0: %d lane pieces in it, lowest at %#x, "
+          "common block ends %#x (reserve %#x), segment 0 fill %.1f%%, "
+          "weights_end %.3f GB, peak fill %.1f%%"
+          % (in0, low, common["bytes"], common["lane_reserve"],
+             100.0 * fill0 / SEGMENT_BYTES, we / 1e9,
+             100.0 * max(x["bytes"] for x in share["segments"]) / SEGMENT_BYTES))
+    small = recs(50, 12288, 4096)
+    f_off, l_off, c_off, _, we_off, sh_off = lane_stripe_plan(
+        small, rows_if, axi_dw, port_map, ".", nm, n_stack1=None,
+        digests=False, wide=False)
+    if any(x["segment"] == 0 for f in f_off for x in f["pieces"]
+           if x["kind"] in ("w", "s")):
+        sys.exit("STRIPETEETH FAIL: the flag OFF placed a lane piece in segment 0")
+    if sh_off.get("all_segments") or c_off["lane_reserve"] is not None:
+        sys.exit("STRIPETEETH FAIL: the flag OFF is recorded as ON")
+    f_on, l_on, c_on, _, we_on, sh_on = lane_stripe_plan(
+        small, rows_if, axi_dw, port_map, ".", nm, n_stack1=None,
+        digests=False, wide=True)
+    chk = check_lane_stripe(f_on, l_on, c_on, port_map, rows_if, axi_dw, sh_on)
+    if not all(ok for _, ok, _ in chk):
+        sys.exit("STRIPETEETH FAIL: the 9B-sized set with segment 0 fails a check")
+    print("STRIPETEETH control: flag OFF puts 0 lane pieces in segment 0 "
+          "(weights_end %.3f GB); flag ON on the same set passes all %d checks "
+          "(weights_end %.3f GB)" % (we_off / 1e9, len(chk), we_on / 1e9))
+    print("STRIPETEETH PASS")
+    return 0
+
+
 def selftest_blocks():
     names = ["token_embd.weight", "output_norm.weight", "output.weight"] + \
             ["blk.%d.%s" % (b, t) for b in range(4) for t in ("attn_q.weight", "ffn_up.weight")]
@@ -1153,6 +1289,17 @@ def main():
                          "~7.4 GB of weights).  The KV-extent refusal then uses "
                          "N; verify the built card with "
                          "`grep C_MAXPOS hw/fk33/rtl/fk33_card.vhd`")
+    ap.add_argument("--stripe-all-segments", dest="stripe_all",
+                    action="store_true",
+                    help="let the 15 stack-0 lanes also use segment 0 (above "
+                         "the headers and nonmatvec_f32.bin) and the 12 "
+                         "stack-1 lanes every stack-1 segment (own ones first, "
+                         "then 16, 29, 30, 31).  Needed for a 27B half: 7.1 to "
+                         "7.4 GB, 15/27 of it on stack 0 against 15 x 256 MiB "
+                         "of segments 1..15, 12/27 against 12 x 256 MiB.  The "
+                         "9B images do not need it and were packed without it; "
+                         "off, the layout is byte-identical to before.  The "
+                         "manifest records `lane_stripe.all_segments`")
     ap.add_argument("--stripe-stack1-segments", type=int, default=None,
                     metavar="N",
                     help="override the width search and put the 12 stack-1 "
@@ -1165,6 +1312,9 @@ def main():
                          "numbering) and, unless HI is the last block, drop the head "
                          "tensors too: one card of a layer-split pipeline.  Sugar over "
                          "--drop; the names it adds are listed in the manifest like any drop.")
+    ap.add_argument("--selftest-stripe", action="store_true",
+                    help="teeth for --stripe-lanes-in-segment0 on synthetic "
+                         "record sets, no GGUF; then exit")
     ap.add_argument("--selftest-blocks", action="store_true",
                     help="test the --blocks name filter without a GGUF, then exit")
     ap.add_argument("--drop", action="append", default=[], metavar="TENSOR",
@@ -1179,6 +1329,8 @@ def main():
     a = ap.parse_args()
     if a.selftest_blocks:
         return selftest_blocks()
+    if a.selftest_stripe:
+        return selftest_stripe(a.rows_if, a.axi_dw)
     if not a.gguf or not a.outdir:
         ap.error("the following arguments are required: gguf, outdir")
 
@@ -1402,13 +1554,14 @@ def main():
         n1, width_rows = choose_stripe_width(
             recs, rows_if, axi_dw, port_map, a.outdir, nm_size,
             GDN_STATE_BYTES, kv_top, KV_BYTES_PER_TOKEN, a.stripe_min_context,
-            out=sys.stdout.write)
+            out=sys.stdout.write, wide=a.stripe_all)
         if a.stripe_stack1_segments is not None:
             n1 = a.stripe_stack1_segments
             print("  stripe width     OVERRIDDEN to %d by "
                   "--stripe-stack1-segments" % n1)
         files, lane, common, nm_base, weights_end, share = lane_stripe_plan(
-            recs, rows_if, axi_dw, port_map, a.outdir, nm_size, n_stack1=n1)
+            recs, rows_if, axi_dw, port_map, a.outdir, nm_size, n_stack1=n1,
+            wide=a.stripe_all)
         files.append(dict(file="nonmatvec_f32.bin", kind="f32blob",
                           tensor=None, nbytes=nm_size, hbm_offset=nm_base,
                           stack=stack_of(nm_base),
@@ -1729,7 +1882,10 @@ def main():
         print(f"  lane stripe      ON, {len(lane)} lanes on "
               f"{len(sg)} segments of {SEGMENT_BYTES//MiB:.0f} MiB")
         print(f"    stack 0        lanes 0..{len(share['stack0_segments'])-1} "
-              f"1:1 on segments {share['stack0_segments']}")
+              f"on segments {share['stack0_segments']}"
+              + ("  (segment 0 above the common block, "
+                 "--stripe-all-segments)" if share.get("all_segments")
+                 else "  (1:1)"))
         print(f"    stack 1        the remaining lanes on segments "
               f"{share['stack1_segments']}")
         print(f"    sharing        at most "
