@@ -105,6 +105,56 @@ to route near that count on congestion, so 86 to 89% is a risk to be drawn,
 not a fit to be assumed. The block RAM line is the hard one: the norm-gain
 store must move before any 27B draw.
 
+## The per-card 27B images (Task 3), MEASURED by the packer
+
+`pack_cards.sh` (final flags inside). Base set `/mnt/storage/llama-models/qwen38-27b-mv4i/`
+(498 `.mv4i`, Q4_K_M dequantised to INT4, 4.50 to 4.53 bits per weight);
+per-card sets symlink those files and place them:
+`qwen38-27b-card0-b0-32` (blocks 0..32, no head, `--desc-arena-jobs 607`) and
+`qwen38-27b-card1-b33-63` (33..63 plus `output.weight`), both
+`--model QWEN38_27B --stripe-lanes --stripe-all-segments --drop token_embd.weight
+--card-maxpos 16384 --stripe-min-context 16384`, plus
+`pack_gdn_consts.py --shape 27b` (3,956,736 B, 48 layers, PASS, same digest on
+both cards).
+
+| | card 0 | card 1 |
+|---|---|---|
+| weights | 7,095,816,192 B | 7,378,014,208 B |
+| stack-1 segments | 13 (17..28, 16) | 13 (17..28, 16) |
+| peak segment fill | 92.1% | 95.9% |
+| `gdn_state_base` / bytes / layers | 0x1D0000000 / 78,741,504 / 48 | same |
+| `kv_base` / bytes per token / layers | 0x1D4B18000 / 34,816 / 16 | same |
+| `max_context_tokens` | 20,868 | 20,868 |
+| `card_c_maxpos` / `card_kv_fits` | 16,384 / true | 16,384 / true |
+| `gdn_const_base`, `desc_arena_base` (607 jobs) | 0x1FF5F8000, 0x1FFA10000 | same |
+
+**Why 16,384 and not the plan's 32,768.** B and C index their HBM arenas by
+the descriptor's GLOBAL per-kind layer ordinal (`job_ordinal`, descriptor
+word 3, `rtl/llama_top.vhd` at `c_layer <= j_lay` and `b_layer <= j_lay`;
+`docs/debugging/2026-08-29_ordinal-two-meanings.md`), so a card's arena must
+span the whole model's layers exactly as the 9B cards' did: 16 KV layers
+(34,816 B per token, not the plan's per-card 17,408) and 48 GDN layers
+(78.7 MB). The width search then tops out at 20,679 tokens for either card
+(the 33/31 split puts both `weights_end` in segment 28), and 32,768 does not
+fit. 16,384 fits with 0.15 GB to spare on card 1.
+
+**The way back to 32k+, not taken today:** the KV and state bases are
+host-programmed registers (`A_KVK_LO/HI`, `A_KVV_LO/HI`, `bst_state_base`),
+so a card could be given an arena sized for ITS layers only and a base offset
+by `-(first ordinal x layer stride)`, so that ordinals 8..15 land at the
+arena's start; the untouched lower ordinals would address below the arena and
+are never issued on that card. Host and packer change only (`kv_layers_used`,
+the offset in the manifest, the loader computing the programmed bases,
+`check_kv_map` understanding it); no RTL. It roughly doubles the context per
+card at the 27B.
+
+`tools/check_kv_map.py` against a card generated at `FK33_MODEL=QWEN38_27B
+FK33_C_MAXPOS=16384` refuses 12 rows, all of them because the checker sizes
+its KV extent from the package's 9B binding and the 9B KVR block (it computes
+a 65,536 x 17,408 extent that runs past HBM); it does not yet take `--model`.
+The image's real extent, 16,384 x 34,816 = 570,425,344 B from `kv_base`, ends
+at 0x1F6B18000, below `gdn_const_base`. That checker change is open.
+
 ## Traps hit
 
 - **A copied Tcl script must live where its `pfRoot` derivation expects.**
@@ -114,6 +164,12 @@ store must move before any 27B draw.
   output directory and the arm died in 12 s with rc=1, sentinel 0. The fix
   is `$ROOT/sim/ooc_gdn_block_27b_probe.tcl`; `run27b.sh` now does that and
   `rerun_gdn27.sh` chains the arm on the first run's `PROBE27_DONE`.
+- **A base pack at a new shape can refuse at its manifest after packing every
+  tensor.** The first 27B base pack packed all 498 tensors in 87 minutes and
+  then refused at `a_descriptor_jobs`, which compared `output.weight` against
+  the 9B shape (fixed: it takes `--model`). The files were fine and the
+  per-card packs KEEP them; only the base manifest is missing, and nothing
+  loads the base set.
 - **The BC-250's login home is not the tree's home.** `ROOT` defaults to
   `$HOME/GitHub/llama.vhdl`, which is `/home/labuser/...` there, while the
   synced tree is at `/home/orencollaco/GitHub/llama.vhdl`. The rerun was
