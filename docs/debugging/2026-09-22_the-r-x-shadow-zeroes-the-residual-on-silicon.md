@@ -91,3 +91,35 @@ LUT as Memory 65,904 -> 65,904, BRAM 567 -> 569.
 - Whether the defect is in the shadow's BRAM inference interacting with `bank` (two RAMs written from one port),
   or something in `region_mem` that GHDL and Vivado read differently.
 - Corrections are appended below when the census lands.
+
+## CORRECTION / MECHANISM, 23:57 (MEASURED: netlist census of region 0, routed checkpoints of builds 17 and 14)
+
+**Region 0's storage has its write enables tied to ground in build 17.** `census_region0_routed.txt`
+(`hw/fk33/results/card_build17_2026-09-22/`, produced by `census.tcl` on the two routed DCPs):
+
+```
+build 14  *u_regmem/g_region[0].bank_reg*   n=164  RAMB36E2 4  LUT4 124 LUT5 20 LUT6 11 LUT2 3 LUT3 2   (the write decode lives here)
+          bank_reg_1_0  WEBWE[7..0] = bank_reg_1_0_i_77_n_0 / _i_78 / _i_79 / _i_80   (real write enables, two bits each)
+build 17  *u_regmem/g_region[0].bank_reg*   n=13   RAMB36E2 4  GND 1  LUT6 2 LUT3 2 LUT5 2 LUT4 1 LUT2 1
+          bank_reg_1_0  WEBWE[7..0] = <const0>  (ALL EIGHT), WEA[3..0] = <const0>, ENARDEN = p_124_out
+          *u_regmem/g_region[0].g_shadow*     n=159  RAMB36E2 2  FDRE 4  LUT4 123 LUT5 18 LUT6 9 LUT2 3   (the write decode moved HERE)
+          shadow_reg_0/1  WEBWE[7..0] = shadow_reg_0_i_76.._79 (real), ENBWREN = g_region[0].wr_en,
+                          ADDRBWRADDR = g_region[0].wr_addr[8..0], ADDRARDADDR = hr_addr[11..3] from fk33_seam xr_addr_reg
+```
+
+So the shadow BRAM is written and addressed exactly as designed, and the engine's own storage of R_X (the four
+`bank_reg` BRAMs that `el_word_r` and `g_word_r` read from) can never be written: the write-enable decode
+that build 14 has on `bank_reg` (155 LUTs) exists in build 17 only on `shadow_reg`, and `bank_reg`'s enables
+are constants. Every read of R_X returns the BRAM's initial zeros, the X push included, which is the all-zero
+residual measured on silicon, the garbage exponent, argmax 0 and the 0.23% shorter token.
+
+**The tool merged the write decode of two RAMs fed by one write port and kept it on the wrong one.** Which
+stage (synth_design's RAM inference against opt_design / power_opt) is settled by the same census on the
+synthesis checkpoint, appended below. Whatever the stage, the RTL construct "a second array written from the
+same `wr_*` signals as the first, both `ram_style = block`" is what invited it, and no simulation can see a
+netlist transformation.
+
+Trap for the record: `tb_fk33_seam` P1 reads R_X through the seam (the shadow) AND through the reference
+`llama_top`, and both were right in GHDL because in GHDL both arrays are written. On silicon the shadow was also
+written, so a window-only test on the shadow would have PASSED while the engine read zeros; the discriminator
+was the engine's own output (argmax, XEXP_OUT), never the window.

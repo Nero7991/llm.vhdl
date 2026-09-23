@@ -1,0 +1,137 @@
+CENSUS_OPENED b17
+CENSUS_REGMEM b17 1 cells named u_regmem: bd_i/card/inst/u/u_regmem
+CENSUS_CELLS b17 *u_regmem/g_region[0].bank_reg* n=13 kinds=RAMB36E2 4 GND 1 LUT6 2 LUT3 2 LUT5 2 LUT4 1 LUT2 1
+CENSUS_CELLS b17 *u_regmem/g_region[0].g_shadow* n=159 kinds=FDRE 4 RAMB36E2 2 LUT2 3 LUT4 123 LUT6 9 LUT5 18
+CENSUS_CELLS b17 *u_regmem/g_region[0]* n=172 kinds=RAMB36E2 6 GND 1 LUT6 11 LUT3 2 LUT5 20 LUT4 124 LUT2 4 FDRE 4
+CENSUS_CELLS b17 *u_regmem/sh_* n=0 kinds=
+CENSUS_BRAM b17 bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0
+CENSUS_PIN b17 WEA[3] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[2] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[1] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[0] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEBWE[7] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_76_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_76/O
+CENSUS_PIN b17 WEBWE[6] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_76_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_76/O
+CENSUS_PIN b17 WEBWE[5] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_77_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_77/O
+CENSUS_PIN b17 WEBWE[4] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_77_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_77/O
+CENSUS_PIN b17 WEBWE[3] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_78_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_78/O
+CENSUS_PIN b17 WEBWE[2] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_78_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_78/O
+CENSUS_PIN b17 WEBWE[1] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_79_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_79/O
+CENSUS_PIN b17 WEBWE[0] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_79_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_79/O
+CENSUS_PIN b17 ADDRARDADDR[14] net=bd_i/card/inst/u/u_regmem/hr_addr[11] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[11]/Q
+CENSUS_PIN b17 ADDRARDADDR[13] net=bd_i/card/inst/u/u_regmem/hr_addr[10] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[10]/Q
+CENSUS_PIN b17 ADDRARDADDR[12] net=bd_i/card/inst/u/u_regmem/hr_addr[9] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[9]/Q
+CENSUS_PIN b17 ADDRARDADDR[11] net=bd_i/card/inst/u/u_regmem/hr_addr[8] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[8]/Q
+CENSUS_PIN b17 ADDRARDADDR[10] net=bd_i/card/inst/u/u_regmem/hr_addr[7] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[7]/Q
+CENSUS_PIN b17 ADDRARDADDR[9] net=bd_i/card/inst/u/u_regmem/hr_addr[6] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[6]/Q
+CENSUS_PIN b17 ADDRARDADDR[8] net=bd_i/card/inst/u/u_regmem/hr_addr[5] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[5]/Q
+CENSUS_PIN b17 ADDRARDADDR[7] net=bd_i/card/inst/u/u_regmem/hr_addr[4] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[4]/Q
+CENSUS_PIN b17 ADDRARDADDR[6] net=bd_i/card/inst/u/u_regmem/hr_addr[3] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[3]/Q
+CENSUS_PIN b17 ADDRARDADDR[5] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[4] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[3] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[2] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[1] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[0] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[14] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[8] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_3/O
+CENSUS_PIN b17 ADDRBWRADDR[13] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[7] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_4/O
+CENSUS_PIN b17 ADDRBWRADDR[12] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[6] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_5/O
+CENSUS_PIN b17 ADDRBWRADDR[11] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[5] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_6/O
+CENSUS_PIN b17 ADDRBWRADDR[10] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[4] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_7/O
+CENSUS_PIN b17 ADDRBWRADDR[9] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[3] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_8/O
+CENSUS_PIN b17 ADDRBWRADDR[8] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[2] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_9/O
+CENSUS_PIN b17 ADDRBWRADDR[7] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[1] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_10/O
+CENSUS_PIN b17 ADDRBWRADDR[6] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[0] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_11/O
+CENSUS_PIN b17 ADDRBWRADDR[5] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[4] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[3] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[2] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[1] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[0] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ENARDEN net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ENBWREN net=bd_i/card/inst/u/u_regmem/g_region[0].wr_en driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_1/O
+CENSUS_PIN b17 CLKARDCLK net=bd_i/card/inst/u/u_regmem/clk driver=bd_i/clk_wiz_0/inst/clkout3_buf/O
+CENSUS_PIN b17 CLKBWRCLK net=bd_i/card/inst/u/u_regmem/clk driver=bd_i/clk_wiz_0/inst/clkout3_buf/O
+CENSUS_BRAM b17 bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1
+CENSUS_PIN b17 WEA[3] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[2] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[1] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEA[0] net=bd_i/card/inst/u/u_regmem/<const0> driver=bd_i/card/inst/u/u_regmem/GND/G
+CENSUS_PIN b17 WEBWE[7] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_65_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_65/O
+CENSUS_PIN b17 WEBWE[6] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_65_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_65/O
+CENSUS_PIN b17 WEBWE[5] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_66_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_66/O
+CENSUS_PIN b17 WEBWE[4] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_66_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_66/O
+CENSUS_PIN b17 WEBWE[3] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_67_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_67/O
+CENSUS_PIN b17 WEBWE[2] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_67_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_67/O
+CENSUS_PIN b17 WEBWE[1] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_68_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_68/O
+CENSUS_PIN b17 WEBWE[0] net=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_68_n_0 driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_1_i_68/O
+CENSUS_PIN b17 ADDRARDADDR[14] net=bd_i/card/inst/u/u_regmem/hr_addr[11] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[11]/Q
+CENSUS_PIN b17 ADDRARDADDR[13] net=bd_i/card/inst/u/u_regmem/hr_addr[10] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[10]/Q
+CENSUS_PIN b17 ADDRARDADDR[12] net=bd_i/card/inst/u/u_regmem/hr_addr[9] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[9]/Q
+CENSUS_PIN b17 ADDRARDADDR[11] net=bd_i/card/inst/u/u_regmem/hr_addr[8] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[8]/Q
+CENSUS_PIN b17 ADDRARDADDR[10] net=bd_i/card/inst/u/u_regmem/hr_addr[7] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[7]/Q
+CENSUS_PIN b17 ADDRARDADDR[9] net=bd_i/card/inst/u/u_regmem/hr_addr[6] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[6]/Q
+CENSUS_PIN b17 ADDRARDADDR[8] net=bd_i/card/inst/u/u_regmem/hr_addr[5] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[5]/Q
+CENSUS_PIN b17 ADDRARDADDR[7] net=bd_i/card/inst/u/u_regmem/hr_addr[4] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[4]/Q
+CENSUS_PIN b17 ADDRARDADDR[6] net=bd_i/card/inst/u/u_regmem/hr_addr[3] driver=bd_i/fk33_seam_0/inst/xr_addr_reg[3]/Q
+CENSUS_PIN b17 ADDRARDADDR[5] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[4] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[3] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[2] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[1] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRARDADDR[0] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[14] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[8] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_3/O
+CENSUS_PIN b17 ADDRBWRADDR[13] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[7] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_4/O
+CENSUS_PIN b17 ADDRBWRADDR[12] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[6] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_5/O
+CENSUS_PIN b17 ADDRBWRADDR[11] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[5] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_6/O
+CENSUS_PIN b17 ADDRBWRADDR[10] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[4] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_7/O
+CENSUS_PIN b17 ADDRBWRADDR[9] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[3] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_8/O
+CENSUS_PIN b17 ADDRBWRADDR[8] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[2] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_9/O
+CENSUS_PIN b17 ADDRBWRADDR[7] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[1] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_10/O
+CENSUS_PIN b17 ADDRBWRADDR[6] net=bd_i/card/inst/u/u_regmem/g_region[0].wr_addr[0] driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_11/O
+CENSUS_PIN b17 ADDRBWRADDR[5] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[4] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[3] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[2] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[1] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ADDRBWRADDR[0] net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ENARDEN net=bd_i/card/inst/u/u_regmem/<const1> driver=bd_i/card/inst/u/u_regmem/VCC/P
+CENSUS_PIN b17 ENBWREN net=bd_i/card/inst/u/u_regmem/g_region[0].wr_en driver=bd_i/card/inst/u/u_regmem/g_region[0].g_shadow.shadow_reg_0_i_1/O
+CENSUS_PIN b17 CLKARDCLK net=bd_i/card/inst/u/u_regmem/clk driver=bd_i/clk_wiz_0/inst/clkout3_buf/O
+CENSUS_PIN b17 CLKBWRCLK net=bd_i/card/inst/u/u_regmem/clk driver=bd_i/clk_wiz_0/inst/clkout3_buf/O
+CENSUS_BANK0 b17 n=13 first=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_ENBWREN_cooolgate_en_sig_1 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_1 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_2
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 ENARDEN net=bd_i/card/inst/u/u_regmem/p_124_out
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[3] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[2] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[1] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[0] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[7] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[6] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[5] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[4] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[3] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[2] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[1] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b17 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[0] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_DONE b17
+CENSUS_OPENED b14
+CENSUS_REGMEM b14 1 cells named u_regmem: bd_i/card/inst/u/u_regmem
+CENSUS_CELLS b14 *u_regmem/g_region[0].bank_reg* n=164 kinds=RAMB36E2 4 LUT6 11 LUT4 124 LUT2 3 LUT3 2 LUT5 20
+CENSUS_CELLS b14 *u_regmem/g_region[0].g_shadow* n=0 kinds=
+CENSUS_CELLS b14 *u_regmem/g_region[0]* n=164 kinds=RAMB36E2 4 LUT6 11 LUT4 124 LUT2 3 LUT3 2 LUT5 20
+CENSUS_CELLS b14 *u_regmem/sh_* n=0 kinds=
+CENSUS_BANK0 b14 n=164 first=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_1 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_10 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_11
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 ENARDEN net=bd_i/card/inst/u/u_regmem/p_124_out
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[3] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[2] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[1] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEA[0] net=bd_i/card/inst/u/u_regmem/<const0>
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[7] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_77_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[6] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_77_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[5] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_78_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[4] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_78_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[3] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_79_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[2] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_79_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[1] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_80_n_0
+CENSUS_BANKPIN b14 bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0 WEBWE[0] net=bd_i/card/inst/u/u_regmem/g_region[0].bank_reg_1_0_i_80_n_0
+CENSUS_DONE b14
+CENSUS_ALL_DONE
