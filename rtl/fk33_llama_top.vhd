@@ -468,6 +468,20 @@ entity fk33_llama_top is
     -- runs, it has no weight at all, and this generic is not read.
     NORM_W_IMAGE : string := "";
 
+    -- NORM_HBM, 2026-09-23 (plan Task 2 of docs/superpowers/plans/
+    -- 2026-09-23-27b-two-card.md).  NORM_REAL only.  The gain vector of each
+    -- OP_VEC_NORM is READ FROM HBM at the op's accept instead of from the
+    -- elaboration-time `NORM_W_IMAGE` tables, which cost 99 block-RAM tiles
+    -- at 9B and 231 at 27B (more than the part has spare).  Row `r` (the
+    -- descriptor's `const_base`: 2*blk, 2*blk+1, 2*blocks for the final
+    -- norm) is NN 16-bit words at
+    --     bst_const_base + NORM_OFF + r*NN*2,
+    --     NORM_OFF = align4K(gdn_layers * gdn_const_bytes_per_layer),
+    -- i.e. APPENDED to the GDN constants image (tools/pack_gdn_consts.py,
+    -- tools/hbm_map.py).  Fetched on the `bst_*` channel, which the norm
+    -- borrows only while the state store has no read outstanding.
+    NORM_HBM : boolean := false;
+
     -- ==================================================================
     -- THE REAL SwiGLU, NOT THE PRODUCT.  Added 2026-09-19.
     --
@@ -1551,6 +1565,16 @@ architecture rtl of fk33_llama_top is
   signal v_n     : unsigned(VN_W-1 downto 0);
   signal v_exp_a, v_exp_b : signed(EXP_W-1 downto 0);
   signal v_reg_a, v_reg_b, v_reg_d : unsigned(7 downto 0);
+  signal v_cb : unsigned(31 downto 0);   -- the norm ROW on OP_VEC_NORM
+
+  -- NORM_HBM: the norm gain fetch's side of the `bst_*` read channel, and the
+  -- state store's side after the mux (`gnm`).  With NORM_HBM false the mux is
+  -- a wire (`gnp`) and the nf_* signals are neither driven nor read.
+  signal nf_arvalid, nf_rready, nf_want : std_logic := '0';
+  signal nf_araddr  : std_logic_vector(32 downto 0) := (others => '0');
+  signal nf_arlen   : std_logic_vector(7 downto 0) := (others => '0');
+  signal nf_own, nf_arready, nf_rvalid : std_logic := '0';
+  signal sst_arready, sst_rvalid : std_logic := '0';
   signal vi_epoch : unsigned(EPOCH_W-1 downto 0);
   signal vi_yexp  : signed(EXP_W-1 downto 0);
   signal vi_code  : std_logic_vector(3 downto 0);
@@ -1805,14 +1829,81 @@ begin
 
   -- `bst_*` outputs, from the shadows declared above.
   bst_busy <= bst_busy_i;  bst_done <= bst_done_i;  bst_err <= bst_err_i;
-  bst_arvalid <= bst_arvalid_i;  bst_araddr <= bst_araddr_i;
-  bst_arlen <= bst_arlen_i;  bst_arsize <= bst_arsize_i;
-  bst_arburst <= bst_arburst_i;  bst_rready <= bst_rready_i;
+  -- The READ side goes through `gnp`/`gnm` below (NORM_HBM).
   bst_awvalid <= bst_awvalid_i;  bst_awaddr <= bst_awaddr_i;
   bst_awlen <= bst_awlen_i;  bst_awsize <= bst_awsize_i;
   bst_awburst <= bst_awburst_i;  bst_wvalid <= bst_wvalid_i;
   bst_wdata <= bst_wdata_i;  bst_wstrb <= bst_wstrb_i;
   bst_wlast <= bst_wlast_i;  bst_bready <= bst_bready_i;
+
+  gnp : if not NORM_HBM generate
+    bst_arvalid <= bst_arvalid_i;  bst_araddr <= bst_araddr_i;
+    bst_arlen <= bst_arlen_i;  bst_arsize <= bst_arsize_i;
+    bst_arburst <= bst_arburst_i;  bst_rready <= bst_rready_i;
+    sst_arready <= bst_arready;  sst_rvalid <= bst_rvalid;
+  end generate;
+
+  -- THE `bst_*` READ MUX, NORM_HBM only.  Two read masters share the channel:
+  -- the GDN state store and the norm gain fetch (`gvr.gwh`).  The norm takes
+  -- it only when the store has NO read burst outstanding and no ARVALID up,
+  -- and holds it until its own last burst's RLAST; while it owns the channel
+  -- the store sees ARREADY and RVALID low, which AXI lets a master wait on
+  -- indefinitely.  RDATA/RLAST/RRESP are shared wires; only the VALID/READY
+  -- pair is steered.  The WRITE side is the store's alone and is not touched.
+  -- By dependency a norm and a B job never overlap (the norm's source is the
+  -- residual the B job's block produced), so in a correct program the mux
+  -- never makes either wait; it is here so that property is the hardware's
+  -- and not the program's.  The card's `bc_port_grant` requests on
+  -- `bst_arvalid` and counts outstanding bursts itself, so nothing outside
+  -- this file changes.
+  gnm : if NORM_HBM generate
+    signal own  : std_logic := '0';
+    signal sout : natural range 0 to 255 := 0;   -- store reads outstanding
+  begin
+    nf_own      <= own;
+    bst_arvalid <= nf_arvalid when own = '1' else bst_arvalid_i;
+    bst_araddr  <= nf_araddr  when own = '1' else bst_araddr_i;
+    bst_arlen   <= nf_arlen   when own = '1' else bst_arlen_i;
+    bst_arsize  <= "101"      when own = '1' else bst_arsize_i;  -- 32 B
+    bst_arburst <= "01"       when own = '1' else bst_arburst_i; -- INCR
+    bst_rready  <= nf_rready  when own = '1' else bst_rready_i;
+    sst_arready <= bst_arready and not own;
+    sst_rvalid  <= bst_rvalid  and not own;
+    nf_arready  <= bst_arready and own;
+    nf_rvalid   <= bst_rvalid  and own;
+
+    p_own : process(clk) is
+      variable n : integer;
+    begin
+      if rising_edge(clk) then
+        if rst = '1' then
+          own  <= '0';
+          sout <= 0;
+        else
+          n := sout;
+          if bst_arvalid_i = '1' and sst_arready = '1' then n := n + 1; end if;
+          if sst_rvalid = '1' and bst_rready_i = '1' and bst_rlast = '1' then
+            n := n - 1;
+          end if;
+          sout <= n;
+          -- Take: the store is quiet NOW (no burst owed, no address up), so
+          -- no store handshake can complete on this edge.  Give back: the
+          -- norm has issued and received everything (`nf_want` falls only
+          -- then), so no norm burst is owed either.
+          if own = '0' and nf_want = '1' and sout = 0 and bst_arvalid_i = '0' then
+            own <= '1';
+          elsif own = '1' and nf_want = '0' then
+            own <= '0';
+          end if;
+          assert not (own = '1' and sout /= 0)
+            report "llama_top: the norm gain fetch owns bst_* while the state "
+                 & "store still has a read burst outstanding.  Its data beats "
+                 & "would be delivered to the norm."
+            severity failure;
+        end if;
+      end if;
+    end process;
+  end generate;
 
   -- ======================================================================
   -- THE BANNERS.  Printed once, at time zero, at severity note, so that no
@@ -2421,6 +2512,7 @@ begin
       job_epoch => job_epoch, job_src => job_src, job_src2 => job_src2,
       job_dst => job_dst, job_dst_off => job_dst_off,
       job_n_rows => job_n_rows, job_step => job_step,
+      job_const_base => job_const_base,
       u_start => u_start(U_V), u_ack => u_ack(U_V),
       u_ready => u_ready(U_V), u_done => u_done(U_V), u_err => u_err(U_V),
       u_done_epoch => vi_epoch, u_y_exp => vi_yexp,
@@ -2430,6 +2522,7 @@ begin
       v_done => v_done, v_ack => v_ack, v_err => v_err, v_y_exp => v_y_exp,
       v_n => v_n, v_exp_a => v_exp_a, v_exp_b => v_exp_b,
       v_reg_a => v_reg_a, v_reg_b => v_reg_b, v_reg_d => v_reg_d,
+      v_cb => v_cb,
       iss_lat => open, exp_lat => open, err_code => vi_code);
 
   u_done_epoch((U_V+1)*EPOCH_W-1 downto U_V*EPOCH_W)
@@ -3162,8 +3255,19 @@ begin
       -- separate element passes several hundred cycles apart, so a `w_mant`
       -- that moved mid-operation would mix two gains into one plausible wrong
       -- vector.
-      signal nidx : natural range 0 to NW_N-1 := 0;
-      signal novf : boolean := false;
+      --
+      -- CORRECTION 2026-09-23: THE COUNTER ABOVE IS GONE.  It was right only
+      -- for a program that starts at step 0, and the two-card split does not
+      -- (docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-
+      -- counter.md: card 1's first norm got block 0's gain).  The descriptor
+      -- names its row in `const_base`, and `seq_vec_issue` latches it at the
+      -- issue and holds it (`v_cb`) for the whole op, so the pinning argument
+      -- above is kept by construction.  `nrow` is that row, latched again at
+      -- the accept; `nrow_c` is it clamped into the elaboration-time table.
+      signal nrow   : natural range 0 to 65535 := 0;
+      signal nrow_c : natural range 0 to NW_N-1 := 0;
+      -- NORM_HBM: sticky per op, a non-OKAY RRESP on the gain fetch.
+      signal nerr   : std_logic := '0';
       -- `wsel`, the 65,536-bit flat gain the unit's `w_mant` port used to
       -- take, IS GONE (TRACK RMSWIRE).  So is the branch that chose how to
       -- drive it.  The gain now reaches the unit as a word stream, and the
@@ -3173,7 +3277,7 @@ begin
       v_ready(vi) <= rdy;
       v_done(vi)  <= dn;
       v_taken(vi) <= tk;
-      v_err(vi)   <= '0';
+      v_err(vi)   <= nerr;
       v_y_exp((vi+1)*EXP_W-1 downto vi*EXP_W) <= std_logic_vector(yexp);
 
       obs_norm_pub <= p_pub;
@@ -3186,7 +3290,11 @@ begin
       nwsay : if SHOUT generate
         process is
         begin
-          if NORM_W_IMAGE = "" then
+          if NORM_HBM then
+            report "llama_top: the D-vec norm gain is read from HBM "
+                 & "(NORM_HBM), row = the descriptor's const_base."
+              severity note;
+          elsif NORM_W_IMAGE = "" then
             report "llama_top: the D-vec norm gain is the SYNTHETIC RAMP "
                  & "(NORM_W_IMAGE empty).  R_XN is not comparable against a "
                  & "model-derived reference."
@@ -3349,39 +3457,35 @@ begin
       -- computed with gain k+1 -- every seam wrong, none of them structurally
       -- so.  Advancing at `dn and v_ack` leaves `nidx` pinned at k for the
       -- whole of op k and moves it while no unit is reading.
+      -- CORRECTION 2026-09-23: `nsel` no longer counts.  The row comes from
+      -- the descriptor (`nrow`, latched in `nproc` at the accept) and the
+      -- gain load STARTS at the accept (`tk`), not at the previous op's
+      -- completion.  The off-by-one described above was a property of an
+      -- index that moved; `nrow` does not move during an op, and the load
+      -- finishes before `S_GO` releases `r_go` (it waits on `wbusy`), which
+      -- is before any `w_mant` read.  What remains here is the range check.
       nsel : process(clk) is
       begin
         if rising_edge(clk) then
-          if rst = '1' or go = '1' then
-            nidx <= 0;
-            novf <= false;
-          elsif dn = '1' and v_ack(vi) = '1' then
-            if nidx + 1 < NW_N then
-              nidx <= nidx + 1;
-            else
-              -- ONE PAST THE END.  Not an error yet: the LAST norm of a token
-              -- completes here and nothing more is coming.  It becomes an
-              -- error only if another norm is then accepted, which is what
-              -- the assert below catches.  Wrapping instead would serve the
-              -- tail of a token the gains of its head, silently.
-              novf <= true;
-            end if;
+          if tk = '1' then
+            assert v_cb(31 downto 16) = 0
+              report "llama_top: OP_VEC_NORM const_base (the norm row) is "
+                   & "above 65535; the descriptor is not a norm row."
+              severity failure;
+            assert NORM_HBM or NORM_W_IMAGE = "" or nrow < NW_N
+              report "llama_top: OP_VEC_NORM names norm row "
+                   & integer'image(nrow) & " and the norm gain image "
+                   & NORM_W_IMAGE & " holds " & integer'image(NW_N)
+                   & " rows.  It was built for a different BLOCKS, or the "
+                   & "program's const_base is not 2*blk (+1 for the FFN "
+                   & "norm, 2*blocks for the final norm)."
+              severity failure;
+            assert not NORM_HBM or nrow < 2*SHAPE.blocks + 1
+              report "llama_top: OP_VEC_NORM names norm row "
+                   & integer'image(nrow) & ", past the model's "
+                   & integer'image(2*SHAPE.blocks + 1) & " rows."
+              severity failure;
           end if;
-
-          -- `wsel` USED TO BE DRIVEN HERE, `wsel <= NW_TBL(nidx)`, one cycle
-          -- behind `nidx`.  It is now driven by `gwc` or `gwm` below; see the
-          -- comment on `gwm` for why.  The instant is unchanged in the empty
-          -- branch and is a load STARTED at this instant in the populated
-          -- one, and the budget that makes that safe is the same one this
-          -- comment used to state: the earliest `w_mant` read is rmsnorm_rs's
-          -- pass 2, after the n+2 region reads, S_GO and the whole rsqrt.
-
-          assert not (tk = '1' and novf and NORM_W_IMAGE /= "")
-            report "llama_top: the token issued more OP_VEC_NORMs than the "
-                 & "norm gain image " & NORM_W_IMAGE & " holds ("
-                 & integer'image(NW_N) & ").  It was built for a different "
-                 & "BLOCKS."
-            severity failure;
         end if;
       end process;
 
@@ -3453,7 +3557,7 @@ begin
       -- drawn against any more.  The comparable control for TRACK RMSWIRE is
       -- the SAME extraction taken from the parent commit, drawn in the same
       -- session, which is what `hw/fk33/results/rmswire_2026-08-30/` holds.
-      gwl : block is
+      gwl : if not NORM_HBM generate
         -- THE RESHAPE.  `NW_TBL` is 65 words of 65,536 bits, which is the
         -- one aspect ratio no memory primitive on this device can hold: a
         -- RAMB36 is at most 72 bits wide (512x72) and a URAM288 is 4096x72,
@@ -3775,7 +3879,7 @@ begin
         signal wix   : std_logic_vector(IXW-1 downto 0) := (others => '0');
         signal wel   : natural range 0 to NN-1 := 0;   -- element being issued
         signal wel_d : natural range 0 to NN-1 := 0;   -- ... one cycle later
-        signal wav   : std_logic := '1';   -- an address is being issued
+        signal wav   : std_logic := '0';   -- an address is being issued
         signal wdv   : std_logic := '0';   -- ... and its datum is due now
       begin
         -- The word the unit's bank port takes this cycle.  `wdv`, `wel_d` and
@@ -3861,7 +3965,7 @@ begin
           if rising_edge(clk) then
             -- Stage 1.  `wrd`/`wel_d`/`wdv` become a MATCHED TRIPLE next
             -- cycle: all three are derived from the same cycle's `wel`/`wav`.
-            wix   <= ixrom(nidx*NWORD + (wel / GW));
+            wix   <= ixrom(nrow_c*NWORD + (wel / GW));
             wel_d <= wel;
             wdv   <= wav;
 
@@ -3876,7 +3980,15 @@ begin
 
             -- Address sequencing.  LAST, so the restart wins over stage 2 on
             -- the cycle they coincide.
-            if rst = '1' or go = '1' or (dn = '1' and v_ack(vi) = '1') then
+            if rst = '1' then
+              -- Nothing to load until a norm is accepted (2026-09-23).
+              wel   <= 0;
+              wav   <= '0';
+              wdv   <= '0';
+              wbusy <= '0';
+            elsif tk = '1' then
+              -- The load STARTS AT THE ACCEPT, from the descriptor's row
+              -- (`nrow_c`, latched on the edge that raised `tk`).
               wel   <= 0;
               wav   <= '1';
               wdv   <= '0';
@@ -3908,12 +4020,139 @@ begin
               report "llama_top: OP_VEC_NORM started while the gain load was "
                    & "still running.  The norm would be computed against a "
                    & "half-shifted gain vector.  The load needs "
-                   & integer'image(NN + 2) & " cycles from the completion "
-                   & "of the previous norm op."
+                   & integer'image(NN + 2) & " cycles from the op's accept."
               severity failure;
           end if;
         end process;
-      end block;
+      end generate;
+
+      -- ==================================================================
+      -- THE GAIN FROM HBM.  NORM_HBM, 2026-09-23 (plan Task 2).
+      --
+      -- The same job as `gwl` -- fill rmsnorm_bf_mem's gain bank, one element
+      -- per cycle through `nw_*`, starting at the accept, `wbusy` high until
+      -- the last element is written -- with the row read from HBM instead of
+      -- an elaboration-time table.  Row `nrow` is NN 16-bit words, element e
+      -- at byte 2e, at `bst_const_base + NORM_OFF + nrow*NN*2`.  Each 256-bit
+      -- beat is sixteen elements, lowest address in bits 15:0, which is how
+      -- tools/pack_gdn_consts.py writes it (little-endian int16).
+      --
+      -- A row is NN/16 beats.  Each burst is at most 16 beats (the AXI3 cap
+      -- on this slave), no more than the row has left, and never past the
+      -- next 4 KB boundary.  At the model shapes (NN*2 = 8,192 / 10,240 B,
+      -- base and NORM_OFF 4 KB aligned) that is always 16; the small bench
+      -- shapes are where the other two limits bite.  At most two bursts are
+      -- outstanding; the drain is one element per cycle, so a deeper queue
+      -- would only park beats on the slave.
+      --
+      -- The load runs beside S_RD (both about NN cycles), so what it adds to
+      -- the op is the first burst's latency.
+      gwh : if NORM_HBM generate
+        constant ROWB  : natural := NN*2;
+        constant NBEAT : natural := NN/16;
+        function align4k(n : natural) return natural is
+        begin
+          return ((n + 4095) / 4096) * 4096;
+        end function;
+        -- MUST AGREE with tools/hbm_map.py `norm_const_offset`, which is
+        -- derived from the same two quantities (the store's CONST_STRIDE is
+        -- BST_CNST_B = KC*QKVN*2 + 512 in `gb_real`).
+        constant NORM_OFF : natural := align4k(n_gdn_blocks(SHAPE)
+                            * (SHAPE.conv_kernel*qkv_dim(SHAPE)*2 + 512));
+        constant bad_norm_hbm_nn_not_16_multiple : natural := 0 - (NN mod 16);
+        constant bad_norm_hbm_without_norm_real : natural
+               := 0 - boolean'pos(not NORM_REAL);
+        signal fa    : unsigned(32 downto 0) := (others => '0');
+        signal rem_b : natural range 0 to NBEAT := 0;   -- beats not yet requested
+        signal blen  : natural range 1 to 16 := 16;     -- the burst being requested
+        signal outst : natural range 0 to 3 := 0;
+        signal arv   : std_logic := '0';
+        signal want  : std_logic := '0';
+        signal hb    : std_logic_vector(255 downto 0) := (others => '0');
+        signal hcnt  : natural range 0 to 16 := 0;
+        signal el    : natural range 0 to NN := 0;
+        signal we_r  : std_logic := '0';
+        signal wa_r  : natural range 0 to NN-1 := 0;
+        signal wd_r  : std_logic_vector(MANT_W-1 downto 0) := (others => '0');
+        signal rrdy  : std_logic;
+      begin
+        nw_we <= we_r;
+        nw_wa <= std_logic_vector(to_unsigned(wa_r, LOG2N));
+        nw_wd <= wd_r;
+        nf_arvalid <= arv;
+        nf_araddr  <= std_logic_vector(fa);
+        nf_arlen   <= std_logic_vector(to_unsigned(blen - 1, 8));
+        nf_want    <= want;
+        -- Accept a beat when the holding register is empty or is writing its
+        -- last element this cycle.
+        rrdy <= '1' when want = '1' and nf_own = '1' and hcnt <= 1 else '0';
+        nf_rready <= rrdy;
+
+        fetch : process(clk) is
+          variable o  : integer;
+          variable to4k, l : natural;
+        begin
+          if rising_edge(clk) then
+            we_r <= '0';
+            if we_r = '1' and wa_r = NN-1 then
+              wbusy <= '0';
+            end if;
+            if rst = '1' then
+              want <= '0'; arv <= '0'; rem_b <= 0; outst <= 0;
+              hcnt <= 0; el <= 0; wbusy <= '0'; nerr <= '0';
+            elsif tk = '1' then
+              -- `nrow` was latched on the edge that raised `tk`.
+              fa    <= unsigned(bst_const_base) + to_unsigned(NORM_OFF, 33)
+                       + to_unsigned(nrow*ROWB, 33);
+              rem_b <= NBEAT; outst <= 0; arv <= '0';
+              hcnt  <= 0; el <= 0;
+              want  <= '1'; wbusy <= '1'; nerr <= '0';
+            else
+              o := outst;
+              -- AR: the address is held stable while ARVALID is up.
+              if arv = '1' then
+                if nf_arready = '1' then
+                  arv   <= '0';
+                  fa    <= fa + to_unsigned(blen*32, 33);
+                  rem_b <= rem_b - blen;
+                  o     := o + 1;
+                end if;
+              elsif want = '1' and nf_own = '1' and rem_b > 0 and outst < 2 then
+                to4k := (4096 - to_integer(fa(11 downto 0))) / 32;
+                l := 16;
+                if rem_b < l then l := rem_b; end if;
+                if to4k < l then l := to4k; end if;
+                blen <= l;
+                arv  <= '1';
+              end if;
+              -- Drain the holding register, one element per cycle.
+              if hcnt > 0 then
+                we_r <= '1';
+                wa_r <= el;
+                wd_r <= hb(MANT_W-1 downto 0);
+                hb   <= std_logic_vector(to_unsigned(0, MANT_W)) & hb(255 downto MANT_W);
+                el   <= el + 1;
+                hcnt <= hcnt - 1;
+              end if;
+              -- R: a new beat overrides the shift above.
+              if nf_rvalid = '1' and rrdy = '1' then
+                hb   <= bst_rdata;
+                hcnt <= 16;
+                if bst_rlast = '1' then o := o - 1; end if;
+                if bst_rresp /= "00" then nerr <= '1'; end if;
+              end if;
+              outst <= o;
+              if want = '1' and rem_b = 0 and outst = 0 and arv = '0' then
+                want <= '0';
+              end if;
+            end if;
+            assert not (r_go = '1' and wbusy = '1')
+              report "llama_top: OP_VEC_NORM started while the HBM gain fetch "
+                   & "was still running."
+              severity failure;
+          end if;
+        end process;
+      end generate;
 
       nproc : process(clk) is
         type st_t is (S_IDLE, S_RD, S_GO, S_RUN, S_WR, S_DONE);
@@ -3964,6 +4203,14 @@ begin
                          & "square."
                     severity failure;
                   r_xe <= to_integer(v_exp_a);
+                  -- The norm ROW, by value, for the gain load that starts on
+                  -- the next edge (`tk`).  See `nsel`.
+                  nrow <= to_integer(v_cb(15 downto 0));
+                  if to_integer(v_cb(15 downto 0)) < NW_N then
+                    nrow_c <= to_integer(v_cb(15 downto 0));
+                  else
+                    nrow_c <= 0;
+                  end if;
                   k    := 0;
                   ssq  := (others => '0');
                   st   := S_RD;
@@ -6283,10 +6530,10 @@ begin
           cv_seg => cv_seg, cv_grp => cv_grp, cv_x => st_cv_x,
           cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
           cvw_data => js_cvw_data, tok_adv => tok_adv_i,
-          r_arvalid => bst_arvalid_i, r_arready => bst_arready,
+          r_arvalid => bst_arvalid_i, r_arready => sst_arready,
           r_araddr => bst_araddr_i, r_arlen => bst_arlen_i,
           r_arsize => bst_arsize_i, r_arburst => bst_arburst_i,
-          r_rvalid => bst_rvalid, r_rready => bst_rready_i,
+          r_rvalid => sst_rvalid, r_rready => bst_rready_i,
           r_rdata => bst_rdata, r_rlast => bst_rlast, r_rresp => bst_rresp,
           w_awvalid => bst_awvalid_i, w_awready => bst_awready,
           w_awaddr => bst_awaddr_i, w_awlen => bst_awlen_i,

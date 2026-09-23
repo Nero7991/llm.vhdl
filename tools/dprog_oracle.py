@@ -552,9 +552,9 @@ class Oracle(object):
         """C5: `ordinal` and `const_base` against the LAYER the seam belongs
         to, which comes from `seam_map`'s own `-L` suffix.
 
-        `const_base` is inert in `llama_top` today (mutations 4b and 11 of
-        the layer-program write-up pass silently), so nothing else in the
-        repository can see it.
+        `const_base` on a norm was inert in `llama_top` until 2026-09-23
+        (mutations 4b and 11 of the layer-program write-up passed silently);
+        it is now the norm gain ROW the RTL reads (plan Task 2).
 
         `ordinal` is NOT inert on a B or C job -- it reaches the unit as the
         layer index, and mutation 4 changed the answer.  Until 2026-08-29 it
@@ -582,9 +582,15 @@ class Oracle(object):
                         "descriptor ordinal=%d" % (L, n_c, d.ordinal))
                 n_c += 1
             elif d.opcode == OP_VEC_NORM and L is not None:
-                self.ck(d.const_base == L, "C5-constbase",
-                        "%s: seam is layer %d, descriptor const_base=%d "
-                        "(the norm-weight selector)" % (rtl, L, d.const_base))
+                # `const_base` IS the gain ROW (2026-09-23, plan Task 2):
+                # 2L for the block's first norm (`attn_norm`), 2L+1 for the
+                # FFN norm (`attn_post_norm`).  rtl/llama_top.vhd selects the
+                # gain by it, so this is no longer a convention.
+                row = 2 * L + (1 if base == "attn_post_norm" else 0)
+                self.ck(d.const_base == row, "C5-constbase",
+                        "%s: seam is layer %d (%s), so the norm gain row is %d; "
+                        "descriptor const_base=%d"
+                        % (rtl, L, base, row, d.const_base))
                 # CONVENTION, not derivation, and labelled as such: `ordinal`
                 # is an 8-bit field and every generator in the repository
                 # stamps `blk mod 64` on a block norm.  Only the TAIL norm is

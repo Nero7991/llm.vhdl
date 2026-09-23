@@ -253,6 +253,14 @@ entity {ent} is
     bst_const_base : in  std_logic_vector(32 downto 0);
     bst_arready    : in  std_logic;
     bst_rvalid     : in  std_logic;
+    -- SEAM REPAIR 2026-09-23 (plan Task 2), the FOURTH instance of the class
+    -- above.  `llama_top` now puts a read mux (`gnm`, NORM_HBM) between the
+    -- store and `bst_*`, so the store's port map binds `r_arready` and
+    -- `r_rvalid` to these two, declared at llama_top's architecture level.
+    -- Without NORM_HBM they are `bst_arready`/`bst_rvalid` through `gnp`, so
+    -- this OOC top is the same design with the wire moved to its boundary.
+    sst_arready    : in  std_logic;
+    sst_rvalid     : in  std_logic;
     bst_rdata      : in  std_logic_vector(255 downto 0);
     bst_rlast      : in  std_logic;
     bst_rresp      : in  std_logic_vector(1 downto 0);

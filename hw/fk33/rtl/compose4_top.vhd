@@ -33,8 +33,8 @@
 --   c_attn   attn_block        70 ports,  68 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
 --   d_opdec  seq_opdec         43 ports,  41 exported   (defaults)
---   d_lock   seq_region_lock   32 ports,  30 exported   (defaults)
---   d_viss   seq_vec_issue     39 ports,  37 exported   (defaults)
+--   d_lock   seq_region_lock   35 ports,  33 exported   (defaults)
+--   d_viss   seq_vec_issue     41 ports,  39 exported   (defaults)
 --   d_vres   seq_vec_res       22 ports,  20 exported   (defaults)
 --   d_norm   ooc_normadapt     26 ports,  24 exported   (defaults)
 --
@@ -1179,6 +1179,9 @@ entity compose4_top is
     d_lock_exp_rd_seg      : in    unsigned(1 downto 0);
     d_lock_exp_rd_data     : out   signed((16)-1 downto 0);
     d_lock_exp_rd_valid    : out   std_logic;
+    d_lock_cap_valid       : out   std_logic;
+    d_lock_cap_region      : out   unsigned(7 downto 0);
+    d_lock_cap_exp         : out   signed((16)-1 downto 0);
     d_lock_lock_state      : out   std_logic_vector(2*14-1 downto 0);
     d_lock_viol            : out   std_logic;
     d_lock_viol_ack        : in    std_logic;
@@ -1195,6 +1198,7 @@ entity compose4_top is
     d_viss_job_dst_off     : in    unsigned(31 downto 0);
     d_viss_job_n_rows      : in    unsigned(31 downto 0);
     d_viss_job_step        : in    unsigned((11)-1 downto 0);
+    d_viss_job_const_base  : in    unsigned(31 downto 0);
     d_viss_u_start         : in    std_logic;
     d_viss_u_ack           : in    std_logic;
     d_viss_u_ready         : out   std_logic;
@@ -1219,6 +1223,7 @@ entity compose4_top is
     d_viss_v_reg_a         : out   unsigned(7 downto 0);
     d_viss_v_reg_b         : out   unsigned(7 downto 0);
     d_viss_v_reg_d         : out   unsigned(7 downto 0);
+    d_viss_v_cb            : out   unsigned(31 downto 0);
     d_viss_iss_lat         : out   std_logic;
     d_viss_exp_lat         : out   std_logic;
     d_viss_err_code        : out   std_logic_vector(3 downto 0);
@@ -2443,6 +2448,9 @@ begin
       exp_rd_seg => d_lock_exp_rd_seg,
       exp_rd_data => d_lock_exp_rd_data,
       exp_rd_valid => d_lock_exp_rd_valid,
+      cap_valid => d_lock_cap_valid,
+      cap_region => d_lock_cap_region,
+      cap_exp => d_lock_cap_exp,
       lock_state => d_lock_lock_state,
       viol => d_lock_viol,
       viol_ack => d_lock_viol_ack,
@@ -2465,6 +2473,7 @@ begin
       job_dst_off => d_viss_job_dst_off,
       job_n_rows => d_viss_job_n_rows,
       job_step => d_viss_job_step,
+      job_const_base => d_viss_job_const_base,
       u_start => d_viss_u_start,
       u_ack => d_viss_u_ack,
       u_ready => d_viss_u_ready,
@@ -2489,6 +2498,7 @@ begin
       v_reg_a => d_viss_v_reg_a,
       v_reg_b => d_viss_v_reg_b,
       v_reg_d => d_viss_v_reg_d,
+      v_cb => d_viss_v_cb,
       iss_lat => d_viss_iss_lat,
       exp_lat => d_viss_exp_lat,
       err_code => d_viss_err_code

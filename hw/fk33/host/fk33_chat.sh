@@ -128,7 +128,11 @@ fi
 # token.dtbl is absent reintroduces exactly the defect above by the back door:
 # a run directory built against the flat manifest would be replayed against a
 # striped image.  Key the cache on the manifest path.
-if [[ ! -f "$RUN/manifest.used" ]] || [[ "$(cat "$RUN/manifest.used")" != "$M/manifest.json" ]]; then
+# Keyed on the GENERATOR too (2026-09-23): a norm's `const_base` became its
+# gain row that day, and a program cached by an older generator names the
+# block there, which the row-indexed RTL reads as the wrong gain.
+GENV="$(sha256sum "$REPO/tools/gen_layer_program.py" | cut -c1-16)"
+if [[ ! -f "$RUN/manifest.used" ]] || [[ "$(cat "$RUN/manifest.used")" != "$M/manifest.json $GENV" ]]; then
     rm -f "$RUN/token.dtbl" "$RUN/token.rel" "$RUN/token.arena"
 fi
 # The token program: generated once per run directory, verified on HBM each time.
@@ -136,7 +140,7 @@ if [[ ! -f "$RUN/token.dtbl" ]]; then
     python3 "$REPO/tools/gen_layer_program.py" --token --shape 9b --manifest "$M/manifest.json" \
         --x-exp 0 --d-table "$RUN/token.dtbl" --rel-file "$RUN/token.rel" \
         --arena-image "$RUN/token.arena" > "$RUN/gen.log" 2>&1
-    printf '%s\n' "$M/manifest.json" > "$RUN/manifest.used"
+    printf '%s\n' "$M/manifest.json $GENV" > "$RUN/manifest.used"
 fi
 ARENA=$(python3 -c "import json;print(hex(json.load(open('$M/manifest.json'))['hbm']['desc_arena_base']))")
 python3 "$REPO/hw/fk33/host/fk33ctl.py" load "$RUN/token.arena" --offset "$ARENA" --verify > "$RUN/arena.log" 2>&1 \

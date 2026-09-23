@@ -11,6 +11,26 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-23 TASK 2 (main session): **the norm gain is selected by the descriptor and read from HBM; in simulation only**
+
+- RTL: `const_base` on an OP_VEC_NORM is the gain ROW (2*blk, 2*blk+1, 2*blocks);
+  `seq_vec_issue` exports it (`v_cb`); `llama_top`'s per-token counter is gone;
+  the load starts at accept. New generic `NORM_HBM` reads the row over `bst_*`
+  (read mux shared with the B state store) from the constants image, no table
+  elaborated. `gen_fk33_card.py` now builds `NORM_HBM=true`; card top and
+  identity bench regenerated.
+- Benches: normrev (kills the pre-fix counter, 4 of 4 landmarks), normhbm,
+  bconst_normhbm, cardtop_normhbm, all bit-exact to their ROM-path landmarks.
+  Two mux mutants do not bite (no program overlaps a norm with a B job).
+- Tools: gen_layer_program emits the row, dprog_oracle C5 checks it, hbm_map
+  derives `norm_const_offset/rows/row_bytes` and places the full image,
+  pack_gdn_consts appends rows from `norm_w_<sfx>.hex`, chat scripts key their
+  program cache on the generator hash.
+- NEXT: re-place each image's constants block with rows (deliberate, new
+  manifests), 9B NORM_HBM card build (build 19), pair without `--pad-norms`,
+  then the 27B build. Details: plan Task 2; the addendum of
+  `docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-counter.md`.
+
 ### 2026-09-23 27B PREP (main session, no subagents): **the plumbing is in, the card does not fit as-is, and the norm-gain ROM is why**
 
 - **Files:** `docs/superpowers/plans/2026-09-23-27b-two-card.md` (THE PLAN, read it first), `tools/model_cfg.py`, `hw/fk33/gen_pcieep.py` / `gen_fk33_card.py` (`FK33_MODEL`, `FK33_C_MAXPOS`), `tools/pack_model_fk33.py` (`--model`, `--card-maxpos`, `--stripe-all-segments`), `tools/pack_gdn_consts.py` (`--shape 27b`), `hw/fk33/gen/{norm_w,qkn}_27b.hex`, `hw/fk33/results/probe27b_2026-09-23/`.

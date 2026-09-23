@@ -489,6 +489,19 @@ def arena_sizes(cfg=None, ncards=1, include_gdn_exp=True,
         gdn_const_bytes_per_layer=gdn_const_b,
         gdn_const_bytes=gdn_layers * gdn_const_b,
         gdn_const_scalar_words_used=gdn_const_scalar_used,
+        # THE NORM GAIN ROWS, 2026-09-23 (plan Task 2 of docs/superpowers/
+        # plans/2026-09-23-27b-two-card.md).  APPENDED to the constants image
+        # at the next 4 KB boundary: row r (2*blk, 2*blk+1, 2*blocks for the
+        # final norm) is `hidden` int16 at norm_const_offset + r*row_bytes.
+        # rtl/llama_top.vhd (NORM_HBM) derives the same offset from the same
+        # two quantities.  `gdn_const_bytes` above stays the GDN part (the
+        # minimum a legacy image must hold); `gdn_const_image_bytes` is what
+        # a new image is and what the placement reserves.
+        norm_const_offset=align_up(gdn_layers * gdn_const_b, PAGE),
+        norm_const_rows=2 * cfg["blocks"] + 1,
+        norm_const_row_bytes=2 * cfg["hidden"],
+        gdn_const_image_bytes=(align_up(gdn_layers * gdn_const_b, PAGE)
+                               + (2 * cfg["blocks"] + 1) * 2 * cfg["hidden"]),
         kv_record_hdr_bytes=ch_b, kv_mantissa_bits=cm_w,
         kv_record_bytes=kv_rec_b,
         kv_bytes_per_layer_per_token=kv_per_layer_per_token,
@@ -645,6 +658,33 @@ def check_arenas(mani, ncards=1):
                 "the GDN constant image: hbm.gdn_const_layers is %d, the %s "
                 "shape has %d GDN layers." % (int(layers), name,
                                                sz["gdn_const_layers"]))
+        # THE NORM ROWS (2026-09-23).  Optional in a manifest -- an image
+        # packed before them has none, and a card built without NORM_HBM does
+        # not read them -- but when declared they must be EXACTLY the derived
+        # layout, because the card derives the offset itself: a manifest that
+        # merely says where it put them cannot move where the card reads.
+        if "norm_const_rows" in hbm:
+            for k in ("norm_const_offset", "norm_const_rows",
+                      "norm_const_row_bytes"):
+                if int(hbm.get(k, -1)) != sz[k]:
+                    fails.append(
+                        "the norm gain rows: hbm.%s is %s and the %s shape "
+                        "derives %d.  The card computes the row address from "
+                        "the shape, so a different layout serves every norm "
+                        "the wrong gain with no address fault."
+                        % (k, hbm.get(k), name, sz[k]))
+            if got < sz["gdn_const_image_bytes"]:
+                fails.append(
+                    "the norm gain rows: hbm.gdn_const_bytes is %d B and the "
+                    "image with its %d norm rows needs %d B."
+                    % (got, sz["norm_const_rows"], sz["gdn_const_image_bytes"]))
+        else:
+            notes.append(
+                "the GDN constant image declares no norm gain rows "
+                "(hbm.norm_const_rows).  A card built with NORM_HBM reads its "
+                "RMSNorm gains from above the GDN layers and would get "
+                "whatever is there; only a NORM_HBM=false bitstream (build 18 "
+                "and older) may run this image.")
     return fails, notes
 
 
@@ -1592,15 +1632,19 @@ def derive_gdn_const_block(mani, ncards=1):
                              "constant image." % k)
     top = int(hbm.get("size", HBM_TOP))
     stack = int(hbm.get("stack_bytes", STACK_LINE))
-    need = align_up(sz["gdn_const_bytes"], PAGE)
+    # The WHOLE image, norm rows included (2026-09-23).
+    need = align_up(sz["gdn_const_image_bytes"], PAGE)
     base = align_down(desc_base - need, PAGE)
     per = int(hbm["kv_bytes_per_token"])
     extents = kv_extents_below(hbm["kv_base"], base, top, stack, per)
     kv_total = sum(x["nbytes"] for x in extents)
     blk = {
         "gdn_const_base": int(base),
-        "gdn_const_bytes": int(sz["gdn_const_bytes"]),
+        "gdn_const_bytes": int(sz["gdn_const_image_bytes"]),
         "gdn_const_stack": stack_of(base),
+        "norm_const_offset": int(sz["norm_const_offset"]),
+        "norm_const_rows": int(sz["norm_const_rows"]),
+        "norm_const_row_bytes": int(sz["norm_const_row_bytes"]),
         "gdn_const_layers": int(sz["gdn_const_layers"]),
         "gdn_const_bytes_per_layer": int(sz["gdn_const_bytes_per_layer"]),
         "gdn_const_words_per_layer": int(sz["gdn_const_words_per_layer"]),

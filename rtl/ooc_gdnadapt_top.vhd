@@ -163,6 +163,14 @@ entity ooc_gdnadapt is
     bst_const_base : in  std_logic_vector(32 downto 0);
     bst_arready    : in  std_logic;
     bst_rvalid     : in  std_logic;
+    -- SEAM REPAIR 2026-09-23 (plan Task 2), the FOURTH instance of the class
+    -- above.  `llama_top` now puts a read mux (`gnm`, NORM_HBM) between the
+    -- store and `bst_*`, so the store's port map binds `r_arready` and
+    -- `r_rvalid` to these two, declared at llama_top's architecture level.
+    -- Without NORM_HBM they are `bst_arready`/`bst_rvalid` through `gnp`, so
+    -- this OOC top is the same design with the wire moved to its boundary.
+    sst_arready    : in  std_logic;
+    sst_rvalid     : in  std_logic;
     bst_rdata      : in  std_logic_vector(255 downto 0);
     bst_rlast      : in  std_logic;
     bst_rresp      : in  std_logic_vector(1 downto 0);
@@ -719,10 +727,10 @@ begin
           cv_seg => cv_seg, cv_grp => cv_grp, cv_x => st_cv_x,
           cvw_en => js_cvw_en, cvw_seg => js_cvw_seg, cvw_grp => js_cvw_grp,
           cvw_data => js_cvw_data, tok_adv => tok_adv_i,
-          r_arvalid => bst_arvalid_i, r_arready => bst_arready,
+          r_arvalid => bst_arvalid_i, r_arready => sst_arready,
           r_araddr => bst_araddr_i, r_arlen => bst_arlen_i,
           r_arsize => bst_arsize_i, r_arburst => bst_arburst_i,
-          r_rvalid => bst_rvalid, r_rready => bst_rready_i,
+          r_rvalid => sst_rvalid, r_rready => bst_rready_i,
           r_rdata => bst_rdata, r_rlast => bst_rlast, r_rresp => bst_rresp,
           w_awvalid => bst_awvalid_i, w_awready => bst_awready,
           w_awaddr => bst_awaddr_i, w_awlen => bst_awlen_i,

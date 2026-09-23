@@ -465,6 +465,15 @@ def inject_identity_pin(t):
     -- says R_X is bit-identical across descriptor-latency points, which is
     -- SELF-consistency and is satisfied by a card top that is consistently
     -- wrong.  Only a comparison against the oracle's own number is identity.
+    --
+    -- AT THE DEFAULT GENERICS ONLY (2026-09-23).  The expect file records
+    -- llama_top's landmark at this bench's DEFAULTS, and a wrapper row at other
+    -- generics (sim/tb_fk33_cardtop_normhbm.vhd) cannot meet it however right
+    -- it is.  Such a wrapper pins EXP_* instead, to llama_top's OWN measurement
+    -- at its configuration (a sim/tb_llama_top_*.vhd row), and the P14
+    -- landmark check enforces that, so it is identity by the same argument.
+    -- The default row leaves EXP_X0 at integer'low, which is how this knows.
+    if EXP_X0 = integer'low then
     assert results(0)(NTOK-1)(0) = %d and xsum = %d
       report "tb_fk33_cardtop_ident: IDENTITY FAIL -- the card top does not "
            & "reproduce llama_top's landmark.  got R_X(0) = "
@@ -474,6 +483,7 @@ def inject_identity_pin(t):
            & "moved and sim/cardtop_ident_expect.txt must be re-measured "
            & "from llama_top -- NOT from this bench."
       severity failure;
+    end if;
 
 """ % (r_x0, xsum, r_x0, xsum)
     return sub_once(t, PIN_ANCHOR, pin + PIN_ANCHOR, "identity pin site")

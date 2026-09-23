@@ -65,8 +65,13 @@ done
 for i in 0 1; do
     export FK33_USER=/dev/xdma${i}_user FK33_H2C=/dev/xdma${i}_h2c_0 FK33_C2H=/dev/xdma${i}_c2h_0
     R="${RUN[$i]}"; MAN="${M[$i]}/manifest.json"
-    # THE CACHED TOKEN PROGRAM BELONGS TO ONE MANIFEST.
-    if [[ ! -f "$R/manifest.used" ]] || [[ "$(cat "$R/manifest.used")" != "$MAN" ]] || [[ ! -f "$R/pad.used" ]] || [[ "$(cat "$R/pad.used")" != "padnorms-v1" ]]; then
+    # THE CACHED TOKEN PROGRAM BELONGS TO ONE MANIFEST AND ONE GENERATOR.
+    # The generator key was added 2026-09-23: that day a norm's `const_base`
+    # became its gain ROW (plan Task 2), and a program cached by the older
+    # generator names the BLOCK there, which a card with the row-indexed RTL
+    # would read as the wrong gain, silently.
+    GENV="padnorms-v1 $(sha256sum "$REPO/tools/gen_layer_program.py" | cut -c1-16)"
+    if [[ ! -f "$R/manifest.used" ]] || [[ "$(cat "$R/manifest.used")" != "$MAN" ]] || [[ ! -f "$R/pad.used" ]] || [[ "$(cat "$R/pad.used")" != "$GENV" ]]; then
         rm -f "$R/token.dtbl" "$R/token.rel" "$R/token.arena"
     fi
     if [[ ! -f "$R/token.dtbl" ]]; then
@@ -83,7 +88,7 @@ for i in 0 1; do
             --blocks-range "${RANGE[$i]}" "${HEAD[@]}" "${PAD[@]}" \
             --x-exp 0 --d-table "$R/token.dtbl" --rel-file "$R/token.rel" \
             --arena-image "$R/token.arena" > "$R/gen.log" 2>&1
-        printf '%s\n' "$MAN" > "$R/manifest.used"; printf 'padnorms-v1\n' > "$R/pad.used"
+        printf '%s\n' "$MAN" > "$R/manifest.used"; printf '%s\n' "$GENV" > "$R/pad.used"
     fi
     ARENA=$(python3 -c "import json;print(hex(json.load(open('$MAN'))['hbm']['desc_arena_base']))")
     python3 "$CTL" load "$R/token.arena" --offset "$ARENA" --verify > "$R/arena.log" 2>&1 \

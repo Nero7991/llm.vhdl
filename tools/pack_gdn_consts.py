@@ -199,6 +199,47 @@ def layout_real(name="QWEN35_9B", ncards=1):
 
 SHAPE_RECORD = {"9b": "QWEN35_9B", "27b": "QWEN38_27B"}
 
+# THE NORM GAIN ROWS, 2026-09-23 (plan Task 2 of docs/superpowers/plans/
+# 2026-09-23-27b-two-card.md).  Appended after the GDN layers at
+# hbm_map's `norm_const_offset`, one row of `hidden` int16 per OP_VEC_NORM
+# row (2*blk, 2*blk+1, 2*blocks).  The VALUES are the committed image the
+# card's ROM was elaborated from until then (hw/fk33/gen/norm_w_<sfx>.hex,
+# checked against its generator by tools/check_norm_image_9b.py), so a
+# NORM_HBM card reads bit for bit what a ROM card reads.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NORM_IMAGE = {"9b": os.path.join(REPO_ROOT, "hw", "fk33", "gen", "norm_w_9b.hex"),
+              "27b": os.path.join(REPO_ROOT, "hw", "fk33", "gen", "norm_w_27b.hex")}
+
+
+def norm_rows(shape, path=None):
+    """(offset, rows, row_bytes, bytes) of the norm rows: the layout from
+    hbm_map, the bytes from the hex image, refused unless the two agree."""
+    name = SHAPE_RECORD[shape]
+    sz = HM.arena_sizes(HM.scrape_model_cfg(name))
+    path = path or NORM_IMAGE[shape]
+    with open(path) as f:
+        words = [int(x, 16) for x in f.read().split()]
+    want = sz["norm_const_rows"] * sz["norm_const_row_bytes"] // 2
+    if len(words) != want:
+        raise SystemExit("pack_gdn_consts: %s holds %d words; %s needs %d "
+                         "(%d rows x %d)" % (path, len(words), name, want,
+                                             sz["norm_const_rows"],
+                                             sz["norm_const_row_bytes"] // 2))
+    if any(w < 0 or w > 0xFFFF for w in words):
+        raise SystemExit("pack_gdn_consts: %s holds a word outside 16 bits"
+                         % path)
+    return (sz["norm_const_offset"], sz["norm_const_rows"],
+            sz["norm_const_row_bytes"],
+            np.array(words, dtype="<u2").tobytes())
+
+
+def with_norm_rows(gdn_image, shape, path=None):
+    off, rows, rb, nb = norm_rows(shape, path)
+    if len(gdn_image) > off:
+        raise SystemExit("pack_gdn_consts: the GDN part is %d B, past the norm "
+                         "offset %d" % (len(gdn_image), off))
+    return gdn_image + bytes(off - len(gdn_image)) + nb
+
 
 def layout_9b(ncards=1):
     """The real shape, from BOTH authorities, cross-checked: rtl/model_cfg_pkg
@@ -518,7 +559,8 @@ def check_values(image, lay, src, real=None, norm_reduce="mean"):
 
 MANIFEST_KEYS = ("gdn_const_base", "gdn_const_bytes", "gdn_const_stack",
                  "gdn_const_layers", "gdn_const_bytes_per_layer",
-                 "gdn_const_words_per_layer")
+                 "gdn_const_words_per_layer", "norm_const_offset",
+                 "norm_const_rows", "norm_const_row_bytes")
 
 
 def manifest_extra(lay, image, out_path, mani_path, gguf, exps):
@@ -556,9 +598,9 @@ def check_manifest(mani, lay, image, out_path, mani_path):
     if hbm["kv_extents"] != blk["kv_extents"]:
         bad.append("hbm.kv_extents are not the re-capped extents the "
                    "allocator derives")
-    if int(hbm["gdn_const_bytes"]) != lay.bytes_total:
+    if int(hbm["gdn_const_bytes"]) != len(image):
         bad.append("hbm.gdn_const_bytes %s, the image is %d B"
-                   % (hbm["gdn_const_bytes"], lay.bytes_total))
+                   % (hbm["gdn_const_bytes"], len(image)))
     if hbm["gdn_const_blake2b_128"] != digest(image):
         bad.append("hbm.gdn_const_blake2b_128 is %s, the re-packed image "
                    "hashes to %s" % (hbm["gdn_const_blake2b_128"],
@@ -595,6 +637,14 @@ def run(a):
         return 1
     print("PASS  every decoded value is within half a quantum of the source "
           "and every exponent is the rule's")
+    if a.shape in SHAPE_RECORD:
+        gdn_len = len(image)
+        image = with_norm_rows(image, a.shape, a.norm_image)
+        off, rows, rb, _ = norm_rows(a.shape, a.norm_image)
+        print("norm rows: %d x %d B at +%d (after %d B of GDN layers), from %s;"
+              " image %d B, blake2b-128 %s"
+              % (rows, rb, off, gdn_len, a.norm_image or NORM_IMAGE[a.shape],
+                 len(image), digest(image)))
 
     if a.check:
         bad = []
@@ -933,6 +983,9 @@ def main(argv=None):
                     help="--shape sim: how the 128-element ssm_norm gain "
                          "becomes a 32-element one (gen_llama_top_weights."
                          "reduce_gain)")
+    ap.add_argument("--norm-image", default=None,
+                    help="the norm gain rows to append (default "
+                         "hw/fk33/gen/norm_w_<shape>.hex); 9b/27b only")
     ap.add_argument("--check", action="store_true",
                     help="re-derive the image and the declaration and compare "
                          "against --out / --hex / --manifest; write nothing")

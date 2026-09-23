@@ -401,8 +401,11 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
 
     def emit_ffn(b):
         p = tensor_prefix % b
+        # `const_base` on a norm is its gain ROW (2026-09-23, plan Task 2):
+        # 2*b for a block's first norm, 2*b+1 for the FFN norm, 2*blocks for
+        # the final norm.  rtl/llama_top.vhd selects the gain by it.
         emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
-             blk=b, const_base=b, ordinal=b % 64)
+             blk=b, const_base=2 * b + 1, ordinal=b % 64)
         emit(opcode=OP_A_JOB, src=R_XN, dst=R_G, n_rows=s.ffn,
              n_cols=s.hidden, blk=b, tensor=p + "ffn_gate.weight")
         emit(opcode=OP_A_JOB, src=R_XN, dst=R_U, n_rows=s.ffn,
@@ -430,6 +433,9 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
     # rewritten by the block's own norm), ~2*lo norm passes in time.  The
     # real fix is to index the gain by `const_base` in the RTL; until that
     # build lands this is what makes the split exact.
+    # 2026-09-23: that fix is in the RTL (NORM row = `const_base`, plan
+    # Task 2) and the pads name row 2*lo, so they are harmless there; they
+    # stay needed on every bitstream built before it (build 18 and older).
     # The lock refuses a producer whose offset is not the region's fill
     # pointer (MEASURED: the second X -> XN pad was DESC-refused at step 1),
     # so only the first pad reads X; the rest are IN-PLACE XN -> XN, which the
@@ -438,7 +444,7 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
     # values are never read by anything real.
     for i in range(pad_norms):
         emit(opcode=OP_VEC_NORM, src=(R_X if i == 0 else R_XN), dst=R_XN,
-             n_rows=s.hidden, blk=lo, const_base=lo, ordinal=lo % 64)
+             n_rows=s.hidden, blk=lo, const_base=2 * lo, ordinal=lo % 64)
     if pad_norms:
         # An in-place destination is never released by its own step
         # (rtl/seq_region_lock.vhd:54), so XN would still be VALID at block
@@ -461,7 +467,7 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
         if s.is_attn(b):
             ao = (b - (s.attn_interval - 1)) // s.attn_interval
             emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
-                 blk=b, const_base=b, ordinal=b % 64)
+                 blk=b, const_base=2 * b, ordinal=b % 64)
             emit(opcode=OP_A_JOB, src=R_XN, dst=R_QG, n_rows=s.att_qg,
                  n_cols=s.hidden, blk=b, tensor=p + "attn_q.weight")
             emit(opcode=OP_A_JOB, src=R_XN, dst=R_KIN, n_rows=s.att_kv,
@@ -478,7 +484,7 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
         else:
             go = b - (b + 1) // s.attn_interval
             emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
-                 blk=b, const_base=b, ordinal=b % 64)
+                 blk=b, const_base=2 * b, ordinal=b % 64)
             # THE THREE-WAY qkv SPLIT.  q | k | v at three offsets in ONE
             # region, so each segment gets its own y_exp -- that is what
             # `seq_opdec`'s MSEG mechanism infers from `dst_offset`.  The
@@ -534,7 +540,7 @@ def build_plan(s, tensor_prefix="blk.%d.", qkv_fused=False, lm_windows=None,
         build_rel(steps)
         return steps
     emit(opcode=OP_VEC_NORM, src=R_X, dst=R_XN, n_rows=s.hidden,
-         blk=s.blocks, const_base=s.blocks, ordinal=0)
+         blk=s.blocks, const_base=2 * s.blocks, ordinal=0)
     # THE LM HEAD, one A job per row window.
     #
     # `dst` is R_NONE and FLG_TO_SMP on EVERY window, not only the first or

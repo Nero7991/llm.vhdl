@@ -688,6 +688,10 @@ the workaround; the fix is to index by the step's block. **When a unit keeps
 a counter that a descriptor field could replace, the counter is a latent
 split bug**, and the bench that finds it runs a program from the middle.
 `docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-counter.md`.
+**FIXED IN RTL 2026-09-23, NOT YET ON SILICON:** the row is the norm's
+`const_base` (2*blk, 2*blk+1, 2*blocks) and the card reads it from HBM
+(`NORM_HBM`). A program generated before that names the BLOCK there, which
+the new RTL reads as the wrong gain; `dprog_oracle` C5 refuses it.
 
 **AN `mmap` ACCESS TO THE USER BAR HITS AN AUTO-INCREMENTING REGISTER TWICE.**
 MEASURED the same day: a python probe reading the seam window through an

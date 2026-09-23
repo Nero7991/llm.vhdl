@@ -367,6 +367,16 @@ entity tb_fk33_cardtop_ident is
     -- because `llama_top`'s norm gain has no other way in: there is no port
     -- and no region for it.
     NORM_W_IMAGE : string := "";
+    -- 2026-09-23 (plan Task 2): name the norm rows in REVERSE in the
+    -- descriptors (`const_base`).  Paired with an image whose rows are stored
+    -- in reverse it must reproduce the forward landmarks bit for bit; the
+    -- old per-token counter fails it.  See sim/tb_llama_top_normrev.vhd.
+    NORM_ROW_REV : boolean := false;
+    -- 2026-09-23 (plan Task 2): the DUT reads each norm's gain row from HBM
+    -- (`rtl/llama_top.vhd` NORM_HBM).  The bench places NORM_W_IMAGE's rows
+    -- in its `bst_*` memory model at bst_const_base + NORM_OFF and gives the
+    -- DUT NO image, so a pass cannot come from the elaboration-time tables.
+    NORM_HBM : boolean := false;
     -- THE REAL SwiGLU ON THE D-VEC SWG OP.  A pass-through to the generic of
     -- the same name in rtl/llama_top.vhd (added 2026-09-19): true puts
     -- rtl/swiglu_mem.vhd on OP_VEC_SWG in place of the `g*u / 2**MANT_W`
@@ -700,7 +710,7 @@ architecture tb of tb_fk33_cardtop_ident is
 
   constant SHAPE  : shape_t := mk_shape_scaled(BLOCKS, ATTN_INT, ATTN_HD);
   constant NSTEP  : natural := n_steps(SHAPE);
-  constant TBL    : sched_tbl_t := build_table(SHAPE);
+  constant TBL    : sched_tbl_t := build_table(SHAPE, NORM_ROW_REV);
   constant PLAN   : plan_t := build_plan(SHAPE);
   constant REGMAX : positive := region_max(SHAPE);
 
@@ -1228,10 +1238,22 @@ architecture tb of tb_fk33_cardtop_ident is
   constant BST_CNST   : natural := BST_KC*BST_QKVN*2 + 512;
   constant BST_CBASE  : natural :=
       ((BST_NLY*BST_STRIDE + 4095) / 4096) * 4096;
+  -- NORM_HBM: the norm rows, APPENDED to the constants image 4 KB aligned.
+  -- Derived here from the bench's own geometry, independently of the DUT's
+  -- NORM_OFF, so a disagreement between the two is a wrong gain and a moved
+  -- landmark, not a silent agreement.
+  constant BST_NOFF   : natural := ((BST_NLY*BST_CNST + 4095) / 4096) * 4096;
+  constant BST_NROW   : natural := 2*SHAPE.blocks + 1;
+  constant BST_ROWB   : natural := SHAPE.hidden*2;
   function bst_total_bytes return natural is
   begin
-    if B_CONST_HBM then return BST_CBASE + BST_NLY*BST_CNST;
+    if NORM_HBM then    return BST_CBASE + BST_NOFF + BST_NROW*BST_ROWB;
+    elsif B_CONST_HBM then return BST_CBASE + BST_NLY*BST_CNST;
     else                return BST_NLY*BST_STRIDE; end if;
+  end function;
+  function dut_norm_image return string is
+  begin
+    if NORM_HBM then return ""; else return NORM_W_IMAGE; end if;
   end function;
   constant BST_BEATS  : natural :=
       (bst_total_bytes + BST_BEAT_B - 1) / BST_BEAT_B;
@@ -1275,6 +1297,35 @@ architecture tb of tb_fk33_cardtop_ident is
         report "tb_llama_top: B_CONST_IMAGE " & B_CONST_IMAGE & " holds "
              & integer'image(w) & " words, the shape needs "
              & integer'image(BST_NLY*BST_CNST/2) & "; refusing"
+        severity failure;
+    end if;
+    if NORM_HBM then
+      assert NORM_W_IMAGE /= ""
+        report "tb_llama_top: NORM_HBM needs NORM_W_IMAGE, the rows it places"
+        severity failure;
+      w := 0;
+      file_open(fh, NORM_W_IMAGE, read_mode);
+      while not endfile(fh) loop
+        readline(fh, ln);
+        if ln'length >= 4 then
+          hread(ln, v);
+          assert w < BST_NROW*SHAPE.hidden
+            report "tb_llama_top: NORM_W_IMAGE " & NORM_W_IMAGE
+                 & " is LONGER than " & integer'image(BST_NROW)
+                 & " rows; refusing"
+            severity failure;
+          byte := BST_CBASE + BST_NOFF + 2*w;
+          beat := byte / BST_BEAT_B;
+          bit0 := (byte mod BST_BEAT_B) * 8;
+          m(beat)(bit0+15 downto bit0) := v;
+          w := w + 1;
+        end if;
+      end loop;
+      file_close(fh);
+      assert w = BST_NROW*SHAPE.hidden
+        report "tb_llama_top: NORM_W_IMAGE " & NORM_W_IMAGE & " holds "
+             & integer'image(w) & " words, NORM_HBM needs "
+             & integer'image(BST_NROW*SHAPE.hidden) & "; refusing"
         severity failure;
     end if;
     return m;
@@ -1496,7 +1547,8 @@ begin
       WDOG_LIMIT => 200000, STRICT => true,
       A_BEHAV => A_BEHAV, B_BEHAV => B_BEHAV,
       B_SRC_REAL => B_SRC_REAL, NORM_ANCHOR => NORM_ANCHOR,
-      NORM_REAL => NORM_REAL, NORM_W_IMAGE => NORM_W_IMAGE,
+      NORM_REAL => NORM_REAL, NORM_W_IMAGE => dut_norm_image,
+      NORM_HBM => NORM_HBM,
       SWG_REAL => SWG_REAL,
       SWG_LANES => SWG_LANES, SWG_WIDE => SWG_WIDE,
       C_REAL => C_REAL, B_STATE_AXI => B_STATE_AXI,
@@ -3249,6 +3301,15 @@ begin
     -- says R_X is bit-identical across descriptor-latency points, which is
     -- SELF-consistency and is satisfied by a card top that is consistently
     -- wrong.  Only a comparison against the oracle's own number is identity.
+    --
+    -- AT THE DEFAULT GENERICS ONLY (2026-09-23).  The expect file records
+    -- llama_top's landmark at this bench's DEFAULTS, and a wrapper row at other
+    -- generics (sim/tb_fk33_cardtop_normhbm.vhd) cannot meet it however right
+    -- it is.  Such a wrapper pins EXP_* instead, to llama_top's OWN measurement
+    -- at its configuration (a sim/tb_llama_top_*.vhd row), and the P14
+    -- landmark check enforces that, so it is identity by the same argument.
+    -- The default row leaves EXP_X0 at integer'low, which is how this knows.
+    if EXP_X0 = integer'low then
     assert results(0)(NTOK-1)(0) = -12739 and xsum = 38863
       report "tb_fk33_cardtop_ident: IDENTITY FAIL -- the card top does not "
            & "reproduce llama_top's landmark.  got R_X(0) = "
@@ -3258,6 +3319,7 @@ begin
            & "moved and sim/cardtop_ident_expect.txt must be re-measured "
            & "from llama_top -- NOT from this bench."
       severity failure;
+    end if;
 
     if fail = 0 then
       report "tb_fk33_cardtop_ident RESULT: PASS -- " & integer'image(NSTEP)

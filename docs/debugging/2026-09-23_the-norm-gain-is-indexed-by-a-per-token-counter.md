@@ -123,3 +123,54 @@ Working files: `/mnt/storage/fk33_builds/pair/` (`clean/`, `fullref/`, `prog/`, 
   on card 1; the cost is measured in the pair timing below when it lands.
 - The `--override 33:dst=X` XN probe on the padded program was DESC-refused (not investigated; the
   whole-half bit identity made it moot).
+
+## ADDENDUM 2026-09-23: the RTL fix, in simulation (not yet on silicon)
+
+The fix is in `rtl/llama_top.vhd` and is plan Task 2 of
+`docs/superpowers/plans/2026-09-23-27b-two-card.md`. Nothing above is withdrawn.
+
+- **The index.** An `OP_VEC_NORM` names its gain row in `const_base`: `2*blk` for a block's first
+  norm, `2*blk+1` for its FFN norm, `2*blocks` for the final norm. `seq_vec_issue` latches it at
+  issue (`v_cb`); the norm engine latches it again at accept. The counter `nidx` is deleted.
+- **The load** starts at the accept, not at the previous op's completion. It runs beside `S_RD`.
+- **The source** is either the old table (`NORM_HBM` false, every bench default) indexed by the row,
+  or HBM (`NORM_HBM` true, what `hw/fk33/gen_fk33_card.py` now builds): the row read over `bst_*`
+  from `gdn_const_base + norm_const_offset + row*hidden*2`, the rows appended to the GDN constants
+  image by `tools/pack_gdn_consts.py` from the same `norm_w_<sfx>.hex` the table was built from.
+
+MEASURED, GHDL, `sim/regress.sh --only ...`:
+
+| row | tree | result |
+|---|---|---|
+| `tb_llama_top_normw` (control, program from step 0) | fixed | PASS, 0 of 4 landmarks moved |
+| `tb_llama_top_normrev` (rows reversed in image AND program) | fixed | PASS, normw's landmarks exactly |
+| `tb_llama_top_normw` | pre-fix HEAD `61c3e7d` | PASS |
+| `tb_llama_top_normrev` | pre-fix HEAD `61c3e7d` | **FAIL, 4 of 4 landmarks moved** (R_X(0) -16438 vs -16350) |
+| `tb_llama_top_normhbm` (HBM path, DUT given NO table) | fixed | PASS, normw's landmarks exactly |
+| `tb_llama_top_bconst_normhbm` (HBM path sharing `bst_*` with the live B state store, 3 tokens) | fixed | PASS, bconst's landmarks exactly |
+| `tb_fk33_cardtop_normhbm` (HBM path in the generated card top) | fixed | PASS, normw's landmarks exactly |
+
+So the new row kills the defect this note is about and the old row cannot; the attribution is the
+P14 landmark check, which is the only check that fired on the pre-fix run.
+
+HBM-path mutants (fixed tree, one edit each):
+
+| mutant | row | verdict | what caught it |
+|---|---|---|---|
+| fetch row r+1 | normhbm | killed | `bst_bad` bounds, on the final row |
+| swap rows in pairs, final row kept | normhbm | killed | landmarks, 4 of 4 moved |
+| elements in reverse order within a beat | normhbm | killed | landmarks |
+| `wbusy` released at element NN/2 | normhbm | **DID NOT BITE** | the unit reads the gain only after its rsqrt, long after the load ends; `wbusy` is a guard with no reachable race at this shape |
+| mux takes the channel while the store is busy | bconst_normhbm | **DID NOT BITE** | no program overlaps a norm with a B job, so the exclusion arm never runs |
+| store sees RVALID while the norm owns the channel | bconst_normhbm | **DID NOT BITE** | same reason |
+
+The last two are the resolution floor: **the `bst_*` read mux's exclusion is untested by any bench.**
+It is correct by construction only.
+
+Also changed so an old program cannot meet the new RTL silently: `tools/gen_layer_program.py`
+emits the row, `tools/dprog_oracle.py` C5 checks it (a 9B program from the pre-change generator
+fails 63 checks, every block norm except block 0's first), and `fk33_chat.sh` / `fk33_chat2.sh`
+key their cached token programs on the generator's hash.
+
+Open: the fix is not on silicon. `--pad-norms` stays until a NORM_HBM card build runs the pair
+without it and matches the single card.

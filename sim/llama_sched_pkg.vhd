@@ -126,7 +126,8 @@ package llama_sched_pkg is
 
   -- The plan first; the table is an encoding of the plan.
   function build_plan (s : shape_t) return plan_t;
-  function build_table(s : shape_t) return sched_tbl_t;
+  function build_table(s : shape_t; norm_rev : boolean := false)
+    return sched_tbl_t;
 
 end package;
 
@@ -327,7 +328,8 @@ package body llama_sched_pkg is
     return p;
   end function;
 
-  function build_table(s : shape_t) return sched_tbl_t is
+  function build_table(s : shape_t; norm_rev : boolean := false)
+    return sched_tbl_t is
     constant p : plan_t  := build_plan(s);
     -- The SAME corrected count `build_plan` asserts against, and not
     -- `n_steps(s)`: with a windowed lm_head the plan is longer than
@@ -340,6 +342,11 @@ package body llama_sched_pkg is
     variable fl : natural;
     variable om : natural;
     variable orv : natural;
+    -- The norm ROW an OP_VEC_NORM names in `const_base` (2026-09-23, plan
+    -- Task 2): 2*blk for a block's first norm, 2*blk+1 for its FFN norm,
+    -- 2*blocks for the final norm.  `llama_top` selects the gain by it.
+    variable cbv : natural;
+    variable nblk : integer := -1;   -- block of the previous norm
   begin
     assert n <= SCHED_MAX_STEPS
       report "llama_sched_pkg: shape needs " & integer'image(n)
@@ -387,6 +394,24 @@ package body llama_sched_pkg is
       else
         orv := p(i).blk mod 64;
       end if;
+      cbv := p(i).blk;
+      if p(i).opcode = OP_VEC_NORM then
+        if p(i).blk >= s.blocks then
+          cbv := 2*s.blocks;
+        elsif p(i).blk = nblk then
+          cbv := 2*p(i).blk + 1;
+        else
+          cbv := 2*p(i).blk;
+        end if;
+        nblk := p(i).blk;
+        -- NORM_REV (sim/tb_llama_top_normrev.vhd): the rows named in reverse,
+        -- to run against an image whose rows are stored in reverse.  A design
+        -- that selects the gain by the descriptor reproduces the forward
+        -- landmarks exactly; one that counts norm ops does not.
+        if norm_rev then
+          cbv := 2*s.blocks - cbv;
+        end if;
+      end if;
       d := mk_desc(opcode  => p(i).opcode,
                    flags   => fl,
                    src     => p(i).src,
@@ -412,7 +437,7 @@ package body llama_sched_pkg is
                    -- is judging a number this table actually emits.
                    nsub_w  => A_NPORTS_W,
                    nsub_s  => A_NPORTS_S,
-                   const_base => p(i).blk);
+                   const_base => cbv);
       -- w_exp / out_shift / const_exp, derived from the step index so that a
       -- stale or shared capture is a WRONG NUMBER and not a repeat of the
       -- right one.

@@ -156,6 +156,11 @@ entity seq_vec_issue is
     job_dst_off : in  unsigned(31 downto 0);
     job_n_rows  : in  unsigned(31 downto 0);
     job_step    : in  unsigned(STEP_W-1 downto 0);
+    -- The descriptor's word 4 [31:0].  On an OP_VEC_NORM it is the norm ROW
+    -- (2*blk, 2*blk+1, 2*blocks for the final norm) that selects the gain
+    -- vector; see `v_cb`.  Defaulted so benches of this unit alone need not
+    -- drive it.  Added 2026-09-23 (plan Task 2).
+    job_const_base : in unsigned(31 downto 0) := (others => '0');
 
     -- ============ THIS UNIT'S SLOT ON seq_desc_fetch's BUS ==============
     u_start      : in  std_logic;
@@ -197,6 +202,12 @@ entity seq_vec_issue is
     v_reg_a  : out unsigned(7 downto 0);
     v_reg_b  : out unsigned(7 downto 0);
     v_reg_d  : out unsigned(7 downto 0);
+    -- The job's `const_base`, latched with the rest.  THE NORM GAIN IS
+    -- SELECTED BY THIS, NOT BY COUNTING NORM OPS: a per-token counter is right
+    -- only for a program that starts at step 0 (the two-card split, MEASURED
+    -- 2026-09-23, docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-
+    -- per-token-counter.md).
+    v_cb     : out unsigned(31 downto 0);
 
     -- ========================= OBSERVATION ==============================
     -- One cycle wide, at the instant the job shadow was copied.  The skeleton
@@ -235,6 +246,7 @@ architecture rtl of seq_vec_issue is
   signal j_src   : unsigned(7 downto 0) := NO_REGION;
   signal j_src2  : unsigned(7 downto 0) := NO_REGION;
   signal j_dst   : unsigned(7 downto 0) := NO_REGION;
+  signal j_cb    : unsigned(31 downto 0) := (others => '0');
   signal j_hasb  : std_logic := '0';
   -- Latched only so the STRICT reports below can NAME the step.  Not dead: an
   -- adapter that rejects a descriptor reports a code, and a code without a
@@ -295,6 +307,7 @@ begin
   v_reg_a <= j_src;
   v_reg_b <= j_src2;
   v_reg_d <= j_dst;
+  v_cb    <= j_cb;
 
   gen_ack : for v in 0 to NVOP-1 generate
     v_ack(v) <= '1' when st = V_HOLD and v = j_sel and u_ack = '1' else '0';
@@ -321,6 +334,7 @@ begin
         ecode <= EC_NONE;
         j_sel <= 0;
         j_n   <= (others => '0');
+        j_cb  <= (others => '0');
         j_src <= NO_REGION;
         j_src2<= NO_REGION;
         j_dst <= NO_REGION;
@@ -355,6 +369,7 @@ begin
               j_src  <= job_src;
               j_src2 <= job_src2;
               j_dst  <= job_dst;
+              j_cb   <= job_const_base;
               erd_r  <= job_src;
 
               op  := to_integer(job_opcode);

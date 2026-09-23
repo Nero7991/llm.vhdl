@@ -240,7 +240,7 @@ begin
       C_REAL                   => true,
       NORM_REAL                => true,
       SWG_REAL                 => true,
-      NORM_W_IMAGE             => "/home/orencollaco/GitHub/llama.vhdl/hw/fk33/gen/norm_w_9b.hex",
+      NORM_HBM                 => true,
       C_QKN_IMAGE              => "/home/orencollaco/GitHub/llama.vhdl/hw/fk33/gen/qkn_9b.hex",
       SMP_EN                   => true,
       C_N_ROT                  => 64,

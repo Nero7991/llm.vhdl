@@ -353,7 +353,7 @@ package body seq_tbl_pkg is
     procedure emit_ffn(blk : natural) is
     begin
       emit(mk_desc(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => HID,
-                   const_base => blk, ordinal => blk mod 64));
+                   const_base => 2*blk + 1, ordinal => blk mod 64));
       emit(mk_desc(OP_A_JOB, src => R_XN, dst => R_G, n_rows => FFN,
                    n_cols => HID, nsub_w => nsw, nsub_s => nss, out_mode => 0));
       emit(mk_desc(OP_A_JOB, src => R_XN, dst => R_U, n_rows => FFN,
@@ -379,7 +379,7 @@ package body seq_tbl_pkg is
         ao := (blk - (MODEL.attn_interval-1)) / MODEL.attn_interval;
         -- 1 attn_norm
         emit(mk_desc(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => HID,
-                     const_base => blk, ordinal => blk mod 64));
+                     const_base => 2*blk, ordinal => blk mod 64));
         -- 2 wq, Q and gate interleaved per head
         emit(mk_desc(OP_A_JOB, src => R_XN, dst => R_QG, n_rows => ATT_QG,
                      n_cols => HID, nsub_w => nsw, nsub_s => nss));
@@ -409,7 +409,7 @@ package body seq_tbl_pkg is
         go := blk - (blk + 1) / MODEL.attn_interval;
         -- 1 attn_norm
         emit(mk_desc(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => HID,
-                     const_base => blk, ordinal => blk mod 64));
+                     const_base => 2*blk, ordinal => blk mod 64));
         -- 2, 3, 4: wqkv as THREE jobs at fixed offsets in one region, so each
         -- segment gets its own y_exp.  q | k | v, the channel order B's single
         -- read port expects.
@@ -454,7 +454,7 @@ package body seq_tbl_pkg is
     -- destination is 0xFF with the sampler route flag, which is exactly the
     -- case the decoder checks.
     emit(mk_desc(OP_VEC_NORM, src => R_X, dst => R_XN, n_rows => HID,
-                 const_base => MODEL.blocks, ordinal => 0));
+                 const_base => 2*MODEL.blocks, ordinal => 0));
 
     -- ONE A JOB PER ROW WINDOW, ascending, and every field below is the same
     -- on every window except `n_rows`.

@@ -80,10 +80,10 @@ MODEL_SFX = MODEL_PKG.image_suffix(MODEL_NAME)
 MODEL_REGMAX = MODEL_PKG.regmax(MODEL_NAME)
 NORM_W_HEX = os.path.join(REPO, "hw", "fk33", "gen", "norm_w_%s.hex" % MODEL_SFX)
 if not os.path.exists(NORM_W_HEX):
-    sys.exit("gen_fk33_card.py: NORM_W_IMAGE %s does not exist; the card "
-             "would elaborate the synthetic norm gain ramp, or fail at "
-             "file_open hours into synthesis.  Run "
-             "sim/ooc_nwrom_gen_image.py (track E) first." % NORM_W_HEX)
+    sys.exit("gen_fk33_card.py: the norm gain image %s does not exist; "
+             "tools/pack_gdn_consts.py appends its rows to the constants "
+             "image the NORM_HBM card reads.  Run sim/ooc_nwrom_gen_image.py "
+             "(track E) first." % NORM_W_HEX)
 # THE REAL QK-NORM GAIN IMAGE, 8 attention layers x (q, k) x 256 entries at
 # C_QKN_EXP = 12, written by tools/gen_qkn_image.py and committed (TRACK F,
 # 2026-09-18; the last stand-in after docs/2026-09-18_b-constants-path.md).
@@ -242,16 +242,21 @@ ARGS = [
     # default is FALSE so every existing bench elaborates unchanged; the
     # card wants the real unit, exactly as it wants NORM_REAL.
     "--generic", "SWG_REAL=true",
-    # NORM_W_IMAGE: the REAL RMSNorm gains, one row per OP_VEC_NORM of a token
-    # in schedule order, read at elaboration into ~114 BRAM
-    # (docs/debugging/2026-08-29_nwrom-norm-gain-image-area.md).  Empty, the
-    # default and what every card build so far used, keeps the SYNTHETIC ramp
-    # (fk33_llama_top.vhd, the NORM_W_IMAGE comment).  The path is built from
-    # REPO above rather than written as a literal so the wrapper is right on
-    # whichever machine generates it; NORM_W_EXP stays at its default of 12,
-    # which is the exponent the image was packed at.  A VHDL string generic
-    # needs the quotes, and gen_bd_wrapper passes the value through as is.
-    "--generic", 'NORM_W_IMAGE="%s"' % NORM_W_HEX,
+    # NORM_HBM (2026-09-23, plan Task 2 of docs/superpowers/plans/
+    # 2026-09-23-27b-two-card.md): the RMSNorm gain row of each OP_VEC_NORM is
+    # READ FROM HBM at the op's accept, selected by the descriptor's
+    # `const_base`, instead of from an elaboration-time NORM_W_IMAGE table
+    # indexed by a per-token counter.  Two reasons, both MEASURED: the table
+    # was 99 block-RAM tiles at 9B and 231 at 27B (the 27B card does not fit
+    # with it), and the counter served card 1 of the two-card split block 0's
+    # gain (docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-
+    # counter.md).  The rows are appended to the GDN constants image by
+    # tools/pack_gdn_consts.py from NORM_W_HEX above, the same values the
+    # table held; NORM_W_IMAGE is left empty so no table is elaborated.  A
+    # card built from this REQUIRES an image whose manifest declares
+    # hbm.norm_const_rows (tools/hbm_map.py refuses nothing without it, but
+    # says so).
+    "--generic", "NORM_HBM=true",
     # C_QKN_IMAGE: the REAL QK-norm gains, one q and one k vector of 256 per
     # attention layer in schedule order, read at elaboration into a table
     # indexed by the C job's layer ordinal (fk33_llama_top.vhd, the
