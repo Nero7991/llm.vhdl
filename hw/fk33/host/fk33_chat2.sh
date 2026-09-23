@@ -42,6 +42,18 @@ PY
 }
 has_head() { python3 -c "import json,sys; print(any(e.get('tensor')=='output.weight' for e in json.load(open(sys.argv[1]))['files']))" "$1"; }
 
+# THE NORM GAIN ROWS (2026-09-23, plan Task 2).  A card built with NORM_HBM
+# (build 19 on) reads each RMSNorm gain row from the constants image at
+# hbm.norm_const_offset; an image packed before that has no rows there, and the
+# card would normalise with whatever bytes sit above the GDN layers, silently.
+# The bitstream does not yet announce NORM_HBM in CAPS_FLAGS, so the host
+# cannot tell the two apart and the IMAGE must carry the rows.  Images with
+# rows run on build 18 too (it ignores them), so the `-nh` images are safe on
+# either.  FK33_ALLOW_NO_NORM_ROWS=1 is for a build-18 card with an old image,
+# and ONLY that.
+norm_rows_ok() {
+    python3 -c "import json,sys; sys.exit(0 if 'norm_const_rows' in json.load(open(sys.argv[1]))['hbm'] else 1)" "$1"
+}
 declare -a M RUN RANGE
 for i in 0 1; do
     export FK33_USER=/dev/xdma${i}_user FK33_H2C=/dev/xdma${i}_h2c_0 FK33_C2H=/dev/xdma${i}_c2h_0
@@ -56,6 +68,14 @@ for i in 0 1; do
     fi
     M[$i]="$(dirname "$RES")"
     RANGE[$i]=$(blocks_of "${M[$i]}/manifest.json")
+    if ! norm_rows_ok "${M[$i]}/manifest.json"; then
+        if [[ "${FK33_ALLOW_NO_NORM_ROWS:-0}" == 1 ]]; then
+            echo "fk33_chat2.sh: WARNING ${M[$i]}/manifest.json declares no norm gain rows; running only because FK33_ALLOW_NO_NORM_ROWS=1 (build 18 or older ONLY)" >&2
+        else
+            echo "fk33_chat2.sh: REFUSING: ${M[$i]}/manifest.json declares no norm gain rows (hbm.norm_const_rows).  A NORM_HBM card (build 19 on) would read wrong gains silently.  Load the -nh image, or set FK33_ALLOW_NO_NORM_ROWS=1 on a build-18 card." >&2
+            exit 1
+        fi
+    fi
     echo "card $i     ${M[$i]}  blocks ${RANGE[$i]}  (image record on the card, not assumed)"
 done
 [[ "$(has_head "${M[0]}/manifest.json")" == "False" ]] || { echo "fk33_chat2.sh: card 0's image carries the LM head; it must be the headless half" >&2; exit 1; }

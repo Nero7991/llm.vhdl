@@ -131,6 +131,26 @@ fi
 # Keyed on the GENERATOR too (2026-09-23): a norm's `const_base` became its
 # gain row that day, and a program cached by an older generator names the
 # block there, which the row-indexed RTL reads as the wrong gain.
+# THE NORM GAIN ROWS (2026-09-23, plan Task 2).  A card built with NORM_HBM
+# (build 19 on) reads each RMSNorm gain row from the constants image at
+# hbm.norm_const_offset; an image packed before that has no rows there, and the
+# card would normalise with whatever bytes sit above the GDN layers, silently.
+# The bitstream does not yet announce NORM_HBM in CAPS_FLAGS, so the host
+# cannot tell the two apart and the IMAGE must carry the rows.  Images with
+# rows run on build 18 too (it ignores them), so the `-nh` images are safe on
+# either.  FK33_ALLOW_NO_NORM_ROWS=1 is for a build-18 card with an old image,
+# and ONLY that.
+norm_rows_ok() {
+    python3 -c "import json,sys; sys.exit(0 if 'norm_const_rows' in json.load(open(sys.argv[1]))['hbm'] else 1)" "$1"
+}
+if ! norm_rows_ok "$M/manifest.json"; then
+    if [[ "${FK33_ALLOW_NO_NORM_ROWS:-0}" == 1 ]]; then
+        echo "fk33_chat.sh: WARNING $M/manifest.json declares no norm gain rows; running only because FK33_ALLOW_NO_NORM_ROWS=1 (build 18 or older ONLY)" >&2
+    else
+        echo "fk33_chat.sh: REFUSING: $M/manifest.json declares no norm gain rows (hbm.norm_const_rows).  A NORM_HBM card (build 19 on) would read wrong gains silently.  Load the -nh image, or set FK33_ALLOW_NO_NORM_ROWS=1 on a build-18 card." >&2
+        exit 1
+    fi
+fi
 GENV="$(sha256sum "$REPO/tools/gen_layer_program.py" | cut -c1-16)"
 if [[ ! -f "$RUN/manifest.used" ]] || [[ "$(cat "$RUN/manifest.used")" != "$M/manifest.json $GENV" ]]; then
     rm -f "$RUN/token.dtbl" "$RUN/token.rel" "$RUN/token.arena"
