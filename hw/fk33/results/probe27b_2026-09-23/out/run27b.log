@@ -1,0 +1,13 @@
+PROBE27_ENV host=cachyos-bc250 root=/home/orencollaco/GitHub/llama.vhdl out=/home/labuser/probe27b/out cap=11G tree=unknown
+PROBE27_CGROUP systemd-run=1
+PROBE27_GDN27_SED_HITS 1
+=== PROBE27 arm attn27 begin 2026-09-23T13:12:05-04:00 ===
+PROBE27_CAP attn27 memory.high=11811160064
+PROBE27_ARM attn27 rc=0 wall=1522s memory.peak=11813003264 swap.peak=10171207680 sentinel=1
+=== PROBE27 arm attn9 begin 2026-09-23T13:37:27-04:00 ===
+PROBE27_CAP attn9 memory.high=11811160064
+PROBE27_ARM attn9 rc=0 wall=982s memory.peak=11814879232 swap.peak=7043276800 sentinel=1
+=== PROBE27 arm gdn27 begin 2026-09-23T13:53:50-04:00 ===
+PROBE27_ARM gdn27 rc=1 wall=12s memory.peak=NA swap.peak=NA sentinel=0
+=== PROBE27 arm gdn9 begin 2026-09-23T13:54:01-04:00 ===
+PROBE27_CAP gdn9 memory.high=11811160064
