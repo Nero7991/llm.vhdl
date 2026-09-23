@@ -679,7 +679,18 @@ begin
     signal ph_ch   : integer range 0 to BEAT_CH-1 := 0;
     signal ar_addr : unsigned(ADDR_W-1 downto 0) := (others => '0');
     signal f_beat  : integer := 0;   -- next beat index to request, from astart
-    signal r_beat  : integer := 0;   -- next beat index to arrive
+    -- (record, chunk-in-record, slot) of chunk 0 of the beat about to arrive,
+    -- kept INCREMENTALLY so no beat divides by CPR.  Invariant, with n the
+    -- number of beats arrived in this run: w_rr*CPR + w_mm = n*BEAT_CH - ph_ch, with 0 <= w_mm < CPR
+    -- once past beat 0 and w_mm = -ph_ch (w_rr = 0) at beat 0, and
+    -- w_slot = w_rr mod RBUF.  MEASURED 2026-09-22, build 15 draw 3: the
+    -- former per-beat `kk / CPR`, `kk mod CPR` and `rr mod RBUF` on the
+    -- 32-bit beat counter were the design's worst path, r_beat_reg ->
+    -- mbank CE, 33 logic levels with 14 CARRY8, 12.945 ns against 13.333,
+    -- the top ten violated paths of the routed card at -0.254 ns.
+    signal w_rr    : integer := 0;
+    signal w_mm    : integer range -(BEAT_CH-1) to CPR-1 := 0;
+    signal w_slot  : integer range 0 to RBUF-1 := 0;
     signal c_max   : integer := 0;   -- highest record index the consumer took
     signal outst   : integer range 0 to MAXOUT+1 := 0;
     signal arv     : std_logic := '0';
@@ -730,7 +741,7 @@ begin
     rd_quiet(s) <= '1' when (outst = 0 and arv = '0') else '0';
 
     P_RD : process(clk)
-      variable kk, rr, mm, slot : integer;
+      variable rr, mm, slot : integer;
       variable lim_rec, lim_beat, left, n : integer;
       variable lane : std_logic_vector(CH_W-1 downto 0);
       variable dout : integer;       -- outstanding delta this cycle
@@ -740,7 +751,8 @@ begin
       if rising_edge(clk) then
         if rst = '1' then
           sv <= (others => '0'); run_v <= '0'; arv <= '0';
-          outst <= 0; f_beat <= 0; r_beat <= 0; c_max <= 0; halted <= '0';
+          outst <= 0; f_beat <= 0; c_max <= 0; halted <= '0';
+          w_rr <= 0; w_mm <= 0; w_slot <= 0;
           err_rd(s) <= '0';
         else
           dout := 0;
@@ -782,14 +794,23 @@ begin
               sv        <= (others => '0');
             end if;
             for c in 0 to BEAT_CH-1 loop
-              kk   := r_beat*BEAT_CH + c - ph_ch;
+              -- kk = n*BEAT_CH + c - ph_ch = w_rr*CPR + w_mm + c, and
+              -- BEAT_CH < CPR (asserted above) so w_mm + c wraps at most
+              -- once.  kk < 0 exactly when w_mm + c < 0, which only beat 0
+              -- can reach.
+              mm   := w_mm + c;
               lane := r_rdata(s*AXI_DW + (c+1)*CH_W-1
                               downto s*AXI_DW + c*CH_W);
-              if kk >= 0 and halted = '0' and run_v = '1' and flushing = '0'
+              if mm >= 0 and halted = '0' and run_v = '1' and flushing = '0'
               then
-                rr   := kk / CPR;
-                mm   := kk mod CPR;
-                slot := rr mod RBUF;
+                if mm >= CPR then
+                  mm := mm - CPR;
+                  rr := w_rr + 1;
+                  if w_slot = RBUF-1 then slot := 0; else slot := w_slot + 1; end if;
+                else
+                  rr   := w_rr;
+                  slot := w_slot;
+                end if;
                 if rr <= c_max + RBUF - 1
                    and (to_integer(run_p0) + rr) < to_integer(cpos_r) then
                   -- mm = 0 is the header; mm >= 1 lands in bank
@@ -811,7 +832,13 @@ begin
                 end if;
               end if;
             end loop;
-            r_beat <= r_beat + 1;
+            if w_mm + BEAT_CH >= CPR then
+              w_mm <= w_mm + BEAT_CH - CPR;
+              w_rr <= w_rr + 1;
+              if w_slot = RBUF-1 then w_slot <= 0; else w_slot <= w_slot + 1; end if;
+            else
+              w_mm <= w_mm + BEAT_CH;
+            end if;
             if r_rlast(s) = '1' then dout := dout - 1; end if;
           end if;
 
@@ -829,7 +856,8 @@ begin
           if flushing = '1' then
             if outst + dout = 0 and arv = '0' then
               sv <= (others => '0'); run_v <= '0'; halted <= '0';
-              f_beat <= 0; r_beat <= 0; c_max <= 0;
+              f_beat <= 0; c_max <= 0;
+              w_rr <= 0; w_mm <= 0; w_slot <= 0;
             end if;
           elsif halted = '1' then
             null;                             -- halted until the next start
@@ -837,7 +865,8 @@ begin
             -- ---- retarget: the same drain-then-flush, mid-job ------------
             if outst + dout = 0 and arv = '0' then
               run_v <= '0'; sv <= (others => '0');
-              f_beat <= 0; r_beat <= 0; c_max <= 0;
+              f_beat <= 0; c_max <= 0;
+              w_rr <= 0; w_mm <= 0; w_slot <= 0;
             end if;
           elsif run_v = '0' then
             -- ---- open a run at the held request -------------------------
@@ -846,11 +875,13 @@ begin
               a0 := rec_addr(base, lay_r, to_integer(q_head(s)),
                              to_integer(q_pos(s)));
               ph_ch   <= low_bits(a0, BEAT_LW)/CH_B;
+              w_rr    <= 0; w_slot <= 0;
+              w_mm    <= -(low_bits(a0, BEAT_LW)/CH_B);   -- beat 0: kk = c - ph_ch
               ar_addr <= a0 - to_unsigned(low_bits(a0, BEAT_LW), ADDR_W);
               run_hd  <= q_head(s);
               run_p0  <= q_pos(s);
               run_v   <= '1';
-              f_beat  <= 0; r_beat <= 0; c_max <= 0;
+              f_beat  <= 0; c_max <= 0;
               sv      <= (others => '0');
             end if;
           else
