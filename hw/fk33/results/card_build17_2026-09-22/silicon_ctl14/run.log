@@ -1,0 +1,26 @@
+== reload 23:41:10
+crw-rw---- 1 root fk33 510, 1 Sep 22 23:42 /dev/xdma0_control
+crw------- 1 root root 510, 0 Sep 22 23:42 /dev/xdma0_user
+FK33_PCI_UP
+BUS_UP_OK
+== seam 23:42:05
+  in spec
+
+Cross-check this against hw/fk33/pcieep.sh --check, which reads the
+same registers over JTAG.  Agreement proves the PCIe MMIO path end
+== weights 23:42:05
+extents      6974 of 6974 digested
+PASS  the image on the card is the image the manifest describes (251 of 251 objects read and checked)
+image record written at 0x1ffb03e00: 7f9e57e300d7beb3c1967bd56e87f3a3
+      the card now answers `which image is resident` with this manifest's placement
+== control (one run) 23:42:17
+prefill    20 ids, pos 20, first argmax 32, exp 15
+timing     83 GOs: run_chunk 24.579 s (of which STATUS wait 24.579 s over 229216 polls), X pushes 0.120 s, wall since st
+== tok0 23:42:42
+/mnt/storage/fk33_builds/build17/silicon_ctl14/tok0.out:prefill    1 ids, pos 1, first argmax 846, exp 15
+/mnt/storage/fk33_builds/build17/silicon_ctl14/tok0.out:decode     1 ids generated, pos 1, stopped at --max-new
+/mnt/storage/fk33_builds/build17/silicon_ctl14/tok0.out:timing     1 GOs: run_chunk 0.295 s (of which STATUS wait 0.295 s over 2746 polls), 
+/mnt/storage/fk33_builds/build17/silicon_ctl14/tok0.out:xout       R_X after the last GO: exp 8, 4096 mantissas -> /mnt/storage/fk33_builds/
+mismatching mantissas 4092 of 4096; max |delta| 28810
+XOUT_VS_REF: FAIL
+E1_DONE 23:42:43

@@ -67,3 +67,25 @@ launch and the unused rescue chain). DCPs (synth, placed, routed) and the bitstr
 
 Appended below after the load (main session): caps 0x7D, weights verified, three control runs against 24.578 s,
 and `run_prompt --dump-xout` on token 248045 against `tok0.r9bs` `R_X-31` (exponent AND all 4,096 mantissas).
+
+**2026-09-22 23:37 to 23:43, MEASURED: BUILD 17 COMPUTES WRONG VALUES ON SILICON.** Reload clean (VCCINT 0.715 V,
+die 42.0 C, seam `LLM2` v2, cap flags 0x7D with `XEXP_OUT yes`, no fault), image verified 251 of 251. The control
+(`fk33_chat.sh "What is a DC-DC converter?" 64`, three runs):
+
+| build | prefill line | run_chunk | output |
+|---|---|---|---|
+| 12b / 14 | `20 ids, pos 20, first argmax 32, exp 15` | 24.578 / 24.579 s | the DC-DC answer |
+| **17** | `20 ids, pos 20, first argmax 0, exp 44` (x3, traces identical) | **24.521 s** x3 | 64 x `!` (token 0) |
+
+Token 0 (`run_prompt --prompt 248045 --max-new 1 --dump-xout`): build 17 `argmax 0, exp 43`, `XEXP_OUT 14`, window
+mantissas all zero; the reference is argmax 846, `R_X-31` exp 8 (build 14 reproduces the argmax and the exponent;
+its window is zero by construction). **Host-side control, same host, same image, same cached program: build 14
+reloaded at 23:41 gives argmax 32 / exp 15 / 24.579 s and token 0 argmax 846 / exp 8** (`silicon_ctl14/`). So the
+defect is in build 17's image. It carries exactly two RTL changes over build 14: the R_X shadow in `region_mem`
+(build 15's change, never on silicon before) and the KV fetcher counters (f14121d). The 0.23% throughput change
+(24.521 against 24.578, 57x the silicon noise floor) is a real difference in the token's cycle count and is
+itself evidence that the attention path does something different, not faster.
+
+**The card holds build 14 again.** Build 17's bitstream is NOT to be loaded except as a diagnostic.
+Attribution in progress: draw 3b's checkpoint (the shadow WITHOUT the counters, WNS -0.028) written to a
+diagnostic bitstream, and `tb_llama_top_real` (real weights against the reference stream) on the counters RTL.

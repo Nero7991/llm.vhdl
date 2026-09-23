@@ -1,0 +1,7 @@
+die temperature    42.0 C
+VCCINT           0.7156 V
+  in spec
+
+Cross-check this against hw/fk33/pcieep.sh --check, which reads the
+same registers over JTAG.  Agreement proves the PCIe MMIO path end
+to end against a path that is already trusted.
