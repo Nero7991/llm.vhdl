@@ -14,6 +14,7 @@
 set -euo pipefail
 Q="${1:?usage: fk33_chat.sh \"question\" [max_new]}"
 MAXNEW="${2:-256}"
+EXTRA=("${@:3}")   # captured HERE: a later `set -- $GB` replaces the positional parameters (MEASURED 2026-09-23: "${@:3}" at the exec was empty)
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 EMB="${FK33_EMBED:-/mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i}"
 QTK="${FK33_QTK:-$REPO/build_artifacts_tok/qwen35_9b.qtk}"
@@ -149,4 +150,4 @@ python3 "$REPO/hw/fk33/host/fk33ctl.py" load "$RUN/gdn_zero.bin" --offset "$1" -
 exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
     --dtbl "$RUN/token.dtbl" --rel "$RUN/token.rel" \
     --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
-    --manifest "$M/manifest.json" --mv4i "$EMB" --quiet "${@:3}"
+    --manifest "$M/manifest.json" --mv4i "$EMB" --quiet "${EXTRA[@]}"

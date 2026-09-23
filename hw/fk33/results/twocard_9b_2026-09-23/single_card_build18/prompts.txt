@@ -1,0 +1,3 @@
+What is a DC-DC converter?
+Explain how a hash table works.
+Write a short poem about the ocean.

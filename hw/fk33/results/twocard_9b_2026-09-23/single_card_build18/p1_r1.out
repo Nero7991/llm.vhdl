@@ -1,0 +1,21 @@
+resident   /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27  (image record on the card, not assumed)
+text       20 ids from the chat template (thinking off)
+embedding  mv4i /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i M=248320 K=4096 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=128 tiles=5174 w_exp=8 recipe=wide read=4096B x2
+program    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat_run/token.dtbl: 8080 32-bit halves (505 descriptors of 8 64-bit words)
+release    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat_run/token.rel: 505 entries
+transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator token supplied)
+card       seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ctx=65536 chunk=1 x_stride=8256 l_stride=993344 | chardev user=/dev/xdma0_user h2c=/dev/xdma0_h2c_0 c2h=/dev/xdma0_c2h_0
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    20 ids, pos 20, first argmax 32, exp 15
+A **DC-DC converter** is an electronic circuit designed to convert a direct current (DC) voltage from one level to another. It is a fundamental building block in modern power electronics, used to regulate voltage levels efficiently within electronic systems.
+
+Here is a detailed breakdown of how it works and its key characteristics:
+
+### Core Functionality
+The primary goal of a DC-DC converter is to take an input DC voltage ($V_{in}$) and produce a different output DC voltage ($V_{out}$). This conversion can be:
+*   **Step-down (Buck Converter):** Reducing the voltage (e.g.,
+decode     128 ids generated, pos 147, stopped at --max-new
+timing     147 GOs: run_chunk 43.705 s (of which STATUS wait 43.705 s over 405262 polls), X pushes 0.161 s, wall since start 43.901 s
+xout       R_X after the last GO: exp 9, 4096 mantissas -> /mnt/storage/fk33_builds/build18/oracle/p1_r1.xout
+bytes      h2c 2408448, c2h 16384, go 147 (argmax fast path)
+ids        128 generated ids -> /mnt/storage/fk33_builds/build18/oracle/p1_r1.ids
