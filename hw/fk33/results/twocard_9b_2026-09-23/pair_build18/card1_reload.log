@@ -1,0 +1,167 @@
+  mode       sudoless, via /usr/local/sbin/fk33-pci
+=== plan ===
+  card       153300000607A   (PCI 0000:07:00.0)
+  bitstream  /home/orencollaco/GitHub/llama.vhdl/hw/fk33/bit/fk33_card_build18_elwin_75mhz_2026-09-23.bit
+             25667150 bytes, 2026-09-23 04:34:29
+  driver     /usr/local/lib/fk33/xdma.ko (pinned copy, via /usr/local/sbin/fk33-pci)
+  VCCINT     raise via probe bitstream
+
+=== pre-flight ===
+  no process holds /dev/xdma*
+07:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+  reading VCCINT over JTAG DRP...
+  VCCINT = 0.677
+
+=== bus down ===
+--- removing 0000:07:00.0 (this also unbinds the driver) ---
+  xdma not loaded (nothing to rmmod)
+FK33_PCI_DOWN 0000:07:00.0
+  other card 0000:06:00.0 still on the bus (must remain so through the reload)
+
+=== configure (as orencollaco, NOT root) ===
+=== configuring hw ===
+    /home/orencollaco/GitHub/llama.vhdl/hw/fk33/bit/fk33_i2cprobe.bit (9978842 bytes, 2026-08-27 22:58:46)
+FPGA_PROG_OK
+  1  xcvu33p
+  2* xcvu33p
+     3  Legacy Debug Hub
+        4  JTAG2AXI
+        5  JTAG2AXI
+=== stage 2: raising VCCINT (volatile, lost on power cycle) ===
+START   wiper=128  VCCINT=0.6775 V  die=41.0 C
+
+SAFETY PROBE: stepping wiper UP (expected to LOWER the rail), so that if
+              anything is misunderstood we find out while moving away
+              from overvoltage.
+  wiper=132 (wrote 132)  VCCINT=0.6763 V   delta=-0.0013 V
+  CONFIRMED: lower wiper = higher voltage.  sensitivity ~0.0003 V per step
+  restored wiper=128  VCCINT=0.6775 V
+
+STEPPING DOWN toward 0.720 V (ceiling 0.760 V, max 0.035 V per step)
+  wiper 128 -> 124   VCCINT=0.6800 V  (+0.0024 V)  die=39.3 C
+  wiper 124 -> 120   VCCINT=0.6814 V  (+0.0014 V)  die=40.1 C
+  wiper 120 -> 116   VCCINT=0.6831 V  (+0.0017 V)  die=39.6 C
+  wiper 116 -> 112   VCCINT=0.6858 V  (+0.0027 V)  die=41.0 C
+  wiper 112 -> 108   VCCINT=0.6882 V  (+0.0025 V)  die=40.0 C
+  wiper 108 -> 104   VCCINT=0.6889 V  (+0.0007 V)  die=40.7 C
+  wiper 104 -> 100   VCCINT=0.6920 V  (+0.0030 V)  die=39.4 C
+  wiper 100 ->  96   VCCINT=0.6954 V  (+0.0035 V)  die=39.3 C
+  wiper  96 ->  92   VCCINT=0.6971 V  (+0.0017 V)  die=40.7 C
+  wiper  92 ->  88   VCCINT=0.6996 V  (+0.0024 V)  die=40.2 C
+  wiper  88 ->  84   VCCINT=0.7028 V  (+0.0033 V)  die=39.4 C
+  wiper  84 ->  80   VCCINT=0.7064 V  (+0.0036 V)  die=41.0 C
+  wiper  80 ->  76   VCCINT=0.7092 V  (+0.0028 V)  die=40.9 C
+  wiper  76 ->  72   VCCINT=0.7123 V  (+0.0031 V)  die=39.5 C
+  wiper  72 ->  68   VCCINT=0.7157 V  (+0.0034 V)  die=39.4 C
+REACHED TARGET: wiper=68  VCCINT=0.7161 V
+
+FINAL STATE
+  wiper   = 68  (power-up default 128)
+  VCCINT  = 0.7164 V
+  VCCBRAM = 0.7557 V
+  die     = 41.6 C
+  SYSMON FLAG_REG = 0x0010  (bit1 VCCINT alarm = 0)
+  NOTE: this is the VOLATILE wiper. A power cycle restores 128 and 0.678 V.
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/153300000607A
+STEP_DONE
+=== configuring hw ===
+    /home/orencollaco/GitHub/llama.vhdl/hw/fk33/bit/fk33_card_build18_elwin_75mhz_2026-09-23.bit (25667150 bytes, 2026-09-23 04:34:29)
+FPGA_PROG_OK
+  1  xcvu33p
+  2* xcvu33p
+     3  Legacy Debug Hub
+        4  JTAG2AXI
+        5  JTAG2AXI
+        6  JTAG2AXI
+
+The card is now configured as a PCIe endpoint.
+If the link trains, LED 6 (RGB blue) changes state.  Note which way.
+=== stage 3: JTAG-side check of the endpoint bitstream ===
+NOTE: every read below goes through xdma/axi_aclk.  If they all hang or
+      return garbage, that is EXPECTED when the link is down -- it does
+      not distinguish a bad bitstream from an untrained link.  A SUCCESS
+      here is conclusive the other way: it means refclk, PCIe user clock
+      and link-up are all real.
+PCIEEP_CHECK begin
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 09 2023-22:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+JTAG target: localhost:3121/xilinx_tcf/Xilinx/153300000607A
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/153300000607A
+PART   xcvu33p
+AXI_MASTERS hw_axi_1 hw_axi_2 hw_axi_3
+INFO: [Labtoolstcl 44-481] READ DATA is: dec0dee3
+  probe hw_axi_1 at 0xA000 -> 0xDEC0DEE3
+INFO: [Labtoolstcl 44-481] READ DATA is: 464b3333
+  probe hw_axi_2 at 0xA000 -> 0x464B3333
+INFO: [Labtoolstcl 44-481] READ DATA is: ffffffffffffffff
+  probe hw_axi_3 at 0xA000 -> 0xFFFFFFFF
+  probe hw_axi_1 at 0x200000000 ERRORED: ERROR: [Labtools 27-3199] Address Value '200000000' is too large. Cannot be larger than 32 bits.
+
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 5A5A0F0F0F5A5A5A
+INFO: [Labtoolstcl 44-481] READ DATA is: 5a5a0f0f0f5a5a5a
+  probe hw_axi_3 at 0x200000000 -> 0x5A5A0F0F0F5A5A5A
+AXI_LITE_MASTER hw_axi_2
+AXI_HBM_MASTER  hw_axi_3
+INFO: [Labtoolstcl 44-481] READ DATA is: 0000a274
+INFO: [Labtoolstcl 44-481] READ DATA is: 00003d0e
+INFO: [Labtoolstcl 44-481] READ DATA is: 464b3333
+INFO: [Labtoolstcl 44-481] READ DATA is: 20260828
+ID_OK magic=0x464B3333 build=0x20260828  ("FK33")
+SYSMON die=42.7 C  VCCINT=0.7155 V  (raw 0xa274 0x3d0e)
+VCCINT_OK 0.7155 V
+INFO: [Labtoolstcl 44-481] READ DATA is: 00000003
+INFO: [Labtoolstcl 44-481] READ DATA is: 00000003
+GPIO tri=0x00000003 data=0x00000003  (tri must be 0x3 or wider all-ones at reset)
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 0BADC0DEDEADBEEF
+INFO: [Labtoolstcl 44-481] WRITE DATA is: A5A5A5A55A5A5A5A
+INFO: [Labtoolstcl 44-481] READ DATA is: 0badc0dedeadbeef
+INFO: [Labtoolstcl 44-481] READ DATA is: a5a5a5a55a5a5a5a
+HBM_OK scratch page 0x1FFFFF000 writes and reads back
+       (this address is in SAXI_16's half, so both stacks are mapped)
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 4A544147464B3333
+INFO: [Labtoolstcl 44-481] WRITE DATA is: FEDCBA9812345678
+INFO: [Labtoolstcl 44-481] READ DATA is: 4a544147464b3333
+INFO: [Labtoolstcl 44-481] READ DATA is: fedcba9812345678
+DMABRAM_OK 0x200000000 holds 464B3333 4A544147 12345678 FEDCBA98
+           Read the same four words from the host with:
+             dd if=/dev/xdma0_c2h_0 bs=16 count=1 skip=$((0x200000000/16)) | xxd
+           Agreement proves the DMA target; disagreement localises the
+           fault to XDMA or the driver rather than to the fabric.
+PCIEEP_DONE
+  OTHER_CARD_INTACT 0000:06:00.0 (the right FPGA was programmed)
+
+=== bus up ===
+07:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+--- 0000:06:00.0 ---
+	Region 0: Memory at 4802c00000 (64-bit, prefetchable) [size=128K]
+		LnkCap:	Port #0, Speed 2.5GT/s, Width x1, ASPM not supported
+		LnkSta:	Speed 2.5GT/s (ok), Width x1 (ok)
+--- 0000:07:00.0 ---
+	Region 0: Memory at 4802b00000 (64-bit, prefetchable) [disabled] [size=128K]
+		LnkCap:	Port #0, Speed 8GT/s, Width x4, ASPM not supported
+		LnkSta:	Speed 8GT/s (ok), Width x4 (ok)
+--- insmod /usr/local/lib/fk33/xdma.ko poll_mode=1 ---
+crw-rw---- 1 root fk33 509, 0 Sep 23 09:12 /dev/xdma0_user
+  xdma0 <- 0000:07:00.0
+FK33_PCI_UP
+BUS_UP_OK

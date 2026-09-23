@@ -509,8 +509,8 @@ int main(int argc, char **argv)
                             " cannot be combined with --allow-hardware\n");
             status = 2; goto done;
         }
-        printf("transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator"
-               " token supplied)\n");
+        printf("transport  %s_user + h2c_0/c2h_0 (LIVE CARD, operator"
+               " token supplied)\n", dev_prefix ? dev_prefix : "/dev/xdma0");
     }
     if (go_timeout_ms > 0) o.go_timeout_ms = go_timeout_ms;
     if (want_v2) {

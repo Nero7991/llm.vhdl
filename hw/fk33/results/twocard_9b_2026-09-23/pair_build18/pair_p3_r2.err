@@ -1,0 +1,6 @@
+[pl_backend] image lock OK: the card holds the image /mnt/storage/llama-models/qwen35-9b-card0-b0-15/manifest.json
+  describes (record at 0x1FFB03E00, 126 of 126 objects)
+[pl_backend] KV base programmed: K 0x1B1938000 V 0x1D3938000 (C_MAXPOS 65536, 17408 B/token, extent ends 0x1F5938000 under hbm.gdn_const_base 0x1FF95A000)
+[pl_backend] image lock OK: the card holds the image /mnt/storage/llama-models/qwen35-9b-card1-b16-31/manifest.json
+  describes (record at 0x1FFB03E00, 127 of 127 objects)
+[pl_backend] KV base programmed: K 0x1B1938000 V 0x1D3938000 (C_MAXPOS 65536, 17408 B/token, extent ends 0x1F5938000 under hbm.gdn_const_base 0x1FF95A000)

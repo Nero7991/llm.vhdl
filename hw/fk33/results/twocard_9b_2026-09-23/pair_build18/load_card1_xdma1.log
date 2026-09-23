@@ -1,0 +1,11 @@
+image record at 0x1ffb03e00 zeroed: the card reports NO IMAGE until this load finishes
+loading 127 objects, 2.53 GB, H2C /dev/xdma1_h2c_0
+wrote 2,531,418,112 bytes in 6.92 s = 0.37 GB/s
+PASS  every object written and its source bytes match the manifest digest
+verifying 127 objects against the manifest (full read-back), C2H /dev/xdma1_c2h_0
+read 2,531,930,112 bytes in 5.58 s = 0.45 GB/s
+125 headers parsed and matched, 127 payload digests matched
+extents      3502 of 3502 digested
+PASS  the image on the card is the image the manifest describes (127 of 127 objects read and checked)
+image record written at 0x1ffb03e00: dec38e9280631a3f52e674eb35d29a08
+      the card now answers `which image is resident` with this manifest's placement

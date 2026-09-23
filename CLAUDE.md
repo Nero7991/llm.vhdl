@@ -673,6 +673,31 @@ NETS: `hw/fk33/gen_pcieep.py` now opens the synthesized run and errors
 constant net. See
 `docs/debugging/2026-09-22_the-r-x-shadow-zeroes-the-residual-on-silicon.md`.
 
+**A TABLE INDEXED BY A PER-TOKEN COUNTER IS CORRECT FOR EVERY PROGRAM THAT
+STARTS AT STEP 0 AND WRONG FOR EVERY OTHER, AND NO BENCH RUNS ANY OTHER.**
+MEASURED 2026-09-23 on the first two-card run: `rtl/llama_top.vhd` serves
+the RMSNorm gain from `NORM_W_IMAGE` "one entry per OP_VEC_NORM of the token,
+in SCHEDULE ORDER", a counter, while every VEC_NORM step carries its block in
+`const_base`. Card 1's program starts at block 16, so its first norm got
+block 0's gain and the pair diverged at positions 7, 28 and 0 with plausible
+text that decayed into repetition. Every static input was identical (D table,
+tensors, header, bases, bytes, placement); the bit-exact oracle (the full
+card's own residual dumped at the same step via `--upto`/`--override`) put
+the difference in the FIRST step. `gen_layer_program --pad-norms 2*lo` is
+the workaround; the fix is to index by the step's block. **When a unit keeps
+a counter that a descriptor field could replace, the counter is a latent
+split bug**, and the bench that finds it runs a program from the middle.
+`docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-counter.md`.
+
+**AN `mmap` ACCESS TO THE USER BAR HITS AN AUTO-INCREMENTING REGISTER TWICE.**
+MEASURED the same day: a python probe reading the seam window through an
+`mmap` slice advanced `WIN_ADDR` by 2 per access (8192 after 4,096 reads)
+and wrote every other address, which looked exactly like "the upper half of
+the window is dead" (2,048 of 4,096 differ, all zeros). The host code uses
+pread/pwrite, one AXI-Lite transaction per access, and is bit-faithful (0 of
+4,096). **Probe the seam only with the primitive the host code uses**, and
+treat a clean power-of-two boundary in a "hardware" fault as the instrument.
+
 **BEFORE WRITING A MODULE, GREP THE ENTITY DECLARATIONS FOR THE SHAPE YOU ARE
 ABOUT TO BUILD, NOT FOR THE WORDS A DOCUMENT USED.** A null grep for one
 spelling is not evidence about the design. MEASURED, twice in one day
