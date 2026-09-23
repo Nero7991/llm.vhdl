@@ -164,6 +164,16 @@ at 0x1F6B18000, below `gdn_const_base`. That checker change is open.
   output directory and the arm died in 12 s with rc=1, sentinel 0. The fix
   is `$ROOT/sim/ooc_gdn_block_27b_probe.tcl`; `run27b.sh` now does that and
   `rerun_gdn27.sh` chains the arm on the first run's `PROBE27_DONE`.
+- **A row window that is legal at K = 4096 is illegal at K = 5120.** The
+  first 27B programs refused 50 (card 0) and 53 (card 1) A jobs with
+  `ERR_ALIGN: base word 8`: every padded qkv segment start (rows 2064, 4128)
+  and every lm_head window start (17,376-row stride). A lane tile is
+  `nb x 32` bytes, 4096 at K = 4096 and 5120 at K = 5120, and the gateware
+  refuses a port base with [11:0] nonzero, so at 5120 only every fourth tile
+  boundary is a legal window start. `gen_mv4i_desc.window_granule` (48 at
+  4096, 192 at 5120) now sizes the qkv pad (starts 0 / 2112 / 4224) and the
+  lm_head stride (17,280); the 9B numbers are unchanged. The qkv tensors had
+  to be re-packed.
 - **A base pack at a new shape can refuse at its manifest after packing every
   tensor.** The first 27B base pack packed all 498 tensors in 87 minutes and
   then refused at `a_descriptor_jobs`, which compared `output.weight` against
