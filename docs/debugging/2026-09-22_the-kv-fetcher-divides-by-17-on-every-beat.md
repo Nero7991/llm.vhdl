@@ -185,3 +185,14 @@ positive slack at a 200 MHz target. The residual six carry chains are the `rr <=
 `run_p0 + rr < cpos_r` compares on 32-bit `integer` operands plus the `w_rr + 1` increment; at 75 MHz they
 have 9 ns of margin in isolation and are not worth a second pass now. The block's worst path is now the AR
 issuer at 6.244 ns, which is also comfortable at 13.333 ns; it would be the next thing at 150 MHz.
+
+## APPENDED 19:40: draw 3b, the control for "phys_opt cannot remove it"
+
+`phys_opt_design -directive AggressiveExplore` on draw 3's routed checkpoint (45 min): WNS -0.254 -> **-0.028**,
+TNS -57.5 -> -1.388, failing endpoints 597 -> **103**, route still legal, WHS 0.000. Every one of the 103 is
+`GEN_RD[1].ph_ch_reg[0]` -> `GEN_RD[1].mbank_reg[*]/CE` at 33-34 levels. The pre-phys_opt census
+(`report_timing -slack_lesser_than 0 -max_paths 300`) put 300 of 300 listed failing endpoints in
+`u_kv/GEN_RD.mbank_reg`. So the rejected path above stands with its number: post-route physical optimisation
+moves 0.226 ns of route and replication and leaves the 3.9 ns of divider logic, 28 ps short. The answer to
+the question is the RTL, and build 17 (15 + f14121d, launched 19:38) is its test. Second-pass phys_opt on the
+3b checkpoint is untested and is a backlog item, not a plan: the lane is build 17's.

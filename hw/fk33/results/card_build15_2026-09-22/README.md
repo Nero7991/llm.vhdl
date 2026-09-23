@@ -43,3 +43,20 @@ three chain scripts are the exact recipes. DCPs (synth, and placed/routed per dr
 
 Draw 3b (post-route `phys_opt_design -directive AggressiveExplore` on draw 3's routed DCP, `reimpl4.tcl`)
 is recorded below when it lands.
+
+## Draw 3b (post-route `phys_opt_design -directive AggressiveExplore` on draw 3's routed DCP): -0.028 ns
+
+`reimpl4.tcl`, unit `card15-reimpl4`, 18:08 to 18:53. Route stays legal (681,011/681,011, 0 errors).
+
+```
+    WNS(ns)   TNS(ns)   TNS Failing Endpoints   WHS(ns)
+     -0.028    -1.388                     103     0.000
+```
+
+Recovered 0.226 of the 0.254 ns and still not closed; **all 103 remaining endpoints are the same path
+family**, `u_kv/GEN_RD[1].ph_ch_reg[0]` -> `mbank_reg[*]/CE`, 33-34 logic levels: the divider, which
+phys_opt can only re-place and replicate, not remove. The census taken BEFORE the phys_opt
+(`draw3b/failing_paths_before.rpt.gz`, `report_timing -slack_lesser_than 0 -max_paths 300`) names
+`gcr.gkvaxi.u_kv/GEN_RD.mbank_reg` for **300 of 300** listed endpoints (the report's cap; the full 597 were
+not enumerated). No bitstream was written (the script refuses on negative slack). DCP at
+`/mnt/storage/fk33_builds/KEEP_build15_dcp/draw3b/`. The RTL fix (`f14121d`) is build 17.
