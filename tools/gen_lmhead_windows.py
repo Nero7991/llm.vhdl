@@ -75,14 +75,21 @@ from gen_mv4i_desc import DescError                          # noqa: E402
 MODES = {"bfp": G.MODE_BFP, "raw": G.MODE_RAW, "partial": G.MODE_PARTIAL}
 
 
-def plan(M, rows_if, maxrows_bfp):
+def plan(M, rows_if, maxrows_bfp, granule=None):
     """The window list, as (row_start, n_rows).
 
     Derived here and NOWHERE else, so the checks below have exactly one thing
-    to disagree with."""
+    to disagree with.  `granule` is `gen_mv4i_desc.window_granule()` -- the
+    rows a window start must be a multiple of so that every port base stays
+    4 KB aligned; it equals ROWS_IF at K = 4096 and 4 x ROWS_IF at K = 5120
+    (2026-09-23).  None means ROWS_IF, the pre-27B behaviour."""
     if rows_if <= 0 or maxrows_bfp <= 0:
         raise DescError("rows_if and maxrows_bfp must be positive")
-    stride = (maxrows_bfp // rows_if) * rows_if
+    granule = rows_if if granule is None else int(granule)
+    if granule <= 0 or granule % rows_if:
+        raise DescError("granule %d is not a positive multiple of rows_if %d"
+                        % (granule, rows_if))
+    stride = (maxrows_bfp // granule) * granule
     if stride == 0:
         raise DescError("MAXROWS_BFP = %d is below one tile of ROWS_IF = %d; "
                         "no legal window exists" % (maxrows_bfp, rows_if))
@@ -102,7 +109,8 @@ def build_set(h, hbm_base, x_exp, out_mode, maxrows_bfp, cb_load_first_only,
     recomputed because the byte-cover check reads the bases back out of the
     descriptors, and a second idea of where a sub-region is would make that
     check agree with itself instead of with the manifest."""
-    stride, wins = plan(h.M, h.rows_if, maxrows_bfp)
+    stride, wins = plan(h.M, h.rows_if, maxrows_bfp,
+                        G.window_granule(h.rows_if, h.axi_dw, h.K))
     descs = []
     for i, (rs, nr) in enumerate(wins):
         # cb_load on every job is the safe default: the codebook register is

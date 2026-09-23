@@ -352,7 +352,9 @@ def lmhead_windows(s, build=None):
     single window at row 0, and the step sequence is bit-for-bit what it was
     before this function existed."""
     build = build or G.FK33
-    _, wins = W.plan(s.vocab_shard, build["rows_if"], build["maxrows_bfp"])
+    _, wins = W.plan(s.vocab_shard, build["rows_if"], build["maxrows_bfp"],
+                     G.window_granule(build["rows_if"], build["axi_dw"],
+                                      s.hidden))
     return wins
 
 
@@ -1336,7 +1338,9 @@ def main(argv=None):
     # ---- the shape, checked against the packed tensors -------------------
     mani = None
     geom = {}
-    if a.shape == "9b" and os.path.exists(a.manifest):
+    # 2026-09-23: the 27B images exist, and the check is written from the
+    # Shape, so it applies to any real shape; only `sim` has no manifest.
+    if a.shape in ("9b", "27b") and os.path.exists(a.manifest):
         checks, mani = check_against_manifest(s, a.manifest,
                                               layer=a.layer or 0)
         bad = [(n, w, g) for (n, w, g) in checks if w != g]

@@ -217,6 +217,26 @@ def gcd(a, b):
     return a
 
 
+def window_granule(rows_if, axi_dw, K):
+    """Rows a job's `row_start` must be a multiple of, so that every port base
+    it produces stays 4 KB aligned.
+
+    THE RULE, MEASURED 2026-09-23 on the first 27B programs.  A row window
+    advances every sub-region base by whole tiles of `nb * port_b` bytes
+    (`build_descriptor`), and the gateware's S_CHECK refuses any base with
+    [11:0] nonzero (EC 0xC, spec 6.4; `acceptance()` below predicts it).  At
+    K = 4096 a tile is 128 x 32 = 4096 B, so EVERY tile boundary is 4 KB
+    aligned and the granule is one tile, ROWS_IF = 48: nothing ever tripped.
+    At K = 5120 a tile is 160 x 32 = 5120 B and only every FOURTH tile lands
+    on a 4 KB boundary: the padded qkv segments (starts 2064 and 4128 rows,
+    tiles 43 and 86) and the 17,376-row lm_head windows (362 tiles) were all
+    REFUSED with `ERR_ALIGN: base word 8`, 50 and 53 A jobs per card.  So the
+    granule is ROWS_IF x 4096 / gcd(4096, tile bytes): 48 at K = 4096 (every
+    9B artefact byte-identical), 192 at K = 5120."""
+    tile_bytes = (K // MV4I_BLOCK) * (axi_dw // 8)
+    return rows_if * (4096 // gcd(4096, tile_bytes))
+
+
 def n_scale_sub_rule(rows_if, axi_dw):
     """spec 6.5a: the smallest n with n*AXI_DW a whole number of SW-bit groups."""
     sw = rows_if * 16
