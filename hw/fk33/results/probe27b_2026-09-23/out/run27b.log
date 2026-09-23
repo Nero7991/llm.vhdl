@@ -11,3 +11,14 @@ PROBE27_ARM attn9 rc=0 wall=982s memory.peak=11814879232 swap.peak=7043276800 se
 PROBE27_ARM gdn27 rc=1 wall=12s memory.peak=NA swap.peak=NA sentinel=0
 === PROBE27 arm gdn9 begin 2026-09-23T13:54:01-04:00 ===
 PROBE27_CAP gdn9 memory.high=11811160064
+PROBE27_ARM gdn9 rc=0 wall=311s memory.peak=10453737472 swap.peak=2789101568 sentinel=1
+PROBE27_UTIL gdn9 | CLB Registers              | 33687 |     0 |          0 |    879360 |  3.83 |
+PROBE27_UTIL gdn9 | CARRY8                     |  1525 |     0 |          0 |     54960 |  2.77 |
+PROBE27_UTIL gdn9 | F7 Muxes                   |  4355 |     0 |          0 |    219840 |  1.98 |
+PROBE27_UTIL gdn9 | F8 Muxes                   |   816 |     0 |          0 |    109920 |  0.74 |
+PROBE27_UTIL gdn9 | Block RAM Tile    |   22 |     0 |          0 |       672 |  3.27 |
+PROBE27_UTIL gdn9 | URAM              |    0 |     0 |          0 |       320 |  0.00 |
+PROBE27_UTIL gdn9 | DSPs           |  141 |     0 |          0 |      2880 |  4.90 |
+PROBE27_UTIL gdn9 | CARRY8   |  1525 |                 CLB |
+PROBE27_RESULT gdn_block wns=0.483 fmax=221.3858755811379
+PROBE27_DONE 2026-09-23T13:59:11-04:00

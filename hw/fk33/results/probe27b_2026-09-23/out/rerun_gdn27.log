@@ -1,0 +1,16 @@
+PROBE27_ENV host=cachyos-bc250 root=/home/orencollaco/GitHub/llama.vhdl out=/home/labuser/probe27b/out cap=11G tree=unknown
+PROBE27_CGROUP systemd-run=1
+PROBE27_GDN27_SED_HITS 1
+=== PROBE27 arm gdn27 begin 2026-09-23T13:59:53-04:00 ===
+PROBE27_CAP gdn27 memory.high=11811160064
+PROBE27_ARM gdn27 rc=0 wall=312s memory.peak=9565675520 swap.peak=3220697088 sentinel=1
+PROBE27_UTIL gdn27 | CLB Registers              | 33998 |     0 |          0 |    879360 |  3.87 |
+PROBE27_UTIL gdn27 | CARRY8                     |  1528 |     0 |          0 |     54960 |  2.78 |
+PROBE27_UTIL gdn27 | F7 Muxes                   |  4399 |     0 |          0 |    219840 |  2.00 |
+PROBE27_UTIL gdn27 | F8 Muxes                   |   732 |     0 |          0 |    109920 |  0.67 |
+PROBE27_UTIL gdn27 | Block RAM Tile    |   22 |     0 |          0 |       672 |  3.27 |
+PROBE27_UTIL gdn27 | URAM              |    2 |     0 |          0 |       320 |  0.63 |
+PROBE27_UTIL gdn27 | DSPs           |  141 |     0 |          0 |      2880 |  4.90 |
+PROBE27_UTIL gdn27 | CARRY8   |  1528 |                 CLB |
+PROBE27_RESULT gdn_block wns=0.483 fmax=221.3858755811379
+PROBE27_GDN27_DONE

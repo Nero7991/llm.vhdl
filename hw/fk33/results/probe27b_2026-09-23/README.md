@@ -56,7 +56,54 @@ the number to carry, not the OOC total.
 `sim/ooc_gdn_block.tcl` (9B: `KEY_HEADS=16 VAL_HEADS=32 DIM=128 KCONV=4
 LAYERS=24`, lanes 4/4) against a sed copy at `VAL_HEADS=48 LAYERS=48`.
 
-PENDING: `gdn9` is drawing, `gdn27` is chained behind it.
+Both arms bound the generics they claim (`Parameter VAL_HEADS bound to: 32`
+/ `48`, `LAYERS 24` / `48`, everything else identical, read from the logs).
+Neither reached the cap (`memory.peak` 10.45 GB and 9.57 GB under 11.81 GB),
+so these peaks are real and the wall times are unthrottled.
+
+| | 9B control (`gdn9`) | 27B (`gdn27`) | delta |
+|---|---|---|---|
+| CLB LUTs | 56,713 | 58,216 | +1,503 (+2.7%) |
+| CLB registers | 33,687 | 33,998 | +311 |
+| CARRY8 | 1,525 | 1,528 | +3 |
+| F7 / F8 muxes | 4,355 / 816 | 4,399 / 732 | +44 / -84 |
+| block RAM tiles | 22 | 22 | 0 |
+| URAM | 0 | 2 | +2 |
+| DSPs | 141 | 141 | 0 |
+| post-synthesis WNS at 5.0 ns | 0.483 | 0.483 | (synthesis estimate, not a timing result) |
+| wall | 311 s | 312 s | |
+
+Reading: `gdn_block` walks its heads sequentially through the same 4/4-lane
+datapath, so value heads and layers only widen counters and the per-layer
+exponent memory; the compute does not grow. The +2 URAM is a depth-dependent
+mapping flip (the same `acc_mem`/`u_mem` objects are named "will be
+implemented using URAM" in BOTH logs while the 9B row reads URAM 0; the
+utilisation row is the census, the message is not). B's real 27B cost is
+elsewhere: the state store (`gdn_state_store`, 28 BRAM + 32 URAM in build 18)
+scales with value heads, DERIVED x1.5, and the per-token state sweep time
+scales the same way.
+
+The identical WNS is not an artefact of an arm that cannot differ: the two
+netlists differ in LUT, FF, mux and URAM counts, and the bound generics
+differ. It says the critical path is in the shared datapath.
+
+## Fit at 27B, DERIVED from build 18 plus these deltas
+
+| resource | build 18 | + C | + B block | + B state (x1.5) | + D regions/swiglu | + norm ROM | total | of | note |
+|---|---|---|---|---|---|---|---|---|---|
+| LUT | 358,846 | +30,122 | +1,503 | ~0 | ~+1,500 | 0 | ~392,000 | 439,680 | 89% |
+| block RAM | 567 | +4.5 | 0 | +14 | +50 | +132 | 767.5 | 672 | does not fit |
+| block RAM without the norm ROM (Task 2) | 567 - 99 | +4.5 | 0 | +14 | +50 | 0 | ~536 | 672 | 80% |
+| URAM | 32 | 0 | +2 | +16 | 0 | +27 to +40 (the moved gains) | ~90 | 320 | fits |
+| DSP | 2,087 | +132 | 0 | 0 | 0 | 0 | 2,219 | 2,880 | 77% |
+
+The D figures are the plan's DERIVED scalings (`region_mem` x 17408/12288,
+`swiglu_mem` x FFN), not measurements. With `FK33_C_KV_BLOCK=16` (MEASURED on
+the 9B: -14,383 LUT net, -112 DSP) the LUT total is about 377,600 (86%).
+Build 18 routed at 81.6% on its first default draw; builds 14 and 15 failed
+to route near that count on congestion, so 86 to 89% is a risk to be drawn,
+not a fit to be assumed. The block RAM line is the hard one: the norm-gain
+store must move before any 27B draw.
 
 ## Traps hit
 
