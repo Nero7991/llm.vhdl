@@ -1,0 +1,54 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Thu Sep 24 00:21:58 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_design_analysis -congestion -file /mnt/storage/fk33_builds/build19/cong/cong_b18.rpt
+| Design       : bd_wrapper
+| Device       : xcvu33p
+| Design State : Fully Placed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+--------+-------+------------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------------------------------------------------------+
+| Direction |  Type  | Level |               Window               | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM |  DSP | CARRY | SRL |                                                      Cell Names                                                     |
++-----------+--------+-------+------------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------------------------------------------------------+
+| South     | Global |     5 | (CLEL_R_X83Y142,CLEL_R_X99Y173)    |            2% |         3.248 | 68% | 70%    |  29% |   4% | 100% | 0%   | 100% |   30% |  0% | bd_i/eng/inst/eng/dut/core(54%),bd_i/card/inst/u(32%),bd_i(4%)                                                      |
+| East      | Global |     5 | (CLEM_X39Y1,DSP_X54Y30)            |           30% |         2.953 | 54% | 48%    |  45% |   2% | NA   | NA   | 81%  |   11% |  0% | bd_i/pcie2hbm/inst(44%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(22%),bd_i/eng/inst/eng/dut/streamer(18%)                   |
+| West      | Global |     5 | (CLEL_R_X83Y81,CLEL_R_X99Y112)     |            8% |         1.825 | 52% | 59%    |  27% |   1% | 83%  | 0%   | 100% |   55% |  0% | bd_i/eng/inst/eng/dut/core(46%),bd_i/pcie2axil/inst(22%),bd_i/card/inst/u(14%)                                      |
+| West      | Global |     6 | (CLEL_R_X51Y41,CLEM_X83Y104)       |           17% |         2.965 | 60% | 49%    |  34% |   4% | 89%  | 0%   | 100% |   23% |  0% | bd_i/eng/inst/eng/dut/core(42%),bd_i/pcie2axil/inst(16%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(14%)                      |
+| South     | Long   |     5 | (CLEL_R_X85Y31,CLEL_R_X101Y62)     |            6% |         2.175 | 56% | 57%    |  28% |   3% | 100% | 50%  | 100% |   46% |  2% | bd_i/eng/inst/eng/dut/core(41%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(25%),bd_i/card/inst/u(10%)                         |
+| South     | Long   |     6 | (CLEL_R_X52Y27,CLEL_L_X84Y90)      |           22% |         2.940 | 59% | 48%    |  36% |   4% | 94%  | 0%   | 100% |   22% |  1% | bd_i/eng/inst/eng/dut/core(37%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(20%),bd_i/pcie2axil/inst(15%)                      |
+| East      | Long   |     5 | (CLEL_R_X31Y1,CLEM_X47Y32)         |           15% |         3.135 | 61% | 29%    |  44% |   2% | 100% | NA   | 37%  |   14% |  0% | bd_i/eng/inst/eng/dut/streamer(29%),bd_i/pcie2hbm/inst(22%),bd_i(13%)                                               |
+| West      | Long   |     5 | (CLEM_X77Y81,CLEM_X93Y112)         |            9% |         1.995 | 51% | 56%    |  26% |   2% | 83%  | 0%   | 100% |   45% |  0% | bd_i/eng/inst/eng/dut/core(43%),bd_i/pcie2axil/inst(18%),bd_i/card/inst/u(15%)                                      |
+| West      | Long   |     6 | (CLEM_X45Y37,BRAM_X76Y100)         |           23% |         3.125 | 60% | 44%    |  37% |   5% | 90%  | 0%   | 100% |   18% |  0% | bd_i/eng/inst/eng/dut/core(36%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(20%),bd_i/pcie2axil/inst(14%)                      |
+| North     | Short  |     5 | (CLEM_X114Y73,CLEM_X130Y104)       |           22% |         3.116 | 57% | 46%    |  45% |   2% | NA   | 50%  | 54%  |   17% |  1% | bd_i/xdma/inst/udma_wrapper/dma_top/dma_enable.vul_dma(56%),bd_i/pcie2axil/inst(11%),bd_i/eng/inst/eng/dut/core(9%) |
+| South     | Short  |     5 | (CLEL_R_X83Y144,CLEL_R_X99Y175)    |            2% |         3.350 | 69% | 66%    |  29% |   4% | 100% | 0%   | 100% |   29% |  0% | bd_i/eng/inst/eng/dut/core(56%),bd_i/card/inst/u(31%)                                                               |
+| South     | Short  |     6 | (CLEL_R_X42Y5,XIPHY_BYTE_L_X74Y60) |           34% |         3.183 | 59% | 40%    |  44% |   4% | 97%  | 0%   | 98%  |   13% |  1% | bd_i/card/inst/u/gcr.gkvaxi.u_kv(30%),bd_i/pcie2hbm/inst(24%),bd_i/eng/inst/eng/dut/core(20%)                       |
+| East      | Short  |     5 | (CLEL_R_X66Y2,CLEL_R_X81Y33)       |           25% |         2.817 | 52% | 56%    |  44% |   4% | 100% | 0%   | 100% |    8% |  0% | bd_i/pcie2hbm/inst(56%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(13%),bd_i/eng/inst/eng/dut/core(13%)                       |
+| East      | Short  |     6 | (CLEL_R_X34Y3,CLEL_R_X66Y66)       |           31% |         3.384 | 62% | 33%    |  45% |   4% | 100% | 0%   | 92%  |   11% |  1% | bd_i/card/inst/u/gcr.gkvaxi.u_kv(28%),bd_i/pcie2hbm/inst(24%),bd_i/eng/inst/eng/dut/core(17%)                       |
+| East      | Short  |     7 | (CLEM_X19Y5,CLEM_X83Y132)          |           14% |         3.187 | 63% | 33%    |  38% |   6% | 96%  | 0%   | 82%  |   19% |  0% | bd_i/eng/inst/eng/dut/core(26%),bd_i/card/inst/u/gcr.u_attn(13%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(11%)              |
+| West      | Short  |     5 | (CLEL_R_X71Y2,CLEL_R_X86Y33)       |           30% |         3.181 | 57% | 63%    |  44% |   4% | 100% | 0%   | 100% |    6% |  1% | bd_i/pcie2hbm/inst(58%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(18%),bd_i/eng/inst/eng/dut/core(9%)                        |
+| West      | Short  |     6 | (CLEL_R_X43Y4,CLEL_R_X74Y67)       |           34% |         3.176 | 59% | 40%    |  44% |   4% | 97%  | 0%   | 98%  |   13% |  1% | bd_i/card/inst/u/gcr.gkvaxi.u_kv(30%),bd_i/pcie2hbm/inst(26%),bd_i/eng/inst/eng/dut/core(20%)                       |
+| West      | Short  |     7 | (CLEL_R_X18Y6,DSP_X82Y130)         |           13% |         3.212 | 63% | 33%    |  38% |   6% | 96%  | 0%   | 82%  |   19% |  0% | bd_i/eng/inst/eng/dut/core(26%),bd_i/card/inst/u/gcr.u_attn(14%),bd_i/card/inst/u/gcr.gkvaxi.u_kv(11%)              |
++-----------+--------+-------+------------------------------------+---------------+---------------+-----+--------+------+------+------+------+------+-------+-----+---------------------------------------------------------------------------------------------------------------------+
+
+
+2. SLR Net Crossing Reporting
+-----------------------------
+
++------------+-----------------------------+
+| Cell Names | Number of Nets crossing SLR |
++------------+-----------------------------+
+* The current part is not an SSI device
+
+
