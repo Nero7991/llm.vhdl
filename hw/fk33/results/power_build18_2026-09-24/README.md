@@ -86,3 +86,42 @@ The card has NO calibrated telemetry: its I2C bus holds three JC42.4 temperature
 and three MCP45xx pots, no PMBus regulator
 (`docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md`, Bus map). The UPS reports
 apparent power for the whole box in ~12 VA steps.
+
+## A guessed calibration of the SYSMON current channels (ESTIMATE, added same day)
+
+Oren: "Can you not guess the current channels?" Assumption, stated so it can be falsified:
+**code 65,536 (1 V on the aux input) = the rail's rated current, and zero offset.** Ratings
+from the board's community documentation: VCCINT 120 A, HBM_VCC 20 A, VCCINT_IO 20 A.
+
+**The channel labelled `VCCBRAM_I` is taken to be VCCINT_IO + VCCBRAM.** The model puts
+VCCBRAM alone at 0.03-0.08 A, and this channel reads the largest code of the three. On
+HBM-equipped UltraScale+ parts VCCBRAM is tied to VCCINT_IO, and VCCINT_IO is the third
+documented rail. SYSMON's own VCCBRAM reads 0.759 / 0.754 V (MEASURED), so that rail runs
+below its 0.85 V nominal too. HBM_VCC is taken at its nominal 1.2 V (not measured).
+
+| rail | card 1 idle | card 2 idle | card 1 / 2 generation MAX |
+|---|---|---|---|
+| VCCINT | 4.20 A x 0.717 V = **3.01 W** | 4.51 A x 0.713 V = **3.22 W** | 7.39 / 8.63 A |
+| VCCINT_IO + VCCBRAM | 3.04 A x 0.759 V = **2.31 W** | 2.96 A x 0.754 V = **2.23 W** | 4.96 / 4.85 A |
+| HBM_VCC | 1.78 A x 1.2 V = **2.14 W** | 1.90 A x 1.2 V = **2.28 W** | 3.58 / 4.07 A |
+| **sensed total** | **7.45 W** | **7.73 W** | |
+
+Rails with no sense channel, from the model: VCCAUX 0.79 W, the GTY rails 1.1 W, VCCAUX_HBM
+0.29 W, and VCC_IO_HBM, which is 5.4 W in the model at Random traffic; scaled by HBM_VCC's
+guessed-over-modelled ratio (1.78 / 4.84) it is about 2.0 W. That puts the rails at
+**about 12 W per card at idle**, and with an 85-90% regulator efficiency **about 13-14 W per
+card at the 12 V input, about 27 W for the pair.** All ESTIMATE, and the calibration
+assumption alone could move it by +/-50%.
+
+Consistency checks, none of them a calibration:
+- HBM_VCC's generation peak (3.6-4.1 A) sits just under the model's full-Random-traffic
+  4.84 A, which is where a heavily streaming token should be.
+- VCCINT's idle guess (4.2 A) is 1.7x the model's idle at 0.715 V (2.1 A dynamic + ~0.45 A
+  leakage, DERIVED by V scaling). Either full scale is nearer 75 A than 120 A, or the real
+  idle has activity and leakage (ES1 die, card 2 at 53 C) the zero-toggle model lacks.
+- Card 2 reads 7.5% more VCCINT current than card 1 at the same voltage, and runs 14 C
+  hotter: the right sign for leakage.
+
+Cheapest falsifier of the zero-offset part, no hardware: step VCCINT 0.715 -> 0.80 V at idle.
+Dynamic current alone scales with V (+12%) and leakage adds more, so the code must rise at
+least 12%. A much smaller rise means a large offset.
