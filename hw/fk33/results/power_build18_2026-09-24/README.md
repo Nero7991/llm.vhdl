@@ -67,3 +67,22 @@ clocked keeps reading. Gating the clock is the only way that goes to zero.
   falls 24% (3.169 -> 2.404 A) when gated. On silicon the raw VCCINT_I code must FALL; its
   size is only interpretable once the sense offset is known.
 - Leakage at 0.715 V and at card 2's 53 C (the model is at 0.85 V, 38.7 C).
+
+## Why the modelled idle is 22 W, and why that is not the card's idle (added same day)
+
+17.780 of the 22.154 W is the HBM instance: **8.305 W in the FPGA die** (controllers,
+switch, PHY, HBM clocks) and **9.474 W in the two stacks** (report section 3.3.11). It is
+computed from the IP's configuration, `CONFIG.USER_MC0..15_TRAFFIC_OPTION {Random}`
+(`hw/fk33/build_fk33_pcieep.tcl:409`), i.e. sustained random traffic on all 16 channels.
+It did not move when every net was forced to zero toggle, so the model never saw the design
+being idle. The rest, 4.37 W, is the fabric: leakage 1.61, GTY 1.20, clocks 0.73, BRAM 0.31,
+PCIe 0.22, DSP 0.16, MMCM 0.10.
+
+The silicon codes disagree with a flat 17.78 W: raw VCCHBM_I is 5,839/6,219 at idle and
+reaches 11,719/13,334 during generation (`silicon_isample.txt`), so the HBM rail's draw does
+move with traffic. Its idle watts are unknown until the channel is calibrated.
+
+The card has NO calibrated telemetry: its I2C bus holds three JC42.4 temperature sensors
+and three MCP45xx pots, no PMBus regulator
+(`docs/debugging/2026-08-24_fk33-sysmon-vccint-undervolt.md`, Bus map). The UPS reports
+apparent power for the whole box in ~12 VA steps.

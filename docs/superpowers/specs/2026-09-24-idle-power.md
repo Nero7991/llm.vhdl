@@ -1,6 +1,9 @@
 # Idle power on the FK33: core clock gating and an RTL VCCINT sequencer
 
-2026-09-24. Status: **tasks P1 and P2 open, not started. P1's saving measured on the model 2026-09-24: about 0.47 W per card.** Requested by Oren:
+2026-09-24. Status: **P1 PARKED 2026-09-24** (Oren: "Park P1, not worth a build for 0.9 W"): the
+model puts it at about 0.47 W per card. P2 open, not started. **The 22 W idle figure below
+is NOT a measurement**: 17.78 W of it is the HBM IP's power model at `TRAFFIC_OPTION
+{Random}` on all 16 memory controllers, which `set_switching_activity` does not move. Requested by Oren:
 "I was wondering if we could lower the static power draw when there's no
 inference going", then choosing core clock gating and asking "Can idle VCCINT
 drop not be implemented in RTL?" It can, and it is also where "we can
