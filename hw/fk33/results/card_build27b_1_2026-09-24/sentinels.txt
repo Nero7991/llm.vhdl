@@ -1,0 +1,6 @@
+/mnt/storage/fk33_builds/build27b_1/reroute/rr.stdout:RR_BEFORE conflicts/unrouted/partial=1681285 0 0
+/mnt/storage/fk33_builds/build27b_1/reroute/rr.stdout:RR_AFTER conflicts/unrouted/partial=1698125 0 0
+/mnt/storage/fk33_builds/build27b_1/reroute/rr.stdout:RR_TIMING WNS=-7.434 WHS=-0.034
+/mnt/storage/fk33_builds/build27b_1/reroute/rr.stdout:RR_FAIL route not clean: 1698125 0 0
+/mnt/storage/fk33_builds/build27b_1/reimpl.stdout:REIMPL_SYNTH_STATUS synth_design Complete!
+/mnt/storage/fk33_builds/build27b_1/reimpl.stdout:REIMPL_STRATEGY Congestion_SpreadLogic_high route=AlternateCLBRouting place=ExtraNetDelay_high physopt=AggressiveExplore
