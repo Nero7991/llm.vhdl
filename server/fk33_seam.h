@@ -402,6 +402,10 @@ extern "C" {
                                               * silently (2026-09-19). */
 #define FK33_CAP_XEXP_OUT         (1u << 6)  /* FK33_SEAM_XEXP_OUT exists; the two-card hop
                                               * (pl_read_xout) refuses a card without it. */
+#define FK33_CAP_NORM_HBM         (1u << 7)  /* the card reads each RMSNorm gain
+                                              * row from HBM (hbm.norm_const_*);
+                                              * an image without norm rows would
+                                              * feed it garbage gains (2026-09-24). */
 #define FK33_CAP_ENG_KV_BASE      (1u << 5)  /* C's KV base is a register
                                               * (FK33_SEAM_KVK_LO/HI, KVV_LO/HI)
                                               * FK33_SEAM_KV_MAXPOS exists.

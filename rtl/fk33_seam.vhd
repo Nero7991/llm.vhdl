@@ -209,6 +209,13 @@ entity fk33_seam is
     CAPS_EMBD  : natural := 0;
     CAPS_LAYER : natural := 0;
     CAPS_CTX   : natural := 0;
+    -- CAPS_FLAGS bit 7 (2026-09-24, plan Task 2): 1 when the card behind the
+    -- seam reads each RMSNorm gain row from HBM (llama_top NORM_HBM), so the
+    -- host can refuse an image with no norm rows by asking the BITSTREAM.  A
+    -- natural 0/1 rather than a boolean: the block-design packager accepts
+    -- natural generics here already.  Defaults to 0, the honest report for a
+    -- card without it.
+    CAP_NORM_HBM : natural := 0;
     -- Positions this card can be at.  SEQ_POS is checked against the card's
     -- own next position, so a host that loses count is refused rather than
     -- silently attending over the wrong history.
@@ -508,6 +515,8 @@ architecture rtl of fk33_seam is
   -- UPDATED 2026-09-20: bit 5 SET, the KV base registers and A_KV_MAXPOS
   -- exist (0x1D -> 0x3D).
   -- bit 6 (2026-09-21): A_XEXP_OUT exists.  0x3D -> 0x7D.
+  -- bit 7 (2026-09-24): NOT in this constant.  It is the card's NORM_HBM, set
+  -- per build through the CAP_NORM_HBM generic and OR'd in at the read.
   constant CAPS_FLAGS_V : std_logic_vector(31 downto 0) := x"0000007D";
 
   -- seam error codes, `server/fk33_seam.h`
@@ -1086,7 +1095,9 @@ begin
               rv := std_logic_vector(to_unsigned(CAPS_LAYER, 16))
                   & std_logic_vector(to_unsigned(CAPS_EMBD, 16));
             when A_CAPS_CTX   => rv := to_slv32(to_unsigned(CAPS_CTX, 32));
-            when A_CAPS_FLAGS => rv := CAPS_FLAGS_V;
+            when A_CAPS_FLAGS =>
+              rv := CAPS_FLAGS_V;
+              if CAP_NORM_HBM = 1 then rv(7) := '1'; end if;
             when A_STATUS     =>
               rv(0) := st_done;
               rv(1) := running or d_busy;

@@ -276,6 +276,32 @@ def main():
                              "advertised=%s, A_KVK_LO/A_KV_MAXPOS=%s, seam->card wiring=%s"
                              % (advertised, have_reg, wired)))
 
+    # --- CAPS bit 7, NORM_HBM (2026-09-24).  NOT in the static constant: it is
+    # OR'd in at the read from the CAP_NORM_HBM generic, which gen_pcieep sets
+    # from the card's own NORM_HBM.  So: the constant must CLEAR bit 7 (or a
+    # ROM-path card would claim it), the seam must OR it in from a generic
+    # that defaults to 0, and gen_pcieep must set that generic.
+    if caps is not None and bits:
+        bit = bits.get("NORM_HBM")
+        seam_src = open(RTL).read() if os.path.exists(RTL) else ""
+        try:
+            gen = open(PCIEEP_GEN).read()
+        except OSError:
+            gen = ""
+        g_ok = bool(re.search(r"CAP_NORM_HBM\s*:\s*natural\s*:=\s*0\s*;", seam_src))
+        or_ok = bool(re.search(r"if\s+CAP_NORM_HBM\s*=\s*1\s+then\s+rv\(7\)\s*:=\s*'1'", seam_src))
+        set_ok = "CONFIG.CAP_NORM_HBM" in gen
+        if bit is None:
+            rows.append(("note", "CAPS:NORM_HBM", "host defines no FK33_CAP_NORM_HBM"))
+        elif bit != (1 << 7) or (caps & bit) or not (g_ok and or_ok and set_ok):
+            rows.append(("REFUSED", "CAPS:NORM_HBM",
+                         "host bit %#x (want 0x80), static CAPS_FLAGS_V %s it, seam generic "
+                         "default-0 %s, OR at read %s, gen_pcieep sets it %s"
+                         % (bit, "SETS" if caps & bit else "clears", g_ok, or_ok, set_ok))); fail += 1
+        else:
+            rows.append(("ok", "CAPS:NORM_HBM",
+                         "bit 7 from the CAP_NORM_HBM generic (default 0), set by gen_pcieep from the card"))
+
     for verdict, name, why in rows:
         print("  %-8s %-14s %s" % (verdict, name, why))
     print("check_seam_regs: %d rows, %d refused (rtl=%d host_offsets=%d)"

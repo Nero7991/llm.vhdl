@@ -1191,6 +1191,21 @@ def card_src(f):
     return MODEL_PKG_OUT if f == "model_cfg_pkg.vhd" else os.path.join(ENG_SRC_DIR, f)
 
 
+def _card_norm_hbm():
+    """1 if hw/fk33/rtl/fk33_card.vhd maps `NORM_HBM => true`, 0 if it maps
+    false or omits it (llama_top's default is false).  Refuses two mappings."""
+    path = os.path.join(HERE, "rtl", "fk33_card.vhd")
+    try:
+        src = open(path).read()
+    except OSError as e:
+        sys.exit("ABORT: cannot read %s (%s); the card's NORM_HBM is unknown."
+                 % (path, e))
+    m = re.findall(r"\bNORM_HBM\s*=>\s*(true|false)\b", src, re.I)
+    if len(set(x.lower() for x in m)) > 1:
+        sys.exit("ABORT: %s maps NORM_HBM more than one way: %s" % (path, m))
+    return 1 if m and m[0].lower() == "true" else 0
+
+
 def _card_generic(name):
     """`NAME => N,` out of hw/fk33/rtl/fk33_card.vhd -- THE FILE THE BUILD
     COMPILES, not gen_fk33_card.py's source text.  Until 2026-09-23 both
@@ -2640,6 +2655,9 @@ def _seam_block():
         # capacity is C_MAXPOS (gen_fk33_card.py); the seam must agree, and
         # the read-back below fails the build if the generic is renamed.
         a("set_property CONFIG.MAXPOS {%d} [get_bd_cells %s]" % (CARD_MAXPOS, SEAM_CELL))
+        # CAPS_FLAGS bit 7 (2026-09-24): the card's NORM_HBM, read from the
+        # file the build compiles, so the seam cannot claim it wrongly.
+        a("set_property CONFIG.CAP_NORM_HBM {%d} [get_bd_cells %s]" % (_card_norm_hbm(), SEAM_CELL))
     a("# READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a")
     a("# CONFIG name an object does not have and get_property then returns the")
     a("# empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this")
@@ -2649,7 +2667,7 @@ def _seam_block():
     a("foreach {g want} {%s} {"
       % (" ".join("%s %d" % (k, MODEL_CAPS[k] if CARD_ON else 0)
                   for k in ("CAPS_VOCAB", "CAPS_EMBD", "CAPS_LAYER", "CAPS_CTX"))
-         + (" MAXPOS %d" % CARD_MAXPOS if CARD_ON else "")))
+         + (" MAXPOS %d CAP_NORM_HBM %d" % (CARD_MAXPOS, _card_norm_hbm()) if CARD_ON else "")))
     a("    set v [get_property CONFIG.$g [get_bd_cells %s]]" % SEAM_CELL)
     a("    if {$v ne $want} {")
     a("        error \"FK33_SEAM FAIL: $g is \\\"$v\\\", not $want. %s\""

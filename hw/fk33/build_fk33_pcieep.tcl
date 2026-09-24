@@ -1322,13 +1322,14 @@ set_property CONFIG.CAPS_EMBD {4096} [get_bd_cells fk33_seam_0]
 set_property CONFIG.CAPS_LAYER {32} [get_bd_cells fk33_seam_0]
 set_property CONFIG.CAPS_VOCAB {248320} [get_bd_cells fk33_seam_0]
 set_property CONFIG.MAXPOS {65536} [get_bd_cells fk33_seam_0]
+set_property CONFIG.CAP_NORM_HBM {1} [get_bd_cells fk33_seam_0]
 # READ BACK, DO NOT ASSUME.  Vivado silently ignores set_property on a
 # CONFIG name an object does not have and get_property then returns the
 # empty string, so a generic RENAMED in rtl/fk33_seam.vhd would leave this
 # build claiming a model geometry it does not have -- or, since 2026-09-17,
 # publishing 0 for a model that IS behind the seam, which a host reads as
 # 'no model' and refuses.
-foreach {g want} {CAPS_VOCAB 248320 CAPS_EMBD 4096 CAPS_LAYER 32 CAPS_CTX 65536 MAXPOS 65536} {
+foreach {g want} {CAPS_VOCAB 248320 CAPS_EMBD 4096 CAPS_LAYER 32 CAPS_CTX 65536 MAXPOS 65536 CAP_NORM_HBM 1} {
     set v [get_property CONFIG.$g [get_bd_cells fk33_seam_0]]
     if {$v ne $want} {
         error "FK33_SEAM FAIL: $g is \"$v\", not $want. Subsystem D is in this bitstream, so the seam must publish the model geometry the card was built for."

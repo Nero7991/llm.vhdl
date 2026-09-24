@@ -115,7 +115,8 @@ SEAM_CAP = ((1 << 0, "WINDOWS   the DESC/REL/XIN/XOUT window port"),
             (1 << 3, "LOGITS    the card writes the full logits row"),
             (1 << 4, "SEQ_RESET SEQ_RESET reaches the engine; TOK_POS exists"),
             (1 << 5, "KV_BASE   C's KV base is a register (KVK/KVV); KV_MAXPOS exists"),
-            (1 << 6, "XEXP_OUT  R_X's block exponent is readable after tok_done (0xA4)"))
+            (1 << 6, "XEXP_OUT  R_X's block exponent is readable after tok_done (0xA4)"),
+            (1 << 7, "NORM_HBM  RMSNorm gain rows are read from HBM; the image must carry hbm.norm_const_rows"))
 SEAM_FAULT = ((1 << 0, "SMP_OVF    the logits FIFO lost beats"),
               (1 << 1, "LOST_BEAT  an unstallable producer beat was dropped"),
               (1 << 2, "GATE_DROP  the region lock refused a write"),
