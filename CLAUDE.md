@@ -329,6 +329,10 @@ remove it** (n500 output run hung at position 32 on card 2). Do not quote it
 as fixed. **CORRECTION 2, same day: no voltage effect is established at
 all** (0.715 V 4 hangs in 13 sequences, 0.78-0.80 V 2 in 15, Fisher p = 0.26);
 the "2 of 3" baseline was three trials. Count every sequence as a trial.
+**CORRECTION 3, same day: it HANGS AT 0.85 V** (1 in 36 sequences, after
+0.80 V 2 in 18), the voltage the design is signed off at. Raising VCCINT is
+not a fix at any value and there is no threshold; the lead is a race or CDC
+in build 19's NORM_HBM change. Wiper 68 stands.
 
 ---
 

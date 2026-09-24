@@ -1,0 +1,18 @@
+BUS CHECK  100 pot reads, 0 bad, value 16
+START  /dev/xdma1_user  wiper 16  VCCINT 0.8012 V  die 55.5 C
+TARGET stop at 0.8480 V, abort above 0.8620 V, wiper floor 2
+  wiper  15  VCCINT 0.8023 V  (+0.0011)  die 55.7 C
+  wiper  14  VCCINT 0.8064 V  (+0.0041)  die 55.9 C
+  wiper  13  VCCINT 0.8095 V  (+0.0031)  die 54.4 C
+  wiper  12  VCCINT 0.8134 V  (+0.0039)  die 56.0 C
+  wiper  11  VCCINT 0.8172 V  (+0.0038)  die 54.8 C
+  wiper  10  VCCINT 0.8193 V  (+0.0020)  die 54.9 C
+  wiper   9  VCCINT 0.8221 V  (+0.0028)  die 54.9 C
+  wiper   8  VCCINT 0.8281 V  (+0.0061)  die 56.0 C
+  wiper   7  VCCINT 0.8311 V  (+0.0030)  die 55.2 C
+  wiper   6  VCCINT 0.8349 V  (+0.0038)  die 55.6 C
+  wiper   5  VCCINT 0.8396 V  (+0.0047)  die 55.3 C
+  wiper   4  VCCINT 0.8436 V  (+0.0040)  die 54.2 C
+  wiper   3  VCCINT 0.8475 V  (+0.0040)  die 55.5 C
+  wiper   2  VCCINT 0.8513 V  (+0.0038)  die 56.0 C
+RAISED  wiper 2  VCCINT 0.8513 V  (target)

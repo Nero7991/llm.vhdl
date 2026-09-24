@@ -172,3 +172,11 @@ block 23). Build 19 at 0.78 V: 1 hang in 11 runs (0.715 V: 2 in 3).
 ## CORRECTION 2, 12:25: no voltage effect is established (p = 0.26)
 Counting every fresh sequence across position 32 on build 19: 0.715 V 4/13,
 0.78 V 1/11, 0.80 V 1/4. The "2 of 3" baseline ignored the ordinary runs above.
+
+## CORRECTION 3, 14:10: it hangs at 0.85 V too; no threshold
+40-id prefill, 30 repeats per level: 0.80 V 1 hang in 14 (`ctxtest_v080_n40x30.log`),
+0.85 V 30/30 clean (`ctxtest_v085_n40x30.log`) then a hang at run 6 of the second
+batch (`ctxtest_v085b_n40x30.log`, `v085b_input_r6_seam_hung.txt`: b16-31 half,
+D WDOG step 268, seq_pos 32). Totals 0.715 V 4/13, 0.78 V 1/11, 0.80 V 2/18,
+0.85 V 1/36. A hang at the sign-off voltage rules out a static setup failure;
+race/CDC in the build-19 change is the lead. Pots back at wiper 68.

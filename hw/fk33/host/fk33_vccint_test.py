@@ -88,7 +88,7 @@ def step_up_to(m, i2c, goal, why):
         w += 1
         nv = rail(m)
         print("  wiper %3d  VCCINT %.4f V  (%+.4f)  die %.1f C" % (w, nv, nv - v, F.die_temp(m)))
-        if nv > v + 0.002:
+        if nv > v + 0.0035:
             raise SystemExit("ABORT: rail ROSE on an upward wiper step; stopping where it is")
         v = nv
     return w, v
@@ -108,6 +108,21 @@ def main():
     print("START  %s  wiper %d  VCCINT %.4f V  die %.1f C" % (F.USER, w, v, F.die_temp(m)))
     if w < 0 or not W_MIN <= w <= 128:
         raise SystemExit("ABORT: wiper reads %d; not touching anything" % w)
+    if mode == "lower":
+        # wiper UP (voltage DOWN, the safe direction) until at or below the target
+        tgt = float(sys.argv[2])
+        if not 0.70 <= tgt <= 0.855:
+            raise SystemExit("refusing target %.3f V" % tgt)
+        while v > tgt + 0.002 and w < W_STD:
+            set_w(i2c, w + 1)
+            w += 1
+            nv = rail(m)
+            print("  wiper %3d  VCCINT %.4f V  (%+.4f)  die %.1f C" % (w, nv, nv - v, F.die_temp(m)))
+            if nv > v + 0.0035:
+                raise SystemExit("ABORT: rail ROSE on an upward wiper step; stopping where it is")
+            v = nv
+        print("LOWERED  wiper %d  VCCINT %.4f V" % (w, v))
+        return
     if mode == "restore":
         w, v = step_up_to(m, i2c, W_STD, "RESTORE")
         print("RESTORED  wiper %d  VCCINT %.4f V" % (w, v))

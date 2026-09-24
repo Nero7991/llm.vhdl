@@ -169,3 +169,44 @@ C_JOB, on either card, at any voltage tried from 0.715 to 0.80 V.
 40-id prefill (`TESTS=input fk33_ctxtest.sh pair <out> 40`, ~10 s per trial)
 tests it at a fraction of the cost of n256/n500. The rate needs tens of trials
 per condition, not four.
+
+## CORRECTION 3 2026-09-24 14:10: it hangs at the 0.85 V sign-off voltage. No threshold exists to find.
+
+Oren asked for the threshold below which it glitches, and chose "Sweep UP
+toward 0.85 V". Instrument: `TESTS=input REPEATS=30 fk33_ctxtest.sh pair <out> 40`
+(a 40-id prefill crosses position 32 once per run, ~10 s per trial), both pots
+raised with `fk33_vccint_test.py raise <target>`.
+
+| build 19, VCCINT | sequences crossing position 32 | hangs |
+|---|---|---|
+| 0.715 V | 13 | 4 |
+| 0.78 V | 11 | 1 |
+| 0.80 V | 18 (4 n256 + 14 n40) | 2 |
+| **0.85 V** (wiper 3, 0.8503 V) | **36** (30 + 6 n40) | **1** |
+
+The 0.85 V hang (`ctxtest_v085b_n40x30.log`, run 6 of the second batch after
+30/30 clean in the first): the `b16-31` half, **D WDOG at step 268, seq_pos 32**,
+ERR_INFO `0x010c10c4`, the same signature as every earlier hang
+(`v085b_input_r6_seam_hung.txt`).
+
+One-sided Fisher (DERIVED, scipy): 0.85 V against 0.715 V p = 0.014; against
+everything at or below 0.80 V pooled (7/42) p = 0.046; 0.80 V against 0.715 V
+p = 0.12. These comparisons were chosen after seeing the data, so read them as
+a possible trend in the RATE, not as a demonstrated effect.
+
+**What this settles:** a static setup failure at the operating voltage is not
+the mechanism, because the design is timed clean at exactly 0.85 V and still
+hangs there. **The voltage question is closed: raising VCCINT is not a fix at
+any value up to the sign-off voltage, and there is no threshold.** The P2
+interlock has no verified V_RUN to carry for build 19.
+
+**What stands:** build 18 does not hang; build 19 does, always position 32,
+always a C_JOB, on either half, at every voltage from 0.715 to 0.85 V. The
+leading hypotheses are now a race or CDC in what build 19 changed (NORM_HBM:
+B's norm fetch on `bst_arvalid` requesting the grant C's KV ports share), or a
+path Vivado does not time (an unconstrained crossing). Neither is measured.
+
+Both pots returned to wiper 68 afterwards (`restore68_xdma1.log`,
+`restore68b_xdma0.log`). Trap hit on the restore: the 2 mV "rail rose" guard on
+an upward step tripped on SYSMON noise (+2.2 mV at wiper 53) and stopped there,
+in spec; raised to 3.5 mV to match the raise path, then it completed.

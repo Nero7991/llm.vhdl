@@ -1,0 +1,19 @@
+BUS CHECK  100 pot reads, 0 bad, value 53
+START  /dev/xdma0_user  wiper 53  VCCINT 0.7315 V  die 39.1 C
+RESTORE: wiper 53  0.7321 V -> wiper 68
+  wiper  54  VCCINT 0.7332 V  (+0.0011)  die 38.3 C
+  wiper  55  VCCINT 0.7309 V  (-0.0023)  die 38.7 C
+  wiper  56  VCCINT 0.7307 V  (-0.0002)  die 40.0 C
+  wiper  57  VCCINT 0.7280 V  (-0.0027)  die 37.9 C
+  wiper  58  VCCINT 0.7249 V  (-0.0031)  die 40.5 C
+  wiper  59  VCCINT 0.7252 V  (+0.0003)  die 39.2 C
+  wiper  60  VCCINT 0.7256 V  (+0.0005)  die 38.3 C
+  wiper  61  VCCINT 0.7232 V  (-0.0025)  die 39.1 C
+  wiper  62  VCCINT 0.7219 V  (-0.0012)  die 39.4 C
+  wiper  63  VCCINT 0.7205 V  (-0.0015)  die 38.6 C
+  wiper  64  VCCINT 0.7207 V  (+0.0003)  die 38.3 C
+  wiper  65  VCCINT 0.7176 V  (-0.0031)  die 38.9 C
+  wiper  66  VCCINT 0.7177 V  (+0.0000)  die 39.2 C
+  wiper  67  VCCINT 0.7178 V  (+0.0001)  die 39.9 C
+  wiper  68  VCCINT 0.7188 V  (+0.0010)  die 39.9 C
+RESTORED  wiper 68  VCCINT 0.7188 V
