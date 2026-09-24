@@ -174,3 +174,11 @@ key their cached token programs on the generator's hash.
 
 Open: the fix is not on silicon. `--pad-norms` stays until a NORM_HBM card build runs the pair
 without it and matches the single card.
+
+## ADDENDUM 2026-09-24: on silicon
+
+Build 19 (`8af98b8`, NORM_HBM) on both cards, `hw/fk33/results/card_build19_2026-09-24/`. MEASURED:
+token-0 residual bit-identical to build 18 (4,096 of 4,096 mantissas and the exponent); the 9B pair
+with NO pad norms (card 1 program 261 descriptors) reproduces the single card's 64-token text, as
+does the padded control (294). The workaround is no longer needed on build 19 or later; it stays the
+script default only because nothing on a card yet says which bitstream it runs.

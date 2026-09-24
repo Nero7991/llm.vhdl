@@ -171,7 +171,14 @@ set -- $GB
 if [[ ! -f "$RUN/gdn_zero.bin" || $(stat -c %s "$RUN/gdn_zero.bin") -ne $2 ]]; then head -c "$2" /dev/zero > "$RUN/gdn_zero.bin"; fi
 python3 "$REPO/hw/fk33/host/fk33ctl.py" load "$RUN/gdn_zero.bin" --offset "$1" --verify > "$RUN/state.log" 2>&1 \
     || { echo "state zero failed, see $RUN/state.log" >&2; exit 1; }
-exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
+# THE SAME CARD FOR BOTH HALVES OF THIS SCRIPT (2026-09-24).  Every Python tool
+# above honours FK33_USER/FK33_H2C/FK33_C2H, and run_prompt does NOT: it takes
+# --dev and defaults to /dev/xdma0.  MEASURED 2026-09-24 with two cards: the
+# arena and GDN state went to xdma1 and run_prompt opened xdma0, refused only
+# because the image record there was a different manifest.  So FK33_USER, when
+# set, also decides run_prompt's device.
+DEVARG=(); [[ -n "${FK33_USER:-}" ]] && DEVARG=(--dev "${FK33_USER%_user}")
+exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 "${DEVARG[@]}" \
     --dtbl "$RUN/token.dtbl" --rel "$RUN/token.rel" \
     --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
     --manifest "$M/manifest.json" --mv4i "$EMB" --quiet "${EXTRA[@]}"

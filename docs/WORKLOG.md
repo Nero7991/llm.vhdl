@@ -11,6 +11,23 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-24 BUILD 19 ON SILICON (main session): **Task 2 holds on both cards; the pair is exact without pad norms**
+
+- Build 19 (`8af98b8`, NORM_HBM): default route FAILED (RTSTAT-6, 21,809 nets),
+  congestion rescue FAILED (264), a second route_design on the rescue's routed
+  checkpoint CLOSED (WNS +0.008, WHS +0.010, 0 failing). Placer congestion is
+  the A core / attention array in all three placements, build 18 included; the
+  norm-fetch cells are in no hot window. 496 block-RAM tiles vs build 18's 567.
+- Single card: token-0 residual bit-identical to build 18, control text
+  identical. Pair (both build 19, `-nh` halves): text == single card with AND
+  without pad norms; no pads is 2.2% faster. `FK33_PAD_NORMS=0` opts in; the
+  default stays padded until a CAPS bit can name the bitstream.
+- Traps: xdma node numbers swap on every reload (identify by seam and image
+  record); `fk33_chat.sh` sent run_prompt to xdma0 while its tools used xdma1
+  (fixed). `hw/fk33/results/card_build19_2026-09-24/README.md`.
+- NEXT: the 27B card build (FK33_MODEL=QWEN38_27B FK33_C_MAXPOS=16384
+  FK33_C_KV_BLOCK=16), CAPS bit for NORM_HBM in the same build.
+
 ### 2026-09-23 TASK 2 (main session): **the norm gain is selected by the descriptor and read from HBM; in simulation only**
 
 - RTL: `const_base` on an OP_VEC_NORM is the gain ROW (2*blk, 2*blk+1, 2*blocks);

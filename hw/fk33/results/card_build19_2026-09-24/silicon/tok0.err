@@ -1,0 +1,3 @@
+[pl_backend] image lock OK: the card holds the image /mnt/storage/llama-models/qwen35-9b-mv4i-noembd-striped-seg27-nh/manifest.json
+  describes (record at 0x1FFB03E00, 251 of 251 objects)
+[pl_backend] KV base programmed: K 0x1B1938000 V 0x1D3938000 (C_MAXPOS 65536, 17408 B/token, extent ends 0x1F5938000 under hbm.gdn_const_base 0x1FF8D8000)

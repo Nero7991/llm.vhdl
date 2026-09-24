@@ -90,7 +90,11 @@ for i in 0 1; do
     # became its gain ROW (plan Task 2), and a program cached by the older
     # generator names the BLOCK there, which a card with the row-indexed RTL
     # would read as the wrong gain, silently.
-    GENV="padnorms-v1 $(sha256sum "$REPO/tools/gen_layer_program.py" | cut -c1-16)"
+    # FK33_PAD_NORMS=0 (2026-09-24): no pad norms.  Correct ONLY on a bitstream
+    # that selects the gain by the descriptor's row (build 19 on, NORM_HBM); on
+    # build 18 or older it reproduces the counter bug.  Part of the cache key.
+    PADN="${FK33_PAD_NORMS:-1}"
+    GENV="padnorms-v1 pad=$PADN $(sha256sum "$REPO/tools/gen_layer_program.py" | cut -c1-16)"
     if [[ ! -f "$R/manifest.used" ]] || [[ "$(cat "$R/manifest.used")" != "$MAN" ]] || [[ ! -f "$R/pad.used" ]] || [[ "$(cat "$R/pad.used")" != "$GENV" ]]; then
         rm -f "$R/token.dtbl" "$R/token.rel" "$R/token.arena"
     fi
@@ -103,7 +107,7 @@ for i in 0 1; do
         # the single card at position 0/7/28; with 2*lo throwaway norms ahead
         # of block lo it reproduces the single card bit for bit.  See
         # docs/debugging/2026-09-23_the-norm-gain-is-indexed-by-a-per-token-counter.md
-        LO="${RANGE[$i]%:*}"; PAD=(); [[ "$LO" -gt 0 ]] && PAD=(--pad-norms $((2 * LO)))
+        LO="${RANGE[$i]%:*}"; PAD=(); [[ "$LO" -gt 0 && "$PADN" == 1 ]] && PAD=(--pad-norms $((2 * LO)))
         python3 "$REPO/tools/gen_layer_program.py" --token --shape 9b --manifest "$MAN" \
             --blocks-range "${RANGE[$i]}" "${HEAD[@]}" "${PAD[@]}" \
             --x-exp 0 --d-table "$R/token.dtbl" --rel-file "$R/token.rel" \
