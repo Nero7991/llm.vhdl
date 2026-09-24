@@ -654,6 +654,13 @@ states, generalised: whenever the question is "is this process the thing I
 mean", the answer comes from the kernel's view of what it is running or where
 it is running, never from the string it was invoked with.
 
+**`fk33ctl.py vccint` IS NOT A READ. IT STEPS THE VCCINT POT.** MEASURED
+2026-09-24: run as a check with `| head -2`, it wrote wiper 68 -> 69 on both
+cards and died on SIGPIPE mid-procedure. Read the rail with `fk33ctl.py sysmon`
+and the wiper with a bare `I2C(Mmio()).pot_read(POT_ADDR)`. The MMIO
+bit-banged I2C also NACKs intermittently (one read, one write that did not
+land, same session), so never trust a single pot transaction.
+
 **`git commit -m` with a long message dies with `Argument list too long`.**
 Write the message to a file in the scratchpad and use `git commit -F <file>`.
 This is not a heredoc quoting problem and no amount of re-quoting fixes it.
