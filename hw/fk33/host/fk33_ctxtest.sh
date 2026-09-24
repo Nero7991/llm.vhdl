@@ -39,6 +39,7 @@ MODE="${1:?usage: fk33_ctxtest.sh pair|single <outdir> [N]}"
 OUT="${2:?usage: fk33_ctxtest.sh pair|single <outdir> [N]}"
 NARG="${3:-}"
 REPEATS="${REPEATS:-2}"
+TESTS="${TESTS:-input output}"   # e.g. TESTS=input for a prefill-only sweep
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 CTL="$REPO/hw/fk33/host/fk33ctl.py"
 IMGFP="$REPO/hw/fk33/host/fk33_imgfp.py"
@@ -94,7 +95,7 @@ head -n "$OUTPROMPT" "$OUT/prompt_input.txt" > "$OUT/prompt_output.txt"
 seams pre || { say "CTXTEST_FAIL a card already holds a sticky error before the test (see $OUT/pre_seam_*.txt); clear or reload it first"; exit 1; }
 
 fail=0
-for T in input output; do
+for T in $TESTS; do
   if [[ $T == input ]]; then MAXNEW=1; else MAXNEW=$(( N - OUTPROMPT + 1 )); fi
   for r in $(seq 1 "$REPEATS"); do
     tag="${T}_r$r"
@@ -128,7 +129,7 @@ for T in input output; do
 done
 
 if [[ $fail -eq 0 ]]; then
-  say "CTXTEST_PASS mode $MODE N $N $([[ $FULL == 1 ]] && echo FULL || echo SHORT) repeats $REPEATS: input and output, every run reached $N GOs with no card error, ids identical across runs"
+  say "CTXTEST_PASS mode $MODE N $N $([[ $FULL == 1 ]] && echo FULL || echo SHORT) repeats $REPEATS tests '$TESTS': every run reached $N GOs with no card error, ids identical across runs"
   exit 0
 fi
 exit 1

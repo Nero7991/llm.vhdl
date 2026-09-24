@@ -324,6 +324,9 @@ passes and the clamp is moved, wiper 68 remains the standing value and the
 raise is `hw/fk33/host/fk33_vccint_test.py` only. The pot is VOLATILE: a power
 cycle returns 128 (0.678 V). See
 `docs/debugging/2026-09-24_build19-attention-hang-is-voltage-sensitive.md`.
+**CORRECTION same day: 0.78 V REDUCES the hang (1 in 11 runs), it does not
+remove it** (n500 output run hung at position 32 on card 2). Do not quote it
+as fixed.
 
 ---
 
@@ -331,11 +334,14 @@ cycle returns 128 (0.678 V). See
 
 **Standing instruction from Oren, 2026-09-24: "full input context and full
 output context length tests after every build, ran two times, so issues
-surface better."** A bitstream is not done until this has run on it:
+surface better."** **REVISED THE SAME DAY:** "Run a much shorter test (500 in and
+out) and considering how long these test take, we don't need to run them" -- the
+FULL-context runs are no longer required. A bitstream is not done until the
+500-token test has run on it, twice:
 
 ```bash
-hw/fk33/host/fk33_ctxtest.sh pair   /mnt/storage/fk33_builds/<build>/ctxtest/full     # two-card split
-hw/fk33/host/fk33_ctxtest.sh single /mnt/storage/fk33_builds/<build>/ctxtest/full     # one card
+hw/fk33/host/fk33_ctxtest.sh pair   /mnt/storage/fk33_builds/<build>/ctxtest/n500 500   # two-card split
+hw/fk33/host/fk33_ctxtest.sh single /mnt/storage/fk33_builds/<build>/ctxtest/n500 500   # one card
 ```
 
 It runs the INPUT test (a real-text prompt of the full context, prefill only)

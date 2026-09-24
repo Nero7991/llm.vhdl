@@ -118,3 +118,23 @@ wiper 68 -> 25, largest step +5.4 mV, die 51-53 C.
   once we verify"**: move the VCCINT clamp (today `fk33ctl.py`'s wiper-68
   floor) to the verified wiper, in the tooling and the bitstream, after the
   full-context test passes.
+
+## CORRECTION 2026-09-24 11:05: 0.78 V does NOT remove the hang. "The answer" above is WITHDRAWN as stated.
+
+The next test at the same 0.779/0.780 V, `fk33_ctxtest.sh pair ... 500`
+(`hw/fk33/results/card_build19_2026-09-24/silicon/hang/ctxtest_n500_b19_078V.log`):
+input r1 and r2 PASS (500 GOs each), then **output r1 HUNG at decode 17 =
+position 32, card 2, step 146 = C_JOB block 23, D WDOG**, the same signature
+as every earlier hang.
+
+| build 19 | runs | hangs |
+|---|---|---|
+| 0.715 V | 3 | 2 |
+| 0.78 V | 11 | 1 |
+
+**What survives:** the hang is voltage-SENSITIVE. P(at most 1 hang in 11 | the
+0.715 V rate of 2/3) = (1/3)^11 + 11 (2/3)(1/3)^10 = 1.3e-4 (DERIVED), so the
+rate fell. **What is withdrawn:** "it is a timing failure at the voltage the
+cards run at" as a sufficient explanation, and "0.78 V fixes it". Either a
+path is still failing occasionally at 0.78 V, or the mechanism is a race whose
+odds depend on speed. It is still always position 32, always a C_JOB.

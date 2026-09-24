@@ -164,3 +164,7 @@ Measurement traps hit, in order:
 
 ## RESOLVED AT THE VOLTAGE LEVEL 2026-09-24 11:00
 Build 19 at VCCINT 0.779/0.780 V (wiper 25 on both cards): 8 of 8 ctxtest runs pass, ids equal to build 18. See `docs/debugging/2026-09-24_build19-attention-hang-is-voltage-sensitive.md`.
+
+## CORRECTION 11:05: 0.78 V reduces the hang, it does not remove it
+n500 ctxtest at 0.78 V: output r1 hung at position 32, card 2, step 146 (C_JOB
+block 23). Build 19 at 0.78 V: 1 hang in 11 runs (0.715 V: 2 in 3).
