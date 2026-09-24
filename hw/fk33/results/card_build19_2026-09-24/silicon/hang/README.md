@@ -91,3 +91,14 @@ timing- or arbitration-dependent handshake the model does not produce.
 - Whether NORM_HBM is involved: the attention unit's RTL did not change in build 19, but its
   placement and routing did (WNS +0.008 ns).
 - What state the attention unit is stuck in: the seam exposes nothing inside C.
+
+## Timing context, recorded 2026-09-24 (data, not a cause)
+Both builds are signed off at Vivado's 0.85 V speed data (no
+`set_operating_conditions -voltage` in the flow) and run at 0.717 V. The 75 MHz
+core clock (`clk_out3`) closed at **+0.225 ns on build 18** and **+0.013 ns on
+build 19** (`/mnt/storage/fk33_builds/build19/reroute/timing_summary_rr.rpt`,
+the shipped bitstream, sha 9366b396). Build 19's ten worst core paths are all
+in A's engine (`eng/dut/core`: `xq_rd -> tr_reg` DSP inputs and `cb_data ->
+cbw_d`), not in C, so the report does not point at the hang. A 0.72 V
+re-analysis of C's paths on the routed DCP would settle whether C is marginal
+at the real voltage; it has not been run.
