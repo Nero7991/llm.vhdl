@@ -1,0 +1,12 @@
+context test: mode pair, N 256 (SHORT, not the full context), 2 repeats, 2026-09-24 03:41:20
+CTX_PROMPT 256 ids -> /mnt/storage/fk33_builds/card_build19/ctxtest/n256_try1/prompt_input.txt (corpus 376 docs, sha256 879f2a300f422b77, 1 pass(es))
+CTXTEST_RUN input_r1 start 03:41:21: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r1 end 03:41:54: rc 0, 256 GOs, 33 s, seam error 0
+CTXTEST_RUN input_r2 start 03:41:54: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r2 end 03:42:00: rc 1,  GOs, 5 s, seam error 1
+CTXTEST_FAIL input_r2: rc 1, GOs '' (want 256), seam error 1.  Evidence: /mnt/storage/fk33_builds/card_build19/ctxtest/n256_try1/input_r2.{out,err} and /mnt/storage/fk33_builds/card_build19/ctxtest/n256_try1/input_r2_seam_*.txt
+last job   seq_pos 32  cycles 9474367  argmax 5860  logit_exp 14
+progress   steps issued 293  last issue at cycle 9456380  (the current or last step has run 17987 cycles)
+  D's own code 4 (WDOG) at step 235, 235 descriptor(s) completed before it.  WDOG: the unit did not finish within WDOG_LIMIT cycles; the GO was ACCEPTED.
+last job   seq_pos 32  cycles 16038301  argmax 0  logit_exp 0
+progress   steps issued 236  last issue at cycle 8038298  (the current or last step has run 8000003 cycles)
