@@ -136,9 +136,13 @@ for i in 0 1; do
 done
 unset FK33_USER FK33_H2C FK33_C2H   # run_prompt names its own devices
 
+# FK33_PROMPT_IDS (2026-09-24, fk33_ctxtest.sh): feed a token-id file instead
+# of templating the question text.  A full-context prompt is ~65k tokens, far
+# past what an argv string can hold, and a context test wants exact ids.
+if [[ -n "${FK33_PROMPT_IDS:-}" ]]; then QARGS=(--prompt "$FK33_PROMPT_IDS" --qtk "$QTK"); else QARGS=(--text "$Q" --qtk "$QTK"); fi
 exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
     --dtbl "${RUN[0]}/token.dtbl" --rel "${RUN[0]}/token.rel" \
     --dtbl2 "${RUN[1]}/token.dtbl" --rel2 "${RUN[1]}/token.rel" \
     --manifest "${M[0]}/manifest.json" --manifest2 "${M[1]}/manifest.json" --dev "${DEV[0]}" --dev2 "${DEV[1]}" \
-    --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
+    "${QARGS[@]}" --stream --max-new "$MAXNEW" \
     --mv4i "$EMB" --quiet "${EXTRA[@]}"

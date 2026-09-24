@@ -319,6 +319,31 @@ does otherwise; it is wrong for this board.
 
 ---
 
+## AFTER EVERY CARD BUILD: THE FULL-CONTEXT TESTS, TWICE
+
+**Standing instruction from Oren, 2026-09-24: "full input context and full
+output context length tests after every build, ran two times, so issues
+surface better."** A bitstream is not done until this has run on it:
+
+```bash
+hw/fk33/host/fk33_ctxtest.sh pair   /mnt/storage/fk33_builds/<build>/ctxtest/full     # two-card split
+hw/fk33/host/fk33_ctxtest.sh single /mnt/storage/fk33_builds/<build>/ctxtest/full     # one card
+```
+
+It runs the INPUT test (a real-text prompt of the full context, prefill only)
+and the OUTPUT test (a 16-id prompt, then decode with the stop token disabled
+to the full context), each twice, compares the two runs' ids, and dumps every
+card's seam after every run. Gate on `^CTXTEST_PASS` and check that it says
+`FULL`: a third argument N makes a SHORT run, and the verdict says so.
+**Cost at the 9B's 65,536 context is about 4.4 h per run, ~17.5 h for the
+four.** Run a short N=256 pass first; it costs 4 minutes and has already
+caught the build-19 attention hang (position 32, second run) that twenty
+ordinary 25-id prompts caught twice.
+
+Why it exists: every earlier silicon check was a ~25-id prompt with 64 tokens
+out, which crosses ONE KV-block boundary ONCE. Opens `/dev/xdma*`: the main
+session or Oren runs it, never a subagent.
+
 ## TRAPS THAT HAVE ALREADY COST REAL TIME
 
 **Which git form is safe DEPENDS ON WHO OWNS THE FILE, and the two cases want

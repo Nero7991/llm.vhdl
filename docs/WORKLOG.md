@@ -11,6 +11,18 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-24 CONTEXT TESTS (main session): **`fk33_ctxtest.sh` is a standing post-build step; its first short run reproduced the attention hang**
+
+Oren: "full input context and full output context length tests after every
+build, ran two times". New `hw/fk33/host/fk33_ctxtest.sh` (pair|single),
+`tools/ctx_prompt.py` (deterministic N-id real-text prompt from `docs/**/*.md`),
+and `FK33_PROMPT_IDS` in both chat scripts. Rule in CLAUDE.md.
+MEASURED, N=256 pair on build 19: input r1 PASS (256 GOs); input r2 FAILED in
+prefill at position 32, card 1 step 235, ERR_INFO 0x00EB0EB4, identical to r8.
+Card 1 is wedged until a JTAG reload. Evidence in
+`hw/fk33/results/card_build19_2026-09-24/silicon/hang/README.md`. The full
+N=65,536 run has NOT been done on build 19 (it cannot pass while the hang is open).
+
 ### 2026-09-24 BUILD 19 ON SILICON (main session): **Task 2 holds on both cards; the pair is exact without pad norms**
 
 - Build 19 (`8af98b8`, NORM_HBM): default route FAILED (RTSTAT-6, 21,809 nets),

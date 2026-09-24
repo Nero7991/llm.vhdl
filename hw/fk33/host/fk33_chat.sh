@@ -178,7 +178,11 @@ python3 "$REPO/hw/fk33/host/fk33ctl.py" load "$RUN/gdn_zero.bin" --offset "$1" -
 # because the image record there was a different manifest.  So FK33_USER, when
 # set, also decides run_prompt's device.
 DEVARG=(); [[ -n "${FK33_USER:-}" ]] && DEVARG=(--dev "${FK33_USER%_user}")
+# FK33_PROMPT_IDS (2026-09-24, fk33_ctxtest.sh): feed a token-id file instead
+# of templating the question text.  A full-context prompt is ~65k tokens, far
+# past what an argv string can hold, and a context test wants exact ids.
+if [[ -n "${FK33_PROMPT_IDS:-}" ]]; then QARGS=(--prompt "$FK33_PROMPT_IDS" --qtk "$QTK"); else QARGS=(--text "$Q" --qtk "$QTK"); fi
 exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 "${DEVARG[@]}" \
     --dtbl "$RUN/token.dtbl" --rel "$RUN/token.rel" \
-    --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
+    "${QARGS[@]}" --stream --max-new "$MAXNEW" \
     --manifest "$M/manifest.json" --mv4i "$EMB" --quiet "${EXTRA[@]}"
