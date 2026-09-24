@@ -20,3 +20,16 @@ A 2,320-id web prompt (`rfobserver_2320_prompt_stdout.txt`): first token
 after 423.6 s, i.e. 0.183 s per prompt token, against the slower card's
 0.159 s, so ~24 ms per token is host and hop time not hidden by the overlap.
 Decode of 936 ids at positions 2320-3255 took 386.6 s, 0.413 s per token.
+
+## CORRECTION 2026-09-24 (same day): the "~24 ms per token of host time" is WITHDRAWN
+
+The 0.183 s per prompt token is an AVERAGE over positions 0..2319, and C's
+cost grows with position: 2,793.4 cycles per position per token on one card
+(`docs/debugging/2026-09-20_token-cost-grows-2793-cycles-per-position.md`),
+so ~0.0186 ms per position on each card of the pair (DERIVED). At the
+prompt's mean position 1,160 that adds 21.6 ms to card 1's 159.0 ms,
+giving 180.6 ms against the measured 182.6 ms. The same model predicts the
+256-id ctxtest prefill (161.4 against ~164 ms) and decode at positions ~25
+(308 against ~310 ms) and 2,320-3,255 (411 against 413 ms). **So the host
+time NOT hidden by the prefill overlap is about 2-3 ms per token, not 24.**
+In DECODE the hop is serial: 7.3 ms R_X read + 1.1 ms push per token.
