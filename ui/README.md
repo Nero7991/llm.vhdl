@@ -12,7 +12,8 @@ make -C server run_prompt libqwen35chat.so
 python3 server/llmvhdl_server.py            # two cards; --mode single for one
 ```
 
-Then open `http://<host>:8000/`. The server needs both cards on a bitstream
+Then open `https://llmvhdl.example.com/` from the LAN (Caddy vhost, LAN only;
+the server binds `127.0.0.1:8000` by default). The server needs both cards on a bitstream
 with their images loaded (the same state `hw/fk33/host/fk33_chat2.sh` needs).
 
 ## What differs from upstream

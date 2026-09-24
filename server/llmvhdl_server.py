@@ -4,7 +4,8 @@
     python3 server/llmvhdl_server.py                 # two cards, port 8000
     python3 server/llmvhdl_server.py --mode single   # one card (FK33_USER picks it)
 
-Then open http://<this host>:8000/ in a browser.
+Then open https://llmvhdl.example.com/ on the LAN (Caddy, LAN-fenced, set up by
+~/GitHub/DevOps/add-llmvhdl-vhost.sh 2026-09-24), or http://127.0.0.1:8000/ here.
 
 WHAT IT IS.  A standard-library HTTP server that speaks the subset of the
 llama.cpp server API the web UI in `ui/` uses (`/props`, `/v1/models`,
@@ -589,7 +590,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="127.0.0.1 behind Caddy (https://llmvhdl.example.com, LAN only); "
+                         "0.0.0.0 exposes the cards to the whole network with no auth")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--mode", choices=("pair", "single"), default="pair")
     ap.add_argument("--n-ctx", type=int, default=65536,
