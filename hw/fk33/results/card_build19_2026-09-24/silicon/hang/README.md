@@ -120,3 +120,24 @@ build signed off at 0.72 V from the start.
 Per-subsystem worst setup slack of build 18 at 0.85 V, for reference
 (`vt72_b18_085_slacks.txt`): core clock 0.225 (in A), C 0.853, C's KV mover
 1.966, B 1.942, B's state store 3.028, D 4.714, the B/C port grant 9.036 ns.
+
+## Build 19 lost 1.7 ns of margin in C's KV mover (MEASURED 2026-09-24 10:40, 0.85 V analysis)
+
+| subsystem (sequential endpoints) | build 18 worst setup | build 19 worst setup |
+|---|---|---|
+| core clock overall (A's `eng/dut/core`) | 0.225 | 0.013 |
+| C, `gcr.u_attn/*` | 0.853 | **0.311**, from `gcr.gkvaxi.u_kv/wb_full_reg` to `u_attn/kbyp_reg[1021]/CE` |
+| C's KV mover, `gcr.gkvaxi.u_kv/*` | 1.966 | **0.254**, `GEN_RD[1].w_mm_reg -> GEN_RD[1].mbank_reg/CE` |
+| B, `gb_real.u_gdn/*` | 1.942 | 1.943 |
+| B's state store | 3.028 | 5.220 |
+| D, `u_fetch` | 4.714 | 6.575 |
+| B/C port grant | 9.036 | 8.822 |
+
+The KV mover is the logic that starts reading a new KV block, and every
+captured hang is at position 32, the first read of block 1. **This is a LEAD,
+not a cause:** A's core path has even less slack (0.013 ns) on the same card
+and does not fail, and both builds are signed off at 0.85 V while running at
+0.717 V, where every one of these paths has less real margin than shown. The
+discriminating test is on silicon: repeat `fk33_ctxtest.sh pair ... 256` on
+build 19 with the die faster (slightly higher VCCINT, which CLAUDE.md fixes at
+wiper 68, so it is Oren's call) or with the path fixed and rebuilt.

@@ -1,0 +1,17 @@
+VT b19 v=0.85 operating 
+VT b19 v=0.85 core_clk setup slack=0.013 end=bd_i/eng/inst/eng/dut/core/tr_reg[1][492]/DSP_A_B_DATA_INST/A[14]
+VT b19 v=0.85 core_clk hold  slack=0.010
+VT b19 v=0.85 C        setup slack=0.311 start=bd_i/card/inst/u/gcr.gkvaxi.u_kv/wb_full_reg/C end=bd_i/card/inst/u/gcr.u_attn/kbyp_reg[1021]/CE
+VT b19 v=0.85 C        hold  slack=0.010 start=bd_i/card/inst/u/gcr.u_attn/vs2_reg[185][0]/C end=bd_i/card/inst/u/gcr.u_attn/gqpl[2].qplane_reg[11152]/D
+VT b19 v=0.85 Ckv      setup slack=0.254 start=bd_i/card/inst/u/gcr.gkvaxi.u_kv/GEN_RD[1].w_mm_reg[5]/C end=bd_i/card/inst/u/gcr.gkvaxi.u_kv/GEN_RD[1].mbank_reg[1][21][118]/CE
+VT b19 v=0.85 Ckv      hold  slack=0.015 start=bd_i/card/inst/u/gcr.gkvaxi.u_kv/GEN_RD[0].hdr_r_reg[1][32]/C end=bd_i/card/inst/u/gcr.gkvaxi.u_kv/GEN_RD[0].q_hdr_reg[0][32]/D
+VT b19 v=0.85 B        setup slack=1.943 start=bd_i/card/inst/u/gb_real.cvq_grp_reg[0]/C end=bd_i/card/inst/u/gb_real.u_gdn/u_conv/p1_reg[3][0]/DSP_A_B_DATA_INST/A[14]
+VT b19 v=0.85 B        hold  slack=0.010 start=bd_i/card/inst/u/gb_real.u_gdn/u_l2/gkq[30].k_reg_reg[1965]/C end=bd_i/card/inst/u/gb_real.u_gdn/knb_reg_0_15_1960_1973/RAMC_D1/I
+VT b19 v=0.85 Bst      setup slack=5.220 start=bd_i/bcgrant/inst/u/own_reg[0]/C end=bd_i/card/inst/u/gb_real.gen_st_tier.u_state/gconst.u_kdma/mwwd_q_reg[173]/CE
+VT b19 v=0.85 Bst      hold  slack=0.016 start=bd_i/card/inst/u/gb_real.gen_st_tier.u_state/u_exp/gwide.gb[30].rq_reg[30][1]/C end=bd_i/card/inst/u/gb_real.gen_st_tier.u_state/u_edma/wfifo_reg_0_3_238_251/RAMB_D1/I
+VT b19 v=0.85 D        setup slack=6.575 start=bd_i/card/inst/u/u_fetch/live_bank_reg[0]_rep/C end=bd_i/card/inst/u/u_fetch/err_step_r_reg[2]/CE
+VT b19 v=0.85 D        hold  slack=0.029 start=bd_i/fk33_seam_0/inst/r_tbl_len_reg[8]/C end=bd_i/card/inst/u/u_fetch/tbl_len_r_reg[8]/D
+VT b19 v=0.85 grant    setup slack=8.822 start=bd_i/core_reset/U0/ACTIVE_LOW_PR_OUT_DFF[0].FDRE_PER_N/C end=bd_i/bcgrant/inst/u/wr_out_reg[0][1]/R
+VT b19 v=0.85 grant    hold  slack=0.059 start=bd_i/bcgrant/inst/u/wr_out_reg[0][3]/C end=bd_i/bcgrant/inst/u/wr_out_reg[0][3]/D
+VT b19 v=0.85 A        setup slack=0.013 start=bd_i/eng/inst/eng/dut/core/xq_rd_reg[0]_rep/C end=bd_i/eng/inst/eng/dut/core/tr_reg[1][492]/DSP_A_B_DATA_INST/A[14]
+VT b19 v=0.85 A        hold  slack=0.010 start=bd_i/eng/inst/eng/dut/core/cbw_d_reg[1279][2]/C end=bd_i/eng/inst/eng/dut/core/cb_reg[1279][11]_0_15_0_7/RAMB/I
