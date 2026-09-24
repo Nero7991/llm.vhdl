@@ -1,0 +1,28 @@
+BUS CHECK  100 pot reads, 0 bad, value 40
+START  /dev/xdma0_user  wiper 40  VCCINT 0.7524 V  die 39.4 C
+TARGET stop at 0.8000 V, abort above 0.8140 V, wiper floor 2
+  wiper  39  VCCINT 0.7535 V  (+0.0011)  die 38.1 C
+  wiper  38  VCCINT 0.7544 V  (+0.0010)  die 38.8 C
+  wiper  37  VCCINT 0.7557 V  (+0.0012)  die 39.4 C
+  wiper  36  VCCINT 0.7576 V  (+0.0019)  die 39.4 C
+  wiper  35  VCCINT 0.7604 V  (+0.0029)  die 38.9 C
+  wiper  34  VCCINT 0.7624 V  (+0.0020)  die 39.1 C
+  wiper  33  VCCINT 0.7626 V  (+0.0002)  die 39.5 C
+  wiper  32  VCCINT 0.7651 V  (+0.0025)  die 39.2 C
+  wiper  31  VCCINT 0.7668 V  (+0.0017)  die 39.3 C
+  wiper  30  VCCINT 0.7690 V  (+0.0022)  die 40.3 C
+  wiper  29  VCCINT 0.7720 V  (+0.0030)  die 39.1 C
+  wiper  28  VCCINT 0.7742 V  (+0.0022)  die 38.5 C
+  wiper  27  VCCINT 0.7742 V  (+0.0000)  die 39.5 C
+  wiper  26  VCCINT 0.7771 V  (+0.0029)  die 39.5 C
+  wiper  25  VCCINT 0.7809 V  (+0.0038)  die 39.8 C
+  wiper  24  VCCINT 0.7836 V  (+0.0028)  die 40.3 C
+  wiper  23  VCCINT 0.7851 V  (+0.0014)  die 39.5 C
+  wiper  22  VCCINT 0.7876 V  (+0.0025)  die 39.9 C
+  wiper  21  VCCINT 0.7898 V  (+0.0022)  die 38.6 C
+  wiper  20  VCCINT 0.7910 V  (+0.0012)  die 38.3 C
+  wiper  19  VCCINT 0.7936 V  (+0.0026)  die 38.9 C
+  wiper  18  VCCINT 0.7962 V  (+0.0026)  die 39.5 C
+  wiper  17  VCCINT 0.7995 V  (+0.0033)  die 38.9 C
+  wiper  16  VCCINT 0.8022 V  (+0.0027)  die 39.0 C
+RAISED  wiper 16  VCCINT 0.8022 V  (target)

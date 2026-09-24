@@ -125,3 +125,37 @@ Consistency checks, none of them a calibration:
 Cheapest falsifier of the zero-offset part, no hardware: step VCCINT 0.715 -> 0.80 V at idle.
 Dynamic current alone scales with V (+12%) and leakage adds more, so the code must rise at
 least 12%. A much smaller rise means a large offset.
+
+## The offset test on card 1 (MEASURED 2026-09-24 ~14:45, Oren: "Run it on card 1")
+
+Card 1 (serial 153300000607A, 07:00.0 = xdma0), idle, build 18. `fk33_vccint_test.py raise`
+to 0.752 then 0.802 V and `restore` to wiper 68, `isample.py` 15 s at each level
+(`offset_card1/`).
+
+| VCCINT | VCCINT_I | VCCHBM_I | VCCINT_IO+BRAM | die |
+|---|---|---|---|---|
+| 0.7161 V (wiper 68) | 2294 | 5846 | 9966 | 39.6 C |
+| 0.7505 V (wiper 40) | 2461 | 5848 | 9946 | 37.7 C |
+| 0.8027 V (wiper 16) | 2741 | 5856 | 9944 | 39.7 C |
+| 0.8028 V (repeat) | 2743 | 5844 | 9967 | 40.0 C |
+| 0.7160 V (restored, wiper 68) | 2284 | 5830 | 9945 | 39.9 C |
+
+**The zero-offset assumption SURVIVES.** The code rose 19.8% for a 12.1% voltage rise,
+above the 12% a purely dynamic load would give, i.e. an effective exponent of 1.58 with
+zero offset. Folding in the model's own dynamic/leakage split (2.499 / 0.670 A at 0.85 V)
+implies an offset of -169 to -814 codes for leakage going as V^4 to V^2, i.e. zero to
+slightly negative; the only hard bounds (exponent between 1 and 4) are -1455 to +1507
+codes. DERIVED, and it tests the offset only.
+
+**The two other channels are the control, and they did not move** (VCCHBM_I 5830-5856,
+VCCINT_IO+BRAM 9944-9967, inside their idle scatter), so VCCINT_I follows VCCINT alone and
+the relabelling of the third channel is not contradicted.
+
+**The SCALE is still open, and this test narrows it only by consistency.** At 120 A full
+scale, the step is +0.83 A against the model's +0.42 A, the same ~2x as the absolute idle
+(4.2 A against 2.5 A). So either full scale is nearer 60-70 A, or the real idle draws about
+twice the zero-toggle model. VCCINT at idle is therefore **2.1 to 4.2 A (1.5 to 3.0 W)**,
+and the card estimate becomes **about 11-14 W per card at 12 V**. Only an external meter on
+the 12 V input separates the two readings.
+
+Nothing else was done at the raised voltage; the pot was restored to 68 and read back.
