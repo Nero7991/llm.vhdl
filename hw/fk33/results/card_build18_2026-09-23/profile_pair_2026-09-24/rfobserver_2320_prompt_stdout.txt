@@ -1,0 +1,71 @@
+card 0     /dev/xdma0  /mnt/storage/llama-models/qwen35-9b-card0-b0-15-nh  blocks 0:15  (image record on the card, not assumed)
+card 1     /dev/xdma1  /mnt/storage/llama-models/qwen35-9b-card1-b16-31-nh  blocks 16:31  (image record on the card, not assumed)
+embedding  mv4i /mnt/storage/llama-models/qwen35-9b-mv4i/token_embd.weight.mv4i M=248320 K=4096 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=128 tiles=5174 w_exp=8 recipe=wide read=4096B x2
+program    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat2_run/card0/token.dtbl: 3920 32-bit halves (245 descriptors of 8 64-bit words)
+release    /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat2_run/card0/token.rel: 245 entries
+program2   /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat2_run/card1/token.dtbl: 4704 32-bit halves (294 descriptors)
+release2   /home/orencollaco/GitHub/llama.vhdl/build_artifacts_tok/chat2_run/card1/token.rel: 294 entries
+transport  /dev/xdma0_user + h2c_0/c2h_0 (LIVE CARD, operator token supplied)
+card       seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ctx=65536 chunk=1 x_stride=8256 l_stride=993344 | chardev user=/dev/xdma0_user h2c=/dev/xdma0_h2c_0 c2h=/dev/xdma0_c2h_0
+transport2 /dev/xdma1_user + h2c_0/c2h_0 (LIVE CARD 1)
+card2      seam v2 @BAR+0xE000 vocab=248320 embd=4096 layer=32 ctx=65536 chunk=1 x_stride=8256 l_stride=993344 | chardev user=/dev/xdma1_user h2c=/dev/xdma1_h2c_0 c2h=/dev/xdma1_c2h_0
+pipeline   card 0 -> host (R_X + exponent) -> card 1; card 1's argmax decides
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    2320 ids, pos 2320, first argmax 8160, exp 0
+Here is a summary of the **RFObserver** (or **RFObs**) application based on the provided documentation:
+
+### **Overview**
+**RFObserver** is a Python-based software application designed to monitor, visualize, and process Radio Frequency (RF) spectra. It is specifically developed for the **Hat Creek Radio Observatory** to manage Radio Frequency Interference (RFI).
+*   **Primary Goal:** Enable dynamic spectrum usage by detecting RFI in real-time, allowing the observatory to use frequencies only when the environment is clear (e.g., when the observatory is not actively observing).
+*   **Hardware:** Currently tested with the **B205mini SDR** and **NVIDIA Jetson Nano** compute module.
+*   **Architecture:** Built on **FastAPI** and **HTMX** for the web interface, using **SQLite** (with WAL) for local storage and **NATS JetStream** for outbound messaging.
+
+### **Key Features & Capabilities**
+*   **Real-time Monitoring:** Provides live spectral density plots (PSD), statistics (mean, std, kurtosis), and burst detection via a rolling hysteresis algorithm.
+*   **Signal Processing:**
+    *   Supports FM demodulation (pluggable add-ons).
+    *   Generates SigMF metadata compatible with tools like Inspectrum and GNU Radio.
+    *   Supports frequency sweeping.
+*   **Capture Management:**
+    *   **Automatic:** Continuous full-duty-cycle IQ capture triggered by power thresholds or manual request.
+    *   **Manual:** On-demand capture with pre-trigger circular buffering.
+    *   **Storage Formats:** Exports raw IQ data (`.sc16`), metadata (`.json`), and SigMF files.
+*   **Storage Management & Safety:**
+    *   Implements a "free space floor" system to prevent disk overflow.
+    *   **Auto-pruning:** Automatically deletes old automatic captures (`auto/`) or prunes history (PSD/Detections) based on disk usage thresholds.
+    *   **Health Monitoring:** Tracks disk health and database reusability; reports status via an API (`/api/health`).
+    *   **Warning System:** Flags "degraded" status if manual captures are deleted or write failures occur, persisting this warning until resolved.
+*   **Integration:**
+    *   Pushes data to **OpenZMS** (via SigMF) and **NATS JetStream**.
+    *   Includes a mock receiver for development and testing without hardware.
+
+### **System Architecture & Workflow**
+1.  **Input:** SDR captures IQ data $\rightarrow$ Jetson Nano processes it.
+2.  **Analysis:** Calculates PSD, detects bursts, and demodulates signals (FM).
+3.  **Storage:** Saves results to SQLite and writes raw IQ to disk.
+4.  **Cleanup:** Monitors disk space; if low, deletes old `auto/` captures or archives old data.
+5.  **Output:**
+    *   Web UI for visualization and control.
+    *   HTTP API for health checks and configuration.
+    *   External integrations (OpenZMS, NATS).
+
+### **Usage & Deployment**
+*   **Installation:** `pip install .` (requires adding `~/.local/bin` to PATH if installed system-wide).
+*   **Commands:**
+    *   `rfobserver run`: Runs the full pipeline (with mock or real hardware).
+    *   `rfobserver web`: Starts the local web UI.
+    *   `rfobserver config`: Displays current configuration.
+*   **Data Retrieval:** Captures can be downloaded via HTTP (supporting resumption via HTTP Range).
+*   **Testing:** Includes unit tests (`hatch`) and integration tests against a mock NATS server.
+
+### **Intended Use Case**
+The system acts as an intelligent "gatekeeper" for radio astronomy. By continuously monitoring the spectrum and storing evidence of interference, it allows the observatory to dynamically grant access to specific frequency bands to other users or experiments only when the local environment is confirmed to be RFI-free.
+
+### **License & Funding**
+*   **License:** BSD 3-Clause.
+*   **Funding:** NSF Cooperative Agreement #2431961.
+*   **Copyright:** University of Colorado Boulder, Wireless Interdisciplinary Research Group (WIRG).
+decode     936 ids generated, pos 3255, stopped on the stop token
+timing     3255 GOs: run_chunk 1199.028 s (of which STATUS wait 776.792 s over 7041195 polls), X pushes 5.081 s, wall since start 809.339 s
+hop        3255 hops: read R_X 23.696 s, push+GO card 1 3.707 s; card 1 at pos 3255; prefill overlapped
+bytes      h2c 53329920, c2h 53329920, go 3255 (argmax fast path)
