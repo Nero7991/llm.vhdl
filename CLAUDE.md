@@ -333,6 +333,12 @@ the "2 of 3" baseline was three trials. Count every sequence as a trial.
 0.80 V 2 in 18), the voltage the design is signed off at. Raising VCCINT is
 not a fix at any value and there is no threshold; the lead is a race or CDC
 in build 19's NORM_HBM change. Wiper 68 stands.
+**CORRECTION 4, same day: build 19 was NOT a one-variable change.** It dropped
+`build12_levers_off.patch`, which every card build from 12b to 18 applied, so
+`FAST_POP`, `NWIDE`, `SWEEP_PIPE` and `SCORE_EARLY` came on with NORM_HBM. The
+committed tree has all four ON since `a95017c`; **a card build that does not
+apply the patch gets them silently.** Diff `Parameter ... bound to` out of both
+logs before attributing anything to a build.
 
 ---
 

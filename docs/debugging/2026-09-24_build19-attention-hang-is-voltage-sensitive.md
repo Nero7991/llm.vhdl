@@ -170,7 +170,7 @@ C_JOB, on either card, at any voltage tried from 0.715 to 0.80 V.
 tests it at a fraction of the cost of n256/n500. The rate needs tens of trials
 per condition, not four.
 
-## CORRECTION 3 2026-09-24 14:10: it hangs at the 0.85 V sign-off voltage. No threshold exists to find.
+## CORRECTION 3 2026-09-24 12:40 (header first committed as "14:10", a clock error; the v085b log closed at 12:34): it hangs at the 0.85 V sign-off voltage. No threshold exists to find.
 
 Oren asked for the threshold below which it glitches, and chose "Sweep UP
 toward 0.85 V". Instrument: `TESTS=input REPEATS=30 fk33_ctxtest.sh pair <out> 40`
@@ -210,3 +210,44 @@ Both pots returned to wiper 68 afterwards (`restore68_xdma1.log`,
 `restore68b_xdma0.log`). Trap hit on the restore: the 2 mV "rail rose" guard on
 an upward step tripped on SYSMON noise (+2.2 mV at wiper 53) and stopped there,
 in spec; raised to 3.5 mV to match the raise path, then it completed.
+
+## CORRECTION 4 2026-09-24 13:15: build 19 is a FIVE-variable change from build 18, not one. Every "only NORM_HBM changed" statement above is WITHDRAWN.
+
+MEASURED by diffing the two build worktrees (`/mnt/storage/fk33_builds/wt18`,
+`wt19`) and the committed trees. Build 18 is `c6af925` **plus
+`build12_levers_off.patch`** (README line 3), as were builds 12b, 14, 15 and
+17. Build 19 is `8af98b8` with NO patch. Since `a95017c` (2026-09-20, "build
+11's two attention levers reach the card") the levers are ON in the committed
+tree, so dropping the patch turned four of them on silently:
+
+| lever | where | build 18 | build 19 |
+|---|---|---|---|
+| NORM_HBM (the change under test) | `fk33_card.vhd` | off (ROM) | on |
+| `FAST_POP` | `gen_fk33_engine.py` `FAST_POP_DEFAULT`, A's FIFOs | false | **true** |
+| `NWIDE` | `llama_top` B's norm | false | **true** |
+| `SWEEP_PIPE` | `llama_top` `u_attn` (C) | false | **true** |
+| `SCORE_EARLY` | `llama_top` `u_attn` (C) | false | **true** |
+
+Build 18's log carries `Parameter FAST_POP bound to: 0` x8 and `NWIDE`,
+`SWEEP_PIPE`, `SCORE_EARLY bound to: 0`; build 19's carries `FAST_POP bound to:
+1` x8. Neither build 19's README nor its COMPOSITION.md mentions the patch.
+`docs/debugging/2026-09-21_the-revert-and-the-lever-that-was-never-set.md:421`
+records that `SWEEP_PIPE` and `SCORE_EARLY` had never been in a card build:
+**build 19 is the first silicon they have run on, and the hang is always in a
+C_JOB.** That is a lead, not an attribution.
+
+This is the recorded CLAUDE.md trap ("enumerate what differs between two runs
+from the runs' own recorded parameters, never from the intent of whoever
+launched them") in the same shape as build 11b: the comparison was made from
+what the build was FOR.
+
+Simulation with the levers ON (`sim/tb_csweep_rate.vhd`, gate library, `-gP0=31
+-gP1=32 -gP2=33 -gP3=64 -gSWEEP_PIPE=true -gSCORE_EARLY=true`): every job
+completes, 67,407 / 67,743 / 67,967 / 74,911 cycles, slope 227.39 per position
+(off: 351.42). The 04:10 simulation above ran at the bench defaults, i.e.
+levers OFF, so it simulated build 18's C, not build 19's. A slave-timing matrix
+with the levers on is running (`/mnt/storage/fk33_builds/card_build19/sim_levers/`).
+
+**The silicon discriminator is a build:** `8af98b8` + `build12_levers_off.patch`
+(NORM_HBM alone). Clean means NORM_HBM is exonerated and one of the four levers
+causes the hang; hanging means NORM_HBM does.

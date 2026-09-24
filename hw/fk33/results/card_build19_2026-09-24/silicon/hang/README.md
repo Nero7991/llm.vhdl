@@ -173,10 +173,18 @@ block 23). Build 19 at 0.78 V: 1 hang in 11 runs (0.715 V: 2 in 3).
 Counting every fresh sequence across position 32 on build 19: 0.715 V 4/13,
 0.78 V 1/11, 0.80 V 1/4. The "2 of 3" baseline ignored the ordinary runs above.
 
-## CORRECTION 3, 14:10: it hangs at 0.85 V too; no threshold
+## CORRECTION 3, 12:40 (first committed as "14:10", a clock error): it hangs at 0.85 V too; no threshold
 40-id prefill, 30 repeats per level: 0.80 V 1 hang in 14 (`ctxtest_v080_n40x30.log`),
 0.85 V 30/30 clean (`ctxtest_v085_n40x30.log`) then a hang at run 6 of the second
 batch (`ctxtest_v085b_n40x30.log`, `v085b_input_r6_seam_hung.txt`: b16-31 half,
 D WDOG step 268, seq_pos 32). Totals 0.715 V 4/13, 0.78 V 1/11, 0.80 V 2/18,
 0.85 V 1/36. A hang at the sign-off voltage rules out a static setup failure;
 race/CDC in the build-19 change is the lead. Pots back at wiper 68.
+
+## CORRECTION 4, 13:15: build 19 is FIVE variables from build 18, not one
+Build 18 carried `build12_levers_off.patch`; build 19 did not, so `FAST_POP`, `NWIDE`,
+`SWEEP_PIPE` and `SCORE_EARLY` came on with NORM_HBM (build 19's log: `FAST_POP bound to: 1` x8).
+Build 19 is the first silicon for C's two levers. "The attention unit's RTL did not change in
+build 19" above is WITHDRAWN: its generics did, and the 04:10 simulation ran them OFF. Build 20
+(`8af98b8` + the patch, NORM_HBM alone) launched 13:20 as the discriminator. Detail in the debug
+doc, CORRECTION 4.
