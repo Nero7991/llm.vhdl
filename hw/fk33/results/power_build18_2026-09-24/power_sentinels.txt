@@ -1,0 +1,9 @@
+PWR_STAGE active_default
+PWR_STAGE idle_clocks_on
+PWR_STAGE idle_072
+PWR2_NETS 4394773
+CRITICAL WARNING: [Vivado 12-4439] The number of objects collected by the 'objects' option of 'set_switching_activity' is very large: 4394773. This may lead to serious performance issues and out-of-memory conditions in handling the results.
+PWR2_STAGE idle_all_clocks
+PWR2_CLK3_PERIOD 3333337.250
+PWR2_STAGE core_gated
+PWR2_DONE

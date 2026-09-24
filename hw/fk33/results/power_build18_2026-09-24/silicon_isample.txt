@@ -1,0 +1,7 @@
+# hw/fk33/results/power_build18_2026-09-24/isample.py, build 18, both cards, 2026-09-24 ~13:55 MDT.
+# Raw 16-bit SYSMON aux codes, scale AND offset UNKNOWN. idle = no request; gen = during a 120-token
+# generation through server/llmvhdl_server.py (request 13:56:37), 25 s window, ~50 Hz.
+ISAMPLE idle /dev/xdma0_user n=498 VCCINT 0.7160 die 38.6 VCCINT_I med 2292 p90 2389 max 2495 VCCHBM_I med 5839 p90 6055 max 6324 VCCBRAM_I med 9953 p90 10187 max 10572
+ISAMPLE idle /dev/xdma1_user n=498 VCCINT 0.7144 die 53.1 VCCINT_I med 2465 p90 2551 max 2691 VCCHBM_I med 6219 p90 6434 max 6685 VCCBRAM_I med 9690 p90 9969 max 10281
+ISAMPLE gen /dev/xdma1_user n=1244 VCCINT 0.7144 die 54.3 VCCINT_I med 2518 p90 3081 max 4712 VCCHBM_I med 6359 p90 9046 max 13334 VCCBRAM_I med 9796 p90 10828 max 15898
+ISAMPLE gen /dev/xdma0_user n=1244 VCCINT 0.7163 die 39.3 VCCINT_I med 2334 p90 2797 max 4034 VCCHBM_I med 5950 p90 8278 max 11719 VCCBRAM_I med 10054 p90 10948 max 16257

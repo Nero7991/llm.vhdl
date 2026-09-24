@@ -1,0 +1,267 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version     : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date             : Thu Sep 24 16:03:48 2026
+| Host             : cachyos-bc250 running 64-bit CachyOS
+| Command          : report_power -file /home/orencollaco/pwr18/p_active_default.rpt
+| Design           : bd_wrapper
+| Device           : xcvu33p-fsvh2104-2L-e
+| Design State     : routed
+| Grade            : extended
+| Process          : typical
+| Characterization : Production
+-------------------------------------------------------------------------------------------------------------------------------------------------
+
+Power Report
+
+Table of Contents
+-----------------
+1. Summary
+1.1 On-Chip Components
+1.2 Power Supply Summary
+1.3 Confidence Level
+2. Settings
+2.1 Environment
+2.2 Clock Constraints
+3. Detailed Reports
+3.1 By Hierarchy
+
+1. Summary
+----------
+
++--------------------------+--------------+
+| Total On-Chip Power (W)  | 25.770       |
+|   FPGA Power (W)         | 16.023       |
+|   HBM Power (W)          | 9.747        |
+| Design Power Budget (W)  | Unspecified* |
+| Power Budget Margin (W)  | NA           |
+| Dynamic (W)              | 24.096       |
+| Device Static (W)        | 1.674        |
+| Effective TJA (C/W)      | 0.5          |
+| Max Ambient (C)          | 86.3         |
+| Junction Temperature (C) | 38.7         |
+| Confidence Level         | Low          |
+| Setting File             | ---          |
+| Simulation Activity File | ---          |
+| Design Nets Matched      | NA           |
++--------------------------+--------------+
+* Specify Design Power Budget using, set_operating_conditions -design_power_budget <value in Watts>
+
+
+1.1 On-Chip Components
+----------------------
+
++--------------------------+-----------+----------+-----------+-----------------+
+| On-Chip                  | Power (W) | Used     | Available | Utilization (%) |
++--------------------------+-----------+----------+-----------+-----------------+
+| Clocks                   |     0.812 |       27 |       --- |             --- |
+| CLB Logic                |     1.029 |   805294 |       --- |             --- |
+|   LUT as Logic           |     0.557 |   292913 |    439680 |           66.62 |
+|   LUT as Distributed RAM |     0.413 |    64836 |    205440 |           31.56 |
+|   Register               |     0.030 |   310214 |    879360 |           35.28 |
+|   CARRY8                 |     0.022 |    12252 |     54960 |           22.29 |
+|   LUT as Shift Register  |     0.007 |     1097 |    205440 |            0.53 |
+|   BUFG                   |    <0.001 |        9 |        32 |           28.13 |
+|   Others                 |     0.000 |     4652 |       --- |             --- |
+|   F7/F8 Muxes            |     0.000 |    34358 |    439680 |            7.81 |
+| Signals                  |     1.360 |   668666 |       --- |             --- |
+| Block RAM                |     0.679 |      567 |       672 |           84.38 |
+| URAM                     |     0.022 |       32 |       320 |           10.00 |
+| HBM                      |    17.780 |        2 |         2 |          100.00 |
+| MMCM                     |     0.099 |        0 |       --- |             --- |
+| DSPs                     |     0.767 |     2087 |      2880 |           72.47 |
+| I/O                      |     0.013 |       25 |       208 |           12.02 |
+| GTY                      |     1.203 |        4 |        32 |           12.50 |
+| SYSMON                   |     0.005 |        1 |       --- |             --- |
+| Hard IPs                 |     0.219 |        1 |       --- |             --- |
+|   PCIE                   |     0.219 |        1 |       --- |             --- |
+| Static Power             |     1.674 |          |           |                 |
+|   HBM Static             |     0.276 |          |           |                 |
+|   Device Static          |     1.398 |          |           |                 |
+| Total                    |    25.661 |          |           |                 |
++--------------------------+-----------+----------+-----------+-----------------+
+
+
+1.2 Power Supply Summary
+------------------------
+
++------------+-------------+-----------+-------------+------------+-------------+-------------+------------+
+| Source     | Voltage (V) | Total (A) | Dynamic (A) | Static (A) | Powerup (A) | Budget (A)  | Margin (A) |
++------------+-------------+-----------+-------------+------------+-------------+-------------+------------+
+| Vccint     |       0.850 |     7.349 |       6.632 |      0.717 |       NA    | Unspecified | NA         |
+| Vccint_io  |       0.850 |     6.991 |       6.800 |      0.191 |       NA    | Unspecified | NA         |
+| Vccbram    |       0.850 |     0.083 |       0.064 |      0.019 |       NA    | Unspecified | NA         |
+| Vccaux     |       1.800 |     0.436 |       0.169 |      0.268 |       NA    | Unspecified | NA         |
+| Vccaux_io  |       1.800 |     0.018 |       0.005 |      0.012 |       NA    | Unspecified | NA         |
+| Vcco33     |       3.300 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco25     |       2.500 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco18     |       1.800 |     0.001 |       0.001 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco15     |       1.500 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco135    |       1.350 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco12     |       1.200 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vcco10     |       1.000 |     0.000 |       0.000 |      0.000 |       NA    | Unspecified | NA         |
+| Vccadc     |       1.800 |     0.008 |       0.000 |      0.008 |       NA    | Unspecified | NA         |
+| VCC_IO_HBM |       1.200 |     4.526 |       4.437 |      0.089 |       NA    | Unspecified | NA         |
+| VCC_HBM    |       1.200 |     4.843 |       4.748 |      0.095 |       NA    | Unspecified | NA         |
+| VCCAUX_HBM |       2.500 |     0.115 |       0.093 |      0.022 |       NA    | Unspecified | NA         |
+| MGTYAVcc   |       0.900 |     0.269 |       0.206 |      0.062 |       NA    | Unspecified | NA         |
+| MGTYAVtt   |       1.200 |     0.713 |       0.689 |      0.025 |       NA    | Unspecified | NA         |
+| MGTYVccaux |       1.800 |     0.026 |       0.023 |      0.003 |       NA    | Unspecified | NA         |
++------------+-------------+-----------+-------------+------------+-------------+-------------+------------+
+
+
+1.3 Confidence Level
+--------------------
+
++-----------------------------+------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+| User Input Data             | Confidence | Details                                                | Action                                                                                                     |
++-----------------------------+------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+| Design implementation state | High       | Design is routed                                       |                                                                                                            |
+| Clock nodes activity        | High       | User specified more than 95% of clocks                 |                                                                                                            |
+| I/O nodes activity          | Low        | More than 75% of inputs are missing user specification | Provide missing input activity with simulation results or by editing the "By Resource Type -> I/Os" view   |
+| Internal nodes activity     | Medium     | User specified less than 25% of internal nodes         | Provide missing internal nodes activity with simulation results or by editing the "By Resource Type" views |
+| Device models               | High       | Device models are Production                           |                                                                                                            |
+|                             |            |                                                        |                                                                                                            |
+| Overall confidence level    | Low        |                                                        |                                                                                                            |
++-----------------------------+------------+--------------------------------------------------------+------------------------------------------------------------------------------------------------------------+
+
+
+2. Settings
+-----------
+
+2.1 Environment
+---------------
+
++-----------------------+--------------------------+
+| Ambient Temp (C)      | 25.0                     |
+| ThetaJA (C/W)         | 0.5                      |
+| Airflow (LFM)         | 250                      |
+| Heat Sink             | medium (Medium Profile)  |
+| ThetaSA (C/W)         | 0.7                      |
+| Board Selection       | medium (10"x10")         |
+| # of Board Layers     | 12to15 (12 to 15 Layers) |
+| Board Temperature (C) | 25.0                     |
++-----------------------+--------------------------+
+
+
+2.2 Clock Constraints
+---------------------
+
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+| Clock                                                                                                                                                                                                                                                                                                                                                                                                                         | Domain                                                                                                                                                                                                                                                                                                                                                                                                         | Constraint (ns) |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+| GTYE4_CHANNEL_TXOUTCLK[0]                                                                                                                                                                                                                                                                                                                                                                                                     | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/GTYE4_CHANNEL_TXOUTCLK[0]                                                       |             2.0 |
+| GTYE4_CHANNEL_TXOUTCLK[1]                                                                                                                                                                                                                                                                                                                                                                                                     | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/GTYE4_CHANNEL_TXOUTCLK[1]                                                       |             2.0 |
+| GTYE4_CHANNEL_TXOUTCLK[2]                                                                                                                                                                                                                                                                                                                                                                                                     | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/GTYE4_CHANNEL_TXOUTCLK[2]                                                       |             2.0 |
+| GTYE4_CHANNEL_TXOUTCLK[3]                                                                                                                                                                                                                                                                                                                                                                                                     | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_channel_container[27].gen_enabled_channel.gtye4_channel_wrapper_inst/channel_inst/GTYE4_CHANNEL_TXOUTCLK[3]                                                       |             2.0 |
+| GTYE4_COMMON_QPLL0OUTCLK[0]                                                                                                                                                                                                                                                                                                                                                                                                   | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/GTYE4_COMMON_QPLL0OUTCLK[0]                                              |             0.2 |
+| GTYE4_COMMON_QPLL0OUTREFCLK[0]                                                                                                                                                                                                                                                                                                                                                                                                | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/GTYE4_COMMON_QPLL0OUTREFCLK[0]                                           |            10.0 |
+| GTYE4_COMMON_QPLL1OUTCLK[0]                                                                                                                                                                                                                                                                                                                                                                                                   | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/GTYE4_COMMON_QPLL1OUTCLK[0]                                              |             0.2 |
+| GTYE4_COMMON_QPLL1OUTREFCLK[0]                                                                                                                                                                                                                                                                                                                                                                                                | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_common.gen_common_container[27].gen_enabled_common.gtye4_common_wrapper_inst/common_inst/GTYE4_COMMON_QPLL1OUTREFCLK[0]                                           |            10.0 |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[0].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[0].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[1].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[1].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[2].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[2].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[3].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/bufg_gt_txoutclkmon_inst/O | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/gt_wizard.gtwizard_top_i/bd_xdma_0_pcie4c_ip_gt_i/inst/gen_gtwizard_gtye4_top.bd_xdma_0_pcie4c_ip_gt_gtwizard_gtye4_inst/gen_gtwizard_gtye4.gen_cpll_cal_gtye4.gen_cpll_cal_inst[3].gen_inst_cpll_cal.gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_inst/gtwizard_ultrascale_v1_7_17_gtye4_cpll_cal_tx_i/txoutclkmon |             8.0 |
+| bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/bufg_gt_intclk/O                                                                                                                                                                                                                                                                                                       | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_INTCLK                                                                                                                                                                                                                                                                                              |          1000.0 |
+| bd_xdma_0_pcie4c_ip_gt_top_i_n_2                                                                                                                                                                                                                                                                                                                                                                                              | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_MCAPCLK                                                                                                                                                                                                                                                                                             |             8.0 |
+| clk_out1_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                       | bd_i/clk_wiz_0/inst/clk_out1_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                    |            10.0 |
+| clk_out2_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                       | bd_i/clk_wiz_0/inst/clk_out2                                                                                                                                                                                                                                                                                                                                                                                   |             5.0 |
+| clk_out2_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                       | bd_i/clk_wiz_0/inst/clk_out2_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                    |             5.0 |
+| clk_out3_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                                                       | bd_i/clk_wiz_0/inst/clk_out3_bd_clk_wiz_0_0                                                                                                                                                                                                                                                                                                                                                                    |            13.3 |
+| dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK                                                                                                                                                                                                                                                                                                                           | dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/DRCK                                                                                                                                                                                                                                                                                                                                             |            50.0 |
+| fk33_dmabram_BRAM_PORTA_CLK                                                                                                                                                                                                                                                                                                                                                                                                   | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_CORECLK                                                                                                                                                                                                                                                                                             |             4.0 |
+| pcie_refclk                                                                                                                                                                                                                                                                                                                                                                                                                   | pcie_refclk_clk_p[0]                                                                                                                                                                                                                                                                                                                                                                                           |            10.0 |
+| pipe_clk                                                                                                                                                                                                                                                                                                                                                                                                                      | bd_i/xdma/inst/pcie4c_ip_i/inst/bd_xdma_0_pcie4c_ip_gt_top_i/diablo_gt.diablo_gt_phy_wrapper/phy_clk_i/CLK_PCLK                                                                                                                                                                                                                                                                                                |             4.0 |
+| sysref_clk                                                                                                                                                                                                                                                                                                                                                                                                                    | sysref_clk_p[0]                                                                                                                                                                                                                                                                                                                                                                                                |             5.0 |
++-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------+
+
+
+3. Detailed Reports
+-------------------
+
+3.1 By Hierarchy
+----------------
+
++-----------------------------+-----------+
+| Name                        | Power (W) |
++-----------------------------+-----------+
+| bd_wrapper                  |    23.988 |
+|   bd_i                      |    23.980 |
+|     aux_clkst               |     0.005 |
+|       U0                    |     0.005 |
+|     aux_ctl                 |     0.003 |
+|       U0                    |     0.003 |
+|     aux_id                  |     0.003 |
+|       U0                    |     0.003 |
+|     aux_peak                |     0.005 |
+|       U0                    |     0.005 |
+|     aux_stat                |     0.004 |
+|       U0                    |     0.004 |
+|     aux_therm               |     0.005 |
+|       U0                    |     0.005 |
+|     aux_time                |     0.005 |
+|       U0                    |     0.005 |
+|     auxconnect              |     0.016 |
+|       inst                  |     0.016 |
+|     axil2eng                |     0.016 |
+|       inst                  |     0.016 |
+|     bc_cdc0                 |     0.018 |
+|       inst                  |     0.018 |
+|     bc_cdc1                 |     0.019 |
+|       inst                  |     0.019 |
+|     card                    |     1.305 |
+|       inst                  |     1.305 |
+|     clk_wiz_0               |     0.099 |
+|       inst                  |     0.099 |
+|     eng                     |     1.610 |
+|       inst                  |     1.610 |
+|     engctl                  |     0.010 |
+|       inst                  |     0.010 |
+|     fk33_aux_0              |     0.005 |
+|       inst                  |     0.005 |
+|     fk33_dmabram            |     0.017 |
+|       U0                    |     0.017 |
+|     fk33_dmabram_ram        |     0.050 |
+|       U0                    |     0.050 |
+|     fk33_id                 |     0.002 |
+|       U0                    |     0.002 |
+|     fk33_scratch            |     0.006 |
+|       U0                    |     0.006 |
+|     fk33_scratch_ram        |     0.007 |
+|       U0                    |     0.007 |
+|     fk33_seam_0             |     0.014 |
+|       inst                  |     0.014 |
+|     fk33_therm              |     0.003 |
+|       U0                    |     0.003 |
+|     fk33_therm_0            |     0.008 |
+|       inst                  |     0.008 |
+|     fk33_thermc             |     0.003 |
+|       U0                    |     0.003 |
+|     fk33_thermp             |     0.003 |
+|       U0                    |     0.003 |
+|     hbm                     |    17.790 |
+|       inst                  |    17.790 |
+|     jtag_aux                |     0.025 |
+|       inst                  |     0.025 |
+|     jtag_axil               |     0.027 |
+|       inst                  |     0.027 |
+|     jtag_hbm                |     0.034 |
+|       inst                  |     0.034 |
+|     pcie2axil               |     0.319 |
+|       inst                  |     0.319 |
+|     pcie2hbm                |     0.438 |
+|       inst                  |     0.438 |
+|     system_management_wiz_0 |     0.010 |
+|       inst                  |     0.010 |
+|     util_ds_buf_0           |     0.006 |
+|       U0                    |     0.006 |
+|     util_ds_buf_1           |     0.004 |
+|       U0                    |     0.004 |
+|     xdma                    |     2.087 |
+|       inst                  |     2.087 |
+|   dbg_hub                   |     0.005 |
+|     inst                    |     0.005 |
+|       BSCANID.u_xsdbm_id    |     0.005 |
++-----------------------------+-----------+
+
+
