@@ -11,6 +11,15 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-24 27B-1 (main session): **the 27B card build does not route on the VU33P**
+
+Three attempts, all failed: congestion level 6, then an unrouted
+re-implementation, then a reroute ending at 1,698,125 conflicts and WNS
+-7.434. Placed 99.84% CLB / 91.12% LUT / 90.55% BRAM. Results
+`hw/fk33/results/card_build27b_1_2026-09-24/`. No Vivado running. The
+Jungle Cat estimate (`docs/2026-09-24_jungle-cat-performance-estimate.md`)
+is the fabric route; on the FK33 it needs area removed first.
+
 ### 2026-09-24 CONTEXT TESTS (main session): **`fk33_ctxtest.sh` is a standing post-build step; its first short run reproduced the attention hang**
 
 Oren: "full input context and full output context length tests after every
