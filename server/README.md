@@ -1,5 +1,14 @@
 # llama.vhdl OpenAI-compatible server
 
+> **2026-09-24: the web UI on the real cards is `llmvhdl_server.py`, not this
+> binary.** `python3 server/llmvhdl_server.py` serves the llama.cpp web UI
+> copied into `ui/` on port 8000 and answers each chat on the two FK33s through
+> `hw/fk33/host/fk33_chat2.sh` (MEASURED: coherent multi-turn answers at
+> 3.2 tokens/s decode). It reuses this directory's chat template and tokenizer
+> via `make libqwen35chat.so`, and `run_prompt --ids-stream`. The notes below
+> about `llama_server` running only against a simulated card still describe
+> `llama_server`.
+
 A zero-dependency C++ HTTP server. **Two models live in this one binary and
 they do not share a code path.**
 

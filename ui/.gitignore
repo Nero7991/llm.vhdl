@@ -1,0 +1,42 @@
+test-results
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+dev-dist
+# dist/ IS COMMITTED in llm.vhdl: the server serves it and must run without node.
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# PWA Artifacts
+/static/apple-splash-*.png
+/static/apple-touch-icon-*.png
+/static/maskable-icon-*.png
+/static/pwa-*.png
+static/favicon*
+
+# Storybook
+*storybook.log
+storybook-static
+*.code-workspace
+
+# Vitest browser mode failure artifacts
+.vitest-attachments/
+tests/**/__screenshots__/

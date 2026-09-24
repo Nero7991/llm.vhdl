@@ -136,3 +136,4 @@ hw/fk33/host/fk33_bringup
 hw/fk33/bit/
 sim/ooc_fk33a/*.rpt
 sim/ooc_fk33a/*.xdc
+server/libqwen35chat.so

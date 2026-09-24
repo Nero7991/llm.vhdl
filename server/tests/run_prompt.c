@@ -125,6 +125,13 @@
  * comment, so the committed artefacts can carry their own provenance.
  */
 #define _GNU_SOURCE
+#include <signal.h>
+/* SIGTERM/SIGINT stop the DECODE loop after the GO in flight, never inside
+ * one: killing the process mid-GO leaves the card busy and the next
+ * --seq-reset racing it.  Added 2026-09-24 for server/llmvhdl_server.py,
+ * whose Stop button sends SIGTERM. */
+static volatile sig_atomic_t g_stop_req = 0;
+static void on_stop_sig(int sig) { (void)sig; g_stop_req = 1; }
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -201,6 +208,9 @@ static void usage(void)
       "                        prints each token's bytes as the card emits it\n"
       "                  [--max-new N] [--qtk <t.qtk>] [--check-argmax]\n"
       "                  [--dump-logits <p.r9bs>]  token 0's LOGITS (S32 +\n"
+      "                  [--ids-stream <file>] each generated id on its own line,\n"
+      "                        flushed as the card emits it (a pipe, e.g. /dev/fd/3);\n"
+      "                        SIGTERM then ends the decode after the GO in flight\n"
       "                  [--ids-out <file>]   the generated ids, one per line, in the\n"
       "                        format --reference reads: record a single-card run,\n"
       "                        then hand it to the two-card run as its reference\n"
@@ -298,6 +308,8 @@ int main(int argc, char **argv)
     int serial_prefill = 0;
     const char *xout_path = NULL;
     const char *ids_path  = NULL;   /* --ids-out: the generated ids, one per line */
+    const char *ids_stream_path = NULL; /* --ids-stream: each generated id, flushed as it arrives */
+    FILE *ids_stream = NULL;
     const char *x_row_path = NULL;  /* --x-row: push this residual row as position 0, no embedding */
     const char *mv4i_path = NULL, *manifest_path = NULL;
     const char *dtbl_path = NULL, *rel_path = NULL;
@@ -363,6 +375,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
         else if (!strcmp(a, "--dump-xout"))    NEXT(xout_path);
         else if (!strcmp(a, "--ids-out"))      NEXT(ids_path);
+        else if (!strcmp(a, "--ids-stream"))   NEXT(ids_stream_path);
         else if (!strcmp(a, "--x-row"))        NEXT(x_row_path);
         else if (!strcmp(a, "--teeth-argmax")) { const char *s2; NEXT(s2); teeth_bias = atoi(s2); }
         else if (!strcmp(a, "--sim-kv-maxpos")) { const char *s2; NEXT(s2); sim_kv_maxpos = atol(s2); }
@@ -412,6 +425,18 @@ int main(int argc, char **argv)
         if (n_ref < 0) { free(prompt); return 2; }
     }
     if (max_new <= 0) max_new = n_ref > 0 ? n_ref : 256;
+    if (ids_stream_path) {
+        struct sigaction sa;
+        ids_stream = fopen(ids_stream_path, "w");
+        if (!ids_stream) {
+            fprintf(stderr, "run_prompt: cannot open --ids-stream %s\n", ids_stream_path);
+            return 2;
+        }
+        memset(&sa, 0, sizeof sa);
+        sa.sa_handler = on_stop_sig;
+        sigaction(SIGTERM, &sa, NULL);
+        sigaction(SIGINT, &sa, NULL);
+    }
 
     if (qtk_path) {
         tok = qwen35_tok_open(qtk_path);
@@ -692,6 +717,7 @@ int main(int argc, char **argv)
         got = (int *)malloc((size_t)cap_got * sizeof *got);
         if (!got) { status = 1; goto done; }
         got[n_got++] = argmax;
+        if (ids_stream) { fprintf(ids_stream, "%d\n", argmax); fflush(ids_stream); }
         if (argmax == stop_id) stopped = 1;
         if (stream && tok) {
             char pb[256]; int pl = qwen35_tok_piece(tok, argmax, pb, sizeof pb, 0);
@@ -700,7 +726,7 @@ int main(int argc, char **argv)
     }
 
     /* -------------------------------------------------------------- decode */
-    while (!stopped && n_got < max_new) {
+    while (!stopped && !g_stop_req && n_got < max_new) {
         int argmax = -1;
         int32_t lexp = 0;
         int fed = got[n_got - 1];
@@ -720,6 +746,7 @@ int main(int argc, char **argv)
             }
         }
         got[n_got++] = argmax;
+        if (ids_stream) { fprintf(ids_stream, "%d\n", argmax); fflush(ids_stream); }
         if (argmax == stop_id) stopped = 1;
         if (stream && tok) {
             char pb[256]; int pl = qwen35_tok_piece(tok, argmax, pb, sizeof pb, 0);
@@ -729,7 +756,7 @@ int main(int argc, char **argv)
     if (stream) { printf("\n"); fflush(stdout); }
 
     printf("decode     %d ids generated, pos %d, stopped %s\n",
-           n_got, pl_seq_pos(c), stopped ? "on the stop token" : "at --max-new");
+           n_got, pl_seq_pos(c), stopped ? "on the stop token" : (g_stop_req ? "on SIGTERM/SIGINT" : "at --max-new"));
     {
         double tp = 0, tw = 0, tg = 0; unsigned long np = 0;
         pl_host_timing(&tp, &tw, &tg, &np);
@@ -858,6 +885,7 @@ int main(int argc, char **argv)
     }
 
 done:
+    if (ids_stream) fclose(ids_stream);
     if (pp)  plp_close(pp);
     if (c2)  pl_close(c2);
     if (c)   pl_close(c);

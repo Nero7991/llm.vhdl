@@ -127,6 +127,13 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 # The goal harness: a committed prompt through the real seam, its ids compared
 # against a committed reference.  Simulated transport only; see the header of
 # tests/run_prompt.c for what that does and does not prove.
+# The chat template and tokenizer as a shared library, for
+# server/llmvhdl_server.py (ctypes).  The SAME three C files run_prompt and
+# llama_server link, so the web server renders and tokenizes exactly as the
+# verified path does rather than through a second implementation.
+libqwen35chat.so: qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c qwen35_tok.h qwen35_chat.h
+	$(CC) $(CBACK) -fPIC -shared -I. -o $@ qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c -lm
+
 run_prompt: tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
             fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
             qwen35_chat.c qwen35_unicode_data.c
@@ -218,7 +225,7 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 
 clean:
 	rm -f llama_server llama_server_arm seam_selftest imglock_selftest chat_batch \
-	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt \
+	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt libqwen35chat.so \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
