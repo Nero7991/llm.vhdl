@@ -11,6 +11,14 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-09-24 IDLE POWER (main session): **tasks P1 (core clock gating) and P2 (RTL VCCINT sequencer + interlock) specced, not started**
+
+`docs/superpowers/specs/2026-09-24-idle-power.md`. Oren chose clock gating and
+asked whether the idle VCCINT drop can be RTL: yes, the pot's I2C is on FPGA
+pins and SYSMON is on-chip, so a closed-loop sequencer in the always-on domain
+can move VCCINT in milliseconds and carry the max-voltage interlock in the
+bitstream. P2 waits on the voltage sweep for build 19's hang.
+
 ### 2026-09-24 27B-1 (main session): **the 27B card build does not route on the VU33P**
 
 Three attempts, all failed: congestion level 6, then an unrouted

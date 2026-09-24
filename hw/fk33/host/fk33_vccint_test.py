@@ -23,8 +23,11 @@ import time
 
 import fk33ctl as F
 
-W_STD, W_MIN = 68, 12
+W_STD, W_MIN = 68, 2
 V_STOP, V_ABORT, DV_MAX, T_MAX = 0.778, 0.800, 0.010, 70.0
+V_HARD = 0.870   # top of the 0.85 V operating window; never exceeded, whatever the target
+# 2026-09-24 11:15 Oren chose "Sweep UP toward 0.85 V": `raise <target>` sets
+# V_STOP = target - 2 mV and V_ABORT = min(target + 12 mV, V_HARD).
 READ_CHECK = 100
 
 # Oren, 2026-09-24, after the 0.740 V plan: "We need to test at the max voltage
@@ -110,7 +113,14 @@ def main():
         print("RESTORED  wiper %d  VCCINT %.4f V" % (w, v))
         return
     if mode != "raise":
-        raise SystemExit("usage: fk33_vccint_test.py raise|restore")
+        raise SystemExit("usage: fk33_vccint_test.py raise [target_V]|restore")
+    global V_STOP, V_ABORT
+    if len(sys.argv) > 2:
+        tgt = float(sys.argv[2])
+        if not 0.70 <= tgt <= 0.855:
+            raise SystemExit("refusing target %.3f V (0.70..0.855 only)" % tgt)
+        V_STOP, V_ABORT = tgt - 0.002, min(tgt + 0.012, V_HARD)
+    print("TARGET stop at %.4f V, abort above %.4f V, wiper floor %d" % (V_STOP, V_ABORT, W_MIN))
     while v < V_STOP and w > W_MIN:
         set_w(i2c, w - 1)
         w -= 1
