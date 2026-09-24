@@ -1,0 +1,2 @@
+START  /dev/xdma0_user  wiper 69  VCCINT 0.7151 V  die 38.8 C
+pot did not acknowledge wiper 68

@@ -141,3 +141,23 @@ and does not fail, and both builds are signed off at 0.85 V while running at
 discriminating test is on silicon: repeat `fk33_ctxtest.sh pair ... 256` on
 build 19 with the die faster (slightly higher VCCINT, which CLAUDE.md fixes at
 wiper 68, so it is Oren's call) or with the path fixed and rebuilt.
+
+## The VCCINT-raise test (Oren approved 2026-09-24): STOPPED before any raise
+Both cards reloaded with build 19 at 10:5x (card 1 = xdma0, card 2 = xdma1), the
+`-nh` images loaded and verified 126/126 and 127/127.
+
+Measurement traps hit, in order:
+1. **`fk33ctl.py vccint` is NOT a read. It is the MMIO VCCINT STEPPER.** Run as
+   a "check" with `| head -2`, it printed START and SAFETY PROBE, wrote wiper
+   68 -> 69 (the safe direction, about -3 mV) and died on SIGPIPE at its next
+   print. Both cards were left at wiper 69, 0.713-0.716 V, in spec. The
+   read-only commands are `fk33ctl.py sysmon` (rail and die temperature) and a
+   bare `I2C(Mmio()).pot_read(POT_ADDR)` for the wiper.
+2. **The MMIO bit-banged I2C is intermittently unreliable.** One pot READ
+   returned -1 (NACK) then 6 of 6 good reads; one pot WRITE (69 -> 68) was not
+   acknowledged and did not land (read back 69 x5). A write that is garbled on
+   the wire can land as any wiper value, and a low wiper is a HIGH rail, so the
+   readback guard only detects it after the rail moved.
+3. **`fk33ctl.py`'s `pot_write` hard-clamps at wiper 68** ("no future caller can
+   route around it"), so a raise past 0.717 V through fk33ctl requires overriding
+   that interlock deliberately. Stopped for Oren's decision rather than doing so.
