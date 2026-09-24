@@ -54,9 +54,20 @@ has_head() { python3 -c "import json,sys; print(any(e.get('tensor')=='output.wei
 norm_rows_ok() {
     python3 -c "import json,sys; sys.exit(0 if 'norm_const_rows' in json.load(open(sys.argv[1]))['hbm'] else 1)" "$1"
 }
-declare -a M RUN RANGE
+declare -a M RUN RANGE DEV
+# WHICH NODE IS WHICH CARD (2026-09-24).  The xdma node numbers follow the
+# order the driver binds the endpoints, and MEASURED that day they SWAP on
+# every JTAG reload of either card.  So the roles are assigned from the image
+# each node holds: card 0 is the node whose image has no LM head.  Nodes are
+# only a transport; the image record is the identity.
+DEV=(/dev/xdma0 /dev/xdma1)
+FIRSTRES=$(FK33_USER=/dev/xdma0_user FK33_H2C=/dev/xdma0_h2c_0 FK33_C2H=/dev/xdma0_c2h_0 python3 "$IMGFP" which 2>/dev/null) || FIRSTRES=""
+if [[ -n "$FIRSTRES" && "$(has_head "$FIRSTRES")" == "True" ]]; then
+    DEV=(/dev/xdma1 /dev/xdma0)
+    echo "nodes      xdma1 holds the first half and xdma0 the second (they swap on reload); using them in that order"
+fi
 for i in 0 1; do
-    export FK33_USER=/dev/xdma${i}_user FK33_H2C=/dev/xdma${i}_h2c_0 FK33_C2H=/dev/xdma${i}_c2h_0
+    export FK33_USER=${DEV[$i]}_user FK33_H2C=${DEV[$i]}_h2c_0 FK33_C2H=${DEV[$i]}_c2h_0
     RUN[$i]="$RUNBASE/card$i"; mkdir -p "${RUN[$i]}"
     # WHICH IMAGE IS ON THIS CARD DECIDES WHICH MANIFEST WE MAY USE.
     RES=$(python3 "$IMGFP" which 2>"${RUN[$i]}/imgfp.log") || RES=""
@@ -76,14 +87,14 @@ for i in 0 1; do
             exit 1
         fi
     fi
-    echo "card $i     ${M[$i]}  blocks ${RANGE[$i]}  (image record on the card, not assumed)"
+    echo "card $i     ${DEV[$i]}  ${M[$i]}  blocks ${RANGE[$i]}  (image record on the card, not assumed)"
 done
 [[ "$(has_head "${M[0]}/manifest.json")" == "False" ]] || { echo "fk33_chat2.sh: card 0's image carries the LM head; it must be the headless half" >&2; exit 1; }
 [[ "$(has_head "${M[1]}/manifest.json")" == "True"  ]] || { echo "fk33_chat2.sh: card 1's image has no LM head" >&2; exit 1; }
 [[ "${RANGE[0]#*:}" -lt "${RANGE[1]%:*}" ]] || { echo "fk33_chat2.sh: block ranges ${RANGE[0]} and ${RANGE[1]} are not card 0 below card 1" >&2; exit 1; }
 
 for i in 0 1; do
-    export FK33_USER=/dev/xdma${i}_user FK33_H2C=/dev/xdma${i}_h2c_0 FK33_C2H=/dev/xdma${i}_c2h_0
+    export FK33_USER=${DEV[$i]}_user FK33_H2C=${DEV[$i]}_h2c_0 FK33_C2H=${DEV[$i]}_c2h_0
     R="${RUN[$i]}"; MAN="${M[$i]}/manifest.json"
     # THE CACHED TOKEN PROGRAM BELONGS TO ONE MANIFEST AND ONE GENERATOR.
     # The generator key was added 2026-09-23: that day a norm's `const_base`
@@ -128,6 +139,6 @@ unset FK33_USER FK33_H2C FK33_C2H   # run_prompt names its own devices
 exec "$REPO/server/run_prompt" --allow-hardware HOST --seq-reset --v2 \
     --dtbl "${RUN[0]}/token.dtbl" --rel "${RUN[0]}/token.rel" \
     --dtbl2 "${RUN[1]}/token.dtbl" --rel2 "${RUN[1]}/token.rel" \
-    --manifest "${M[0]}/manifest.json" --manifest2 "${M[1]}/manifest.json" --dev2 /dev/xdma1 \
+    --manifest "${M[0]}/manifest.json" --manifest2 "${M[1]}/manifest.json" --dev "${DEV[0]}" --dev2 "${DEV[1]}" \
     --text "$Q" --qtk "$QTK" --stream --max-new "$MAXNEW" \
     --mv4i "$EMB" --quiet "${EXTRA[@]}"
