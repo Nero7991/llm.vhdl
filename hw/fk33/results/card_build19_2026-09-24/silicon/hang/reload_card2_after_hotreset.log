@@ -1,0 +1,131 @@
+  mode       sudoless, via /usr/local/sbin/fk33-pci
+=== plan ===
+  card       153300001366A   (PCI 0000:06:00.0)
+  bitstream  /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/card_build19_2026-09-24/bd_wrapper.bit
+             24853834 bytes, 2026-09-24 02:28:09
+  driver     /usr/local/lib/fk33/xdma.ko (pinned copy, via /usr/local/sbin/fk33-pci)
+  VCCINT     assume already raised (--with-vccint to raise)
+
+=== pre-flight ===
+  no process holds /dev/xdma*
+06:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+07:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+  reading VCCINT over JTAG DRP...
+  VCCINT = 0.715
+
+=== bus down ===
+--- removing 0000:06:00.0 (this also unbinds the driver) ---
+--- rmmod xdma (refcnt now 0) ---
+07:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+FK33_PCI_DOWN 0000:06:00.0
+  other card 0000:07:00.0 still on the bus (must remain so through the reload)
+
+=== configure (as orencollaco, NOT root) ===
+=== configuring fk33 ===
+    /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/card_build19_2026-09-24/bd_wrapper.bit (24853834 bytes, 2026-09-24 02:28:09)
+FPGA_PROG_OK
+  1* xcvu33p
+     2  Legacy Debug Hub
+        3  JTAG2AXI
+        4  JTAG2AXI
+        5  JTAG2AXI
+  6  xcvu33p
+     7  Legacy Debug Hub
+        8  JTAG2AXI
+        9  JTAG2AXI
+       10  JTAG2AXI
+
+The card is now configured as a PCIe endpoint.
+If the link trains, LED 6 (RGB blue) changes state.  Note which way.
+=== stage 3: JTAG-side check of the endpoint bitstream ===
+NOTE: every read below goes through xdma/axi_aclk.  If they all hang or
+      return garbage, that is EXPECTED when the link is down -- it does
+      not distinguish a bad bitstream from an untrained link.  A SUCCESS
+      here is conclusive the other way: it means refclk, PCIe user clock
+      and link-up are all real.
+PCIEEP_CHECK begin
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2023.2
+  **** Build date : Oct 13 2023 at 20:26:23
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 09 2023-22:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+JTAG target: localhost:3121/xilinx_tcf/Xilinx/153300001366A
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/153300001366A
+PART   xcvu33p
+AXI_MASTERS hw_axi_1 hw_axi_2 hw_axi_3
+INFO: [Labtoolstcl 44-481] READ DATA is: dec0dee3
+  probe hw_axi_1 at 0xA000 -> 0xDEC0DEE3
+INFO: [Labtoolstcl 44-481] READ DATA is: 464b3333
+  probe hw_axi_2 at 0xA000 -> 0x464B3333
+INFO: [Labtoolstcl 44-481] READ DATA is: 000100014d563449
+  probe hw_axi_3 at 0xA000 -> 0x4D563449
+  probe hw_axi_1 at 0x200000000 ERRORED: ERROR: [Labtools 27-3199] Address Value '200000000' is too large. Cannot be larger than 32 bits.
+
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 5A5A0F0F0F5A5A5A
+INFO: [Labtoolstcl 44-481] READ DATA is: 5a5a0f0f0f5a5a5a
+  probe hw_axi_3 at 0x200000000 -> 0x5A5A0F0F0F5A5A5A
+AXI_LITE_MASTER hw_axi_2
+AXI_HBM_MASTER  hw_axi_3
+INFO: [Labtoolstcl 44-481] READ DATA is: 0000a654
+INFO: [Labtoolstcl 44-481] READ DATA is: 00003cd0
+INFO: [Labtoolstcl 44-481] READ DATA is: 464b3333
+INFO: [Labtoolstcl 44-481] READ DATA is: 20260828
+ID_OK magic=0x464B3333 build=0x20260828  ("FK33")
+SYSMON die=50.4 C  VCCINT=0.7126 V  (raw 0xa654 0x3cd0)
+VCCINT_OK 0.7126 V
+INFO: [Labtoolstcl 44-481] READ DATA is: 00000003
+INFO: [Labtoolstcl 44-481] READ DATA is: 00000003
+GPIO tri=0x00000003 data=0x00000003  (tri must be 0x3 or wider all-ones at reset)
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 0BADC0DEDEADBEEF
+INFO: [Labtoolstcl 44-481] WRITE DATA is: A5A5A5A55A5A5A5A
+INFO: [Labtoolstcl 44-481] READ DATA is: 0badc0dedeadbeef
+INFO: [Labtoolstcl 44-481] READ DATA is: a5a5a5a55a5a5a5a
+HBM_OK scratch page 0x1FFFFF000 writes and reads back
+       (this address is in SAXI_16's half, so both stacks are mapped)
+INFO: [Labtoolstcl 44-481] WRITE DATA is: 4A544147464B3333
+INFO: [Labtoolstcl 44-481] WRITE DATA is: FEDCBA9812345678
+INFO: [Labtoolstcl 44-481] READ DATA is: 4a544147464b3333
+INFO: [Labtoolstcl 44-481] READ DATA is: fedcba9812345678
+DMABRAM_OK 0x200000000 holds 464B3333 4A544147 12345678 FEDCBA98
+           Read the same four words from the host with:
+             dd if=/dev/xdma0_c2h_0 bs=16 count=1 skip=$((0x200000000/16)) | xxd
+           Agreement proves the DMA target; disagreement localises the
+           fault to XDMA or the driver rather than to the fabric.
+PCIEEP_DONE
+  OTHER_CARD_INTACT 0000:07:00.0 (the right FPGA was programmed)
+
+=== bus up ===
+06:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+07:00.0 Processing accelerators: Xilinx Corporation Device 9034 (rev a3)
+--- 0000:06:00.0 ---
+	Region 0: Memory at 4802c00000 (64-bit, prefetchable) [disabled] [size=128K]
+		LnkCap:	Port #0, Speed 8GT/s, Width x4, ASPM not supported
+		LnkSta:	Speed 2.5GT/s (downgraded), Width x4 (ok)
+--- 0000:07:00.0 ---
+	Region 0: Memory at 4802b00000 (64-bit, prefetchable) [size=128K]
+		LnkCap:	Port #0, Speed 8GT/s, Width x4, ASPM not supported
+		LnkSta:	Speed 8GT/s (ok), Width x4 (ok)
+--- insmod /usr/local/lib/fk33/xdma.ko poll_mode=1 ---
+crw-rw---- 1 root fk33 509, 0 Sep 24 03:32 /dev/xdma0_user
+crw-rw---- 1 root fk33 508, 0 Sep 24 03:32 /dev/xdma1_user
+  xdma0 <- 0000:07:00.0
+  xdma1 <- 0000:06:00.0
+FK33_PCI_UP
+BUS_UP_OK

@@ -1,0 +1,5 @@
+verifying 127 objects against the manifest (full read-back), C2H /dev/xdma1_c2h_0
+read 2,532,462,592 bytes in 5.59 s = 0.45 GB/s
+125 headers parsed and matched, 127 payload digests matched
+extents      3502 of 3502 digested
+PASS  the image on the card is the image the manifest describes (127 of 127 objects read and checked)

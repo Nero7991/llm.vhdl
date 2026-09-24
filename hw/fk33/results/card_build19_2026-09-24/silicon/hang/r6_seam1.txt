@@ -1,0 +1,31 @@
+seam id    0x4c4c4d32   expected 0x4c4c4d32 ("LLM2") at BAR+0xE000
+version    2
+caps       n_vocab 248320  n_embd 4096  n_layer 32  ctx 65536 tokens
+cap flags  0x0000007d
+  yes  WINDOWS   the DESC/REL/XIN/XOUT window port
+   no  HBM_FETCH the card fetches its own D program
+  yes  SAMPLER   the card computes a running argmax
+  yes  LOGITS    the card writes the full logits row
+  yes  SEQ_RESET SEQ_RESET reaches the engine; TOK_POS exists
+  yes  KV_BASE   C's KV base is a register (KVK/KVV); KV_MAXPOS exists
+  yes  XEXP_OUT  R_X's block exponent is readable after tok_done (0xA4)
+   no  NORM_HBM  RMSNorm gain rows are read from HBM; the image must carry hbm.norm_const_rows
+status     0x00000001  done=1 busy=0 err=0 err_code=0 (NONE)
+faults     0x00000000  (none)
+engine     tok_pos 33  (NOT 0: the next token is not a first token; B runs at tk0=0)
+last job   seq_pos 33  cycles 9475419  argmax 248046  logit_exp 15
+           tbl_len 294  smp_n 248320
+           x_exp_out 8  (R_X's block exponent; window 3 holds the mantissas)
+progress   steps issued 293  last issue at cycle 9457436  (the current or last step has run 17983 cycles)
+bases      bst_const_base 0x1ff8d8000
+           kv_k_base 0x1b1938000  kv_v_base 0x1d3938000  kv_maxpos 65536  (V - K = 570425344 B = 65536 * 8704)
+image      image 60e4cbfb52e4f72ded47b4f045d1ae61
+             loaded 2026-09-24 02:34:41 from /mnt/storage/llama-models/qwen35-9b-card0-b0-15-nh/manifest.json
+             126 of 126 objects, 1,959,727,104 bytes
+             kv_base 0x1B1938000  gdn_state_base 0x1B0000000  gdn_const_base 0x1FF8D8000
+             desc_arena_base 0x1FFADD000  weights_end 0x1A52D7000  host_max_chunk 512
+drift      26 offsets agree with server/fk33_seam.h
+
+SEAM OK -- the seam is present, decoded, claims a usable shape, and reports
+no sticky fault.  That is the whole of what a read-only check can settle: it
+says NOTHING about whether a job computes correctly.
