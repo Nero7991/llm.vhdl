@@ -1,0 +1,4 @@
+C_DONE sp rc=1 /home/orencollaco/GitHub/llama.vhdl/sim/tb_csweep_rate.vhd:1057:9:@2000155ns:(assertion failure): tb_csweep_rate: 200000 cycles of dead air -- the sweep has hung 
+C_DONE on rc=1 /home/orencollaco/GitHub/llama.vhdl/sim/tb_csweep_rate.vhd:1057:9:@2000155ns:(assertion failure): tb_csweep_rate: 200000 cycles of dead air -- the sweep has hung 
+C_DONE se rc=1 /home/orencollaco/GitHub/llama.vhdl/sim/tb_csweep_rate.vhd:1057:9:@2000155ns:(assertion failure): tb_csweep_rate: 200000 cycles of dead air -- the sweep has hung 
+C_DONE off rc=1 /home/orencollaco/GitHub/llama.vhdl/sim/tb_csweep_rate.vhd:1057:9:@2000155ns:(assertion failure): tb_csweep_rate: 200000 cycles of dead air -- the sweep has hung 

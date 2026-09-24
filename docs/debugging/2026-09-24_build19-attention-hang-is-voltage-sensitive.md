@@ -251,3 +251,23 @@ with the levers on is running (`/mnt/storage/fk33_builds/card_build19/sim_levers
 **The silicon discriminator is a build:** `8af98b8` + `build12_levers_off.patch`
 (NORM_HBM alone). Clean means NORM_HBM is exonerated and one of the four levers
 causes the hang; hanging means NORM_HBM does.
+
+### Slave-timing matrix with the levers ON (MEASURED 13:45, `sim_levers_on_matrix.txt`)
+
+`tb_csweep_rate`, positions 31/32/33/64, `SWEEP_PIPE=true SCORE_EARLY=true`:
+`STALL` 2, 3, 7; `RD_LAT` 20, 300; `SPREAD=3` (rescale pass firing), with and
+without `STALL=3`; `MAXOUT=8` with and without `STALL=3`; `WR_LAT=200`. **Every
+job completes** (position 32: 67,419 to 76,523 cycles). No hang reproduced.
+
+**Trap hit, do not retry: `STALL=1` is a DEAD slave, not a slow one.** It
+"hung" with the levers on, and looked like the reproduction. The bench gates a
+beat when `(lfsr + s) mod STALL = 0`, which is always true for `STALL=1`, so no
+read data is ever returned. Attribution control (`sim_stall1_control.txt`):
+levers off, `SWEEP_PIPE` alone, `SCORE_EARLY` alone and both all hang at the
+identical 2,000,155 ns. `RBUF=1` is refused by `attn_kv_axi`'s own assert and
+is not a data point either.
+
+So this bench, which has C alone against one modelled slave, does not
+reproduce the hang with the levers either on or off. It has no B, no
+`bc_port_grant`, and no second KV port. Build 20 decides which of NORM_HBM or
+the levers a better bench has to model.

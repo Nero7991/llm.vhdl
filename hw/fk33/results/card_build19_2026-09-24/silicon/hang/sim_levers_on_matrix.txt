@@ -1,0 +1,12 @@
+M_DONE s1 rc=1 /home/orencollaco/GitHub/llama.vhdl/sim/tb_csweep_rate.vhd:1057:9:@2000155ns:(assertion failure): tb_csweep_rate: 200000 cycles of dead air -- the sweep has hung 
+M_DONE s7 rc=0 CSWEEP_CYCLES 32 67814 
+M_DONE s3 rc=0 CSWEEP_CYCLES 32 67999 
+M_DONE s2 rc=0 CSWEEP_CYCLES 32 68138 
+M_DONE lat20 rc=0 CSWEEP_CYCLES 32 67419 
+M_DONE sp3 rc=0 CSWEEP_CYCLES 32 67743 
+M_DONE sp3s3 rc=0 CSWEEP_CYCLES 32 67999 
+M_DONE lat300 rc=0 CSWEEP_CYCLES 32 76523 
+M_DONE rb1 rc=1 /home/orencollaco/GitHub/llama.vhdl/rtl/attn_kv_axi.vhd:537:3:@0ms:(assertion failure): attn_kv_axi: RBUF < 2 leaves no slot for the straddle record, so the last beat of a burst would overwrite the slot the consumer is reading.  Prefetch depth is RBUF-2 records beyond the current one. 
+M_DONE mo8 rc=0 CSWEEP_CYCLES 32 67743 
+M_DONE mo8s3 rc=0 CSWEEP_CYCLES 32 67999 
+M_DONE wr200 rc=0 CSWEEP_CYCLES 32 67743 
