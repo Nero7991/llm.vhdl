@@ -1,0 +1,21 @@
+context test: mode pair, N 256 (SHORT, not the full context), 4 repeats, 2026-09-24 07:42:14
+CTX_PROMPT 256 ids -> /mnt/storage/fk33_builds/card_build19/ctxtest/n256_r4_build18/prompt_input.txt (corpus 376 docs, sha256 bf0386666f1a818b, 1 pass(es))
+CTXTEST_RUN input_r1 start 07:42:15: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r1 end 07:43:12: rc 0, 256 GOs, 57 s, seam error 0
+CTXTEST_RUN input_r2 start 07:43:12: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r2 end 07:43:55: rc 0, 256 GOs, 43 s, seam error 0
+CTXTEST_RUN input_r3 start 07:43:55: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r3 end 07:44:38: rc 0, 256 GOs, 43 s, seam error 0
+CTXTEST_RUN input_r4 start 07:44:38: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r4 end 07:45:21: rc 0, 256 GOs, 43 s, seam error 0
+input: all 4 runs produced identical ids (2 ids)
+CTXTEST_RUN output_r1 start 07:45:21: prompt 16 ids, max-new 241, want 256 GOs
+CTXTEST_RUN output_r1 end 07:46:40: rc 0, 256 GOs, 79 s, seam error 0
+CTXTEST_RUN output_r2 start 07:46:40: prompt 16 ids, max-new 241, want 256 GOs
+CTXTEST_RUN output_r2 end 07:47:58: rc 0, 256 GOs, 78 s, seam error 0
+CTXTEST_RUN output_r3 start 07:47:58: prompt 16 ids, max-new 241, want 256 GOs
+CTXTEST_RUN output_r3 end 07:49:17: rc 0, 256 GOs, 79 s, seam error 0
+CTXTEST_RUN output_r4 start 07:49:17: prompt 16 ids, max-new 241, want 256 GOs
+CTXTEST_RUN output_r4 end 07:50:36: rc 0, 256 GOs, 79 s, seam error 0
+output: all 4 runs produced identical ids (242 ids)
+CTXTEST_PASS mode pair N 256 SHORT repeats 4: input and output, every run reached 256 GOs with no card error, ids identical across runs

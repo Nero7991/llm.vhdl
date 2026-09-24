@@ -1,4 +1,4 @@
-# Build 19: an intermittent attention hang at position 32 (OPEN, not root-caused)
+# Build 19: an intermittent attention hang at position 32 (OPEN; narrowed to the build-19 bitstream)
 
 2026-09-24, both FK33s on build 19, 9B pair with the `-nh` halves, prompt
 "What is a DC-DC converter in 10 words?" (25 ids; decode reaches positions 25..33).
@@ -40,6 +40,38 @@
   hung 2 of its 3 runs, which makes it a usable reproducer, unlike the 25-id prompt.
 - Card 2's link has trained at 2.5 GT/s on the MCIO riser since build 18 (every reload log);
   not new, and not related.
+
+## The discriminator: build 18 does not hang (MEASURED 2026-09-24 07:42-08:00)
+Both cards JTAG-reloaded with `fk33_card_build18_elwin_75mhz_2026-09-23.bit`, then the same
+`fk33_ctxtest.sh pair ... 256` with REPEATS=4, pad norms on in every arm (`pad.used`
+`padnorms-v1 pad=1`), the same D program:
+
+| bitstream | image | runs (4 prefill + 4 decode, 256 positions each) |
+|---|---|---|
+| build 19 | `-nh` | input r1 pass, input r2 HANG @32; after reload input r1 HANG @32 |
+| build 18 | original (no norm rows) | **8 of 8 pass**, ids identical across repeats |
+| build 18 | `-nh` (the build 19 image) | **8 of 8 pass**, ids identical, and equal to the row above |
+
+So the image (norm rows, GDN constants moved down 532,480 B; the KV base is the SAME address in
+both) is not the cause, and the hang arrived with the build 19 BITSTREAM. At 2 of 3 on build 19
+against 0 of 16 on build 18, chance alone is not a credible explanation (DERIVED: at a 2/3 rate,
+16 passes has probability (1/3)^16).
+
+Between the two trees (`c6af925` -> `8af98b8`) the RTL change is plan Task 2 only (`llama_top`,
+`seq_vec_issue`, `fk33_card`, regenerated tops); no hunk names a C signal. What Task 2 DOES change
+on C's path, found by reading, NOT measured: `hw/fk33/gen_pcieep.py` drives `bc_port_grant`'s
+`b_req` from `bst_arvalid OR bst_awvalid`, and B and C share the grant's two HBM ports (m0/m1).
+On build 18 only the GDN state store raised `bst_arvalid`; on build 19 every VEC_NORM's gain fetch
+does too, so B now requests the ports C uses in every block, attention blocks included. The grant
+switches owners only when the owner is idle and `rd_out`/`wr_out` are zero, so any B-side burst
+left owed would starve C for ever, which is exactly a C_JOB watchdog. What this does NOT explain:
+the last norm before each hung C_JOB is three long A_JOBs earlier (step 48 before step 52), and a
+permanently owed burst would hang every token, not only position 32. It is a lead, not a cause.
+The grant's `owner_is_c`, `draining`, `err_switch_busy` and `err_len_ovf` outputs are
+UNCONNECTED in the card build, so the seam cannot say whether C was waiting on the grant; wiring
+them to a seam register is the cheapest instrument for the next card build.
+
+**The 27B build 27B-1 carries NORM_HBM too**, so it should be expected to have the same hang.
 
 ## Simulation at position 32 (MEASURED 2026-09-24 04:10, GHDL, no hang)
 `sim/tb_csweep_rate.vhd` is the only bench that runs `attn_block` + `attn_kv_axi` at the real 9B
