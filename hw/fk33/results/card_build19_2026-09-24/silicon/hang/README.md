@@ -161,3 +161,6 @@ Measurement traps hit, in order:
 3. **`fk33ctl.py`'s `pot_write` hard-clamps at wiper 68** ("no future caller can
    route around it"), so a raise past 0.717 V through fk33ctl requires overriding
    that interlock deliberately. Stopped for Oren's decision rather than doing so.
+
+## RESOLVED AT THE VOLTAGE LEVEL 2026-09-24 11:00
+Build 19 at VCCINT 0.779/0.780 V (wiper 25 on both cards): 8 of 8 ctxtest runs pass, ids equal to build 18. See `docs/debugging/2026-09-24_build19-attention-hang-is-voltage-sensitive.md`.

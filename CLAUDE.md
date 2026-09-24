@@ -316,6 +316,14 @@ Vivado in non-hardware modes (synth, `report_*`) is fine.
 
 **Never take VCCINT to 0.85 V.** Stay at wiper 68 (~0.717 V). The vendor script
 does otherwise; it is wrong for this board.
+**2026-09-24, Oren's decision for a test: VCCINT 0.78 V (wiper 25).** Build
+19's attention hang is a timing failure at 0.715 V (every build is signed off
+at 0.85 V): 2 of 3 ctxtest runs hung at 0.715 V, 0 of 8 at 0.78 V. Oren: "We can
+interlock to there in the bitstream once we verify". Until the full-context test
+passes and the clamp is moved, wiper 68 remains the standing value and the
+raise is `hw/fk33/host/fk33_vccint_test.py` only. The pot is VOLATILE: a power
+cycle returns 128 (0.678 V). See
+`docs/debugging/2026-09-24_build19-attention-hang-is-voltage-sensitive.md`.
 
 ---
 

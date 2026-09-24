@@ -1,0 +1,28 @@
+BUS CHECK  100 pot reads, 0 bad, value 69
+START  /dev/xdma0_user  wiper 69  VCCINT 0.7141 V  die 36.8 C
+  wiper  68  VCCINT 0.7151 V  (+0.0011)  die 37.3 C
+  wiper  67  VCCINT 0.7167 V  (+0.0016)  die 38.4 C
+  wiper  66  VCCINT 0.7192 V  (+0.0025)  die 38.5 C
+  wiper  65  VCCINT 0.7191 V  (-0.0001)  die 38.9 C
+  wiper  64  VCCINT 0.7199 V  (+0.0008)  die 38.6 C
+  wiper  63  VCCINT 0.7206 V  (+0.0007)  die 38.5 C
+  wiper  62  VCCINT 0.7224 V  (+0.0018)  die 39.6 C
+  wiper  61  VCCINT 0.7249 V  (+0.0025)  die 38.6 C
+  wiper  60  VCCINT 0.7256 V  (+0.0007)  die 37.8 C
+  wiper  59  VCCINT 0.7238 V  (-0.0018)  die 37.8 C
+  wiper  58  VCCINT 0.7263 V  (+0.0026)  die 38.0 C
+  wiper  57  VCCINT 0.7289 V  (+0.0025)  die 38.1 C
+  wiper  56  VCCINT 0.7282 V  (-0.0006)  die 38.1 C
+  wiper  55  VCCINT 0.7305 V  (+0.0022)  die 38.7 C
+  wiper  54  VCCINT 0.7330 V  (+0.0025)  die 39.2 C
+  wiper  53  VCCINT 0.7317 V  (-0.0012)  die 37.6 C
+  wiper  52  VCCINT 0.7337 V  (+0.0020)  die 38.1 C
+  wiper  51  VCCINT 0.7345 V  (+0.0007)  die 37.0 C
+  wiper  50  VCCINT 0.7370 V  (+0.0025)  die 38.0 C
+  wiper  49  VCCINT 0.7366 V  (-0.0004)  die 38.0 C
+  wiper  48  VCCINT 0.7393 V  (+0.0027)  die 38.9 C
+  wiper  47  VCCINT 0.7401 V  (+0.0008)  die 37.9 C
+  wiper  46  VCCINT 0.7412 V  (+0.0011)  die 37.2 C
+  wiper  45  VCCINT 0.7434 V  (+0.0022)  die 38.6 C
+  wiper  44  VCCINT 0.7445 V  (+0.0011)  die 37.6 C
+RAISED  wiper 44  VCCINT 0.7445 V  (wiper floor 44)

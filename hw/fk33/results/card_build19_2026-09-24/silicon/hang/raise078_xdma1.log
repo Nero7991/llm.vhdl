@@ -1,0 +1,12 @@
+BUS CHECK  100 pot reads, 0 bad, value 69
+START  /dev/xdma1_user  wiper 69  VCCINT 0.7130 V  die 51.7 C
+  wiper  68  VCCINT 0.7144 V  (+0.0015)  die 52.6 C
+  wiper  67  VCCINT 0.7164 V  (+0.0019)  die 52.8 C
+  wiper  66  VCCINT 0.7151 V  (-0.0013)  die 51.5 C
+  wiper  65  VCCINT 0.7194 V  (+0.0043)  die 51.5 C
+  wiper  64  VCCINT 0.7166 V  (-0.0028)  die 52.6 C
+ABORT rail FELL on a downward wiper step: wiper 64  0.7187 V -> wiper 68
+  wiper  65  VCCINT 0.7167 V  (-0.0021)  die 53.0 C
+  wiper  66  VCCINT 0.7167 V  (+0.0000)  die 52.3 C
+  wiper  67  VCCINT 0.7154 V  (-0.0013)  die 51.3 C
+  wiper  68  VCCINT 0.7138 V  (-0.0016)  die 52.5 C
