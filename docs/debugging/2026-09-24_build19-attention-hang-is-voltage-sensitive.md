@@ -138,3 +138,34 @@ rate fell. **What is withdrawn:** "it is a timing failure at the voltage the
 cards run at" as a sufficient explanation, and "0.78 V fixes it". Either a
 path is still failing occasionally at 0.78 V, or the mechanism is a race whose
 odds depend on speed. It is still always position 32, always a C_JOB.
+
+## CORRECTION 2 2026-09-24 12:25: the voltage effect is NOT established either. Withdrawn.
+
+The sweep's first level, both cards at 0.800/0.802 V: `n256` input r4 HUNG at
+position 32, card 1, step 52 (C_JOB), after three passes
+(`hw/fk33/results/card_build19_2026-09-24/silicon/hang/ctxtest_sweep_v080_n256.log`).
+
+**The error in CORRECTION 1 and in "The answer":** the 0.715 V rate was taken
+from the THREE ctxtest runs alone (2 of 3). Every fresh sequence that crosses
+position 32 is one trial, and the ordinary runs on build 19 at 0.715 V were
+already in the hang README: Oren's run 1 (hang), repro2 and r1-r7 (pass), r8
+(hang). Counted properly:
+
+| build 19, VCCINT | sequences crossing position 32 | hangs |
+|---|---|---|
+| 0.715 V | 13 (2 Oren, 8 ordinary, 3 ctxtest) | 4 |
+| 0.78 V | 11 | 1 |
+| 0.80 V | 4 | 1 |
+
+One-sided Fisher exact, 4/13 against 2/15: **p = 0.26** (DERIVED). No voltage
+effect is demonstrated. The two probabilities quoted above (1.5e-4, 1.3e-4)
+were computed against a rate estimated from three trials, which is the error.
+
+**What still stands:** build 19 hangs and build 18 does not (0 of 16 ctxtest
+runs plus the whole of 2026-09-23's pair work); always position 32, always a
+C_JOB, on either card, at any voltage tried from 0.715 to 0.80 V.
+
+**The better instrument:** the hang is at position 32 in prefill too, so a
+40-id prefill (`TESTS=input fk33_ctxtest.sh pair <out> 40`, ~10 s per trial)
+tests it at a fraction of the cost of n256/n500. The rate needs tens of trials
+per condition, not four.

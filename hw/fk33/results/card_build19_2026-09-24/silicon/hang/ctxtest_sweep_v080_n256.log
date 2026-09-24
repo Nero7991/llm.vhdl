@@ -1,0 +1,20 @@
+context test: mode pair, N 256 (SHORT, not the full context), 4 repeats, 2026-09-24 12:23:09
+CTX_PROMPT 256 ids -> /mnt/storage/fk33_builds/card_build19/vtest/sweep_v080_n256/prompt_input.txt (corpus 378 docs, sha256 51be3804a0994362, 1 pass(es))
+CTXTEST_RUN input_r1 start 12:23:10: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r1 end 12:23:44: rc 0, 256 GOs, 34 s, seam error 0
+CTXTEST_RUN input_r2 start 12:23:44: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r2 end 12:24:18: rc 0, 256 GOs, 34 s, seam error 0
+CTXTEST_RUN input_r3 start 12:24:18: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r3 end 12:24:52: rc 0, 256 GOs, 34 s, seam error 0
+CTXTEST_RUN input_r4 start 12:24:52: prompt 256 ids, max-new 1, want 256 GOs
+CTXTEST_RUN input_r4 end 12:24:57: rc 1,  GOs, 5 s, seam error 1
+CTXTEST_FAIL input_r4: rc 1, GOs '' (want 256), seam error 1.  Evidence: /mnt/storage/fk33_builds/card_build19/vtest/sweep_v080_n256/input_r4.{out,err} and /mnt/storage/fk33_builds/card_build19/vtest/sweep_v080_n256/input_r4_seam_*.txt
+  /dev/xdma0 holds /mnt/storage/llama-models/qwen35-9b-card0-b0-15-nh/manifest.json
+    status     0x00000604  done=0 busy=0 err=1 err_code=6 (DESC)
+      D's own code 4 (WDOG) at step 52, 52 descriptor(s) completed before it.  WDOG: the unit did not finish within WDOG_LIMIT cycles; the GO was ACCEPTED.
+    last job   seq_pos 32  cycles 9764700  argmax 0  logit_exp 0
+    progress   steps issued 53  last issue at cycle 1764697  (the current or last step has run 8000003 cycles)
+  /dev/xdma1 holds /mnt/storage/llama-models/qwen35-9b-card1-b16-31-nh/manifest.json
+    status     0x00000001  done=1 busy=0 err=0 err_code=0 (NONE)
+    last job   seq_pos 32  cycles 9474780  argmax 5860  logit_exp 14
+    progress   steps issued 293  last issue at cycle 9456772  (the current or last step has run 18008 cycles)

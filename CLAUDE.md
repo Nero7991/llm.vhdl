@@ -326,7 +326,9 @@ cycle returns 128 (0.678 V). See
 `docs/debugging/2026-09-24_build19-attention-hang-is-voltage-sensitive.md`.
 **CORRECTION same day: 0.78 V REDUCES the hang (1 in 11 runs), it does not
 remove it** (n500 output run hung at position 32 on card 2). Do not quote it
-as fixed.
+as fixed. **CORRECTION 2, same day: no voltage effect is established at
+all** (0.715 V 4 hangs in 13 sequences, 0.78-0.80 V 2 in 15, Fisher p = 0.26);
+the "2 of 3" baseline was three trials. Count every sequence as a trial.
 
 ---
 
