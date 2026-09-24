@@ -1,0 +1,17 @@
+VT b18 v=0.85 operating 
+VT b18 v=0.85 core_clk setup slack=0.225 end=bd_i/eng/inst/eng/dut/core/tr_reg[1][548]/DSP_M_DATA_INST/RSTM
+VT b18 v=0.85 core_clk hold  slack=0.009
+VT b18 v=0.85 C        setup slack=0.853
+VT b18 v=0.85 C        hold  slack=0.009
+VT b18 v=0.85 Ckv      setup slack=1.966
+VT b18 v=0.85 Ckv      hold  slack=0.012
+VT b18 v=0.85 B        setup slack=1.942
+VT b18 v=0.85 B        hold  slack=0.009
+VT b18 v=0.85 Bst      setup slack=3.028
+VT b18 v=0.85 Bst      hold  slack=0.010
+VT b18 v=0.85 D        setup slack=4.714
+VT b18 v=0.85 D        hold  slack=0.016
+VT b18 v=0.85 grant    setup slack=9.036
+VT b18 v=0.85 grant    hold  slack=0.062
+VT b18 v=0.85 A        setup slack=0.225
+VT b18 v=0.85 A        hold  slack=0.010

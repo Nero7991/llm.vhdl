@@ -102,3 +102,21 @@ in A's engine (`eng/dut/core`: `xq_rd -> tr_reg` DSP inputs and `cb_data ->
 cbw_d`), not in C, so the report does not point at the hang. A 0.72 V
 re-analysis of C's paths on the routed DCP would settle whether C is marginal
 at the real voltage; it has not been run.
+
+## The 0.72 V re-analysis cannot be run on the routed DCPs (MEASURED 2026-09-24 10:20)
+`vt72.tcl` opened the shipped build-18 routed DCP, reported per-subsystem
+slack at 0.85 V, then `set_operating_conditions -voltage {VCCINT 0.72}`.
+Vivado 2023.2 then threw `[Timing 38-246] Caught exception
+'vector::_M_range_check ...' while reading timing library` and `Net delay
+calculation threw an exception` on unrelated AXI GPIO drivers, plus `[Constraints
+18-11797]` BRAM site-type errors, and SEGFAULTED (exit 139). A second attempt on
+build 19 with the voltage set straight after `open_checkpoint`, before any 0.85 V
+timing, crashed the same way. Not memory: 24G cap, box never below 1.8 GB.
+**Do not retry this form.** The 2026-08-24 derate study only worked on a
+post-synthesis OOC netlist. What remains: an OOC `attn_block` implemented at
+0.72 V from the start (C's own paths, but not the card's placement), or a card
+build signed off at 0.72 V from the start.
+
+Per-subsystem worst setup slack of build 18 at 0.85 V, for reference
+(`vt72_b18_085_slacks.txt`): core clock 0.225 (in A), C 0.853, C's KV mover
+1.966, B 1.942, B's state store 3.028, D 4.714, the B/C port grant 9.036 ns.
