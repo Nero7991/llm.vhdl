@@ -1,0 +1,104 @@
+      3 FK33_SYSMONI OT limit  = 0xBFD0 -> 100.90 C
+      3 FK33_SYSMONI OT automatic shutdown is ARMED in this bitstream
+      3 FK33_SYSMONI OT arming nibble 53h[3:0] = 0x3 (0x3 = automatic power-down ARMED)
+      3 FK33_SYSMONI INIT_57 = 0xBEDA -> 98.99 C
+      3 FK33_SYSMONI INIT_54 = 0xB2C0 -> 75.00 C
+      3 FK33_SYSMONI INIT_53 = 0xBFD3 -> 100.92 C
+      3 FK33_SYSMONI INIT_50 = 0xBA51 -> 90.00 C
+      3 FK33_SYSMONI cell=bd_i/system_management_wiz_0/inst/AXI_SYSMON_CORE_I/inst_sysmon
+      2 FK33_TOP bd_wrapper
+      2 FK33_TIMING WNS=0.005 ns  WHS=0.009 ns
+      2 FK33_THERM hbm/DRAM_1_STAT_TEMP connected
+      2 FK33_THERM hbm/DRAM_1_STAT_CATTRIP connected
+      2 FK33_THERM hbm/DRAM_0_STAT_TEMP connected
+      2 FK33_THERM hbm/DRAM_0_STAT_CATTRIP connected
+      2 FK33_THERMCLK OK the thermal guard runs on the free-running oscillator
+      2 FK33_THERMCLK fk33_therm_0/aux_clk clocks=sysref_clk
+      2 FK33_SYSMON USER_TEMP_ALARM = true
+      2 FK33_SYSMON TEMPERATURE_ALARM_TRIGGER = 90
+      2 FK33_SYSMON TEMPERATURE_ALARM_RESET = 75
+      2 FK33_SYSMON TEMPERATURE_ALARM_OT_TRIGGER = 101
+      2 FK33_SYSMON TEMPERATURE_ALARM_OT_RESET = 99
+      2 FK33_SYSMON REFERENCE = External
+      2 FK33_SYSMON INTERFACE_SELECTION = Enable_AXI
+      2 FK33_SYSMON ENABLE_TEMP_BUS = true
+      2 FK33_PCIE_IDS vendor=10EE device=9034
+      2 FK33_LNKLED OK: LED 6 follows NOT(user_lnk_up)
+      2 FK33_HUBCLK pins=dbg_hub/clk dbg_hub/inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_ADDRESS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BURST_WD_LEN_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_MSTR2SL_PORT_IFACE/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_ABORT_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_RD_REQ_FLAG/clk dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_XSDB_BUS_CONTROLLER/U_TIMER/clk clocks=sysref_clk
+      2 FK33_HUBCLK OK dbg_hub is on sysref_clk
+      2 FK33_ENGI engine utilization -> fk33_pcieep_engine_util.rpt
+      2 FK33_ENGI clock fk33_dmabram_BRAM_PORTA_CLK    period 4.000 ns (250.00 MHz)
+      2 FK33_ENGI clock clk_out3_bd_clk_wiz_0_0        period 13.333 ns (75.00 MHz)
+      2 FK33_ENG ASSOCIATED_BUSIF eng/hbm_aclk = m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi
+      2 FK33_ENG ASSOCIATED_BUSIF eng/core_clk = s_axi:s_axix
+      2 FK33_BITSTREAM ./fk33_pcieep/fk33_pcieep.runs/impl_1/bd_wrapper.bit (24952898 bytes)
+      2 FK33_AUX LNK user_lnk_up wired into the aux status word
+      2 FK33_AUXCLK period=5.000 ns
+      2 FK33_AUXCLK clocks=sysref_clk
+      2 FK33_AUXCLK analysed paths crossing the aux boundary: 0 (must be 0)
+      1 FK33_XEXP_PORT true
+      1 FK33_XDC_CHECK OK
+      1 FK33_UNCONNECTED count=0
+      1 FK33_TGROOT /mnt/storage/fk33_builds/wt21
+      1 FK33_SEAMWIRE 41 seam<->card pins exist on both cells
+      1 FK33_SEAM REGMAX=12288 HADDR_W=14
+      1 FK33_SEAM MAXPOS = 65536
+      1 FK33_SEAMMAP tie-off absent and subsystem D is in the card cell (FK33_CARD) -- consistent
+      1 FK33_SEAMMAP BAR map OK: 10 slaves, seam at 0xe000, 45056 bytes of 128 KB BAR assigned
+      1 FK33_SEAM CAPS_VOCAB = 248320
+      1 FK33_SEAM CAPS_LAYER = 32
+      1 FK33_SEAM CAPS_EMBD = 4096
+      1 FK33_SEAM CAPS_CTX = 65536
+      1 FK33_RUNSTART synth_1 dir=/mnt/storage/fk33_builds/build21/root/fk33_pcieep/fk33_pcieep.runs/synth_1 status=Queued...
+      1 FK33_RUNSTART impl_1 dir=/mnt/storage/fk33_builds/build21/root/fk33_pcieep/fk33_pcieep.runs/impl_1 status=Queued...
+      1 FK33_RUNDONE synth_1 100% status=synth_design Complete!
+      1 FK33_RUNDONE impl_1 100% status=write_bitstream Complete!
+      1 FK33_RUNBOUND synth=360 min impl=720 min
+      1 FK33_RESETGUARD eng/core_aresetn descends from xdma/axi_aresetn via core_reset, and so do all 28 engine hbm/AXI_nn_ARESET_N
+      1 FK33_REPORTS no placed hierarchical utilization -- read SENTINELS.txt for FK33_HIERUTIL to see whether the post-place hook armed
+      1 FK33_REPORTS /mnt/storage/fk33_builds/wt21/hw/fk33/results/build_card_20260925_060808 (22 files, 2.1M)
+      1 FK33_REPORTS commit them with:  git add /mnt/storage/fk33_builds/wt21/hw/fk33/results/build_card_20260925_060808
+      1 FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt
+      1 FK33_PBLK pblocks in the implemented design: pb_core
+      1 FK33_PBLK pb_core CLOCKREGION_X0Y0:CLOCKREGION_X6Y3
+      1 FK33_PBLK fk33_pblock.xdc added, implementation only
+      1 FK33_MODEL QWEN35_9B (package binds QWEN35_9B; card stamp QWEN35_9B; REGMAX 12288 HADDR_W 14; package compiled: rtl/model_cfg_pkg.vhd)
+      1 FK33_IMPL_STRATEGY Performance_RefinePlacement
+      1 FK33_HOST_SELFTEST OK
+      1 FK33_HOST_COMPILE OK
+      1 FK33_HIERUTIL routed hierarchical utilization -> fk33_pcieep_util_hier.rpt
+      1 FK33_HIERUTIL post-place hook armed: /mnt/storage/fk33_builds/build21/root/fk33_impl_post_place.tcl
+      1 FK33_HIERUTIL placed reports copied to /mnt/storage/fk33_builds/wt21/hw/fk33/results/build_card_20260925_060808
+      1 FK33_HIERUTIL placed hierarchical utilization -> bd_wrapper_utilization_placed_hier.rpt
+      1 FK33_GRANT_ADDR bcgrant/m1 maps 32 segments of SAXI_31
+      1 FK33_GRANT_ADDR bcgrant/m0 maps 32 segments of SAXI_30
+      1 FK33_CORE_MHZ 75.000 requested on clk_wiz_0/clk_out3
+      1 FK33_CFGTIME   nominal 127.5 MHz ->   391.4 ms
+      1 FK33_CFGTIME data=24952768 bytes (199622144 bits), 49905536 CCLK cycles at x4
+      1 FK33_CFGTIME budget: 100 ms T_PVPERL + 100 ms host wait = 200 ms, minus startup, GT lock and link training
+      1 FK33_CFGTIME   +15%    146.6 MHz ->   340.4 ms
+      1 FK33_CFGTIME   -15%    108.4 MHz ->   460.5 ms
+      1 FK33_CB_STYLE distributed
+      1 FK33_CARD synth_checkpoint_mode = None
+      1 FK33_CARD SAXI_31 ENABLED
+      1 FK33_CARD SAXI_30 ENABLED
+      1 FK33_CARDPINS 53 seam<->card pins checked against fk33_card.vhd: all present
+      1 FK33_CARD INTF card m
+      1 FK33_CARD INTF card kv1
+      1 FK33_CARD INTF card kv0
+      1 FK33_CARD INTF card kv
+      1 FK33_CARD INTF card bst
+      1 FK33_CARD INTF card a
+      1 FK33_CARD INTF bcgrant m1
+      1 FK33_CARD INTF bcgrant m0
+      1 FK33_CARD INTF bcgrant c
+      1 FK33_CARD INTF bcgrant b
+      1 FK33_CARD general.maxThreads = 1
+      1 FK33_CARD FLATTEN_HIERARCHY = none
+      1 FK33_CARDCLOSURE 63 card sources, every instantiated unit declared
+      1 FK33_CARD card/a maps /card/a/SEG_eng_reg0
+      1 FK33_CARD bc_cdc1 PROTOCOL AXI3 -> SAXI_31
+      1 FK33_CARD bc_cdc0 PROTOCOL AXI3 -> SAXI_30
+      1 FK33_CARD 51 sources set to VHDL 2008 (the two wrapper tops stay VHDL-93)
+      1 FK33_AUX all aux cells present in the implemented design
+      1 FK33_AUTOSAVE /mnt/storage/fk33_builds/wt21/hw/fk33/bit/autosave/fk33_pcieep_card_20260925_060808.bit (24952898 bytes, md5 a68f1cf9977b866cf604c8f70164bc71)

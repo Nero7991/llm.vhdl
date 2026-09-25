@@ -309,3 +309,13 @@ reproduces build 19.
 table and the text above. It is a generic of **`gdn_state_store`**, B's state-store movers
 (MEASURED: `grep -lE '^\s*NWIDE\s*:\s*boolean' rtl/*.vhd` returns only that file). The
 conclusions do not change.
+
+## CORRECTION 6 2026-09-25 13:40: the hang is C's attention levers (SWEEP_PIPE + SCORE_EARLY)
+
+Build 21 = build 20 + `SWEEP_PIPE`/`SCORE_EARLY` on (one variable, worktree diff two lines):
+**5 hangs in 90** at position 32, every one a C_JOB; build 20, extended to **0 in 150**.
+Fisher p = 0.0069. `FAST_POP` and `NWIDE` are exonerated for this hang. Not separated: which
+of the two levers, or only their combination. The simulation matrix above ran these same
+levers on and never hung, so the next bench has to model what the card has and the bench
+lacks (B and C sharing `bc_port_grant`, two KV ports, real HBM latency), or the levers stay
+off. `hw/fk33/results/card_build21_2026-09-25/README.md`.

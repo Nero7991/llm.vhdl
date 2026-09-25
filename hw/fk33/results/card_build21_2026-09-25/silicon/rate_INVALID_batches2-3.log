@@ -1,0 +1,8 @@
+RATE reload 153300000607A (was xdma0, 0000:07:00.0)
+ON_BUILD21 153300000607A on xdma1, VCCINT           0.7157 V
+RATE batch 1: ok=2 hang=1  totals runs=4 hangs=2  ERR is STICKY from a previous job. ERR_INFO=0x00550554  D's own code 4 (WDOG) at step 85, 85 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIMIT 
+ls: cannot access '/mnt/storage/fk33_builds/card_build21/vtest/rate_1.out/*_seam_xdma*.txt': Not a directory
+RATE batch 2: ok=0 hang=1  totals runs=5 hangs=3  ERR is STICKY from a previous job. ERR_INFO=0x00550554  D's own code 4 (WDOG) at step 85, 85 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIMIT 
+ls: cannot access '/mnt/storage/fk33_builds/card_build21/vtest/rate_2.out/*_seam_xdma*.txt': Not a directory
+RATE batch 3: ok=0 hang=1  totals runs=6 hangs=4  ERR is STICKY from a previous job. ERR_INFO=0x00550554  D's own code 4 (WDOG) at step 85, 85 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIMIT 
+RATE_DONE runs=6 hangs=4

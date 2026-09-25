@@ -1,0 +1,4 @@
+RATE reload 153300001366A (was xdma0, 0000:06:00.0)
+ON_BUILD21 153300001366A on xdma1, VCCINT           0.7142 V
+RATE batch 1: ok=26 hang=0  totals runs=30 hangs=2 
+RATE_DONE runs=30 hangs=2

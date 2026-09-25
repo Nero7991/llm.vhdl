@@ -1,0 +1,11 @@
+RATE batch 1: ok=3 hang=1  totals runs=34 hangs=3  ERR is STICKY from a previous job. ERR_INFO=0x00550554  D's own code 4 (WDOG) at step 85, 85 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIMIT 
+RATE reload 153300001366A (was xdma1, 0000:06:00.0)
+ON_BUILD21 153300001366A on xdma1, VCCINT           0.7136 V
+RATE batch 2: ok=0 hang=1  totals runs=35 hangs=4  ERR is STICKY from a previous job. ERR_INFO=0x00550554  D's own code 4 (WDOG) at step 85, 85 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIMIT 
+RATE reload 153300001366A (was xdma1, 0000:06:00.0)
+ON_BUILD21 153300001366A on xdma1, VCCINT           0.7156 V
+RATE batch 3: ok=19 hang=1  totals runs=55 hangs=5  ERR is STICKY from a previous job. ERR_INFO=0x00cf0cf4  D's own code 4 (WDOG) at step 207, 207 descriptor(s) completed before it. WDOG: the unit did not finish within WDOG_LIM 
+RATE reload 153300001366A (was xdma1, 0000:06:00.0)
+ON_BUILD21 153300001366A on xdma1, VCCINT           0.7133 V
+RATE batch 4: ok=35 hang=0  totals runs=90 hangs=5 
+RATE_DONE runs=90 hangs=5

@@ -349,6 +349,9 @@ load-bearing for every card build until a lever is shown safe on silicon.**
 (94 `8-638` lines; build 18's has 172, including attn_block's, so it is not the 100-message
 limit). Cause not established. A lever's bind line may be quoted when present; when absent,
 read the worktree the build compiled.
+**CORRECTION 6, 2026-09-25: the hang is C's attention levers.** Build 21 (build 20 +
+`SWEEP_PIPE`/`SCORE_EARLY`): 5 hangs in 90 at position 32; build 20: 0 in 150 (p = 0.0069).
+Keep both off on the card; which of the two is not separated.
 
 ---
 
