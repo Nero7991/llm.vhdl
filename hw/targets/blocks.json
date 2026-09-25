@@ -1,0 +1,5 @@
+{
+  "calib_lut": {"top": "rate_calib_lut", "tier": "calib", "clocks": {"clk": "*"},
+                "generics": {"DEPTH": "4", "WIDTH": "64"}, "levers": [],
+                "extra_files": ["tools/rate/calib/rate_calib_lut.vhd"], "target_ns": 2.5}
+}

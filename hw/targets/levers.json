@@ -1,0 +1,6 @@
+{
+  "FAST_POP":    {"top": "matvec_int4_desc_axi", "silicon": "unproven", "evidence": "never on silicon alone; on in build 19 (hangs)"},
+  "NWIDE":       {"top": "gdn_state_store",      "silicon": "unproven", "evidence": "never on silicon alone; on in build 19 (hangs)"},
+  "SWEEP_PIPE":  {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SCORE_EARLY): 5 hangs in 90 at pos 32 vs build 20 0 in 150, p = 0.0069"},
+  "SCORE_EARLY": {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SWEEP_PIPE): 5 hangs in 90 at pos 32 vs build 20 0 in 150, p = 0.0069"}
+}
