@@ -1,0 +1,13 @@
+context test: mode single, N 500 (SHORT, not the full context), 2 repeats, 2026-09-24 21:07:00
+CTX_PROMPT 500 ids -> /mnt/storage/fk33_builds/card_build20/ctxtest/single_n500/prompt_input.txt (corpus 380 docs, sha256 424c90100de435f6, 1 pass(es))
+CTXTEST_RUN input_r1 start 21:07:00: prompt 500 ids, max-new 1, want 500 GOs
+CTXTEST_RUN input_r1 end 21:09:33: rc 0, 500 GOs, 153 s, seam error 0
+CTXTEST_RUN input_r2 start 21:09:33: prompt 500 ids, max-new 1, want 500 GOs
+CTXTEST_RUN input_r2 end 21:12:06: rc 0, 500 GOs, 153 s, seam error 0
+input: all 2 runs produced identical ids (2 ids)
+CTXTEST_RUN output_r1 start 21:12:06: prompt 16 ids, max-new 485, want 500 GOs
+CTXTEST_RUN output_r1 end 21:14:39: rc 0, 500 GOs, 153 s, seam error 0
+CTXTEST_RUN output_r2 start 21:14:39: prompt 16 ids, max-new 485, want 500 GOs
+CTXTEST_RUN output_r2 end 21:17:12: rc 0, 500 GOs, 153 s, seam error 0
+output: all 2 runs produced identical ids (486 ids)
+CTXTEST_PASS mode single N 500 SHORT repeats 2 tests 'input output': every run reached 500 GOs with no card error, ids identical across runs

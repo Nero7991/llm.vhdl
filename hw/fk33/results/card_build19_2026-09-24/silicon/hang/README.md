@@ -188,3 +188,7 @@ Build 19 is the first silicon for C's two levers. "The attention unit's RTL did 
 build 19" above is WITHDRAWN: its generics did, and the 04:10 simulation ran them OFF. Build 20
 (`8af98b8` + the patch, NORM_HBM alone) launched 13:20 as the discriminator. Detail in the debug
 doc, CORRECTION 4.
+
+## CORRECTION 5, 21:10: NORM_HBM exonerated
+Build 20 (NORM_HBM alone): 0 hangs in 60 at 0.715 V, N=500 pair and single PASS
+(`../../../card_build20_2026-09-24/README.md`). The hang comes with the levers.

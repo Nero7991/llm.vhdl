@@ -339,6 +339,10 @@ in build 19's NORM_HBM change. Wiper 68 stands.
 committed tree has all four ON since `a95017c`; **a card build that does not
 apply the patch gets them silently.** Diff `Parameter ... bound to` out of both
 logs before attributing anything to a build.
+**CORRECTION 5, same day: build 20 (NORM_HBM alone, levers off) does NOT hang**, 0 in
+60 at 0.715 V against build 19's 4 in 13 (p = 6.6e-4), and passes N=500 pair and single.
+The hang comes with the levers; which one is open. **`build12_levers_off.patch` is
+load-bearing for every card build until a lever is shown safe on silicon.**
 
 ---
 

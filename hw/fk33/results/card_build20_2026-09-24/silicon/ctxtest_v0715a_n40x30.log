@@ -1,0 +1,64 @@
+context test: mode pair, N 40 (SHORT, not the full context), 30 repeats, 2026-09-24 20:50:29
+CTX_PROMPT 40 ids -> /mnt/storage/fk33_builds/card_build20/vtest/v0715a_n40x30/prompt_input.txt (corpus 380 docs, sha256 424c90100de435f6, 1 pass(es))
+CTXTEST_RUN input_r1 start 20:50:30: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r1 end 20:50:37: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r2 start 20:50:37: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r2 end 20:50:45: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r3 start 20:50:45: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r3 end 20:50:52: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r4 start 20:50:52: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r4 end 20:51:00: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r5 start 20:51:00: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r5 end 20:51:07: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r6 start 20:51:07: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r6 end 20:51:14: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r7 start 20:51:14: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r7 end 20:51:22: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r8 start 20:51:22: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r8 end 20:51:29: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r9 start 20:51:29: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r9 end 20:51:37: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r10 start 20:51:37: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r10 end 20:51:44: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r11 start 20:51:44: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r11 end 20:51:52: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r12 start 20:51:52: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r12 end 20:51:59: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r13 start 20:51:59: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r13 end 20:52:07: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r14 start 20:52:07: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r14 end 20:52:14: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r15 start 20:52:14: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r15 end 20:52:22: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r16 start 20:52:22: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r16 end 20:52:29: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r17 start 20:52:29: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r17 end 20:52:36: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r18 start 20:52:36: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r18 end 20:52:44: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r19 start 20:52:44: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r19 end 20:52:51: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r20 start 20:52:51: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r20 end 20:52:59: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r21 start 20:52:59: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r21 end 20:53:06: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r22 start 20:53:06: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r22 end 20:53:14: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r23 start 20:53:14: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r23 end 20:53:21: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r24 start 20:53:21: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r24 end 20:53:29: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r25 start 20:53:29: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r25 end 20:53:36: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r26 start 20:53:36: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r26 end 20:53:44: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r27 start 20:53:44: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r27 end 20:53:51: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r28 start 20:53:51: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r28 end 20:53:58: rc 0, 40 GOs, 7 s, seam error 0
+CTXTEST_RUN input_r29 start 20:53:58: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r29 end 20:54:06: rc 0, 40 GOs, 8 s, seam error 0
+CTXTEST_RUN input_r30 start 20:54:06: prompt 40 ids, max-new 1, want 40 GOs
+CTXTEST_RUN input_r30 end 20:54:13: rc 0, 40 GOs, 7 s, seam error 0
+input: all 30 runs produced identical ids (2 ids)
+CTXTEST_PASS mode pair N 40 SHORT repeats 30 tests 'input': every run reached 40 GOs with no card error, ids identical across runs

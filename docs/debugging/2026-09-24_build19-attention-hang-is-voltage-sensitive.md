@@ -271,3 +271,36 @@ So this bench, which has C alone against one modelled slave, does not
 reproduce the hang with the levers either on or off. It has no B, no
 `bc_port_grant`, and no second KV port. Build 20 decides which of NORM_HBM or
 the levers a better bench has to model.
+
+## CORRECTION 5 2026-09-24 21:10: NORM_HBM is EXONERATED. The hang comes with the levers.
+
+Build 20 = `8af98b8` + `build12_levers_off.patch`: NORM_HBM on, `FAST_POP`, `NWIDE`,
+`SWEEP_PIPE`, `SCORE_EARLY` off (worktree lines read back; synthesis log `FAST_POP bound to:
+0` x8; the LEVERGUARD never fired). Default flow closed on the first draw: WNS +0.032, WHS
++0.009, 680,386 nets routed, 0 errors, sha256 `1176b271...`
+(`hw/fk33/results/card_build20_2026-09-24/`). Both cards, the same `-nh` halves, the same
+instrument, VCCINT 0.715 V (wiper 68), where build 19 hung most:
+
+| build | VCCINT | sequences crossing position 32 | hangs |
+|---|---|---|---|
+| 19 (NORM_HBM + 4 levers) | 0.715 V | 13 | 4 |
+| 19 | 0.78-0.85 V | 65 | 4 |
+| **20 (NORM_HBM alone)** | **0.715 V** | **60** (2 x 30, n40) | **0** |
+
+One-sided Fisher, build 20 0/60 against build 19 at 0.715 V 4/13: **p = 6.6e-4**; against
+build 19 at every voltage (8/78): p = 8.8e-3 (DERIVED, scipy). The ids are byte-identical to
+build 18's and build 19's for the same prompt. The standing N=500 pair test also PASSES (input
+and output, twice each, 500 GOs, no seam error).
+
+**What this settles:** the norm gain from HBM, selected by the descriptor, is not the cause.
+**What it does not settle:** WHICH lever. `SWEEP_PIPE` and `SCORE_EARLY` are the leads (the
+hang is always a C_JOB, and they are C's), but `FAST_POP` (A's FIFOs) and `NWIDE` (B's norm)
+share the HBM ports with C through the same switch and are not excluded by anything measured.
+Each earlier hypothesis in this file (static timing at 0.715 V, a voltage threshold, a
+NORM_HBM race) was about the wrong variable; the constant across them is that build 19 was
+compared with build 18 as if it differed in one thing.
+
+**Next, if the levers are wanted:** one card build per lever group, C's two first (build 20 +
+`SWEEP_PIPE`/`SCORE_EARLY` on), with the same n40 x 30 instrument. Until then the levers stay
+off on the card, and `build12_levers_off.patch` is load-bearing: a card build without it
+reproduces build 19.
