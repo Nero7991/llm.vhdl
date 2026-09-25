@@ -343,6 +343,12 @@ logs before attributing anything to a build.
 60 at 0.715 V against build 19's 4 in 13 (p = 6.6e-4), and passes N=500 pair and single.
 The hang comes with the levers; which one is open. **`build12_levers_off.patch` is
 load-bearing for every card build until a lever is shown safe on silicon.**
+**AND THE LOG'S BIND LINES ARE NOT COMPLETE, SO THEIR ABSENCE PROVES NOTHING.** MEASURED
+2026-09-25: build 20's log has `done synthesizing module 'attn_block'` but not its
+`[Synth 8-638] synthesizing module 'attn_block'` line nor any of its `Parameter` lines
+(94 `8-638` lines; build 18's has 172, including attn_block's, so it is not the 100-message
+limit). Cause not established. A lever's bind line may be quoted when present; when absent,
+read the worktree the build compiled.
 
 ---
 
