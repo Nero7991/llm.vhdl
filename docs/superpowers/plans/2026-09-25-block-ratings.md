@@ -312,7 +312,7 @@ git commit -m "rate: device table with Vivado-sourced resources, capped single-V
 ```python
 import pytest, manifest
 
-LEV = {"SWEEP_PIPE": {"top": "attn_block", "silicon": "unproven", "evidence": "build 21: 2 hangs in 30"}}
+LEV = {"SWEEP_PIPE": {"top": "attn_block", "silicon": "unproven", "evidence": "build 21: 5 hangs in 90"}}
 
 def base():
     return {"c_attn": {"top": "attn_block", "tier": "core", "clocks": {"clk": "*"},
@@ -421,8 +421,8 @@ def row(name, path=None):
 {
   "FAST_POP":    {"top": "matvec_int4_desc_axi", "silicon": "unproven", "evidence": "never on silicon alone; on in build 19 (hangs)"},
   "NWIDE":       {"top": "gdn_state_store",      "silicon": "unproven", "evidence": "never on silicon alone; on in build 19 (hangs)"},
-  "SWEEP_PIPE":  {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SCORE_EARLY): 2 hangs in 30 at pos 32"},
-  "SCORE_EARLY": {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SWEEP_PIPE): 2 hangs in 30 at pos 32"}
+  "SWEEP_PIPE":  {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SCORE_EARLY): 5 hangs in 90 at pos 32 vs build 20 0 in 150, p = 0.0069"},
+  "SCORE_EARLY": {"top": "attn_block",           "silicon": "unproven", "evidence": "build 21 (with SWEEP_PIPE): 5 hangs in 90 at pos 32 vs build 20 0 in 150, p = 0.0069"}
 }
 ```
 
