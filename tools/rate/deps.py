@@ -25,4 +25,9 @@ def elab_order(tree, top, extra_abs=(), workdir=None):
     r = subprocess.run(["ghdl", "--elab-order"] + common + [top], cwd=tree, capture_output=True, text=True)
     if r.returncode != 0 or not r.stdout.strip():
         raise SystemExit("ghdl --elab-order %s failed:\n%s" % (top, r.stderr))
-    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    order = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    # MEASURED 2026-09-25, GHDL 1.0.0: --elab-order OMITS files analysed from an absolute
+    # path (the unit is in work-obj08.cf, the file is not listed). The extras are the
+    # caller's own files (calibration sources, the generated shell), given in dependency
+    # order, so they are appended here in that order.
+    return order + [p for p in extra_abs if p not in order]
