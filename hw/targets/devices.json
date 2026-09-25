@@ -1,0 +1,17 @@
+{
+  "vu33p_fk33": {
+    "board": "fk33",
+    "build_part": "xcvu33p-fsvh2104-2L-e",
+    "note": "rating part is the -2LV variant: Vivado reloads -2L as -2LV at reduced VCCINT (sim/ooc_micro_pnr.tcl:49)",
+    "rating_part": "xcvu33p-fsvh2104-2LV-e",
+    "resources": {
+      "BRAM": 672,
+      "DSP": 2880,
+      "FF": 879360,
+      "LUT": 439680,
+      "URAM": 320,
+      "_source": "vivado 2023.2 get_parts"
+    },
+    "vccint_run": 0.715
+  }
+}
