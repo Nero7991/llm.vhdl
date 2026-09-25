@@ -304,3 +304,8 @@ compared with build 18 as if it differed in one thing.
 `SWEEP_PIPE`/`SCORE_EARLY` on), with the same n40 x 30 instrument. Until then the levers stay
 off on the card, and `build12_levers_off.patch` is load-bearing: a card build without it
 reproduces build 19.
+
+**Correction to CORRECTION 4 and 5 (2026-09-25):** `NWIDE` was labelled "B's norm" in the
+table and the text above. It is a generic of **`gdn_state_store`**, B's state-store movers
+(MEASURED: `grep -lE '^\s*NWIDE\s*:\s*boolean' rtl/*.vhd` returns only that file). The
+conclusions do not change.
