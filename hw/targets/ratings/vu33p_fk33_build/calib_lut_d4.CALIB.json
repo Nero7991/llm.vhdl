@@ -1,0 +1,44 @@
+{
+  "achieved_mhz": 1149.4252873563216,
+  "ceiling_mhz": 1818.181818181818,
+  "deps": [
+    "/home/orencollaco/GitHub/llama.vhdl/tools/rate/calib/rate_calib_lut.vhd"
+  ],
+  "device": "vu33p_fk33",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": true,
+  "key": "51e5e86036120a4649d08d7283b0ea1f8de62845da6dc58efe952ef58001dd53",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "24G",
+    "peak": 3878993920,
+    "swap_peak": 0
+  },
+  "model": "CALIB",
+  "part": "xcvu33p-fsvh2104-2L-e",
+  "route": {
+    "end": "q_reg[52]/D",
+    "levels": 4,
+    "start": "d_q_reg[317]/C",
+    "unrouted": 0,
+    "whs": 0.052,
+    "wns": 0.18
+  },
+  "route_mhz": 1149.4252873563216,
+  "row": "calib_lut_d4",
+  "synth": {
+    "levels": 4,
+    "wns": -0.084
+  },
+  "target_ns": 1.05,
+  "tier": "calib",
+  "util": {
+    "BRAM": 0,
+    "DSP": 0,
+    "FF": 448,
+    "LUT": 288,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

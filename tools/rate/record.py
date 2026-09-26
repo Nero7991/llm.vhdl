@@ -45,7 +45,16 @@ def build(row_name, row, device, rating_part, model, key, deps, target_ns, parse
          "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results"}
     if "route" in parsed:
         r["route"], r["util"] = parsed["route"], parsed["util"]
-        r["achieved_mhz"] = fmax_mhz(target_ns, parsed["route"]["wns"])
-        r["fmax_is_lower_bound"] = parsed["route"]["wns"] > 0.5    # lax target: Vivado stopped early
+        r["route_mhz"] = fmax_mhz(target_ns, parsed["route"]["wns"])
+        r["achieved_mhz"] = r["route_mhz"]
+        r["limited_by"] = "routing"
+        # Any MET target is a lower bound: Vivado stops optimising once WNS >= 0 (MEASURED
+        # 2026-09-25: calib d3 met 1.5 ns at 765 MHz, d4 also met it at 807). Rate over-constrained.
+        r["fmax_is_lower_bound"] = parsed["route"]["wns"] >= 0
         r["ceiling_mhz"] = ceiling
+        if ceiling is not None and r["route_mhz"] > ceiling:
+            # Setup WNS cannot see a primitive's minimum period (MEASURED 2026-09-25: calib
+            # depth 1 routed 1887 MHz against FDRE's 1818). The ceiling is a hard limit, so
+            # a result capped by it is a rating, not a lower bound.
+            r["achieved_mhz"], r["limited_by"], r["fmax_is_lower_bound"] = ceiling, "ceiling", False
     return r

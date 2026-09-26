@@ -1,5 +1,130 @@
 {
-  "calib_lut": {"top": "rate_calib_lut", "tier": "calib", "clocks": {"clk": "*"},
-                "generics": {"DEPTH": "4", "WIDTH": "64"}, "levers": [],
-                "extra_files": ["tools/rate/calib/rate_calib_lut.vhd"], "target_ns": 2.5}
+  "calib_lut_d1": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "1",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 0.54,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d10": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "10",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 1.717,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d12": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "12",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 2.048,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d2": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "2",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 0.7,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d3": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "3",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 0.836,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d4": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "4",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 1.05,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d6": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "6",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 1.229,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  },
+  "calib_lut_d8": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [
+      "tools/rate/calib/rate_calib_lut.vhd"
+    ],
+    "generics": {
+      "DEPTH": "8",
+      "WIDTH": "64"
+    },
+    "levers": [],
+    "target_ns": 1.594,
+    "tier": "calib",
+    "top": "rate_calib_lut"
+  }
 }

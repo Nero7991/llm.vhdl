@@ -35,3 +35,25 @@ def test_pulse_width_ceiling():
 
 def test_record_path_distinct_per_device_and_model():
     assert record.path("a", "r", "M1") != record.path("b", "r", "M1") != record.path("a", "r", "M2")
+
+def test_any_met_target_is_a_lower_bound():
+    # Vivado stops optimising once timing is met: MEASURED 2026-09-25, calib depth 3 met a
+    # 1.5 ns target at 765 MHz while depth 4, also met, reached 807 MHz.
+    p = record.parse_log(fx("rate_ok.log").replace("WNS 0.412", "WNS 0.100"))
+    r = record.build("x", {"tier": "core", "levers": []}, "d", "p", "M", "k", [], 5.0, p, {})
+    assert r["fmax_is_lower_bound"] is True
+
+def test_overconstrained_run_is_a_rating():
+    p = record.parse_log(fx("rate_ok.log").replace("WNS 0.412", "WNS -0.300"))
+    r = record.build("x", {"tier": "core", "levers": []}, "d", "p", "M", "k", [], 5.0, p, {})
+    assert r["fmax_is_lower_bound"] is False
+    assert r["achieved_mhz"] == pytest.approx(1000.0 / 5.3)
+
+def test_achieved_is_capped_at_the_ceiling():
+    # MEASURED 2026-09-25: calib depth 1 routed 1887 MHz against a 1818 MHz FDRE min period.
+    p = record.parse_log(fx("rate_ok.log").replace("WNS 0.412", "WNS 0.010"))
+    r = record.build("x", {"tier": "core", "levers": []}, "d", "p", "M", "k", [], 0.54, p, {}, ceiling=1818.2)
+    assert r["achieved_mhz"] == pytest.approx(1818.2)
+    assert r["limited_by"] == "ceiling"
+    assert r["fmax_is_lower_bound"] is False
+    assert r["route_mhz"] == pytest.approx(1000.0 / 0.53)

@@ -37,3 +37,11 @@ def test_key_changes_with_part_target_generics(tree, tmp_path):
     assert key.rating_key(tree, d, "shell", ROW, "p1", 4.0, []) != base
     r2 = dict(ROW, generics={"HEAD_DIM": "128"})
     assert key.rating_key(tree, d, "shell", r2, "p1", 5.0, []) != base
+
+def test_elab_order_when_every_file_is_an_absolute_extra(tmp_path):
+    a = tmp_path / "leaf.vhd"
+    a.write_text("library ieee; use ieee.std_logic_1164.all;\n"
+                 "entity leaf_rt is port(x : in std_logic; y : out std_logic); end entity;\n"
+                 "architecture a of leaf_rt is begin y <= x; end architecture;\n")
+    got = deps.elab_order(config.REPO, "leaf_rt", (str(a),), str(tmp_path / "w"))
+    assert got == [str(a)]

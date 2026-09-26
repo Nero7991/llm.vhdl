@@ -23,7 +23,7 @@ def elab_order(tree, top, extra_abs=(), workdir=None):
     if r.returncode != 0:
         raise SystemExit("ghdl -i failed:\n" + r.stderr)
     r = subprocess.run(["ghdl", "--elab-order"] + common + [top], cwd=tree, capture_output=True, text=True)
-    if r.returncode != 0 or not r.stdout.strip():
+    if r.returncode != 0 or (not r.stdout.strip() and not extra_abs):
         raise SystemExit("ghdl --elab-order %s failed:\n%s" % (top, r.stderr))
     order = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
     # MEASURED 2026-09-25, GHDL 1.0.0: --elab-order OMITS files analysed from an absolute
