@@ -18,11 +18,26 @@ def entity_text(tree, row):
 def current_key(row_name, row, part, target_ns, tree=config.REPO):
     """(key, shell text, GHDL order, probe shell path) for `row` on `part` against `tree`."""
     text = shell.gen_shell(row, entity_text(tree, row))
-    probe = os.path.join(config.WORK_ROOT, row_name, part, "_probe")
-    os.makedirs(probe, exist_ok=True)
+    declared = {n for (n, _, _) in shell.parse_entity(entity_text(tree, row), row["top"])["generics"]}
+    extra_g = sorted(set(row["generics"]) - declared)
+    if extra_g:
+        # gen_shell would drop them silently and rate the block at its defaults (a renamed
+        # lever would be rated ON while the manifest says off).
+        raise SystemExit("row %s sets generic(s) %s that %s does not declare"
+                         % (row_name, ", ".join(extra_g), row["top"]))
+    # A private probe per call: status/ratestale and a lane rating the same row run
+    # concurrently, and a shared GHDL work library is shared mutable state.
+    import tempfile
+    base = os.path.join(config.WORK_ROOT, row_name, part, "_probe")
+    os.makedirs(base, exist_ok=True)
+    probe = tempfile.mkdtemp(prefix="p%d_" % os.getpid(), dir=base)
     sp0 = os.path.join(probe, "rate_shell.vhd"); open(sp0, "w").write(text)
     extra = [os.path.join(tree, p) for p in row["extra_files"]]
-    order = deps.elab_order(tree, "rate_shell", extra + [sp0], os.path.join(probe, "ghdl"))
+    import shutil
+    try:
+        order = deps.elab_order(tree, "rate_shell", extra + [sp0], os.path.join(probe, "ghdl"))
+    finally:
+        shutil.rmtree(probe)       # callers use sp0 only as a name; cmd_run writes its own copy
     k = key.rating_key(tree, [p for p in order if p != sp0], text, row, part, target_ns, HARNESS)
     return k, text, order, sp0
 
@@ -103,8 +118,18 @@ def rows_for(rows, levers):
             out[rname] = row
     return out
 
-def parse_levers(text):
-    return dict(x.split("=", 1) for x in text.split(",") if x)
+def parse_levers(text, table):
+    """NAME=true|false,...; an unknown name or any other value refuses (a misspelt value
+    would otherwise silently drop that lever's rows from rows_for)."""
+    out = {}
+    for x in (t for t in text.split(",") if t):
+        name, _, val = x.partition("=")
+        if name not in table:
+            raise SystemExit("PREFLIGHT_REFUSED unknown lever %s (levers.json)" % name)
+        if val not in ("true", "false"):
+            raise SystemExit("PREFLIGHT_REFUSED lever %s=%s: the value must be true or false" % (name, val))
+        out[name] = val
+    return out
 
 def tree_records(device, model, tier, tree, rdir, levers):
     """FRESH records of `tier` rated on `tree`, from `rdir`; a stale or missing one refuses."""
@@ -129,7 +154,7 @@ def cmd_k(a):
     import tiers
     tree = os.path.abspath(a.tree)
     rdir = os.path.join(config.TARGETS, "ratings", a.device, "tree_build%s" % a.build)
-    recs = tree_records(a.device, a.model, a.tier, tree, rdir, parse_levers(a.levers))
+    recs = tree_records(a.device, a.model, a.tier, tree, rdir, parse_levers(a.levers, manifest.load_levers()))
     mhz, row = tiers.tier_min(recs, a.tier)
     k = tiers.k_from_build(a.card_period, a.card_wns, mhz)
     k.update({"build": a.build, "clb_util": a.clb_util, "levers": a.levers, "tier_min_row": row, "tier_min_mhz": mhz,
@@ -147,7 +172,7 @@ def cmd_k(a):
 
 def cmd_preflight(a):
     import glob, math, predict, tiers
-    lv = parse_levers(a.levers)
+    lv = parse_levers(a.levers, manifest.load_levers())
     rows = rows_for(manifest.load(), lv); dev = devices.row(a.device)
     bad, recs = [], []
     for rname, row in sorted(rows.items()):
