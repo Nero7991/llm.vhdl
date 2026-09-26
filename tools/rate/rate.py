@@ -31,6 +31,9 @@ def cmd_run(a):
     dev = devices.row(a.device)
     part = dev["rating_part"] if a.part_kind == "rating" else dev["build_part"]
     tree = os.path.abspath(a.tree)
+    if a.lane == "bc250" and tree != os.path.abspath(config.REPO):
+        raise SystemExit("REFUSED: --lane bc250 rates the repo tree only; only the repo is synced")
+    mem = a.mem or ("11G" if a.lane == "bc250" else "24G")
     k, text, order, sp0 = current_key(a.row, row, part, tree)
     wd = os.path.join(config.WORK_ROOT, a.row, part, k[:12])
     os.makedirs(wd, exist_ok=True)
@@ -38,15 +41,16 @@ def cmd_run(a):
     fl = os.path.join(wd, "files.txt")
     open(fl, "w").write("\n".join((p if os.path.isabs(p) else os.path.join(tree, p)).replace(sp0, sp)
                                   for p in order) + "\n")
-    out = vivado.run_batch(HARNESS[0], [part, wd, str(row["target_ns"]), ",".join(row["clocks"]), fl, a.mode],
-                           wd, a.mem, "rate-%s" % a.row)
+    runner = vivado.run_batch_bc250 if a.lane == "bc250" else vivado.run_batch
+    out = runner(HARNESS[0], [part, wd, str(row["target_ns"]), ",".join(row["clocks"]), fl, a.mode],
+                 wd, mem, "rate-%s" % a.row)
     parsed = record.parse_log(out["log"])
     ceiling = None
     if a.mode == "route":
         ceiling = record.parse_pulse_width(open(os.path.join(wd, "pulse_width.rpt")).read())
     rec = record.build(a.row, row, a.device, part, a.model, k, [p for p in order if p != sp0],
                        row["target_ns"], parsed, {"peak": out["mem_peak"], "swap_peak": out["swap_peak"],
-                                                  "cap": a.mem}, ceiling)
+                                                  "cap": mem, "lane": a.lane}, ceiling)
     if a.mode == "pregate":
         print("RATE_PREGATE %s %s levels %d" % (a.row, part, parsed["synth"]["levels"]))
         return
@@ -83,7 +87,8 @@ def main():
     r = sub.add_parser("run")
     r.add_argument("row"); r.add_argument("--device", required=True); r.add_argument("--model", required=True)
     r.add_argument("--mode", choices=("route", "pregate"), default="route")
-    r.add_argument("--tree", default=config.REPO); r.add_argument("--mem", default="24G")
+    r.add_argument("--tree", default=config.REPO); r.add_argument("--mem", default=None)
+    r.add_argument("--lane", choices=("local", "bc250"), default="local")
     r.add_argument("--part-kind", choices=("rating", "build"), default="rating")
     st = sub.add_parser("status"); st.add_argument("--check", action="store_true")
     a = ap.parse_args()
