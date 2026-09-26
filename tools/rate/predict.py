@@ -4,8 +4,13 @@ import json, os
 import config
 
 def check(t):
+    """Strictly falling with depth, except that depths capped at the same primitive ceiling
+    are equal (MEASURED 2026-09-26: VU35P -3 depths 1 and 2 both at FDRE's 1818.2 MHz)."""
     ds = sorted(t["lut"])
+    capped = {int(d) for d in t.get("ceiling_limited", [])}
     for a, b in zip(ds, ds[1:]):
+        if a in capped and b in capped and t["lut"][b] == t["lut"][a]:
+            continue
         if t["lut"][b] >= t["lut"][a]:
             raise SystemExit("calibration table is not monotone at depth %d -> %d" % (a, b))
 

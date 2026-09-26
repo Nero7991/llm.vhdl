@@ -1,0 +1,63 @@
+{
+  "achieved_mhz": 162.36402013313847,
+  "ceiling_mhz": 718.3908045977012,
+  "deps": [
+    "rtl/attn_block.vhd",
+    "rtl/attn_emit.vhd",
+    "rtl/attn_gate.vhd",
+    "rtl/attn_kv_quant.vhd",
+    "rtl/attn_mac_array.vhd",
+    "rtl/attn_recip.vhd",
+    "rtl/attn_rope.vhd",
+    "rtl/attn_score_q12.vhd",
+    "rtl/attn_softmax.vhd",
+    "rtl/attn_twiddle.vhd",
+    "rtl/divider_rs.vhd",
+    "rtl/fixed_luts_pkg.vhd",
+    "rtl/fixed_pkg.vhd",
+    "rtl/imrope_pkg.vhd",
+    "rtl/rmsnorm_rs.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu35p_jc_m3",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "e583516bdb0a636b4131735a684b7718a4254c83fa864e789d631ee38dd40713",
+  "levers": [
+    "SCORE_EARLY",
+    "SWEEP_PIPE"
+  ],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "16G",
+    "lane": "local",
+    "peak": 17180049408,
+    "swap_peak": 2128691200
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu35p-fsvh2104-3-e",
+  "route": {
+    "end": "u_dut/u_arr/p_reg_reg[19]0_i_12_psdsp_1/D",
+    "levels": 12,
+    "start": "u_dut/kvh_reg[1]/C",
+    "unrouted": 0,
+    "whs": 0.019,
+    "wns": -3.64
+  },
+  "route_mhz": 162.36402013313847,
+  "row": "c_attn",
+  "synth": {
+    "levels": 18,
+    "wns": -1.411
+  },
+  "target_ns": 2.519,
+  "tier": "core",
+  "util": {
+    "BRAM": 11,
+    "DSP": 298,
+    "FF": 115927,
+    "LUT": 88056,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

@@ -13,5 +13,65 @@
       "_source": "vivado 2023.2 get_parts"
     },
     "vccint_run": 0.715
+  },
+  "vu35p_jc_m1": {
+    "board": "jungle_cat",
+    "build_part": "xcvu35p-fsvh2104-1-e",
+    "note": "vccint_run is the grade's nominal, ESTIMATE until a unit is characterised",
+    "rating_part": "xcvu35p-fsvh2104-1-e",
+    "resources": {
+      "BRAM": 1344,
+      "DSP": 5952,
+      "FF": 1743360,
+      "LUT": 871680,
+      "URAM": 640,
+      "_source": "vivado 2023.2 get_parts"
+    },
+    "vccint_run": 0.85
+  },
+  "vu35p_jc_m2": {
+    "board": "jungle_cat",
+    "build_part": "xcvu35p-fsvh2104-2-e",
+    "note": "vccint_run is the grade's nominal, ESTIMATE until a unit is characterised",
+    "rating_part": "xcvu35p-fsvh2104-2-e",
+    "resources": {
+      "BRAM": 1344,
+      "DSP": 5952,
+      "FF": 1743360,
+      "LUT": 871680,
+      "URAM": 640,
+      "_source": "vivado 2023.2 get_parts"
+    },
+    "vccint_run": 0.85
+  },
+  "vu35p_jc_m2l": {
+    "board": "jungle_cat",
+    "build_part": "xcvu35p-fsvh2104-2L-e",
+    "note": "vccint_run is the grade's nominal, ESTIMATE until a unit is characterised",
+    "rating_part": "xcvu35p-fsvh2104-2LV-e",
+    "resources": {
+      "BRAM": 1344,
+      "DSP": 5952,
+      "FF": 1743360,
+      "LUT": 871680,
+      "URAM": 640,
+      "_source": "vivado 2023.2 get_parts"
+    },
+    "vccint_run": 0.72
+  },
+  "vu35p_jc_m3": {
+    "board": "jungle_cat",
+    "build_part": "xcvu35p-fsvh2104-3-e",
+    "note": "vccint_run is the grade's nominal, ESTIMATE until a unit is characterised",
+    "rating_part": "xcvu35p-fsvh2104-3-e",
+    "resources": {
+      "BRAM": 1344,
+      "DSP": 5952,
+      "FF": 1743360,
+      "LUT": 871680,
+      "URAM": 640,
+      "_source": "vivado 2023.2 get_parts"
+    },
+    "vccint_run": 0.9
   }
 }

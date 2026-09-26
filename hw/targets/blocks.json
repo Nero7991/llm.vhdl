@@ -80,7 +80,11 @@
       "VAL_HEADS": "32"
     },
     "levers": [],
-    "target_ns": 1.0,
+    "target_ns": {
+      "default": 1.0,
+      "vu35p_jc_m2": 0.79,
+      "vu35p_jc_m3": 0.707
+    },
     "tier": "core",
     "top": "gdn_job_seq"
   },
@@ -311,7 +315,11 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 1.717,
+    "target_ns": {
+      "default": 1.717,
+      "vu35p_jc_m2": 1.377,
+      "vu35p_jc_m3": 1.367
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -327,7 +335,11 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 2.048,
+    "target_ns": {
+      "default": 2.048,
+      "vu35p_jc_m2": 1.627,
+      "vu35p_jc_m3": 1.543
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -343,7 +355,12 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 0.7,
+    "target_ns": {
+      "default": 0.7,
+      "vu35p_jc_m1": 0.577,
+      "vu35p_jc_m2": 0.545,
+      "vu35p_jc_m3": 0.503
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -359,7 +376,12 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 0.836,
+    "target_ns": {
+      "default": 0.836,
+      "vu35p_jc_m1": 0.708,
+      "vu35p_jc_m2": 0.654,
+      "vu35p_jc_m3": 0.61
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -375,7 +397,12 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 1.05,
+    "target_ns": {
+      "default": 1.05,
+      "vu35p_jc_m1": 0.888,
+      "vu35p_jc_m2": 0.738,
+      "vu35p_jc_m3": 0.743
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -391,7 +418,11 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 1.229,
+    "target_ns": {
+      "default": 1.229,
+      "vu35p_jc_m2": 0.932,
+      "vu35p_jc_m3": 0.897
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },
@@ -407,7 +438,11 @@
       "WIDTH": "64"
     },
     "levers": [],
-    "target_ns": 1.594,
+    "target_ns": {
+      "default": 1.594,
+      "vu35p_jc_m2": 1.169,
+      "vu35p_jc_m3": 1.113
+    },
     "tier": "calib",
     "top": "rate_calib_lut"
   },

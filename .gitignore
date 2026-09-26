@@ -137,3 +137,7 @@ hw/fk33/bit/
 sim/ooc_fk33a/*.rpt
 sim/ooc_fk33a/*.xdc
 server/libqwen35chat.so
+
+# rating flow: set_target lock and temp files (tools/rate/calib.py)
+hw/targets/*.lock
+hw/targets/*.tmp*

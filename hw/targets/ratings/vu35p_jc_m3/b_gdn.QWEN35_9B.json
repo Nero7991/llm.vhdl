@@ -1,0 +1,58 @@
+{
+  "achieved_mhz": 264.1310089804543,
+  "ceiling_mhz": 718.3908045977012,
+  "deps": [
+    "rtl/fixed_luts_pkg.vhd",
+    "rtl/fixed_pkg.vhd",
+    "rtl/gdn_block.vhd",
+    "rtl/gdn_conv.vhd",
+    "rtl/gdn_emit_chain.vhd",
+    "rtl/gdn_exp_capture.vhd",
+    "rtl/gdn_head_emit.vhd",
+    "rtl/gdn_recur_pipe.vhd",
+    "rtl/gdn_scalar.vhd",
+    "rtl/gdn_silu.vhd",
+    "rtl/gdn_y_emit.vhd",
+    "rtl/l2norm_rs.vhd",
+    "rtl/rmsnorm_bf.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu35p_jc_m3",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "57c1fdf17b93c418410a9b86222661e7813f8751424a6e0ae0c8bc824ec87429",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "16G",
+    "lane": "local",
+    "peak": 16660606976,
+    "swap_peak": 0
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu35p-fsvh2104-3-e",
+  "route": {
+    "end": "u_dut/u_l2/gkq[11].q_reg_reg[744]/D",
+    "levels": 20,
+    "start": "u_dut/u_l2/bias_q_reg[1]/C",
+    "unrouted": 0,
+    "whs": 0.005,
+    "wns": -0.754
+  },
+  "route_mhz": 264.1310089804543,
+  "row": "b_gdn",
+  "synth": {
+    "levels": 19,
+    "wns": -1.312
+  },
+  "target_ns": 3.032,
+  "tier": "core",
+  "util": {
+    "BRAM": 22,
+    "DSP": 141,
+    "FF": 38508,
+    "LUT": 56960,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

@@ -1,0 +1,45 @@
+{
+  "achieved_mhz": 382.262996941896,
+  "ceiling_mhz": 637.3486297004462,
+  "deps": [
+    "rtl/region_mem.vhd"
+  ],
+  "device": "vu35p_jc_m2",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "888fe5c4f2a526565d1eb41671bc64c83c87a138c76e22790c812bc46236af83",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "11G",
+    "lane": "bc250",
+    "peak": 4847046656,
+    "swap_peak": 0
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu35p-fsvh2104-2-e",
+  "route": {
+    "end": "u_dut/g_region[2].bank_reg_2_3/DINADIN[1]",
+    "levels": 4,
+    "start": "w_regd_q_reg[5]/C",
+    "unrouted": 0,
+    "whs": 0.052,
+    "wns": -1.574
+  },
+  "route_mhz": 382.262996941896,
+  "row": "g_region",
+  "synth": {
+    "levels": 4,
+    "wns": -0.961
+  },
+  "target_ns": 1.042,
+  "tier": "core",
+  "util": {
+    "BRAM": 100,
+    "DSP": 0,
+    "FF": 816,
+    "LUT": 3979,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

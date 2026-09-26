@@ -1,0 +1,53 @@
+{
+  "achieved_mhz": 269.1065662002153,
+  "ceiling_mhz": 500.0,
+  "deps": [
+    "rtl/gdn_conv_tap_mem.vhd",
+    "rtl/gdn_conv_w_mem.vhd",
+    "rtl/gdn_exp_mem.vhd",
+    "rtl/gdn_state_axi.vhd",
+    "rtl/gdn_state_mem.vhd",
+    "rtl/gdn_state_store.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu35p_jc_m2",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "ec479553d2e93a69796107c00e0552e82998b665210e88357e84a92ae8542b7c",
+  "levers": [
+    "NWIDE"
+  ],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "11G",
+    "lane": "bc250",
+    "peak": 4970524672,
+    "swap_peak": 0
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu35p-fsvh2104-2-e",
+  "route": {
+    "end": "st_rdata_reg[2]/D",
+    "levels": 8,
+    "start": "u_dut/u_mem/gwide.gb[1].bank_reg_uram_0/CLK",
+    "unrouted": 0,
+    "whs": 0.027,
+    "wns": -2.246
+  },
+  "route_mhz": 269.1065662002153,
+  "row": "b_state",
+  "synth": {
+    "levels": 8,
+    "wns": -1.935
+  },
+  "target_ns": 1.47,
+  "tier": "core",
+  "util": {
+    "BRAM": 28,
+    "DSP": 4,
+    "FF": 10957,
+    "LUT": 5747,
+    "URAM": 32
+  },
+  "vivado": "2023.2"
+}

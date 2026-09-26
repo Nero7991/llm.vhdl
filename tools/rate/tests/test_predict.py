@@ -28,3 +28,10 @@ def test_max_levels_is_unbounded_below_the_slowest_calibrated_depth():
     t = {"lut": {1: 1800.0, 12: 424.0}}
     assert predict.max_levels(80.0, t) is None
     assert predict.max_levels(500.0, t) == 1
+
+
+def test_equal_depths_are_monotone_when_both_hit_the_primitive_ceiling():
+    # MEASURED 2026-09-26, VU35P -3: depths 1 and 2 both capped at FDRE's 1818.2 MHz.
+    predict.check({"lut": {1: 1818.2, 2: 1818.2, 3: 1287.0}, "ceiling_limited": [1, 2]})
+    with pytest.raises(SystemExit, match="monotone"):
+        predict.check({"lut": {1: 1818.2, 2: 1818.2, 3: 1287.0}, "ceiling_limited": []})

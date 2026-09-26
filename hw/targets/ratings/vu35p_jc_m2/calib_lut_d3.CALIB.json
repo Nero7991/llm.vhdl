@@ -1,0 +1,45 @@
+{
+  "achieved_mhz": 1308.9005235602094,
+  "ceiling_mhz": 1818.181818181818,
+  "deps": [
+    "/home/orencollaco/GitHub/llama.vhdl/tools/rate/calib/rate_calib_lut.vhd"
+  ],
+  "device": "vu35p_jc_m2",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "08ee0893836fc6125333c9e67980f958eef96ce3ee2e9a7f0c3d2c0b27682dd7",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "11G",
+    "lane": "bc250",
+    "peak": 4676292608,
+    "swap_peak": 0
+  },
+  "model": "CALIB",
+  "part": "xcvu35p-fsvh2104-2-e",
+  "route": {
+    "end": "q_reg[44]/D",
+    "levels": 3,
+    "start": "d_q_reg[265]/C",
+    "unrouted": 0,
+    "whs": 0.044,
+    "wns": -0.11
+  },
+  "route_mhz": 1308.9005235602094,
+  "row": "calib_lut_d3",
+  "synth": {
+    "levels": 3,
+    "wns": -0.252
+  },
+  "target_ns": 0.654,
+  "tier": "calib",
+  "util": {
+    "BRAM": 0,
+    "DSP": 0,
+    "FF": 448,
+    "LUT": 224,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

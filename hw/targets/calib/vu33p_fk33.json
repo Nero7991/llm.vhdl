@@ -1,4 +1,7 @@
 {
+  "ceiling_limited": [
+    1
+  ],
   "device": "vu33p_fk33",
   "evidence": "MEASURED, routed, over-constrained (WNS < 0) or ceiling-limited, one draw per depth",
   "lut": {
