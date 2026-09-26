@@ -8,13 +8,13 @@
   "device": "vu33p_fk33",
   "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
   "fmax_is_lower_bound": false,
-  "key": "85cd71cf57368d7c9caf37094e0b578e97ea30bf81bd83eb9d9d4cc1e622025d",
+  "key": "27610144d343e2859916465c9e1a55c9c84bd79a1252954797e53b3ac8a1833d",
   "levers": [],
   "limited_by": "routing",
   "mem": {
     "cap": "16G",
-    "peak": 13134852096,
-    "swap_peak": 631689216
+    "peak": 13515919360,
+    "swap_peak": 0
   },
   "model": "QWEN35_9B",
   "part": "xcvu33p-fsvh2104-2LV-e",

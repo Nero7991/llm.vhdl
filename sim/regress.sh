@@ -1922,6 +1922,12 @@ printf 'descrule\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 # This row is therefore the difference between a fork and a copy.
 printf 'cardtop\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
 
+# sim:ratetests -- the block-rating flow's own unit tests (tools/rate/tests). No Vivado.
+printf 'ratetests\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+# sim:ratestale -- a committed rating whose cache key no longer matches the tree is RED.
+# UNRATED rows are reported, not red, so the gate is usable during rollout; preflight refuses them.
+printf 'ratestale\tsim\tRUN\t-\t-\t-\t-\n' >> "$PLAN"
+
 # sim:srvseam and sim:srve2e -- the HOST SOFTWARE.  server/pl_backend.c is the
 # driver and server/llama_server.cpp is the OpenAI-compatible server, and until
 # 2026-09-03 NOTHING SCHEDULED EITHER of their harnesses.
@@ -2928,6 +2934,8 @@ declare -A SELFCHECK_CMD=(
   [splitplan]="python3 $REPO/tools/gen_layer_program.py --selfcheck-split"
   [descrule]="python3 $REPO/tools/gen_mv4i_desc.py --selftest"
   [cardtop]="python3 $REPO/tools/gen_cardtop.py --check --bench"
+  [ratetests]="python3 -m pytest -p no:asyncio -q $REPO/tools/rate/tests"
+  [ratestale]="python3 $REPO/tools/rate/rate.py status --check"
   [srvseam]="make -s -C $REPO/server test"
   [srve2e]="make -s -C $REPO/server test-e2e"
   [bdports]="python3 $REPO/sim/check_bd_ports.py"
@@ -3073,7 +3081,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   case "${key#*:}" in
     seamgate_*) run_seam "$key"; return ;;
     graygate)   run_graygate "$key"; return ;;
-    runguard|ipsync|splitplan|descrule|cardtop|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|elabrows|pcieep|mutrms|mutbfm) run_selfcheck "$key"; return ;;
+    runguard|ipsync|splitplan|descrule|cardtop|ratetests|ratestale|srvseam|srve2e|bdports|srvstories|c4stale|shapechk|gdnstale|shapemirror|fk33card|kvmap|seamregs|normimage|gdnconst|constimage|qknimage|logitcmp|imglock|elabrows|pcieep|mutrms|mutbfm) run_selfcheck "$key"; return ;;
   esac
   [ "$vecs" = "-" ] && vecs=""
   local tb="${key#*:}" suite="${key%%:*}"

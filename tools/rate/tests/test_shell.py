@@ -50,3 +50,15 @@ def test_entity_without_generics():
     v = shell.gen_shell({"top": "g0", "clocks": {"clk": "*"}, "generics": {}}, t)
     assert "generic(" not in v and "generic map" not in v
     assert "a_q" in v and "y_q" in v
+
+
+def test_shell_text_does_not_depend_on_the_hash_seed():
+    # MEASURED 2026-09-25: a_engine's key flipped between runs because gen_shell iterated a
+    # set of clock names, whose order follows PYTHONHASHSEED; the shell text is in the key.
+    import subprocess, sys
+    code = ("import sys, json; sys.path.insert(0, %r); import manifest, rate, shell; "
+            "r = manifest.row('a_engine'); print(shell.gen_shell(r, rate.entity_text(rate.config.REPO, r)))"
+            % os.path.join(os.path.dirname(__file__), ".."))
+    outs = {subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
+                           env=dict(os.environ, PYTHONHASHSEED=str(s))).stdout for s in range(8)}
+    assert len(outs) == 1

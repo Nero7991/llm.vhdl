@@ -63,7 +63,7 @@ def gen_shell(row, entity_text):
     bad = [p for p in e["ports"] if p[1] not in ("in", "out")]
     if bad:
         raise SystemExit("rate shell: port %s is %s; inout/buffer ports need an adapter row" % (bad[0][0], bad[0][1]))
-    clocks = set(row["clocks"])
+    clocks = sorted(row["clocks"])   # never a set: its order follows PYTHONHASHSEED, and the text is keyed
     gl = ["    %s : %s := %s" % (n, typ, row["generics"].get(n, d)) for (n, typ, d) in e["generics"]]
     missing = [n for (n, _, d) in e["generics"] if n not in row["generics"] and not d]
     if missing:

@@ -7,12 +7,12 @@
   "device": "vu33p_fk33",
   "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
   "fmax_is_lower_bound": false,
-  "key": "998c89042a75b414c9fed5e3edfe3d02e69fd7d23f02898b0fd9ce6f59203b6f",
+  "key": "c62f1e0dd1aac7f4e5ca07a5fc985b759c4540d9f7a5849d2cc328ebe66f8880",
   "levers": [],
   "limited_by": "routing",
   "mem": {
     "cap": "24G",
-    "peak": 3906863104,
+    "peak": 3908001792,
     "swap_peak": 0
   },
   "model": "CALIB",
