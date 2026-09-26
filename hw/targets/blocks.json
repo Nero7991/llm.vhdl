@@ -280,7 +280,7 @@
     },
     "levers": [],
     "target_ns": 3.0,
-    "tier": "core",
+    "tier": "anchor",
     "top": "ooc_cattnadapt_top"
   },
   "calib_lut_d1": {

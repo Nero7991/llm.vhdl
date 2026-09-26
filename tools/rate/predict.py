@@ -28,5 +28,10 @@ def structural_mhz(levels, t):
     return 1000.0 / p, "measured"
 
 def max_levels(mhz, t):
+    """Deepest calibrated depth that still meets `mhz`; None when `mhz` is below the slowest
+    calibrated depth, because the table then cannot bound the depth at all."""
+    deepest = max(t["lut"])
+    if mhz < t["lut"][deepest]:
+        return None
     ok = [d for d, f in t["lut"].items() if f >= mhz]
     return max(ok) if ok else 0

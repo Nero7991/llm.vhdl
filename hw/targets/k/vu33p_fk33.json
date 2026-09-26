@@ -1,0 +1,54 @@
+{
+  "core": [
+    {
+      "build": "20",
+      "card_clock": "clk_out3_bd_clk_wiz_0_0",
+      "card_period_ns": 13.333,
+      "card_wns": 0.87,
+      "clb_util": 99.57,
+      "k": 0.9618069485677606,
+      "levers": "FAST_POP=false,NWIDE=false,SWEEP_PIPE=false,SCORE_EARLY=false",
+      "lower_bound": true,
+      "tier_min_mhz": 83.42370901810294,
+      "tier_min_row": "v_swg"
+    },
+    {
+      "build": "21",
+      "card_clock": "clk_out3_bd_clk_wiz_0_0",
+      "card_period_ns": 13.333,
+      "card_wns": 0.91,
+      "clb_util": 99.82,
+      "k": 0.9649038074539162,
+      "levers": "FAST_POP=false,NWIDE=false,SWEEP_PIPE=true,SCORE_EARLY=true",
+      "lower_bound": true,
+      "tier_min_mhz": 83.42370901810294,
+      "tier_min_row": "v_swg"
+    }
+  ],
+  "stream": [
+    {
+      "build": "20",
+      "card_clock": "clk_out3_bd_clk_wiz_0_0",
+      "card_period_ns": 13.333,
+      "card_wns": 0.87,
+      "clb_util": 99.57,
+      "k": 0.43256037872101416,
+      "levers": "FAST_POP=false,NWIDE=false,SWEEP_PIPE=false,SCORE_EARLY=false",
+      "lower_bound": true,
+      "tier_min_mhz": 185.49434242255612,
+      "tier_min_row": "a_engine"
+    },
+    {
+      "build": "21",
+      "card_clock": "clk_out3_bd_clk_wiz_0_0",
+      "card_period_ns": 13.333,
+      "card_wns": 0.91,
+      "clb_util": 99.82,
+      "k": 0.43395315141270224,
+      "levers": "FAST_POP=false,NWIDE=false,SWEEP_PIPE=true,SCORE_EARLY=true",
+      "lower_bound": true,
+      "tier_min_mhz": 185.49434242255612,
+      "tier_min_row": "a_engine"
+    }
+  ]
+}

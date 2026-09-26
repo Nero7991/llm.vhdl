@@ -20,3 +20,11 @@ def test_max_levels():
 def test_table_must_be_monotone():
     with pytest.raises(SystemExit, match="monotone"):
         predict.check({"lut": {1: 500.0, 2: 600.0}})
+
+
+def test_max_levels_is_unbounded_below_the_slowest_calibrated_depth():
+    # MEASURED 2026-09-26: v_swg routes 32 levels at 83.4 MHz; a table ending at depth 12
+    # (424 MHz) cannot bound the depth of an 80 MHz clock, so it must not refuse on it.
+    t = {"lut": {1: 1800.0, 12: 424.0}}
+    assert predict.max_levels(80.0, t) is None
+    assert predict.max_levels(500.0, t) == 1

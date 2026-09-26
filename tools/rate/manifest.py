@@ -5,7 +5,7 @@ import config
 
 PATH = os.path.join(config.TARGETS, "blocks.json")
 LEVERS = os.path.join(config.TARGETS, "levers.json")
-TIERS = ("stream", "core", "calib")
+TIERS = ("stream", "core", "calib", "anchor")   # calib and anchor rows never gate a build
 KEYS = ("top", "tier", "clocks", "generics", "levers", "extra_files", "target_ns")
 
 def validate(d, levers):
@@ -15,6 +15,8 @@ def validate(d, levers):
             raise SystemExit("blocks.json %s: missing %s" % (name, ", ".join(miss)))
         if r["tier"] not in TIERS:
             raise SystemExit("blocks.json %s: tier %r not in %s" % (name, r["tier"], TIERS))
+        if isinstance(r["target_ns"], dict) and "default" not in r["target_ns"]:
+            raise SystemExit("blocks.json %s: a target_ns map needs a \"default\" entry" % name)
         if not r["clocks"]:
             raise SystemExit("blocks.json %s: no clock port named" % name)
         for lv in r["levers"]:
@@ -29,6 +31,14 @@ def validate(d, levers):
             if info["top"] == r["top"] and lv not in r["levers"]:
                 raise SystemExit("blocks.json %s: its top %s declares lever %s; the row must list it "
                                  "and set it explicitly" % (name, r["top"], lv))
+
+def target_for(row, device):
+    """A row's target on `device`: target_ns is a number (every device) or a map with a
+    "default" entry, so tuning one device's constraint cannot re-key another's ratings."""
+    t = row["target_ns"]
+    if isinstance(t, dict):
+        return float(t.get(device, t["default"]))
+    return float(t)
 
 def load_levers(path=None):
     with open(path or LEVERS) as f:
