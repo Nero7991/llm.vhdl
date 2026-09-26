@@ -1,0 +1,62 @@
+{
+  "achieved_mhz": 151.5610791148833,
+  "ceiling_mhz": 510.2040816326531,
+  "deps": [
+    "rtl/attn_block.vhd",
+    "rtl/attn_emit.vhd",
+    "rtl/attn_gate.vhd",
+    "rtl/attn_kv_quant.vhd",
+    "rtl/attn_mac_array.vhd",
+    "rtl/attn_recip.vhd",
+    "rtl/attn_rope.vhd",
+    "rtl/attn_score_q12.vhd",
+    "rtl/attn_softmax.vhd",
+    "rtl/attn_twiddle.vhd",
+    "rtl/divider_rs.vhd",
+    "rtl/fixed_luts_pkg.vhd",
+    "rtl/fixed_pkg.vhd",
+    "rtl/imrope_pkg.vhd",
+    "rtl/rmsnorm_rs.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu33p_fk33",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "1e089da9875ad4712f353857315ab2afad7b03054d4ebf6b05d3942243a928ff",
+  "levers": [
+    "SCORE_EARLY",
+    "SWEEP_PIPE"
+  ],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "16G",
+    "peak": 15990841344,
+    "swap_peak": 2036711424
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu33p-fsvh2104-2LV-e",
+  "route": {
+    "end": "u_dut/u_arr/er_r_reg/D",
+    "levels": 14,
+    "start": "u_dut/u_arr/p_reg_reg[17]/DSP_OUTPUT_INST/CLK",
+    "unrouted": 0,
+    "whs": 0.055,
+    "wns": -4.079
+  },
+  "route_mhz": 151.5610791148833,
+  "row": "c_attn_levers",
+  "synth": {
+    "levels": 16,
+    "wns": -2.461
+  },
+  "target_ns": 2.519,
+  "tier": "core",
+  "util": {
+    "BRAM": 11,
+    "DSP": 298,
+    "FF": 116039,
+    "LUT": 90335,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

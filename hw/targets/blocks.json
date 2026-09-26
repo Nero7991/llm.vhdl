@@ -36,6 +36,214 @@
     "tier": "stream",
     "top": "matvec_int4_desc_axi"
   },
+  "b_gdn": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "CONV_LANES": "4",
+      "CV_GAP": "0",
+      "DIM": "128",
+      "EPS": "1.0e-06",
+      "HEAD_GAP": "0",
+      "ISSUE_GAP": "0",
+      "KCONV": "4",
+      "KEY_HEADS": "16",
+      "L2_LANES": "4",
+      "LAYERS": "24",
+      "Q": "12",
+      "RECUR_LANES": "4",
+      "RECUR_SLOTS": "16",
+      "RMS_LANES": "4",
+      "SILU_LANES": "8",
+      "SP_Q": "18",
+      "STRICT_PRODUCER": "true",
+      "VAL_HEADS": "32"
+    },
+    "levers": [],
+    "target_ns": 3.032,
+    "tier": "core",
+    "top": "gdn_block"
+  },
+  "b_seq": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "CONV_LANES": "4",
+      "DIM": "128",
+      "KCONV": "4",
+      "KEY_HEADS": "16",
+      "LAYERS": "24",
+      "VAL_HEADS": "32"
+    },
+    "levers": [],
+    "target_ns": 1.0,
+    "tier": "core",
+    "top": "gdn_job_seq"
+  },
+  "b_state": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "33",
+      "AXI_DW": "256",
+      "CONST_BYTES": "66048",
+      "CONST_EN": "true",
+      "CONST_STRIDE": "66048",
+      "CONV_BYTES": "49152",
+      "CONV_LANES": "4",
+      "CONV_STYLE": "\"block\"",
+      "DIM": "128",
+      "EXP_BYTES": "4096",
+      "EXP_STYLE": "\"distributed\"",
+      "KCONV": "4",
+      "KEY_HEADS": "16",
+      "LAYERS": "24",
+      "LAYER_STRIDE": "1101824",
+      "MANT_BYTES": "1048576",
+      "MAXB": "16",
+      "MAXOUT": "8",
+      "NWIDE": "false",
+      "PIPE": "true",
+      "RECUR_LANES": "4",
+      "STYLE": "\"ultra\"",
+      "VAL_HEADS": "32",
+      "WIDE": "true"
+    },
+    "levers": [
+      "NWIDE"
+    ],
+    "target_ns": 1.47,
+    "tier": "core",
+    "top": "gdn_state_store"
+  },
+  "b_state_nwide": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "33",
+      "AXI_DW": "256",
+      "CONST_BYTES": "66048",
+      "CONST_EN": "true",
+      "CONST_STRIDE": "66048",
+      "CONV_BYTES": "49152",
+      "CONV_LANES": "4",
+      "CONV_STYLE": "\"block\"",
+      "DIM": "128",
+      "EXP_BYTES": "4096",
+      "EXP_STYLE": "\"distributed\"",
+      "KCONV": "4",
+      "KEY_HEADS": "16",
+      "LAYERS": "24",
+      "LAYER_STRIDE": "1101824",
+      "MANT_BYTES": "1048576",
+      "MAXB": "16",
+      "MAXOUT": "8",
+      "NWIDE": "true",
+      "PIPE": "true",
+      "RECUR_LANES": "4",
+      "STYLE": "\"ultra\"",
+      "VAL_HEADS": "32",
+      "WIDE": "true"
+    },
+    "levers": [
+      "NWIDE"
+    ],
+    "target_ns": 1.47,
+    "tier": "core",
+    "top": "gdn_state_store"
+  },
+  "c_attn": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ACC_W": "36",
+      "CM_W": "8",
+      "EXP_W": "8",
+      "E_W": "13",
+      "GQ": "15",
+      "HEAD_DIM": "256",
+      "KV_BLOCK": "32",
+      "LAYERS": "8",
+      "MANT_W": "16",
+      "NORM_LANES": "1",
+      "N_KVH": "4",
+      "N_QH": "16",
+      "N_ROT": "64",
+      "POS_W": "17",
+      "P_W": "32",
+      "Q": "12",
+      "ROM_N": "256",
+      "R_Q": "15",
+      "SCORE_EARLY": "false",
+      "SCORE_HDR_TREE": "0",
+      "SIG_N": "512",
+      "STRICT_PRODUCER": "true",
+      "SWEEP_PIPE": "false",
+      "S_W": "26",
+      "TW_TBL": "1024",
+      "T_W": "24",
+      "Y_W": "24"
+    },
+    "levers": [
+      "SCORE_EARLY",
+      "SWEEP_PIPE"
+    ],
+    "target_ns": 2.519,
+    "tier": "core",
+    "top": "attn_block"
+  },
+  "c_attn_levers": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ACC_W": "36",
+      "CM_W": "8",
+      "EXP_W": "8",
+      "E_W": "13",
+      "GQ": "15",
+      "HEAD_DIM": "256",
+      "KV_BLOCK": "32",
+      "LAYERS": "8",
+      "MANT_W": "16",
+      "NORM_LANES": "1",
+      "N_KVH": "4",
+      "N_QH": "16",
+      "N_ROT": "64",
+      "POS_W": "17",
+      "P_W": "32",
+      "Q": "12",
+      "ROM_N": "256",
+      "R_Q": "15",
+      "SCORE_EARLY": "true",
+      "SCORE_HDR_TREE": "0",
+      "SIG_N": "512",
+      "STRICT_PRODUCER": "true",
+      "SWEEP_PIPE": "true",
+      "S_W": "26",
+      "TW_TBL": "1024",
+      "T_W": "24",
+      "Y_W": "24"
+    },
+    "levers": [
+      "SCORE_EARLY",
+      "SWEEP_PIPE"
+    ],
+    "target_ns": 2.519,
+    "tier": "core",
+    "top": "attn_block"
+  },
   "c_kv": {
     "clocks": {
       "clk": "*"
@@ -202,5 +410,187 @@
     "target_ns": 1.594,
     "tier": "calib",
     "top": "rate_calib_lut"
+  },
+  "d_fetch": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "EPOCH_W": "4",
+      "NREG": "14",
+      "NSUB_MAX": "64",
+      "NUNIT": "5",
+      "STEP_W": "11",
+      "STRICT_PROTO": "true",
+      "WDOG_LIMIT": "4000000"
+    },
+    "levers": [],
+    "target_ns": 1.315,
+    "tier": "core",
+    "top": "seq_desc_fetch"
+  },
+  "d_lock": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "16",
+      "EXP_W": "16",
+      "REG_SIZE": "(4096, 4096, 8192, 4096, 32, 32, 8192, 1024, 1024, 4096, 12288, 12288, 12288, 4096)",
+      "SEGS": "3",
+      "STRICT": "true"
+    },
+    "levers": [],
+    "target_ns": 1.47,
+    "tier": "core",
+    "top": "seq_region_lock"
+  },
+  "d_opdec": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "16",
+      "EXP_W": "16",
+      "HOST_REG": "0",
+      "HOST_ROWS": "4096",
+      "MSEG_OFF1": "2048",
+      "MSEG_OFF2": "4096",
+      "MSEG_REG": "2",
+      "NREG": "14",
+      "NUNIT": "5",
+      "OPC_CONS": "(0, 56, 384, 0, 0, 8192, 2048, 0)",
+      "REL_NAIVE": "false",
+      "SEGS": "3",
+      "STEP_W": "11",
+      "STRICT": "true"
+    },
+    "levers": [],
+    "target_ns": 1.042,
+    "tier": "core",
+    "top": "seq_opdec"
+  },
+  "d_vissue": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "EPOCH_W": "4",
+      "EXP_W": "16",
+      "MY_UNIT": "4",
+      "NREG": "14",
+      "NVOP": "3",
+      "OP_BASE": "4",
+      "STEP_W": "11",
+      "STRICT": "true",
+      "VN_W": "14"
+    },
+    "levers": [],
+    "target_ns": 1.0,
+    "tier": "core",
+    "top": "seq_vec_issue"
+  },
+  "d_vres": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ACC_W": "32",
+      "ADDR_W": "14",
+      "EXP_W": "16",
+      "LANES": "8",
+      "MANT_W": "16",
+      "STRICT": "true"
+    },
+    "levers": [],
+    "target_ns": 1.042,
+    "tier": "core",
+    "top": "seq_vec_res"
+  },
+  "g_grant": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "33",
+      "CNT_W": "8",
+      "DATA_W": "256",
+      "MLEN_W": "4",
+      "NPORT": "2"
+    },
+    "levers": [],
+    "target_ns": 1.0,
+    "tier": "core",
+    "top": "bc_port_grant"
+  },
+  "g_region": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "GA_W": "11",
+      "HOST_WINDOW": "false",
+      "LANES": "8",
+      "MANT_W": "16",
+      "NREGION": "14",
+      "REGMAX": "12288",
+      "SZ": "(4096, 4096, 8192, 4096, 32, 32, 8192, 1024, 1024, 4096, 12288, 12288, 12288, 4096)"
+    },
+    "levers": [],
+    "target_ns": 1.042,
+    "tier": "core",
+    "top": "region_mem"
+  },
+  "v_rms": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "EPS": "1.0e-06",
+      "LANES": "4",
+      "N": "4096",
+      "Q": "12"
+    },
+    "levers": [],
+    "target_ns": 1.47,
+    "tier": "core",
+    "top": "rmsnorm_bf_mem"
+  },
+  "v_smp": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "VOCAB": "248320"
+    },
+    "levers": [],
+    "target_ns": 1.0,
+    "tier": "core",
+    "top": "sampler_stream"
+  },
+  "v_swg": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "LANES": "1",
+      "N": "12288",
+      "Q": "12",
+      "WIDE_IO": "false"
+    },
+    "levers": [],
+    "target_ns": 5.086,
+    "tier": "core",
+    "top": "swiglu_mem"
   }
 }

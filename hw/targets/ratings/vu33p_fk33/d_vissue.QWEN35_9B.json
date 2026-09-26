@@ -1,0 +1,44 @@
+{
+  "achieved_mhz": 675.2194463200541,
+  "ceiling_mhz": 1818.181818181818,
+  "deps": [
+    "rtl/seq_vec_issue.vhd"
+  ],
+  "device": "vu33p_fk33",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "831b00cc636c443cf7b428dcea9ef96e151c8fb68963c1039e5be2035bc8ffa9",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "16G",
+    "peak": 3935461376,
+    "swap_peak": 0
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu33p-fsvh2104-2LV-e",
+  "route": {
+    "end": "u_dut/y_r_reg[2]/CE",
+    "levels": 3,
+    "start": "job_opcode_q_reg[2]/C",
+    "unrouted": 0,
+    "whs": 0.072,
+    "wns": -0.481
+  },
+  "route_mhz": 675.2194463200541,
+  "row": "d_vissue",
+  "synth": {
+    "levels": 4,
+    "wns": -0.612
+  },
+  "target_ns": 1.0,
+  "tier": "core",
+  "util": {
+    "BRAM": 0,
+    "DSP": 0,
+    "FF": 498,
+    "LUT": 113,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}
