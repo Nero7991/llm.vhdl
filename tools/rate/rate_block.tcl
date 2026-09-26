@@ -6,6 +6,12 @@ set fh [open $filelist]; set files [split [string trim [read $fh]] "\n"]; close 
 foreach f $files { read_vhdl -vhdl2008 $f }
 set x [file join $outdir clocks.xdc]; set fh [open $x w]
 foreach c [split $clocks ,] { puts $fh "create_clock -name $c -period $period \[get_ports $c\]" }
+# Several rated clocks are ASYNCHRONOUS (a DUAL_CLK row's core and AXI clocks come from
+# different MMCMs on the card): a rating is per-clock fmax, and a CDC is checked elsewhere.
+if {[llength [split $clocks ,]] > 1} {
+  set g {}; foreach c [split $clocks ,] { lappend g -group $c }   ;# Vivado's Tcl 8.5 has no lmap
+  puts $fh "set_clock_groups -asynchronous [join $g]"
+}
 close $fh
 read_xdc -mode out_of_context $x
 synth_design -top rate_shell -part $part -mode out_of_context -flatten_hierarchy rebuilt

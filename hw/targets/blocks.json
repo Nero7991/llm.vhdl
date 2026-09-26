@@ -1,4 +1,80 @@
 {
+  "a_engine": {
+    "clocks": {
+      "m_aclk": "*",
+      "s_axi_aclk": [
+        "s_axi_*"
+      ]
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "40",
+      "AXI_DW": "256",
+      "BLK": "32",
+      "CB_STYLE": "\"distributed\"",
+      "CHECK_JOB_INDEX": "false",
+      "C_S_AXI_ADDR_WIDTH": "8",
+      "C_S_AXI_DATA_WIDTH": "32",
+      "DESC_MAXB": "16",
+      "DUAL_CLK": "true",
+      "FAST_POP": "false",
+      "FIFO_DEPTH": "512",
+      "MAXB": "16",
+      "MAXCOLS": "17408",
+      "MAXOUT": "16",
+      "MAXROWS_BFP": "17408",
+      "NPORTS_S": "3",
+      "NPORTS_W": "24",
+      "ROWS_IF": "48",
+      "USE_XEXP_PORT": "true",
+      "WDOG_LIMIT": "65536"
+    },
+    "levers": [
+      "FAST_POP"
+    ],
+    "target_ns": 3.0,
+    "tier": "stream",
+    "top": "matvec_int4_desc_axi"
+  },
+  "c_kv": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "33",
+      "AXI_DW": "256",
+      "CM_W": "8",
+      "EXP_W": "8",
+      "HEAD_DIM": "256",
+      "KV_BLOCK": "32",
+      "LAYERS": "8",
+      "MAXB": "16",
+      "MAXCTX": "65536",
+      "MAXOUT": "4",
+      "N_KVH": "4",
+      "POS_W": "17",
+      "RBUF": "4"
+    },
+    "levers": [],
+    "target_ns": 3.0,
+    "tier": "core",
+    "top": "attn_kv_axi"
+  },
+  "c_mover": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "C_KV_AXI": "false",
+      "C_KV_BLOCK": "4"
+    },
+    "levers": [],
+    "target_ns": 3.0,
+    "tier": "core",
+    "top": "ooc_cattnadapt_top"
+  },
   "calib_lut_d1": {
     "clocks": {
       "clk": "*"
