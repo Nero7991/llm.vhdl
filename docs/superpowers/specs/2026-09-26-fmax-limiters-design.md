@@ -159,3 +159,10 @@ lives.
   inference log, decides what was built (CLAUDE.md).
 - **Noise floor**: a 200 MHz single draw can be 0.4-0.75 ns lucky; criterion 2 in section 2
   handles it.
+
+## CORRECTION 2026-09-26 (while planning): "two draws" means two targets
+
+Section 2's "or two draws both reach 200 MHz" cannot mean re-running the same job: Vivado is
+deterministic for identical inputs (MEASURED bit-identical, 2026-09-05 and the 2026-09-25
+cross-lane check), so a re-run reproduces the number and is not a second sample of the noise.
+A second draw is the same row rated at a different `target_ns` (4.0 ns), which changes placement.
