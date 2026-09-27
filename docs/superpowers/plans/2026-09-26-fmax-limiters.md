@@ -24,7 +24,7 @@
 
 ## Review Focus
 
-1. A `start` pulse (new token, `cpos_r` changes) while a c_kv read run is active: the registered limit must not survive it. Pinned in Task 2 Step 6 (second mutant).
+1. A `start` pulse (new token, `cpos_r` changes) while a c_kv read run is active: the registered limit must not survive it. Pinned in Task 2 Step 4 (mutant 2).
 2. `swiglu_mem` at LANES 2 and 4 (and the w8 variants): the pipe's valid is taken from lane 0 for every lane. Pinned in Task 4 Step 3 (`--only swiglu` runs every LANES row).
 3. `sigmoid_q` at the int32 extremes and exactly at the saturation edges (+-16 * 2^Q) and z = 0. Pinned in Task 3 Step 1.
 4. `acc_clr` while a score is in the new S2b stage: the STRICT_PRODUCER assertion must see it. Pinned in Task 1 Step 3 (assertion extended) and Step 5 (bench green with STRICT_PRODUCER true).
