@@ -626,7 +626,9 @@
     "levers": [],
     "target_ns": {
       "default": 5.086,
-      "vu35p_jc_m2": 3.597
+      "vu35p_jc_m1": 4.259,
+      "vu35p_jc_m2": 3.597,
+      "vu35p_jc_m3": 3.286
     },
     "tier": "core",
     "top": "swiglu_mem"

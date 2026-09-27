@@ -166,3 +166,35 @@ Section 2's "or two draws both reach 200 MHz" cannot mean re-running the same jo
 deterministic for identical inputs (MEASURED bit-identical, 2026-09-05 and the 2026-09-25
 cross-lane check), so a re-run reproduces the number and is not a second sample of the noise.
 A second draw is the same row rated at a different `target_ns` (4.0 ns), which changes placement.
+
+## RESULT 2026-09-27: v_swg done; c_attn and c_kv held
+
+Scope was narrowed on 2026-09-27 to v_swg ("rework v_swg first"); sections 4.1-4.3 are not
+implemented yet.
+
+v_swg (`swiglu_mem`, stage B now `sigmoid_q_pipe`, five stages; commits 8c69c46, 9a973e6).
+MEASURED, tools/rate, routed, every record over-constrained (WNS < 0), MHz:
+
+| device | before | after | WNS at target |
+|---|---|---|---|
+| VU33P -2LV (`vu33p_fk33`) | 83.4 | 183.5 | -0.363 |
+| VU35P -2LV (`vu35p_jc_m2l`) | 84.5 | 178.5 | -0.517 |
+| VU35P -1 (`vu35p_jc_m1`) | 93.0 | 212.4 | -0.449 |
+| **VU35P -2 (`vu35p_jc_m2`)** | **111.6** | **242.9** | -0.520 |
+| VU35P -3 (`vu35p_jc_m3`) | 124.5 | 266.9 | -0.461 |
+
+Success criterion (section 2): >= 217 MHz single draw on VU35P -2: MET (242.9). Area on
+VU33P: LUT 2547 -> 1617, DSP 16 -> 9, FF 586 -> 657, BRAM 22.5 -> 23.5. C and D were not
+split. The new v_swg critical path is stage A, the exponent conversion `to_qq`
+(`ue`/`ge` -> `a_hq`/`a_vq`, 22-23 levels).
+
+Slowest blocks per device after this change: c_kv then c_attn everywhere (VU35P -2: 151.1,
+173.7), then v_swg, except VU35P -3 where a_engine (248.8) is third.
+
+Verification: `sim/tb_sigmoid_q_pipe.vhd` exhaustive over [-17, 17] * 2^12 plus the int32
+extremes, 139,270 samples bit-exact to `sigmoid_q`; every swiglu row and both
+`tb_llama_top_swg*` rows PASS unchanged. Mutants: rounding bias removed KILLED (value);
+saturation edge `>=` -> `>` KILLED but by GHDL's range check on `k1`, not the value compare;
+`drained` without the pipe's busy term SURVIVES and is equivalent under contiguous issue
+(term kept); `drained` without `vd` KILLED by the new `maxlast` trial on all four
+swiglu_mem rows, where the random trials before it passed.
