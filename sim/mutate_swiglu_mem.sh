@@ -30,9 +30,11 @@ SRC="$REPO/rtl/swiglu_mem.vhd"
 TB="$REPO/sim/tb_swiglu_mem.vhd"
 DEPS="util_pkg fixed_luts_pkg fixed_pkg vec_mem swiglu bfp_pack"
 
-# name|sed program|what it breaks|expected
+# name|sed program|what it breaks|expected[|extra generics for this mutant]
+# expected NB4: bites at LANES = 4 only (NB = 4 with -gN=16), survives at 1 and 2
 MUTS=(
-"nosig|s@            b_sig(l) <= sigmoid_q(a_vq(l), Q);@            b_sig(l) <= to_signed(4096, 32);@|the sigmoid dropped: sig = 1.0, so out = g*u in Q12 -- the stand-in this unit replaces, at the unit's own grid|BITE"
+"nosig|s@               o_v => sg_v(l), o_s => b_sig(l), o_tag => sg_to(l), busy => sg_busy(l));@               o_v => sg_v(l), o_s => open, o_tag => sg_to(l), busy => sg_busy(l));\n    b_sig(l) <= to_signed(4096, 32);@|the sigmoid dropped (sigmoid_q_pipe's output replaced by 1.0): out = g*u in Q12 -- the stand-in this unit replaces, at the unit's own grid|BITE"
+"nobusy|s@        drained := (vf = '0' and va = '0' and sg_busy(0) = '0' and vc = '0'@        drained := (vf = '0' and va = '0' and vc = '0'@|the drain test ignores sigmoid_q_pipe's busy.  Bites only when NB = N/LANES <= 5, where the whole batch can sit inside the five-stage pipe with vf/va/vc/vd all 0 (run at N = 16: NB 16, 8, 4 at LANES 1, 2, 4)|NB4|-gN=16"
 "packrnd|s@                  r34    := shift_right(r34 + bias34, shift_o);@                  r34    := shift_right(r34, shift_o);@|the pack TRUNCATES instead of rounding half up (bfp_pack's rule dropped)|BITE"
 "raskew|s@  ram_ra <= std_logic_vector(to_unsigned(idx, AB)) when idx < NB@  ram_ra <= std_logic_vector(to_unsigned(idx + 1, AB)) when idx + 1 < NB@|the input-bank read address advanced by one beat: the read latency the valid chain absorbs is off by one element (LANES elements above 1)|BITE"
 "convrnd|s@        bias64 := shift_left(to_signed(1, 64), cr - 1);@        bias64 := (others => '0');@|the Qq conversion TRUNCATES instead of rounding half up for exp > Q (swiglu.vhd's S_CALC_A bias dropped)|BITE"
@@ -79,7 +81,7 @@ done
 
 fails=0
 for m in "${MUTS[@]}"; do
-  IFS='|' read -r name prog what exp <<< "$m"
+  IFS='|' read -r name prog what exp xg <<< "$m"
   f="$SD/$name.vhd"
   sed -e "$(printf '%b' "$prog")" "$SRC" > "$f"
   if cmp -s "$f" "$SRC"; then
@@ -87,7 +89,7 @@ for m in "${MUTS[@]}"; do
     fails=$((fails+1)); continue
   fi
   for L in $LANES_LIST; do
-    G="-gLANES=$L"
+    G="-gLANES=$L${xg:+ $xg}"
     a=$(run "$f" "$G" "$SD/$name.L$L.full.log")
     b=$(run "$f" "$G -gCHK_VAL=false" "$SD/$name.L$L.noval.log")
     # The third column turns the exponent check off as well, leaving only the
@@ -103,6 +105,7 @@ for m in "${MUTS[@]}"; do
     case "$exp" in
       BITE)   want=BITE ;;
       L1SURV) if [ "$L" = 1 ]; then want=SURVIVES; else want=BITE; fi ;;
+      NB4)    if [ "$L" = 4 ]; then want=BITE; else want=SURVIVES; fi ;;
       *)      want= ;;
     esac
     if [ -n "$want" ] && [ "$v" != "$want" ]; then v="$v!EXP=$want"; fails=$((fails+1)); fi

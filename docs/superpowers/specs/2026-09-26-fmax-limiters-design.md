@@ -198,3 +198,28 @@ saturation edge `>=` -> `>` KILLED but by GHDL's range check on `k1`, not the va
 `drained` without the pipe's busy term SURVIVES and is equivalent under contiguous issue
 (term kept); `drained` without `vd` KILLED by the new `maxlast` trial on all four
 swiglu_mem rows, where the random trials before it passed.
+
+### CORRECTION 2026-09-27 (final review, same day)
+
+- **WITHDRAWN: "`drained` without the pipe's busy term SURVIVES and is equivalent under
+  contiguous issue".** It survived because every gate row had NB = N/LANES >= 16. With
+  NB <= 5 the whole batch can sit inside the five-stage pipe while `vf`, `va`, `vc` and `vd`
+  are all 0, and the mutant FAILS: MEASURED by the reviewer, 45 of 271 checks at N=8 LANES=2
+  and 74 of 511 at N=16 LANES=4. The term is required, not redundant. New gate row
+  `sim/tb_swiglu_mem_nb4.vhd` (N=16, LANES=4) pins it, and `sim/mutate_swiglu_mem.sh`
+  gains a `nobusy` row expected to bite at LANES=4 only. MEASURED: bites at LANES=4
+  (rc 1 full and with values off, rc 0 with values and exponent off, so the kill is the
+  exponent check's), survives at LANES 1 and 2 (NB 16, 8); `nosig`, repointed at the pipe's
+  output, bites at 1, 2 and 4.
+- **The 217 MHz criterion is met by one draw at the edge of the noise floor.** 242.9 MHz is
+  4.117 ns against 4.608 ns, a margin of 0.49 ns (DERIVED), inside the 0.4-0.75 ns routed
+  floor recorded in CLAUDE.md. Read it as MET, single draw, not as a margin.
+- **The RESULT table's rows were rated at different targets** (VU33P and VU35P -2LV at
+  5.086 ns; -1, -2 and -3 retargeted to 4.259, 3.597 and 3.286 ns). Each row is its own
+  over-constrained measurement; do not rank rows against each other on small differences.
+- **"The new critical path is stage A `to_qq`" holds on 4 of 5 devices.** On VU35P -1 the
+  worst path is `gen_sig[0].u_sig/s5_reg -> ARG__5` DSP A input (stage C's multiply, 11
+  levels).
+- **Pipe latency adds 8 cycles per `VEC_SWG`** (MEASURED `SWGFAST_CYCLES` 24,596, was
+  24,588); the cycle-count comments in `rtl/swiglu_mem.vhd`, `rtl/llama_top.vhd`,
+  `rtl/fk33_llama_top.vhd` and the w8 benches still quote the old figures (deferred).
