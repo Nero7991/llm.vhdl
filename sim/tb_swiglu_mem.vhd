@@ -419,6 +419,15 @@ begin
     end loop;
     ge <= 12; ue <= 12; trial("ident");
 
+    -- ---- 2b. the largest |out| in the LAST element (2026-09-26).  Pass 1 must
+    -- fold every element into the max before it settles; with the sigmoid in a
+    -- five-stage pipe, a `drained` that forgets the pipe settles while the last
+    -- elements are still in it.  MEASURED: that mutant PASSED every random
+    -- trial above, because their max is rarely among the last few elements.
+    for i in 0 to N-2 loop setg(i, 100); setu(i, 100); end loop;
+    setg(N-1, 16000); setu(N-1, 16000);
+    ge <= 12; ue <= 12; trial("maxlast");
+
     -- ---- 3. exponents BELOW Q: the left-shift branch of the conversion
     for i in 0 to N-1 loop
       uniform(seed1, seed2, r); setg(i, integer(r*2000.0) - 1000);

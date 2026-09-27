@@ -414,6 +414,11 @@ architecture rtl of swiglu_mem is
   signal a_vq, a_hq : s32a := (others => (others => '0'));
   -- Stage B: sigmoid, operands carried.
   signal b_sig, b_vq, b_hq : s32a := (others => (others => '0'));
+  -- Stage B is sigmoid_q_pipe (above), per lane; the operands ride its tag.
+  signal sg_v    : std_logic_vector(LANES-1 downto 0);
+  signal sg_busy : std_logic_vector(LANES-1 downto 0);
+  type tag64a is array(0 to LANES-1) of std_logic_vector(63 downto 0);
+  signal sg_ti, sg_to : tag64a;
   -- Stage C: silu, up operand carried.
   signal c_silu, c_hq : s32a := (others => (others => '0'));
   -- Stage D: the Q12 result, exactly swiglu.vhd's out_v, per lane.
@@ -571,6 +576,21 @@ begin
   end process;
   o_rdata <= o_bq(to_integer(unsigned(o_rsel)));
 
+  -- Stage B, 2026-09-26: sigmoid_q in five stages (sigmoid_q_pipe, above), the
+  -- operands riding its tag.  It was ONE stage: 32 levels, 83.4 MHz on VU33P
+  -- -2LV (block ratings).  All lanes are driven by the same `va`, so every
+  -- lane's valid is lane 0's; b_* are wires from the pipe's output registers.
+  gen_sig : for l in 0 to LANES-1 generate
+    sg_ti(l) <= std_logic_vector(a_vq(l)) & std_logic_vector(a_hq(l));
+    u_sig : entity work.sigmoid_q_pipe
+      generic map(Q => Q, TAG_W => 64)
+      port map(clk => clk, rst => rst, i_v => va, i_z => a_vq(l), i_tag => sg_ti(l),
+               o_v => sg_v(l), o_s => b_sig(l), o_tag => sg_to(l), busy => sg_busy(l));
+    b_vq(l) <= signed(sg_to(l)(63 downto 32));
+    b_hq(l) <= signed(sg_to(l)(31 downto 0));
+  end generate;
+  vb <= sg_v(0);
+
   process(clk)
     variable prod1  : signed(63 downto 0);
     variable prod2  : signed(63 downto 0);
@@ -605,7 +625,7 @@ begin
       if rst = '1' then
         state <= S_IDLE;
         idx <= 0; widx <= 0;
-        vf <= '0'; va <= '0'; vb <= '0'; vc <= '0'; vd <= '0';
+        vf <= '0'; va <= '0'; vc <= '0'; vd <= '0';
         lmax <= (others => (others => '0'));
         max_abs <= (others => '0');
       else
@@ -616,15 +636,6 @@ begin
           for l in 0 to LANES-1 loop
             a_vq(l) <= to_qq(signed(g_bq(l)), Q - ge);
             a_hq(l) <= to_qq(signed(u_bq(l)), Q - ue);
-          end loop;
-        end if;
-
-        vb <= va;
-        if va = '1' then
-          for l in 0 to LANES-1 loop
-            b_sig(l) <= sigmoid_q(a_vq(l), Q);
-            b_vq(l)  <= a_vq(l);
-            b_hq(l)  <= a_hq(l);
           end loop;
         end if;
 
@@ -646,7 +657,7 @@ begin
         end if;
 
         -- ---- the two passes.
-        drained := (vf = '0' and va = '0' and vb = '0' and vc = '0'
+        drained := (vf = '0' and va = '0' and sg_busy(0) = '0' and vc = '0'
                     and vd = '0');
         case state is
           when S_IDLE =>

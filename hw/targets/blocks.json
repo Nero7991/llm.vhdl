@@ -624,7 +624,10 @@
       "WIDE_IO": "false"
     },
     "levers": [],
-    "target_ns": 5.086,
+    "target_ns": {
+      "default": 5.086,
+      "vu35p_jc_m2": 3.597
+    },
     "tier": "core",
     "top": "swiglu_mem"
   }
