@@ -151,6 +151,155 @@
 -- it to the level seq_vec_issue wants, as every adapter there does.
 --
 -- NO HARDWARE.  Synthesis and simulation only.
+-- ===========================================================================
+-- sigmoid_q_pipe -- 2026-09-26.  fixed_pkg.sigmoid_q(z, Q), bit-exact, in five
+-- registered stages, one listed operation each (the project timing rule).
+-- It lives in THIS file on purpose: nine build and sim lists name
+-- swiglu_mem.vhd explicitly (hw/fk33/gen_pcieep.py:1592 among them), and a new
+-- file would have to be added to every one.  swiglu_mem ran sigmoid_q in ONE
+-- stage: 32 levels, 83.4 MHz on VU33P -2LV (block ratings, 2026-09-26).
+--
+--   B1  saturation flags; k and frac, which are BIT SLICES of the offset in
+--       the non-saturated domain (z in (-16, 16)*2^Q gives offset in
+--       (0, 32*2^Q), so k = offset*16 >> Q is in [0, 511] and frac is the low
+--       Q bits; the reference's clamps are no-ops there, and saturated
+--       inputs never use k or frac)
+--   B2  lo = SIG_ROM(k), hi = SIG_ROM(k+1)
+--   B3  (hi - lo) * frac, at D_W x (Q+1) bits: one DSP, not a 64x64 cascade
+--   B4  lo + (prod >> Q), plus the rounding bias, shifted to Q30 -> Q
+--   B5  saturation select and the [0, 1] clamp
+-- rtl/attn_gate.vhd stages the same interpolation for C; its OUTPUT stage is
+-- deliberately different (Q15, clamped to 32767), so it is not reused here.
+-- ===========================================================================
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+use work.util_pkg.all;
+use work.fixed_luts_pkg.all;
+
+entity sigmoid_q_pipe is
+  generic(Q : natural := 12; TAG_W : positive := 1);
+  port(
+    clk, rst : in  std_logic;
+    i_v      : in  std_logic;
+    i_z      : in  signed(31 downto 0);
+    i_tag    : in  std_logic_vector(TAG_W-1 downto 0);
+    o_v      : out std_logic;
+    o_s      : out signed(31 downto 0);
+    o_tag    : out std_logic_vector(TAG_W-1 downto 0);
+    busy     : out std_logic
+  );
+end entity;
+
+architecture rtl of sigmoid_q_pipe is
+  function step_max return natural is
+    variable m : natural := 0;
+  begin
+    for k in 0 to SIG_ROM'high - 1 loop
+      if SIG_ROM(k+1) - SIG_ROM(k) > m then m := SIG_ROM(k+1) - SIG_ROM(k); end if;
+    end loop;
+    return m;
+  end function;
+  function step_min return integer is
+    variable m : integer := integer'high;
+  begin
+    for k in 0 to SIG_ROM'high - 1 loop
+      if SIG_ROM(k+1) - SIG_ROM(k) < m then m := SIG_ROM(k+1) - SIG_ROM(k); end if;
+    end loop;
+    return m;
+  end function;
+  -- Vivado ignores asserts in synthesis: out-of-range naturals stop it instead.
+  constant CHK_STEP_NONNEG : natural := step_min;          -- table rises
+  constant CHK_Q_POS       : natural := Q - 1;             -- frac has >= 1 bit
+  constant D_W   : positive := clog2(step_max + 1) + 1;    -- signed step width
+  constant HI_Z  : signed(63 downto 0) := shift_left(to_signed(16, 64), Q);
+  constant LO_Z  : signed(63 downto 0) := -HI_Z;
+  constant ONE_Q : signed(63 downto 0) := shift_left(to_signed(1, 64), Q);
+
+  type tag_t is array (1 to 5) of std_logic_vector(TAG_W-1 downto 0);
+  signal v   : std_logic_vector(1 to 5) := (others => '0');
+  signal tg  : tag_t := (others => (others => '0'));
+  signal lsat1, hsat1, lsat2, hsat2, lsat3, hsat3, lsat4, hsat4 : std_logic := '0';
+  signal k1  : natural range 0 to SIG_ROM'high - 1 := 0;
+  signal f1, f2 : unsigned(Q-1 downto 0) := (others => '0');
+  signal lo2, hi2, lo3 : signed(31 downto 0) := (others => '0');
+  signal p3  : signed(D_W + Q downto 0) := (others => '0');
+  signal r4  : signed(63 downto 0) := (others => '0');
+  signal s5  : signed(31 downto 0) := (others => '0');
+begin
+  o_v   <= v(5);
+  o_s   <= s5;
+  o_tag <= tg(5);
+  busy  <= '0' when v = "00000" else '1';
+
+  process(clk)
+    variable z, off, idx : signed(63 downto 0);
+    variable r           : signed(63 downto 0);
+  begin
+    if rising_edge(clk) then
+      if rst = '1' then
+        v <= (others => '0');
+      else
+        v <= i_v & v(1 to 4);
+        tg(1) <= i_tag;
+        for i in 2 to 5 loop tg(i) <= tg(i-1); end loop;
+
+        -- B1
+        z := resize(i_z, 64);
+        if z <= LO_Z then lsat1 <= '1'; else lsat1 <= '0'; end if;
+        if z >= HI_Z then hsat1 <= '1'; else hsat1 <= '0'; end if;
+        off := z + HI_Z;
+        idx := shift_left(off, 4);
+        if z <= LO_Z or z >= HI_Z then
+          k1 <= 0;
+          f1 <= (others => '0');
+        else
+          k1 <= to_integer(shift_right(idx, Q));
+          f1 <= unsigned(idx(Q-1 downto 0));
+        end if;
+
+        -- B2
+        lo2 <= to_signed(SIG_ROM(k1), 32);
+        hi2 <= to_signed(SIG_ROM(k1 + 1), 32);
+        f2  <= f1;
+        lsat2 <= lsat1; hsat2 <= hsat1;
+
+        -- B3
+        p3  <= resize(hi2 - lo2, D_W) * signed('0' & f2);
+        lo3 <= lo2;
+        lsat3 <= lsat2; hsat3 <= hsat2;
+
+        -- B4: interp = lo + (prod >> Q), then sigmoid_q's rounding to Q
+        if Q <= 30 then
+          if 30 - Q > 0 then
+            r := resize(lo3, 64) + resize(shift_right(p3, Q), 64)
+                 + shift_left(to_signed(1, 64), 30 - Q - 1);
+            r4 <= shift_right(r, 30 - Q);
+          else
+            r4 <= resize(lo3, 64) + resize(shift_right(p3, Q), 64);
+          end if;
+        else
+          r4 <= shift_left(resize(lo3, 64) + resize(shift_right(p3, Q), 64), Q - 30);
+        end if;
+        lsat4 <= lsat3; hsat4 <= hsat3;
+
+        -- B5
+        if lsat4 = '1' then
+          s5 <= (others => '0');
+        elsif hsat4 = '1' then
+          s5 <= resize(ONE_Q, 32);
+        elsif r4 < 0 then
+          s5 <= (others => '0');
+        elsif r4 > ONE_Q then
+          s5 <= resize(ONE_Q, 32);
+        else
+          s5 <= resize(r4, 32);
+        end if;
+      end if;
+    end if;
+  end process;
+end architecture;
+
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 use work.fixed_pkg.all;
 use work.util_pkg.all;   -- clog2
