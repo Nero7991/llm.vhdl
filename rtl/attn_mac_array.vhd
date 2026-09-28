@@ -67,7 +67,8 @@
 --
 --   S0   operand mux, REGISTERED.  These are the DSP48E2's AREG/BREG.
 --   S1   the multiply, alone in its stage.
---   S2   score: the adder tree and the partial register
+--   S2   score: the two half trees (S2a), then the final add and the range
+--        compare (S2b, 2026-09-26)
 --        PV / rescale: the accumulator read-modify-write, ONE shared adder
 --        per lane (see below)
 --
@@ -98,7 +99,7 @@
 --                                    the KV beat rate.  There is deliberately
 --                                    no ready on any of the three.  What
 --                                    bounds the service time is that every
---                                    mode is a FIXED three-stage pipeline with
+--                                    mode is a FIXED pipeline (three stages, a score four since 2026-09-26) with
 --                                    no feedback into its own input, so the
 --                                    array accepts one operation per cycle
 --                                    unconditionally, forever.
@@ -233,12 +234,19 @@ architecture rtl of attn_mac_array is
   -- against P_W.  Wide on purpose: a sum that overflows here would hide the
   -- very overflow `err` exists to report.
   constant T_W   : integer := PR_W + clog2(DIM_TILE) + 1;
+  -- S2a sums each half of the DIM_TILE products; S2b adds the halves and does
+  -- the P_W range compare.  A wide add tree and a wide compare were in one
+  -- stage (the project rule, header), MEASURED 142.0 MHz on VU33P -2LV and
+  -- 173.7 on VU35P -2 (block ratings, 2026-09-26).  T_W holds the full sum, so
+  -- the two halves and their sum are exact: the split cannot change a value.
+  constant HALF  : integer := DIM_TILE/2;
 
   type mode_t is (M_NONE, M_SCORE, M_PV, M_RS);
 
   type a_arr is array (0 to LANES-1) of signed(A_W-1 downto 0);
   type b_arr is array (0 to LANES-1) of signed(B_W-1 downto 0);
   type p_arr is array (0 to LANES-1) of signed(PR_W-1 downto 0);
+  type t_arr is array (0 to QH_TILE-1) of signed(T_W-1 downto 0);
   type acc_arr is array (0 to NACC-1) of signed(ACC_W-1 downto 0);
 
   signal a_reg : a_arr := (others => (others => '0'));
@@ -252,6 +260,9 @@ architecture rtl of attn_mac_array is
   signal pv_r  : std_logic := '0';
   signal pd_r  : std_logic_vector(QH_TILE*P_W-1 downto 0) := (others => '0');
   signal pb_r  : integer range 0 to ACC_N-1 := 0;
+  signal hs_lo, hs_hi : t_arr := (others => (others => '0'));
+  signal sv3  : std_logic := '0';
+  signal blk3 : integer range 0 to ACC_N-1 := 0;
 
   signal ov_r  : std_logic := '0';
   signal er_r  : std_logic := '0';
@@ -323,11 +334,13 @@ begin
     variable sum  : signed(ACC_W downto 0);
     variable ovf  : boolean;
     variable rsh  : signed(PR_W-1 downto 0);
+    variable tl, th : signed(T_W-1 downto 0);
   begin
     if rising_edge(clk) then
       if rst = '1' then
         mode1 <= M_NONE; mode2 <= M_NONE;
         blk1 <= 0; blk2 <= 0; pb_r <= 0;
+        sv3 <= '0'; blk3 <= 0;
         pv_r <= '0'; ov_r <= '0'; er_r <= '0'; ov_r2 <= '0';
         acc  <= (others => (others => '0'));
       else
@@ -438,22 +451,39 @@ begin
         pv_r  <= '0';
         ov_r2 <= '0';
 
+        -- ---------------- S2b: the final add and the range compare -------
+        sv3 <= '0';
+        if sv3 = '1' then
+          for h in 0 to QH_TILE-1 loop
+            t := hs_lo(h) + hs_hi(h);
+            if t > resize(not shift_left(to_signed(-1, P_W), P_W-1), T_W)
+               or t < resize(shift_left(to_signed(-1, P_W), P_W-1), T_W) then
+              er_r <= '1';
+            end if;
+            pd_r((h+1)*P_W-1 downto h*P_W)
+              <= std_logic_vector(resize(t, P_W));
+          end loop;
+          pv_r <= '1';
+          pb_r <= blk3;
+        end if;
+
         case mode2 is
           when M_SCORE =>
+            -- ---------------- S2a: the two half trees -------------------
             for h in 0 to QH_TILE-1 loop
-              t := (others => '0');
-              for t2 in 0 to DIM_TILE-1 loop
-                t := t + resize(p_reg(h*DIM_TILE + t2), T_W);
+              tl := (others => '0');
+              th := (others => '0');
+              for t2 in 0 to HALF-1 loop
+                tl := tl + resize(p_reg(h*DIM_TILE + t2), T_W);
               end loop;
-              if t > resize(not shift_left(to_signed(-1, P_W), P_W-1), T_W)
-                 or t < resize(shift_left(to_signed(-1, P_W), P_W-1), T_W) then
-                er_r <= '1';
-              end if;
-              pd_r((h+1)*P_W-1 downto h*P_W)
-                <= std_logic_vector(resize(t, P_W));
+              for t2 in HALF to DIM_TILE-1 loop
+                th := th + resize(p_reg(h*DIM_TILE + t2), T_W);
+              end loop;
+              hs_lo(h) <= tl;
+              hs_hi(h) <= th;
             end loop;
-            pv_r <= '1';
-            pb_r <= blk2;
+            sv3  <= '1';
+            blk3 <= blk2;
 
           when M_PV =>
             -- ONE shared adder per lane; see the header's MEASURED note.
@@ -503,7 +533,7 @@ begin
           ov_r <= '0';
           er_r <= '0';
           if STRICT_PRODUCER then
-            assert mode1 = M_NONE and mode2 = M_NONE
+            assert mode1 = M_NONE and mode2 = M_NONE and sv3 = '0'
               report "attn_mac_array: acc_clr while an operation is in the "
                    & "pipeline.  That operation's write-back is discarded."
               severity error;

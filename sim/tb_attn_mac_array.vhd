@@ -45,6 +45,9 @@ entity tb_attn_mac_array is
     -- Idle cycles inserted between the score, rescale and PV phases of one
     -- position.  0 abuts them; see the header.
     GAP      : natural  := 2;
+    -- Edges from the edge that samples sc_valid to the edge the collector sees
+    -- the partial.  3 before the 2026-09-26 S2 split, 4 after it.
+    P_LAT    : positive := 4;
     VECS     : string   := "attn_mac_array_vec.txt";
     HEARTBEAT_US : integer := 0
   );
@@ -98,6 +101,8 @@ architecture sim of tb_attn_mac_array is
   -- would be reading a stream it is also driving.
   signal par_got : int_arr(0 to QH_TILE*ACC_N-1) := (others => 0);
   signal par_n   : integer := 0;
+  signal sc_hist : std_logic_vector(7 downto 0) := (others => '0');
+  signal lat_bad : integer := 0;
   signal nerr    : integer := 0;
 
   -- ACC_W = 36 exceeds a VHDL integer, so accumulator goldens are carried as
@@ -138,9 +143,18 @@ begin
     variable b : integer;
   begin
     if rising_edge(clk) then
+      sc_hist <= sc_hist(6 downto 0) & sc_valid;
       if rst = '1' then
         par_n <= 0;
       elsif p_valid = '1' then
+        -- The latency contract, measured on every partial: the score that
+        -- produced it was sampled exactly P_LAT edges earlier.  sc_hist(k)
+        -- holds sc_valid as sampled k+1 edges before this one.
+        if sc_hist(P_LAT-1) /= '1' then
+          lat_bad <= lat_bad + 1;
+          report "tb_attn_mac_array: a partial arrived without a score "
+               & integer'image(P_LAT) & " edges earlier" severity error;
+        end if;
         b := to_integer(p_blk);
         for h in 0 to QH_TILE-1 loop
           par_got(h*ACC_N + b) <= to_integer(signed(p_data((h+1)*P_W-1 downto h*P_W)));
@@ -244,7 +258,8 @@ begin
         -- registered copy produces garbage rather than the right answer.
         sc_q <= (others => '1');
         sc_k <= (others => '1');
-        for i in 1 to 4 loop wait until rising_edge(clk); end loop;
+        -- drain P_LAT stages plus the collector's edge
+        for i in 1 to P_LAT + 1 loop wait until rising_edge(clk); end loop;
 
         for h in 0 to QH_TILE-1 loop
           for b in 0 to ACC_N-1 loop
@@ -334,7 +349,7 @@ begin
            & "attn_score_q12's own width argument rests on is violated"
       severity error;
 
-    if nerr = 0 then
+    if nerr = 0 and lat_bad = 0 then
       report "tb_attn_mac_array: PASS -- " & integer'image(NCASE)
            & " cases, QH_TILE=" & integer'image(QH_TILE)
            & " DIM_TILE=" & integer'image(DIM_TILE)
@@ -344,7 +359,8 @@ begin
            & std_logic'image(ovr);
     else
       report "tb_attn_mac_array: RESULT bad, " & integer'image(nerr)
-           & " mismatches" severity failure;
+           & " mismatches, " & integer'image(lat_bad)
+           & " partials off the P_LAT contract" severity failure;
     end if;
     running <= false;
     wait;

@@ -202,7 +202,13 @@
       "SCORE_EARLY",
       "SWEEP_PIPE"
     ],
-    "target_ns": 2.519,
+    "target_ns": {
+      "default": 2.519,
+      "vu35p_jc_m1": 5.5,
+      "vu35p_jc_m2": 4.0,
+      "vu35p_jc_m2l": 5.8,
+      "vu35p_jc_m3": 4.8
+    },
     "tier": "core",
     "top": "attn_block"
   },
@@ -244,7 +250,14 @@
       "SCORE_EARLY",
       "SWEEP_PIPE"
     ],
-    "target_ns": 2.519,
+    "target_ns": {
+      "default": 2.519,
+      "vu33p_fk33": 6.5,
+      "vu35p_jc_m1": 5.5,
+      "vu35p_jc_m2": 4.5,
+      "vu35p_jc_m2l": 5.8,
+      "vu35p_jc_m3": 4.8
+    },
     "tier": "core",
     "top": "attn_block"
   },
