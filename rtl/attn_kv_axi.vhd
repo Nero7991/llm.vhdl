@@ -678,7 +678,16 @@ begin
     signal run_p0  : unsigned(POS_W-1 downto 0) := (others => '0');
     signal ph_ch   : integer range 0 to BEAT_CH-1 := 0;
     signal ar_addr : unsigned(ADDR_W-1 downto 0) := (others => '0');
-    signal f_beat  : integer := 0;   -- next beat index to request, from astart
+    -- The highest beat index a read run can reach, DERIVED: phase < BEAT_CH,
+    -- MAXCTX records of CPR chunks, rounded up, plus one burst of overshoot.
+    constant FB_MAX : natural := (2*BEAT_CH - 2 + MAXCTX*CPR)/BEAT_CH + MAXB;
+    signal lim_beat_r : natural range 0 to FB_MAX := 0;
+    signal lim_ok_r   : std_logic := '0';
+    -- '0' for the one cycle after anything the limit is computed from was
+    -- reassigned (run start/end, flush, reset, token start): lim_beat_r then
+    -- still holds the PREVIOUS run's limit.  Issue requires it '1'.
+    signal lim_fresh  : std_logic := '0';
+    signal f_beat  : natural range 0 to FB_MAX := 0;   -- next beat index to request, from astart
     -- (record, chunk-in-record, slot) of chunk 0 of the beat about to arrive,
     -- kept INCREMENTALLY so no beat divides by CPR.  Invariant, with n the
     -- number of beats arrived in this run: w_rr*CPR + w_mm = n*BEAT_CH - ph_ch, with 0 <= w_mm < CPR
@@ -691,7 +700,7 @@ begin
     signal w_rr    : integer := 0;
     signal w_mm    : integer range -(BEAT_CH-1) to CPR-1 := 0;
     signal w_slot  : integer range 0 to RBUF-1 := 0;
-    signal c_max   : integer := 0;   -- highest record index the consumer took
+    signal c_max   : natural range 0 to MAXCTX := 0;   -- highest record index the consumer took
     signal outst   : integer range 0 to MAXOUT+1 := 0;
     signal arv     : std_logic := '0';
     signal alen    : integer range 1 to MAXB := 1;
@@ -742,7 +751,7 @@ begin
 
     P_RD : process(clk)
       variable rr, mm, slot : integer;
-      variable lim_rec, lim_beat, left, n : integer;
+      variable lim_rec, left, n : integer;
       variable lane : std_logic_vector(CH_W-1 downto 0);
       variable dout : integer;       -- outstanding delta this cycle
       variable base : std_logic_vector(ADDR_W-1 downto 0);
@@ -754,7 +763,27 @@ begin
           outst <= 0; f_beat <= 0; c_max <= 0; halted <= '0';
           w_rr <= 0; w_mm <= 0; w_slot <= 0;
           err_rd(s) <= '0';
+          lim_fresh <= '0'; lim_ok_r <= '0';
         else
+          -- The read limit, registered one cycle ahead of its use (block
+          -- ratings 2026-09-26: this arithmetic was 28 levels in the issue
+          -- cycle, 114.9 MHz on VU33P -2LV).  A limit one cycle old is SAFE:
+          -- c_max only grows within a run and cpos_r/run_p0/ph_ch are fixed
+          -- in it, so the old limit is never above the true one.  The cycles
+          -- where that premise breaks clear lim_fresh below.
+          lim_fresh <= '1';
+          lim_rec := c_max + RBUF - 2;
+          if lim_rec > to_integer(cpos_r) - 1 - to_integer(run_p0) then
+            lim_rec := to_integer(cpos_r) - 1 - to_integer(run_p0);
+          end if;
+          if lim_rec >= 0 then
+            lim_ok_r   <= '1';
+            lim_beat_r <= (ph_ch + (lim_rec+1)*CPR + BEAT_CH - 1)/BEAT_CH;
+          else
+            lim_ok_r   <= '0';
+          end if;
+          if start = '1' then lim_fresh <= '0'; end if;
+
           dout := 0;
           if start = '1' then err_rd(s) <= '0'; end if;
 
@@ -857,6 +886,7 @@ begin
             if outst + dout = 0 and arv = '0' then
               sv <= (others => '0'); run_v <= '0'; halted <= '0';
               f_beat <= 0; c_max <= 0;
+              lim_fresh <= '0';
               w_rr <= 0; w_mm <= 0; w_slot <= 0;
             end if;
           elsif halted = '1' then
@@ -866,6 +896,7 @@ begin
             if outst + dout = 0 and arv = '0' then
               run_v <= '0'; sv <= (others => '0');
               f_beat <= 0; c_max <= 0;
+              lim_fresh <= '0';
               w_rr <= 0; w_mm <= 0; w_slot <= 0;
             end if;
           elsif run_v = '0' then
@@ -882,11 +913,13 @@ begin
               run_p0  <= q_pos(s);
               run_v   <= '1';
               f_beat  <= 0; c_max <= 0;
+              lim_fresh <= '0';
               sv      <= (others => '0');
             end if;
           else
             -- ---- AR issue along the run ---------------------------------
-            if arv = '0' and outst + dout < MAXOUT then
+            if arv = '0' and outst + dout < MAXOUT
+               and lim_fresh = '1' and lim_ok_r = '1' then
               -- ONE RECORD OF HEADROOM IS MANDATORY, and it is not slack.
               -- `lim_beat` is a CEILING, so the last beat of the permitted
               -- range carries the first chunk(s) of record lim_rec+1 as well.
@@ -898,19 +931,27 @@ begin
               -- dropped, slot 0 kept record 0's `sp` while filling with record
               -- 4's mantissas, and the sweep hung at pos = 4 having silently
               -- built a record out of two different positions.
+              -- The limit itself is lim_beat_r, computed at the top of the
+              -- process one cycle ahead.
+              left := lim_beat_r - f_beat;
+              if left > 0 then
+                n := burst_len(ar_addr, left);
+                alen <= n;
+                arv  <= '1';
+              end if;
+              -- The safety argument, checked in simulation on every issue: the
+              -- registered limit never exceeds the one this cycle's values give.
+              -- pragma translate_off
               lim_rec := c_max + RBUF - 2;
               if lim_rec > to_integer(cpos_r) - 1 - to_integer(run_p0) then
                 lim_rec := to_integer(cpos_r) - 1 - to_integer(run_p0);
               end if;
-              if lim_rec >= 0 then
-                lim_beat := (ph_ch + (lim_rec+1)*CPR + BEAT_CH - 1)/BEAT_CH;
-                left := lim_beat - f_beat;
-                if left > 0 then
-                  n := burst_len(ar_addr, left);
-                  alen <= n;
-                  arv  <= '1';
-                end if;
-              end if;
+              assert lim_rec >= 0
+                     and lim_beat_r <= (ph_ch + (lim_rec+1)*CPR + BEAT_CH - 1)/BEAT_CH
+                report "attn_kv_axi: the registered read limit is above the "
+                     & "current one; a stale limit would issue past the buffer"
+                severity failure;
+              -- pragma translate_on
             end if;
           end if;
         end if;

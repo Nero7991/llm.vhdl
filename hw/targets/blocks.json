@@ -269,7 +269,13 @@
       "RBUF": "4"
     },
     "levers": [],
-    "target_ns": 3.0,
+    "target_ns": {
+      "default": 3.0,
+      "vu35p_jc_m1": 5.5,
+      "vu35p_jc_m2": 4.25,
+      "vu35p_jc_m2l": 6.5,
+      "vu35p_jc_m3": 5.0
+    },
     "tier": "core",
     "top": "attn_kv_axi"
   },
