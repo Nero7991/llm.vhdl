@@ -223,3 +223,44 @@ swiglu_mem rows, where the random trials before it passed.
 - **Pipe latency adds 8 cycles per `VEC_SWG`** (MEASURED `SWGFAST_CYCLES` 24,596, was
   24,588); the cycle-count comments in `rtl/swiglu_mem.vhd`, `rtl/llama_top.vhd`,
   `rtl/fk33_llama_top.vhd` and the w8 benches still quote the old figures (deferred).
+
+## RESULT 2026-09-27: c_attn done (meets 200), c_kv gain committed and 200 deferred
+
+Tasks 1-2 un-held on 2026-09-27 ("Proceed with both") and implemented after v_swg.
+Both changes are RTL pipeline splits with no arithmetic change; oracles unchanged.
+Commits: c_kv `ede9e8f`, c_attn `1b92fa6`. MEASURED, tools/rate, routed, one draw,
+`limited_by routing` on every row, MHz:
+
+| device | c_attn before | c_attn after | c_kv before | c_kv after |
+|---|---|---|---|---|
+| VU33P -2LV (`vu33p_fk33`) | 142.0 | 150.4 | 114.9 | 144.8 |
+| VU35P -1 (`vu35p_jc_m1`) | 130.6 | 181.5 | 114.3 | 155.8 |
+| **VU35P -2 (`vu35p_jc_m2`)** | **173.7** | **204.5** | **151.1** | **187.5** |
+| VU35P -2LV (`vu35p_jc_m2l`) | 140.2 | 162.7 | 131.9 | 143.4 |
+| VU35P -3 (`vu35p_jc_m3`) | 162.4 | 203.7 | 147.3 | 203.5 |
+
+**c_attn: success criterion MET** (>= 200 MHz on VU35P -2: 204.5, one draw). The S2
+split (two half-trees S2a -> registered final add + range compare S2b) removed the
+`p_reg -> er_r` 14-level path; the worst path is now `u_arr blk2_reg -> acc_reg` (PV
+accumulate, 8 levels, routing). `c_attn_levers` (levers-on variant, re-keyed by the
+same RTL) re-rated to 198.0 on VU35P -2.
+
+**c_kv: 200 NOT met; the gain is committed and 200 deferred (Oren).** Registering the
+read limit (`lim_beat_r` a cycle ahead) took it 151.1 -> 187.5 on VU35P -2. The worst
+path moved off `alen` to an 18-level `cpos_r -> lim_beat_r` cone that a single register
+does not cut; reaching 200 needs a second split of that cone, deferred.
+
+Both `>= 200` on VU35P -3 (203.7, 203.5); neither on -1 or the -2LV/-2LV low-voltage
+grades, as expected from the ceilings. Differences within the 0.4-0.75 ns routed noise
+floor (CLAUDE.md) are not results; each row is its own over-constrained draw at a
+per-grade target, do not rank grades on small deltas.
+
+Verification. c_attn: spec 4.3 checks (1)-(3) verified against the RTL before the change
+(no cycle count keyed to arrival; `attn_score_q12` holds S_ACC until NBLK partials, so
+`p_rdy` never falls early; the sweep is phase-driven, so the extra stage costs +1 cycle
+per position, not a missed beat). `tb_attn_mac_array` gains a `P_LAT` latency guard
+(`sc_hist`/`lat_bad`) that fails if the score latency regresses; attn gate 16 PASS.
+c_kv: a pragma-guarded assertion catches a stale read limit surviving a run boundary;
+the run-boundary-clear mutant is KILLED in 5 rows, the token-start-clear mutant SURVIVES
+(resolution floor: the flush-end branch clears `lim_fresh` anyway). Gates kv 7/7,
+csweep 1/1.
