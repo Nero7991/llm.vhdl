@@ -264,3 +264,48 @@ c_kv: a pragma-guarded assertion catches a stale read limit surviving a run boun
 the run-boundary-clear mutant is KILLED in 5 rows, the token-start-clear mutant SURVIVES
 (resolution floor: the flush-end branch clears `lim_fresh` anyway). Gates kv 7/7,
 csweep 1/1.
+
+## RESULT 2026-09-30: c_kv meets 200 (228.2 on VU35P -2); the deferred cause was wrong
+
+c_kv un-deferred ("Push c_kv to 200"). It now MEETS the criterion: **228.2 MHz on
+VU35P -2**, one draw, `limited_by routing`. The fix is bit-exact, adds no latency and
+does not touch the freshness guard, so the planned "second split of the cone" was not
+needed.
+
+**The deferred analysis named the object, not the cause.** The 2026-09-27 section said
+the 18-level `cpos_r -> lim_beat_r` cone "needs a second split of that cone" to reach
+200. MEASURED (routed timing report, `vu35p_jc_m2`, key `a5b2b52fe1eb`): of the 5.312 ns
+path, **2.4 ns was a single combinational DSP48E2** (`lim_beat_r3`), because
+`(lim_rec+1)*CPR` mapped to a DSP MACC (PREADD +1, MULT *17, ALU + ph_ch + BEAT_CH-1).
+The limiter was the DSP's combinational delay, not the logic depth. CPR = 17 at the
+geometry, so `*CPR` is a shift-add: rewriting it `(lim_rec+1)*(CPR-1) + (lim_rec+1)`
+(CPR-1 = 16, a power of two, maps to a wire shift) removed the DSP. Path dropped to 15
+levels, DSP 5 -> 3, worst path moved to the address-gen DSP `rec_addr0 -> w_awlen_reg`,
+WNS -0.133. Commit: see below. `rtl/attn_kv_axi.vhd:781`.
+
+MEASURED, tools/rate, routed, one draw, all 5 grades re-rated FRESH:
+
+| device | c_kv before (lim_beat_r) | c_kv after (shift-add) |
+|---|---|---|
+| VU33P -2LV (`vu33p_fk33`) | 144.8 | 153.8 |
+| VU35P -1 (`vu35p_jc_m1`) | 155.8 | 181.9 |
+| **VU35P -2 (`vu35p_jc_m2`)** | **187.5** | **228.2** |
+| VU35P -2LV (`vu35p_jc_m2l`) | 143.4 | 155.5 |
+| VU35P -3 (`vu35p_jc_m3`) | 203.5 | 201.7 |
+
+Improved on every grade except -3, where the 1.8 MHz dip is inside the routed noise
+floor and still >= 200. **With this, every shipping block clears 200 MHz on VU35P -2**
+(c_attn_levers at 198.0 is the levers-on variant, held off on silicon, so not shipped).
+
+**Measurement trap hit (do not retry).** The first attempt set
+`attribute use_dsp of lim_beat_r : signal is "no"`. It did NOT remove the DSP: the
+re-rate was byte-identical at 187.5 MHz with DSP still 5, because Vivado keeps the
+multiply on an intermediate net (`lim_beat_r3`), and `use_dsp` on the downstream
+register never reaches it. The attribute must sit on the multiply's own signal or the
+architecture; the source strength-reduction is the reliable route for a multiply inside
+a process expression.
+
+Verification. Bit-exact: `(lim_rec+1)*(CPR-1) + (lim_rec+1) = (lim_rec+1)*CPR` for all
+integers, and the consumer assertion (`attn_kv_axi.vhd:949`) still recomputes the limit
+with the `*CPR` form, so it cross-checks the shift-add every cycle it fires.
+`tb_attn_kv_axi` PASS (bit-exact across 2 AXI widths). No oracle change.

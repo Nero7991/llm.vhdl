@@ -778,7 +778,14 @@ begin
           end if;
           if lim_rec >= 0 then
             lim_ok_r   <= '1';
-            lim_beat_r <= (ph_ch + (lim_rec+1)*CPR + BEAT_CH - 1)/BEAT_CH;
+            -- (lim_rec+1)*CPR is a shift-add here, not `*CPR`, to keep it out of
+            -- a DSP48.  MEASURED 2026-09-30 (block ratings, vu35p_jc_m2): the
+            -- `*CPR` form mapped to a combinational DSP MACC that was 2.4 ns of
+            -- an 18-level, 5.312 ns path cpos_r -> lim_beat_r, holding c_kv at
+            -- 187.5 MHz.  CPR-1 = 16 at the geometry (a power of two), so
+            -- *(CPR-1) is a wire shift and this whole line is fabric shift-adds.
+            -- Bit-exact; the consumer assert below still checks it vs `*CPR`.
+            lim_beat_r <= (ph_ch + (lim_rec+1)*(CPR-1) + (lim_rec+1) + BEAT_CH - 1)/BEAT_CH;
           else
             lim_ok_r   <= '0';
           end if;
