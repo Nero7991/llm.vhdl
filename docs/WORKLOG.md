@@ -11,6 +11,38 @@ the answer only has to be classified, not argued with.
 
 ## STATE OF THE BOARD, 2026-08-30 morning
 
+### 2026-10-01 FMAX + 27B FIT (main session): c_kv clears 200 on VU35P -2; the 27B fits the VU35P at 46% LUT
+
+- **c_kv to 200 (006edac).** `attn_kv_axi`'s read limit `(lim_rec+1)*CPR` mapped
+  to a combinational DSP48 MACC that was 2.4 ns of an 18-level, 5.312 ns path
+  `cpos_r -> lim_beat_r`; rewritten as a shift-add (`*(CPR-1) + (lim_rec+1)`,
+  CPR-1=16 a wire shift) it stays in fabric. **187.5 -> 228.2 MHz on m2**,
+  bit-exact (consumer assert cross-checks), no latency/guard change, DSP 5->3.
+  All 5 grades re-rated FRESH. Spec RESULT 2026-09-30. **Every shipping block now
+  clears 200 on VU35P -2** (c_attn_levers 198 is the levers-on variant, held off
+  on silicon). TRAP: `use_dsp` on the registered signal did NOT remove the DSP
+  (Vivado keeps the multiply on an intermediate net); strength-reduce the source.
+- **27B fits the VU35P (c7a7eee).** Real OOC synth+route on
+  xcvu35p-fsvh2104-2-e: full card **402,006 LUT = 46.1%** (engine 133,303 @
+  **222 MHz**, card 268,703), BRAM 537.5/1344 (40%), DSP 2,025/5,952 (34%),
+  URAM 82/640 (13%). The VU33P was simply too small (full 27B = 99.84% CLB
+  there). The composed `fk33_card` OOC "70 MHz" is a **standalone-OOC artifact**
+  (9B control identical at 69.0 MHz on the same `vec_issue -> wsum` path; the
+  shipped 9B build runs that compute >=120 MHz in-context, WNS +4.98 at 75 MHz,
+  those nets absent from its worst paths). Nothing to pipeline. Real composed
+  200 MHz timing needs the Jungle Cat block design, which does not exist. Doc:
+  `docs/debugging/2026-09-30_27b-fits-vu35p-ooc-timing-artifact.md`. Harness:
+  `/mnt/storage/fk33_builds/ooc27_vu35/`, worktree `wt27v35`.
+- **c_mover rated (BC-250), NOT shipping.** `ooc_cattnadapt_top` (anchor tier,
+  NOT in `fk33_card`'s datapath): m1 132.1, m2 142.1, m2l 120.9, m3 170.9 MHz,
+  all <200. A standalone adapter characterization, not a deployment blocker;
+  left as-is. (vu33p grade landing.)
+- **NEXT:** Jungle Cat block design scoping -- the VU35P PCIe/HBM/pinout + the
+  Aurora GTY inter-card link. Unblocks real composed 27B timing AND the 2-card
+  27B deployment. The GTY refclk separately needs the X1/X2 oscillator + buffer
+  populated (`docs/boards/jungle-cat/2026-09-27_bringup.md` Section 16).
+
+
 ### 2026-09-24 IDLE POWER (main session): **tasks P1 (core clock gating) and P2 (RTL VCCINT sequencer + interlock) specced, not started**
 
 `docs/superpowers/specs/2026-09-24-idle-power.md`. Oren chose clock gating and

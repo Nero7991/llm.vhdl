@@ -1,0 +1,64 @@
+{
+  "achieved_mhz": 142.06563432305725,
+  "ceiling_mhz": 637.3486297004462,
+  "deps": [
+    "rtl/attn_block.vhd",
+    "rtl/attn_emit.vhd",
+    "rtl/attn_gate.vhd",
+    "rtl/attn_kv_axi.vhd",
+    "rtl/attn_kv_quant.vhd",
+    "rtl/attn_mac_array.vhd",
+    "rtl/attn_recip.vhd",
+    "rtl/attn_rope.vhd",
+    "rtl/attn_score_q12.vhd",
+    "rtl/attn_softmax.vhd",
+    "rtl/attn_twiddle.vhd",
+    "rtl/divider_rs.vhd",
+    "rtl/fixed_luts_pkg.vhd",
+    "rtl/fixed_pkg.vhd",
+    "rtl/imrope_pkg.vhd",
+    "rtl/llama_map_pkg.vhd",
+    "rtl/model_cfg_pkg.vhd",
+    "rtl/ooc_cattnadapt_top.vhd",
+    "rtl/rmsnorm_rs.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu35p_jc_m2",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": false,
+  "key": "a1e65b705456fd8d4ece01a3512c75ba66511fdb96fc2f534ec4b2cfec0e3745",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "11G",
+    "lane": "bc250",
+    "peak": 11813474304,
+    "swap_peak": 9440890880
+  },
+  "model": "QWEN35_9B",
+  "part": "xcvu35p-fsvh2104-2-e",
+  "route": {
+    "end": "u_dut/gcr.u_attn/vref_r_reg[12][3]/D",
+    "levels": 24,
+    "start": "u_dut/gcr.u_attn/vhdr_reg[131]/C",
+    "unrouted": 0,
+    "whs": 0.008,
+    "wns": -4.039
+  },
+  "route_mhz": 142.06563432305725,
+  "row": "c_mover",
+  "synth": {
+    "levels": 23,
+    "wns": -3.577
+  },
+  "target_ns": 3.0,
+  "tier": "anchor",
+  "util": {
+    "BRAM": 63,
+    "DSP": 72,
+    "FF": 99322,
+    "LUT": 76232,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}
