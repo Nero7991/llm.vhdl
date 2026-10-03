@@ -1,0 +1,27 @@
+llm.vhdl
+Copyright (c) 2026 Oren Collaco
+Licensed under the MIT License (see LICENSE).
+
+This project includes third-party components under their own licenses:
+
+1. Web UI (ui/)
+   Derived from the llama.cpp web UI (tools/ui of llama.cpp), MIT License,
+   Copyright (c) 2023-2026 The ggml authors.
+   See ui/LICENSE.llama.cpp and ui/README.llama.cpp.md.
+
+2. Vendored JavaScript libraries (ui/src/lib/vendors/)
+   big-integer, decimal.js, nerdamer-prime -- each MIT License, with the
+   upstream LICENSE retained alongside the source.
+
+3. Server (server/)
+   Includes a server layer derived from llama.cpp (MIT License, see item 1).
+
+4. Tokenizer data (server/qwen35_tok.h, server/qwen35_unicode_data.h,
+   tools/qwen35_tokenizer.py)
+   Reproduces the Qwen3.5 tokenizer (byte-level BPE), whose vocabulary and
+   merge data originate with the Qwen models (Qwen3 is Apache-2.0, Alibaba
+   Cloud). The implementation mirrors llama.cpp's gpt2 / qwen35 behavior.
+
+5. Generated post-synthesis netlists (sim/post_*.vhd)
+   Output of AMD (Xilinx) Vivado; the AMD copyright headers in those files
+   are retained.
