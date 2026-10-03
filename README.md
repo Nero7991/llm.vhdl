@@ -9,9 +9,12 @@ Target card: SQRL FK33 (`xcvu33p-fsvh2104-2L-e`, 8 GiB HBM, PCIe Gen3 x4).
 
 ## Deploy to an FK33, end to end
 
-This runs the validated silicon path. The host tooling opens `/dev/xdma*`;
-run it as a human on the box, never unattended. See
-`docs/2026-08-27_fk33-pcie-bringup-procedure.md` for the long form.
+This runs the validated silicon path. Several steps do direct DMA and MMIO
+to the card: reconfiguring the FPGA tears the PCIe bus down and rescans it, and
+the weight load writes 8 GiB into HBM. An interrupted or faulted transaction can
+hang the host, so run these steps interactively and watch them, not from cron,
+CI, or an unattended script. See `docs/2026-08-27_fk33-pcie-bringup-procedure.md`
+for the long form.
 
 Prerequisites: an FK33 in a PCIe slot, Vivado 2023.2, a Linux host, and the
 Qwen3.5-9B weight image with its `MANIFEST.json` (layout in
