@@ -128,6 +128,34 @@ web UI). It is greedy-only, one request at a time, no prompt cache; the server
 docstring in `server/llmvhdl_server.py` explains why. Current measured decode
 is about 2.5 tokens/s on the two-card pipeline.
 
+## Jungle Cat (2x VU35P): the 27B target
+
+The two-die 27B target runs on the SQRL Jungle Cat (JCC2L-Lite carrier, two
+JCM35P modules = 2x `xcvu35p`, -2L). 27B INT4 fits one VU35P at about 46% LUT,
+and every shipping block closes 200 MHz on the VU35P -2 grade standalone.
+
+**Working:** both modules program and come up with a standard `.bit` over
+Ethernet through SQRL's on-board STM32, which bridges to JTAG (`sqrl_bridge`
+CoE; Vivado drives it over XVC). IDCODE confirmed on both dies. No PCIe and no
+bitstream reverse-engineering required.
+
+**Blockers:**
+- **No GTY reference clock.** The inter-die link (8-lane GTY / Aurora, quad 126)
+  for the two-die residual hand-off and the tensor-parallel collective cannot
+  come up: a sweep found no refclk on any bank, because the carrier's refclk
+  oscillator sites (X1/X2) are unpopulated. The clock-injection BOM
+  (a 156.25 MHz LVDS oscillator into a CDCLVD1204 fan-out) is identified and
+  awaits soldering.
+- **No fast weight-load path.** No PCIe; the only host paths are the CoE/JTAG
+  bridge (transport-bound, ~1 MB/s class) and BMC Ethernet, far too slow for the
+  ~13.5 GB of 27B INT4 weights. A JTAG-AXI probe bitstream is built to measure
+  the real ceiling; a bulk path (over Aurora once the link is up, or BMC
+  Ethernet) is the open question.
+- **Subsystem E (the TP collective) is still a skeleton.**
+
+See `docs/boards/jungle-cat/2026-09-27_bringup.md` and
+`docs/2026-09-24_jungle-cat-performance-estimate.md`.
+
 ## Status and ongoing work
 
 `docs/WORKLOG.md` is the live board; `docs/` holds the dated design and
@@ -139,9 +167,6 @@ debugging notes. In flight:
 - **27B across two dies** -- fits a VU35P at about 46% LUT; composed timing
   and the no-PCIe host path are the open items.
   See `docs/2026-09-24_jungle-cat-performance-estimate.md`.
-- **Jungle Cat carrier (2x VU35P) and the inter-card link** -- Aurora over
-  spare GTY lanes, plus the tensor-parallel collective (subsystem E), are in
-  design. See `docs/boards/jungle-cat/` and `docs/fpga-hardware-recon.md`.
 - **Per-block fmax ratings** -- every shipping block clears 200 MHz on the
   VU35P -2 deployment grade; flow under `hw/targets/`.
 
