@@ -5,7 +5,15 @@ inference (9B on a single card, 27B targeted across two) entirely in FPGA
 fabric: INT4 streaming matvec, Gated DeltaNet, gated attention, and a
 transformer sequencer, with the weights resident in on-card HBM.
 
-Target card: SQRL FK33 (`xcvu33p-fsvh2104-2L-e`, 8 GiB HBM, PCIe Gen3 x4).
+Outputs are validated against [llama.cpp](https://github.com/ggml-org/llama.cpp)
+running the BF16 GGUF. Its per-layer activations, captured through llama.cpp's
+eval callback, are compared with a bit-accurate C model of the INT4 /
+fixed-point datapath and with residuals read back from the card, and the
+tokenizer and chat template are bit-exact against llama.cpp.
+Details: `tools/ref9b/README.md`.
+
+Target cards: SQRL FK33 (`xcvu33p-fsvh2104-2L-e`, 8 GiB HBM, PCIe Gen3 x4) and
+Jungle Cat (2x `xcvu35p` modules, 8 GiB HBM each, Ethernet only, no PCIe).
 
 ## Architecture
 
