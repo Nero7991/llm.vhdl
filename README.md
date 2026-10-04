@@ -171,8 +171,9 @@ cache; the docstring in `server/llmvhdl_server.py` explains why.
 
 Decode on the FK33 is slow (about 2.5 tokens/s on the two-card split) mainly
 because the composed design closes timing at only **75 MHz**. Token rate scales
-roughly with clock, so the same design at 200 MHz is the bulk of the gap to the
-~20 tokens/s target. Getting the FK33 there is hard for two fabric reasons:
+roughly with clock, so 200 MHz alone would be about 2.7x. The ~20 tokens/s
+figure for the 27B assumes the VU35Ps at 200 MHz. Getting the FK33 to 200 MHz
+is hard for two fabric reasons:
 
 - **Low-voltage fabric.** The FK33 runs VCCINT at about 0.72 V, so its
   `xcvu33p -2L` is effectively the slower `-2LV` low-voltage grade. The VU35P
