@@ -163,29 +163,11 @@ The `xdma0`/`xdma1` node numbers can swap on every reload, so the host assigns
 each card's role from the image it holds (the card with the LM head is card 1),
 not from the node number.
 
-Either way, open `http://127.0.0.1:8000/` for the chat UI (a copy of the
-llama.cpp web UI). It is greedy-only, one request at a time, with no prompt
-cache; the docstring in `server/llmvhdl_server.py` explains why.
-
-## Why the FK33 runs at 75 MHz, and the VU35P reaches 200 MHz
-
-Decode on the FK33 is slow (about 2.5 tokens/s on the two-card split) mainly
-because the composed design closes timing at only **75 MHz**. Token rate scales
-roughly with clock, so 200 MHz alone would be about 2.7x. The ~20 tokens/s
-figure for the 27B assumes the VU35Ps at 200 MHz. Getting the FK33 to 200 MHz
-is hard for two fabric reasons:
-
-- **Low-voltage fabric.** The FK33 runs VCCINT at about 0.72 V, so its
-  `xcvu33p -2L` is effectively the slower `-2LV` low-voltage grade. The VU35P
-  target runs at the `-2` grade's nominal 0.85 V.
-- **A nearly full die.** The VU33P has half the fabric of the VU35P. The
-  composed A+B+C+D design packs it densely, so routes are long and congested and
-  the composed clock lands far below what each block reaches alone (a 27B card
-  build on the VU33P placed at 99.8% CLB and did not route at all). The same 27B
-  design uses about 46% of the VU35P's LUTs.
-
-Each block is rated standalone (synthesize, place and route out of context) on
-both parts with `tools/rate/`. Achieved MHz for the slowest shipping blocks:
+The cards have been tested on silicon at 75 MHz only; nothing above 75 MHz, and
+nothing at the full 0.85 V VCCINT, has been run on hardware yet. Getting to
+higher clocks is ongoing work. The standalone per-block ratings below (each block
+placed and routed alone with `tools/rate/`, full table in `hw/targets/ratings/`)
+suggest there is headroom on both parts:
 
 | block | what it is | FK33 (`vu33p -2LV`, 0.72 V) | VU35P (`-2`, 0.85 V) |
 |---|---|---|---|
@@ -196,11 +178,9 @@ both parts with `tools/rate/`. Achieved MHz for the slowest shipping blocks:
 | `b_gdn` | Gated DeltaNet | 194.9 | 254.3 |
 | `v_rms` | RMSNorm | 206.9 | 281.9 |
 
-On the FK33 several blocks sit well under 200 MHz even alone, before the
-congestion of the full die takes its share. On the VU35P every shipping block
-clears 200 MHz standalone; whether the composed design holds 200 MHz on the
-VU35P is still open, because the Jungle Cat block design does not exist yet.
-Full table: `hw/targets/ratings/`.
+Either way, open `http://127.0.0.1:8000/` for the chat UI (a copy of the
+llama.cpp web UI). It is greedy-only, one request at a time, with no prompt
+cache; the docstring in `server/llmvhdl_server.py` explains why.
 
 ## Jungle Cat (2x VU35P): the 27B target
 
