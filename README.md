@@ -167,6 +167,40 @@ Either way, open `http://127.0.0.1:8000/` for the chat UI (a copy of the
 llama.cpp web UI). It is greedy-only, one request at a time, with no prompt
 cache; the docstring in `server/llmvhdl_server.py` explains why.
 
+## Why the FK33 runs at 75 MHz, and the VU35P reaches 200 MHz
+
+Decode on the FK33 is slow (about 2.5 tokens/s on the two-card split) mainly
+because the composed design closes timing at only **75 MHz**. Token rate scales
+roughly with clock, so the same design at 200 MHz is the bulk of the gap to the
+~20 tokens/s target. Getting the FK33 there is hard for two fabric reasons:
+
+- **Low-voltage fabric.** The FK33 runs VCCINT at about 0.72 V, so its
+  `xcvu33p -2L` is effectively the slower `-2LV` low-voltage grade. The VU35P
+  target runs at the `-2` grade's nominal 0.85 V.
+- **A nearly full die.** The VU33P has half the fabric of the VU35P. The
+  composed A+B+C+D design packs it densely, so routes are long and congested and
+  the composed clock lands far below what each block reaches alone (a 27B card
+  build on the VU33P placed at 99.8% CLB and did not route at all). The same 27B
+  design uses about 46% of the VU35P's LUTs.
+
+Each block is rated standalone (synthesize, place and route out of context) on
+both parts with `tools/rate/`. Achieved MHz for the slowest shipping blocks:
+
+| block | what it is | FK33 (`vu33p -2LV`, 0.72 V) | VU35P (`-2`, 0.85 V) |
+|---|---|---|---|
+| `c_attn` | attention MAC array | 150.4 | 204.5 |
+| `c_kv` | KV cache over HBM | 153.8 | 228.2 |
+| `v_swg` | SwiGLU | 183.5 | 242.9 |
+| `a_engine` | INT4 matvec | 185.5 | 264.0 |
+| `b_gdn` | Gated DeltaNet | 194.9 | 254.3 |
+| `v_rms` | RMSNorm | 206.9 | 281.9 |
+
+On the FK33 several blocks sit well under 200 MHz even alone, before the
+congestion of the full die takes its share. On the VU35P every shipping block
+clears 200 MHz standalone; whether the composed design holds 200 MHz on the
+VU35P is still open, because the Jungle Cat block design does not exist yet.
+Full table: `hw/targets/ratings/`.
+
 ## Jungle Cat (2x VU35P): the 27B target
 
 The two-die 27B target runs on the SQRL Jungle Cat (JCC2L-Lite carrier, two
