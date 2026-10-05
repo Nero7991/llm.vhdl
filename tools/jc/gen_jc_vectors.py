@@ -112,19 +112,42 @@ def gen_crcunit(rng):
                     (a, n, seq, zlib.crc32(data) & 0xFFFFFFFF, experr))
 
 def gen_loader(rng):
-    """One continuous scan as the host sends it, plus the model's final memory and status."""
+    """One continuous scan as the host sends it, plus the model's final memory and status.
+
+    Addressing (fix round 1, M3): frames are spaced 0x1000 (4 KB) apart, which is more than
+    any frame's 1,984-byte max payload, so no two of these frames ever write the same byte
+    and the per-address memory check below cannot be hidden by a later frame overwriting an
+    earlier one's bytes. The OLD 0x0400 spacing was narrower than the max payload, so
+    adjacent frames silently overlapped; the memory check still passed because it only
+    checks presence/value at addresses the LAST writer of each address produced, never
+    noticing an earlier frame's bytes were never checked at all.
+
+    k=5 is reserved for a frame that deterministically crosses a 4 KB boundary: its address
+    (0xC000 + 0x0FE0, i.e. 0x0FE0 into an otherwise-unused 4 KB page) and its length (a FIXED
+    64 bytes = 2 words, not the random draw used for the other 11) are both independent of
+    the RNG, so the crossing happens every run. The OLD `0x0400*k + 0x0FE0 if k==5` line
+    landed at 0x23E0, which is 0xC20 bytes short of the next 4 KB boundary (0x3000) -- more
+    than the 1,984-byte max payload, so it could never actually cross 4 KB regardless of the
+    random length; the "k=5 crosses 4 KB" comment on it was simply wrong.
+    """
     from jc import jc_frame as F
     from jc.jc_model import LoaderModel
     m = LoaderModel()
     slots = [bytes(F.SLOT_BYTES)]                                     # filler (lead = 0)
     seq = 0
     for k in range(12):
-        addr = 0x0400 * k + (0x0FE0 if k == 5 else 0)                 # k=5 crosses 4 KB
-        slots.append(F.build_slot(seq, addr, rng.randbytes(rng.randrange(32, 1985)))); seq += 1
-    bad = bytearray(F.build_slot(seq, 0x8000, rng.randbytes(500))); bad[999] ^= 2
+        if k == 5:
+            addr = 0xC000 + 0x0FE0          # dedicated page, clear of every other frame's
+                                             # span; fixed length below guarantees the crossing
+            payload = rng.randbytes(64)
+        else:
+            addr = 0x1000 * k
+            payload = rng.randbytes(rng.randrange(32, 1985))
+        slots.append(F.build_slot(seq, addr, payload)); seq += 1
+    bad = bytearray(F.build_slot(seq, 0xE000, rng.randbytes(500))); bad[999] ^= 2
     slots.append(bytes(bad))                                          # CRC fail
-    slots.append(F.build_slot(seq, 0x8000, rng.randbytes(500))); seq += 1   # resend
-    slots.append(F.build_slot(seq - 1, 0x8000, rng.randbytes(500)))   # duplicate
+    slots.append(F.build_slot(seq, 0xE000, rng.randbytes(500))); seq += 1   # resend
+    slots.append(F.build_slot(seq - 1, 0xE000, rng.randbytes(500)))   # duplicate
     slots.append(F.range_crc_slot(seq, 0x0000, 0x0400 * 3)); seq += 1
     slots += [F.poll_slot()] * 3
     for s in slots:
@@ -139,8 +162,93 @@ def gen_loader(rng):
             st["last"], st["committed"], st["crc_fail"], st["seq_err"], st["dup"],
             st["desync"], st["range_crc"], st["range_seq"]))
 
+def gen_loader_ovf(rng):
+    """End-to-end FIFO-overflow case (fix round 1, I1): the host sends six real frames and
+    one resend while the testbench holds the AXI3 AW channel closed across four of them, long
+    enough that the 128-deep async_fifo genuinely overflows (status bit 179) -- not merely a
+    writer that is slow, a case already covered by sim/tb_jc_loader_core.vhd's STALL=>true.
+
+    Frame layout (seq, addr, nwords), with gate (AW channel) state during each. Addresses are
+    spaced 0x800 apart (more than the 1,984-byte max payload of any frame here), so -- same
+    reasoning as M3 for gen_loader -- no two frames ever write the same byte and the memory
+    check below cannot be hidden by a later frame overwriting an earlier one's bytes:
+      seq0 addr 0x0000 nwords 62   gate OPEN   -- commits before the block starts
+      seq1 addr 0x0800 nwords 62   gate closes AFTER this frame's header+data+verdict are
+                                   collected (collection does not need AW); the WRITE decision
+                                   for this frame is what gets stuck
+      seq2 addr 0x1000 nwords 62   gate CLOSED -- queues whole (64 FIFO entries: hdr+62 data+
+                                   verdict); writer is stuck on seq1's AW, so nothing drains
+      seq3 addr 0x1800 nwords 61   gate CLOSED -- queues whole (63 entries). FIFO level is now
+                                   64 + 63 = 127, one below its 128-entry capacity
+      seq4 addr 0x2000 nwords 62   gate CLOSED -- only its HEADER fits (level 127 -> 128,
+                                   exactly at capacity); every other word of this frame (62
+                                   data + 1 verdict) arrives at a full FIFO and is DROPPED.
+                                   This sets status bit 179 (ovf). Gate reopens right after
+                                   this frame's slot ends.
+      seq4 RESEND addr 0x2000     gate OPEN -- by the time this is shifted in, the writer has
+                                   already (in aclk time, far faster than one TCK slot) drained
+                                   the backlog: finished seq1's write, drained and committed
+                                   seq2 and seq3 in order, and popped seq4's orphan header into
+                                   its S_COLLECT state with nothing behind it. This resend's own
+                                   header is therefore the FIFO's very next entry while the
+                                   writer is already mid-collect on the dead seq4 header -- this
+                                   is jc_hbm_writer's "lost verdict" branch (S_COLLECT sees a
+                                   second TAG_HDR with no intervening verdict): counted as a
+                                   CRC failure per ruling 6, then collection restarts cleanly on
+                                   the resend's own header and the resend commits normally.
+      seq5 addr 0x2800 nwords 62   gate OPEN -- commits normally
+
+    This is the SAME mechanism ruling 6 describes for a word-count mismatch (a frame whose
+    FIFO entries were partly dropped), reached here through the FIFO drop landing exactly on
+    a verdict rather than a data word -- the dropped frame's header is the only piece that
+    survives, so the writer never gets a verdict for it at all and instead treats the next
+    arriving header as the one that must have displaced it.
+
+    The expected final status/memory is produced by FifoOverflowModel (jc_model.py), an
+    explicit simulation of the FIFO's bounded queue plus the writer's S_HDR/S_COLLECT/S_DECIDE
+    states at FIFO-entry granularity, independent of the RTL. It was cross-checked against an
+    actual GHDL run of the composed core with this exact frame/gate schedule during
+    development (see task-6-report.md, "Fix round 1"); the vector file commits only this
+    model's derived values, never a value copied from the RTL's own printed status.
+    """
+    from jc import jc_frame as F
+    from jc.jc_model import FifoOverflowModel
+    m = FifoOverflowModel(depth=128)
+    slots = [bytes(F.SLOT_BYTES)]                                    # filler (lead = 0)
+    m.feed_slot(slots[-1])
+
+    frames = [(0, 0x0000, 62), (1, 0x0800, 62), (2, 0x1000, 62), (3, 0x1800, 61),
+              (4, 0x2000, 62)]
+    m.set_gate(True)
+    for seq, addr, nwords in frames:
+        s = F.build_slot(seq, addr, rng.randbytes(nwords * 32))
+        slots.append(s)
+        if seq == 1:
+            m.set_gate(False)         # close right before this frame's entries are pushed
+        m.feed_slot(s)
+        if seq == 4:
+            m.set_gate(True)          # reopen right after the lost frame's slot completes
+
+    s = F.build_slot(4, 0x2000, rng.randbytes(62 * 32))               # resend
+    slots.append(s); m.feed_slot(s)
+    s = F.build_slot(5, 0x2800, rng.randbytes(62 * 32))
+    slots.append(s); m.feed_slot(s)
+    slots += [F.poll_slot()] * 3
+    for s in slots[-3:]:
+        m.feed_slot(s)
+
+    st = m.status()
+    with open(sim("jc_loader_ovf_vec.txt"), "w") as f:
+        for s in slots:
+            f.write("S %s\n" % F.slot_hex(s))
+        for a in sorted(m.mem):
+            f.write("M %010x %064x\n" % (a, int.from_bytes(m.mem[a], "little")))
+        f.write("T %08x %08x %04x %04x %04x %04x %d\n" % (
+            st["last"], st["committed"], st["crc_fail"], st["seq_err"], st["dup"],
+            st["desync"], st["ovf"]))
+
 GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer, "crcunit": gen_crcunit,
-        "loader": gen_loader}
+        "loader": gen_loader, "loader_ovf": gen_loader_ovf}
 
 def main():
     ap = argparse.ArgumentParser()

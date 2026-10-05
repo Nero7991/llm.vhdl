@@ -54,16 +54,47 @@ architecture rtl of jc_loader_core is
   signal crc_seq, res_crc, res_seq, last_seq : std_logic_vector(31 downto 0);
   signal committed : unsigned(31 downto 0);
   signal crc_fail, seq_err, dup_cnt, bresp_err : unsigned(15 downto 0);
+  signal trip_s1, trip_s2 : std_logic := '0';
   attribute ASYNC_REG : string;
   attribute ASYNC_REG of trst_s1, trst_s2 : signal is "TRUE";
+  attribute ASYNC_REG of trip_s1, trip_s2 : signal is "TRUE";
 begin
-  -- FIFO write-side reset in TCK: held from configuration until two TCK edges after arst
-  -- falls. The host's filler slot absorbs those edges.
+  -- RESET, STATED HONESTLY (fix round 1, M1; the previous comment here overclaimed).
+  --
+  -- `arst` is an aclk-domain signal. It resets the FIFO's READ side (rrst => arst)
+  -- immediately, on the next aclk edge. It reaches the FIFO's WRITE side only through
+  -- trst_s1/trst_s2 below, which are clocked by TCK -- and TCK is stopped between host
+  -- commands (S4.1: "TCK runs only while bits shift"). So if `arst` pulses while TCK is
+  -- idle, the write side does NOT see it until TCK resumes; the two TCK edges this process
+  -- needs happen inside the host's next filler slot, which is exactly why that slot exists.
+  --
+  -- `jc_frame_core` itself has NO reset input at all (see its entity). `desync_cnt` and
+  -- `ovf_seen` are therefore sticky for the life of the configuration: nothing `arst` does,
+  -- here or anywhere downstream, ever clears them. Only a fresh bitstream load (power-up,
+  -- or a reconfiguration) resets them to zero.
+  --
+  -- Net effect: `arst` can resynchronise the write-side FIFO pointers and the writer's own
+  -- counters (jc_hbm_writer does have a `rst` port), but it cannot roll back what
+  -- jc_frame_core has already counted, and it is not the recovery path for an overflow or a
+  -- desync in any case -- the recovery is always a HOST resend from last_committed + 1
+  -- (S4.1's resync procedure), never an `arst` pulse.
   process(tck)
   begin
     if rising_edge(tck) then
       trst_s1 <= arst;
       trst_s2 <= trst_s1;
+    end if;
+  end process;
+
+  -- hbm_cat_trip CDC (fix round 1, I2): a plain 2-flop synchroniser into aclk. Spec 4.6
+  -- only says the HBM temperature/catastrophic-trip outputs are "wired to the status
+  -- word" -- it does not call for a latch, so this tracks the live trip state and will
+  -- clear in the status word if the trip input clears, rather than sticking high forever.
+  process(aclk)
+  begin
+    if rising_edge(aclk) then
+      trip_s1 <= hbm_cat_trip;
+      trip_s2 <= trip_s1;
     end if;
   end process;
 
@@ -111,7 +142,7 @@ begin
   live(159 downto 144) <= std_logic_vector(bresp_err);
   live(175 downto 160) <= std_logic_vector(dup_cnt);
   live(176)            <= w_busy or crc_busy;
-  live(177)            <= hbm_cat_trip;
+  live(177)            <= trip_s2;
   live(178)            <= res_valid;
   live(179)            <= '0';
   live(180)            <= res_err;
