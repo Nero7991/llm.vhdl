@@ -244,3 +244,72 @@ read error: the stock 13.5 MHz bridge reads the same with the probe loaded.
 **Remaining lever:** the per-shift overhead is in the bridge/BMC protocol, which XVC
 cannot batch beyond 16,384 bits. Going past ~1.5 MB/s means talking CoE directly
 (protocol RE) or the GTY path.
+
+## 12. UPDATE 2026-10-05: CoE protocol RE'd; a direct pipelined client doubles the rate. 2.68 MB/s, 43 min per die
+
+**Question (Oren).** RE the CoE protocol: can talking to the BMC directly beat the
+bridge? And why did 40.5 MHz give no speed-up?
+
+**Answer, up front.** Yes. The bridge sends ONE CoE request and waits for its reply
+before the next; the BMC accepts several in flight. A direct client
+(`hw/jc/xvcstream/coe_stream.py`, bridge stopped) with 4 requests outstanding
+streams **2,676.8 KB/s sustained over 100 MB at 27 MHz, zero bit errors (full check)
+-> 0.71 h (43 min) per 7 GB die**, 1.9x the bridge. And **the BMC cannot run
+40.5 MHz: any request between 27 and 54 MHz runs at 27** (MEASURED, below); 54 MHz
+corrupts the chain (S11). 27 MHz is the real top of the JTAG clock.
+
+**The protocol (from `tcpdump` on `enp4s0`, TCP to BMC port 21363):**
+- Request: `u16 total_len | u16 txn | u32 cmd | payload` (LE). Reply:
+  `u16 len | u16 txn | u32 0x8000000a | data`. Telemetry polls (`0x80001110`) share
+  the socket. **txn bit 15 is not a counter bit**: txn 0x8000 drew a 4-byte error
+  reply; wrap below 0x8000.
+- `0x80001000` hello. `0x8000100c` speed: `u32 0, u32 Hz` (the bridge's 13.5 MHz).
+  `0x80001001` mode (`0002` at init, `0001` before XVC traffic). `0x80001010` IDCODEs
+  (returns `14b71093` x2). `0x80001011` IR lengths `000c0c` (12 bits per die).
+  `0x80001012` sysmon/DNA register scans.
+- `0x8000100e` shift with TMS: `u8 dev, u8 flags, u16 nbits`, then (TDI byte, TMS
+  byte) pairs. `0x8000100f` shift TDI only with TMS held 0: `u8 dev, u8 0x20,
+  u16 nbits, TDI`; the reply carries TDO, streamed back in ~350-byte chunks as it
+  shifts. One XVC shift of 16,384 bits = one `0x8000100f` (2,052-byte payload).
+- The client sends only these observed commands; its TAP moves were checked
+  byte-for-byte against the bridge's captured requests before use.
+
+**Evidence (raw):**
+```
+# direct client, 27 MHz, 16384-bit shifts
+COERATE tck=27000000 depth=1 ... 1656.4 KB/s mean 1.207 ms/shift worst 1.28 ms  bad_bits=0
+COERATE tck=27000000 depth=2 ... 2601.0 KB/s mean 0.769 ms/shift worst 41.70 ms bad_bits=0
+COERATE tck=27000000 depth=4 ... 2666.7 KB/s mean 0.750 ms/shift worst 3.59 ms  bad_bits=0
+COERATE tck=27000000 depth=4 bits/shift=16384 shifts=48828 36.48s 2676.8 KB/s mean 0.747 ms/shift worst 3.62 ms bad_bits=0
+# the clock: depth 1, so time = fixed + 16384/TCK
+COERATE tck=13500000 depth=1 ... mean 1.815 ms/shift
+COERATE tck=27000000 depth=1 ... mean 1.187 ms/shift   (13.5 -> 27 saves 0.628 ms; 16384/TCK predicts 0.607)
+COERATE tck=36000000 depth=1 ... mean 1.197 ms/shift   (a real 36 MHz would save 0.152 ms more)
+COERATE tck=40500000 depth=1 ... mean 1.210 ms/shift   (a real 40.5 MHz would save 0.202 ms more)
+COERATE tck=40500000 depth=4 ... 2670.7 KB/s            (= 27 MHz)
+```
+
+**CORRECTION to S10/S11:** the "+4% at 40.5 MHz" through the bridge was run-to-run
+noise; the BMC was running 27 MHz. 13.5 MHz = 108/8 and 27 = 108/4 are consistent
+with a power-of-two prescaler that rounds a request down; that mechanism is a
+reading, not measured.
+
+**Where the time goes now (DERIVED):** pipelined, 0.747 ms per 16,384-bit shift
+against 0.607 ms of TCK, i.e. 81% of the 3.375 MB/s ceiling. The ~0.14 ms remainder
+is BMC turnaround between commands; larger commands (the bit-count field is 16-bit,
+so up to 65,528 bits) would amortise it, ESTIMATE ~3.0 MB/s at 32,768 bits. Not tried:
+an oversized command may hang the BMC, which needs a carrier power cycle.
+
+**Measured and REJECTED, do not retry:** TCK above 27 MHz (36 and 40.5 run at 27;
+54 corrupts). Pipelining through `sqrl_bridge` (it serialises CoE internally; S10).
+
+**Trap hit (mine):** my first client wrapped txn at 0xffff and both 100 MB soaks died
+at txn 32768 with a 4-byte error reply. A 10 MB run (4,882 shifts) never reaches it.
+
+**State left:** bridge STOPPED (the direct client owns the BMC socket while it runs).
+Both dies hold `jc_axiprobe.bit`. Restart the bridge with
+`./sqrl_bridge_tck27 C<bmc> skip skip 2542` (or the stock binary) for XVC/Vivado.
+
+**Consequence for the loader:** the host side is now this client, not XVC. A
+`BSCANE2` USER-register loader fed by `0x8000100f` streams at ~2.7 MB/s: ~43 min per
+die, ~1.5 h for both on the shared chain.
