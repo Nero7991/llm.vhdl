@@ -11,49 +11,11 @@ Usage: coe_stream.py <bmc_ip> <tck_hz> <bits_per_shift> <total_MB> <depth>
 """
 import socket, struct, sys, time, os
 
-class CoE:
-    def __init__(s, ip, port=21363, to=10.0):
-        s.s = socket.create_connection((ip, port), timeout=to)
-        s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        s.txn = 1
-    def send(s, cmd, payload=b""):
-        # txn bit 15 is not a counter bit: txn 0x8000 drew a 4-byte error reply (MEASURED)
-        t = s.txn; s.txn = s.txn + 1 if s.txn < 0x7fff else 1
-        s.s.sendall(struct.pack("<HHI", 8 + len(payload), t, cmd) + payload)
-        return t
-    def recv_exact(s, n):
-        b = bytearray()
-        while len(b) < n:
-            c = s.s.recv(n - len(b))
-            if not c: raise ConnectionError("CoE closed")
-            b += c
-        return bytes(b)
-    def reply(s):
-        h = s.recv_exact(8)
-        L, t, st = struct.unpack("<HHI", h)
-        return t, st, s.recv_exact(L - 8)
-    def call(s, cmd, payload=b""):
-        t = s.send(cmd, payload)
-        while True:
-            rt, st, d = s.reply()
-            if rt == t: return st, d
-
-def tms_payload(tms_bits):
-    # cmd 0x8000100e: dev 0, flags 0, count, then (TDI byte, TMS byte) pairs; TDI 0 here
-    n = len(tms_bits); out = bytearray(struct.pack("<BBH", 0, 0, n))
-    for k in range(0, n, 8):
-        out += bytes([0, sum(tms_bits[k + j] << j for j in range(min(8, n - k)))])
-    return bytes(out)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
+from jc.coe import CoE, tms_payload, pair_payload
 
 def ir_all_ones_payload(n):
-    # cmd 0x8000100e long form: dev 0, flags 0, count, then (TDI byte, TMS byte) pairs
-    tdi = [1] * n; tms = [0] * (n - 1) + [1]
-    out = bytearray(struct.pack("<BBH", 0, 0, n))
-    for k in range(0, n, 8):
-        bt = sum(tdi[k + j] << j for j in range(min(8, n - k)))
-        bm = sum(tms[k + j] << j for j in range(min(8, n - k)))
-        out += bytes([bt, bm])
-    return bytes(out)
+    return pair_payload([1] * n, [0] * (n - 1) + [1])
 
 def main():
     ip, hz, nbits, total_mb, depth = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), float(sys.argv[4]), int(sys.argv[5])
