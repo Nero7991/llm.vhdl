@@ -54,7 +54,42 @@ def gen_frame(rng):
         for s, ok, nw, ps, seq in slots:
             f.write("S %d %d %d %08x %s\n" % (ok, nw, ps, seq, F.slot_hex(s)))
 
-GENS = {"crc32": gen_crc32, "frame": gen_frame}
+def gen_writer(rng):
+    """Events fed straight into the writer's FIFO port, plus the model's final state."""
+    from jc import jc_frame as F
+    from jc.jc_model import LoaderModel
+    bad = 0x0600                                # the third burst of the first full frame
+    m = LoaderModel(bad_bresp_addrs={bad})
+    ev, slots = [], []
+    def frame(seq, addr, payload, corrupt=False):
+        s = F.build_slot(seq, addr, payload)
+        if corrupt:
+            s = bytearray(s); s[50] ^= 1; s = bytes(s)
+        slots.append(s)
+    frame(0, 0x0000, rng.randbytes(1984))       # 4 bursts, one SLVERR at 0x600
+    frame(1, 0x0FE0, rng.randbytes(96))         # crosses 4 KB: bursts of 1 then 2
+    frame(1, 0x0FE0, rng.randbytes(96))         # duplicate
+    frame(3, 0x2000, rng.randbytes(64))         # gap
+    frame(2, 0x3000, rng.randbytes(64), corrupt=True)   # CRC fail
+    frame(2, 0x3000, rng.randbytes(1000))       # short, padded last word
+    slots.append(F.poll_slot())
+    for s in slots:
+        m.feed(s)
+        h = F.parse_header(s)
+        ev.append("H %064x" % int.from_bytes(s[:32], "little"))
+        for k in range(h["nwords"]):
+            ev.append("D %064x" % int.from_bytes(s[32 * (k + 1):32 * (k + 2)], "little"))
+        ev.append("%s %08x" % ("P" if F.slot_crc_ok(s) else "F", h["seq"]))
+    st = m.status()
+    with open(sim("jc_writer_vec.txt"), "w") as f:
+        f.write("B %010x\n" % bad)
+        f.write("\n".join(ev) + "\n")
+        for a in sorted(m.mem):
+            f.write("M %010x %064x\n" % (a, int.from_bytes(m.mem[a], "little")))
+        f.write("C %08x %08x %04x %04x %04x %04x\n" % (st["last"], st["committed"],
+                st["crc_fail"], st["seq_err"], st["dup"], st["bresp_err"]))
+
+GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer}
 
 def main():
     ap = argparse.ArgumentParser()
