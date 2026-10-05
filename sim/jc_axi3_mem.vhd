@@ -75,15 +75,13 @@ begin
   process(clk)
     variable wa, ra : std_logic_vector(39 downto 0);
     variable wleft, rleft : integer := -1;
-    variable wcnt : natural;
     variable bad_b : boolean;
-    variable aw_ok : boolean := false;
-    variable stall : std_logic;
+    variable do_stall : std_logic;
   begin
     if rising_edge(clk) then
       lfsr <= lfsr(14 downto 0) & (lfsr(15) xor lfsr(13) xor lfsr(12) xor lfsr(10));
-      stall := '0';
-      if STALL then stall := lfsr(0) and lfsr(3); end if;
+      do_stall := '0';
+      if STALL then do_stall := lfsr(0) and lfsr(3); end if;
 
       if poke_en = '1' then
         mem(idx(poke_addr))  <= poke_data;
@@ -92,17 +90,17 @@ begin
 
       -- write address
       awready <= '0';
-      if awvalid = '1' and wleft < 0 and stall = '0' then
+      if awvalid = '1' and wleft < 0 and do_stall = '0' then
         awready <= '1';
         wa := std_logic_vector(resize(unsigned(awaddr), 40));
         if not burst_ok(wa, awlen, awsize, awburst) then nerr <= nerr + 1;
           report "AXI3 write burst breaks a rule at " & to_hstring(wa) severity error; end if;
-        wleft := to_integer(unsigned(awlen)); wcnt := 0;
+        wleft := to_integer(unsigned(awlen));
         bad_b := wa = BAD_BRESP_ADDR;
       end if;
       -- write data
       wready <= '0';
-      if wleft >= 0 and wvalid = '1' and stall = '0' then
+      if wleft >= 0 and wvalid = '1' and do_stall = '0' then
         wready <= '1';
       end if;
       if wleft >= 0 and wvalid = '1' and wready = '1' then
@@ -125,7 +123,7 @@ begin
 
       -- read address and data
       arready <= '0';
-      if arvalid = '1' and rleft < 0 and stall = '0' then
+      if arvalid = '1' and rleft < 0 and do_stall = '0' then
         arready <= '1';
         ra := std_logic_vector(resize(unsigned(araddr), 40));
         if not burst_ok(ra, arlen, arsize, arburst) then nerr <= nerr + 1;
@@ -136,7 +134,7 @@ begin
         rvalid <= '0';
         ra := std_logic_vector(unsigned(ra) + 32);
         rleft := rleft - 1;
-      elsif rleft >= 0 and arready = '0' and (rvalid = '0') and stall = '0' then
+      elsif rleft >= 0 and arready = '0' and (rvalid = '0') and do_stall = '0' then
         rvalid <= '1'; rdata <= mem(idx(ra)); rresp <= "00";
         if rleft = 0 then rlast <= '1'; else rlast <= '0'; end if;
       end if;
