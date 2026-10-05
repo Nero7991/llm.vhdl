@@ -87,3 +87,54 @@ marginal ceiling", and **that figure is NOT a result**: it is a slope fitted to 
 
 - Whether long user-DR shifts over this bridge reach the config-load rate, or hang.
 - Whether a ~3-6 h load per power cycle is acceptable for the 2-die 27B bring-up.
+
+## 9. UPDATE 2026-10-05: the BSCAN-streamer spike. The TRANSPORT does ~1 MB/s; the 23 ms was Vivado
+
+**Question.** Is the ~23 ms per transaction a property of the CoE bridge, or of
+Vivado's `jtag_axi` protocol on top of it? Equivalently: what does a raw long-DR
+stream (what a `BSCANE2` loader would see) actually get?
+
+**Answer, up front.** It is Vivado. MEASURED with a raw XVC client
+(`hw/jc/xvcstream/xvc_bypass_rate.py`, on the BC-250 against the bridge's port 2542),
+both dies in BYPASS: **1,005.8 KB/s sustained over 100 MB at 16,384-bit shifts, zero
+integrity errors, worst shift 2.84 ms, the XVC listener still up afterwards**. That
+projects 7 GB in **1.9 h** per die through a streaming loader. Section 7's ESTIMATE
+(1.4-2.8 h) is now a MEASURED transport bound.
+
+**Procedure.** `hw_server` stopped (it holds the XVC socket). TAP reset, 64 ones into
+IR (BYPASS on every device, non-destructive), then Shift-DR held for the whole stream
+with TMS all zero. In BYPASS, TDO is TDI delayed by one bit per device; the delay is
+found with a single-1 probe (**2**, both dies), then every ~997th bit of every shift is
+checked against the random TDI stream delayed by 2, across shift boundaries. A shift
+that never returns trips a 10 s socket timeout.
+
+**Evidence (raw):**
+```
+XVCINFO xvcServer_v1.0:4096
+XVCDELAY ones_at [2]
+XVCRATE bits/shift=1024  shifts=7813  bytes=1000064   2.95s   330.8 KB/s  mean 0.38 ms/shift  worst 0.89 ms  bad_samples=0
+XVCRATE bits/shift=2048  shifts=3907  bytes=1000192   1.85s   527.7 KB/s  mean 0.47 ms/shift  worst 0.62 ms  bad_samples=0
+XVCRATE bits/shift=4096  shifts=1954  bytes=1000448   1.31s   745.0 KB/s  mean 0.67 ms/shift  worst 1.81 ms  bad_samples=0
+XVCRATE bits/shift=8192  shifts=977   bytes=1000448   1.15s   846.4 KB/s  mean 1.18 ms/shift  worst 1.35 ms  bad_samples=0
+XVCRATE bits/shift=16384 shifts=489   bytes=1001472   0.92s  1064.6 KB/s  mean 1.88 ms/shift  worst 2.02 ms  bad_samples=0
+XVCRATE bits/shift=16384 shifts=48829 bytes=100001792 97.10s 1005.8 KB/s  mean 1.99 ms/shift  worst 2.84 ms  bad_samples=0
+```
+DERIVED: per-shift time is about 0.25 ms fixed plus ~0.1 us per bit (an effective
+~10 Mbit/s against the bridge's reported 13.5 MHz CoE JTAG), so the largest shift wins.
+
+**The shift-size ceiling is now pinned.** 16,384 bits (2,048 B TMS + 2,048 B TDI = the
+4,096 B `getinfo` buffer) works; S10's 32,768 bits hangs. `getinfo`'s 4096 is the
+COMBINED TMS+TDI byte count. A loader must shift at most 16,384 bits per XVC call.
+
+**Measured and REJECTED, do not retry:** attributing the 23 ms to the bridge.
+`jtag_axi` costs 50-100x the transport per word; the bridge is not the limit.
+
+**Not yet determined:**
+- This is the transport ceiling. A real loader also needs a `BSCANE2` USER register
+  that accepts a bit per TCK into an HBM writer; at ~10 Mbit/s that is trivial fabric
+  bandwidth, but it is unbuilt.
+- Both dies share the chain, so loading both is ~14 GB at the same aggregate
+  ~1 MB/s, ~3.9 h total (one DR scan can feed both USER registers at once, but the
+  aggregate does not double).
+- TCP pipelining (issuing the next shift before the reply) could hide part of the
+  ~0.25 ms fixed cost; not tried.
