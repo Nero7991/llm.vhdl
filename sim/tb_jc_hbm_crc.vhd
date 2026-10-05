@@ -38,7 +38,8 @@ begin
              res_crc => res_crc, res_seq => res_seq);
 
   mem : entity work.jc_axi3_mem
-    generic map(ADDR_W => 33, IDX_W => 11, STALL => true)
+    generic map(ADDR_W => 33, IDX_W => 11, STALL => true,
+                BAD_RRESP_ADDR => x"0000002100")
     port map(clk => clk, awaddr => (others => '0'), awlen => "0000", awsize => "101",
              awburst => "01", awvalid => '0', awready => open, wdata => (others => '0'),
              wstrb => (others => '1'), wlast => '0', wvalid => '0', wready => open,
@@ -57,6 +58,8 @@ begin
     variable n : std_logic_vector(39 downto 0);
     variable w : std_logic_vector(255 downto 0);
     variable s32, e32 : std_logic_vector(31 downto 0);
+    variable experr : integer;
+    variable exp_err_sl : std_logic;
     variable checks, errors, nreq : natural := 0;
     procedure chk(cond : boolean; msg : string) is
     begin
@@ -73,7 +76,8 @@ begin
         poke_addr <= a; poke_data <= w; poke_en <= '1';
         wait until rising_edge(clk); poke_en <= '0';
       else
-        hread(l, a); hread(l, n); hread(l, s32); hread(l, e32);
+        hread(l, a); hread(l, n); hread(l, s32); hread(l, e32); read(l, experr);
+        if experr = 1 then exp_err_sl := '1'; else exp_err_sl := '0'; end if;
         req_addr <= a(32 downto 0); req_len <= unsigned(n); req_seq <= s32; req <= '1';
         wait until rising_edge(clk); req <= '0';
         wait until rising_edge(clk);
@@ -84,12 +88,13 @@ begin
         chk(busy = '0', "request " & to_hstring(s32) & " never finished");
         chk(res_valid = '1' and res_seq = s32, "result seq " & to_hstring(res_seq));
         chk(res_crc = e32, "crc " & to_hstring(res_crc) & " expected " & to_hstring(e32));
-        chk(res_err = '0', "no RRESP error");
+        chk(res_err = exp_err_sl, "res_err " & std_logic'image(res_err) & " expected " &
+            std_logic'image(exp_err_sl) & " for seq " & to_hstring(s32));
         nreq := nreq + 1;
       end if;
     end loop;
     chk(axi_errors = 0, "AXI3 rule violations: " & integer'image(axi_errors));
-    assert nreq = 6 report "expected 6 requests" severity failure;
+    assert nreq = 7 report "expected 7 requests" severity failure;
     if errors = 0 then
       report "PASS: tb_jc_hbm_crc checks=" & integer'image(checks);
     else

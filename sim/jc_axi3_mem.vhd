@@ -8,7 +8,8 @@ use ieee.numeric_std.all;
 
 entity jc_axi3_mem is
   generic(ADDR_W : positive := 33; IDX_W : positive := 11; STALL : boolean := true;
-          BAD_BRESP_ADDR : std_logic_vector(39 downto 0) := (others => '1'));
+          BAD_BRESP_ADDR : std_logic_vector(39 downto 0) := (others => '1');
+          BAD_RRESP_ADDR : std_logic_vector(39 downto 0) := (others => '1'));
   port(
     clk       : in  std_logic;
     awaddr    : in  std_logic_vector(ADDR_W-1 downto 0);
@@ -75,7 +76,7 @@ begin
   process(clk)
     variable wa, ra : std_logic_vector(39 downto 0);
     variable wleft, rleft : integer := -1;
-    variable bad_b : boolean;
+    variable bad_b, bad_r : boolean;
     variable do_stall : std_logic;
   begin
     if rising_edge(clk) then
@@ -129,13 +130,15 @@ begin
         if not burst_ok(ra, arlen, arsize, arburst) then nerr <= nerr + 1;
           report "AXI3 read burst breaks a rule at " & to_hstring(ra) severity error; end if;
         rleft := to_integer(unsigned(arlen));
+        bad_r := ra = BAD_RRESP_ADDR;
       end if;
       if rvalid = '1' and rready = '1' then
         rvalid <= '0';
         ra := std_logic_vector(unsigned(ra) + 32);
         rleft := rleft - 1;
       elsif rleft >= 0 and arready = '0' and (rvalid = '0') and do_stall = '0' then
-        rvalid <= '1'; rdata <= mem(idx(ra)); rresp <= "00";
+        rvalid <= '1'; rdata <= mem(idx(ra));
+        if bad_r then rresp <= "10"; else rresp <= "00"; end if;
         if rleft = 0 then rlast <= '1'; else rlast <= '0'; end if;
       end if;
     end if;

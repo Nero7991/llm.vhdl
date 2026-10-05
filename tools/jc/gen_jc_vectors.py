@@ -89,20 +89,27 @@ def gen_writer(rng):
         f.write("C %08x %08x %04x %04x %04x %04x\n" % (st["last"], st["committed"],
                 st["crc_fail"], st["seq_err"], st["dup"], st["bresp_err"]))
 
+# jc_axi3_mem's BAD_RRESP_ADDR in the tb_jc_hbm_crc instantiation: a single-beat read
+# starting here comes back with RRESP = SLVERR on every beat of that burst. Lies inside
+# the 0x2000 preload base (word 8 of 70) so the data is real, only the response is bad.
+JC_CRCUNIT_BAD_ADDR = 0x2100
+
 def gen_crcunit(rng):
     """Preloaded memory plus range requests with zlib CRCs over the same bytes."""
     words = {}
     for base in (0x0000, 0x0FC0, 0x2000):
         for k in range(70):
             words[base + 32 * k] = rng.randbytes(32)
-    reqs = [(0x0000, 32, 1), (0x0000, 70 * 32, 2), (0x0FC0, 5 * 32, 3),   # 5 beats across 4 KB
-            (0x2000, 16 * 32, 4), (0x2000, 17 * 32, 5), (0x2000, 0, 6)]  # 0 bytes: CRC of nothing
+    reqs = [(0x0000, 32, 1, 0), (0x0000, 70 * 32, 2, 0), (0x0FC0, 5 * 32, 3, 0),  # 5 beats across 4 KB
+            (0x2000, 16 * 32, 4, 0), (0x2000, 17 * 32, 5, 0), (0x2000, 0, 6, 0),  # 0 bytes: CRC of nothing
+            (JC_CRCUNIT_BAD_ADDR, 32, 7, 1)]                                      # RRESP error expected
     with open(sim("jc_crcunit_vec.txt"), "w") as f:
         for a in sorted(words):
             f.write("M %010x %064x\n" % (a, int.from_bytes(words[a], "little")))
-        for a, n, seq in reqs:
+        for a, n, seq, experr in reqs:
             data = b"".join(words.get(x, bytes(32)) for x in range(a, a + n, 32))
-            f.write("R %010x %010x %08x %08x\n" % (a, n, seq, zlib.crc32(data) & 0xFFFFFFFF))
+            f.write("R %010x %010x %08x %08x %d\n" %
+                    (a, n, seq, zlib.crc32(data) & 0xFFFFFFFF, experr))
 
 GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer, "crcunit": gen_crcunit}
 
