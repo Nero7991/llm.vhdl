@@ -55,6 +55,27 @@ believing it was still safe. Round 3's ruling, applied below:
      (see `tools/jc/derive_resync.py`'s `resync_check`-style analysis) -- harmless to
      `jc_frame_core`, which never acts on Update-DR, but it does mean any frame that was
      only partially shifted in before `resync()` was called is abandoned, not completed.
+
+Task 9 (Task 8 final review, items N1-N3, 2026-10-05):
+
+  N1. `send()` records every CMD_TDI txn in `s.outstanding` (send order) and `reply()`
+      removes the oldest one when it reads a reply. Every vetted TMS move (resync
+      included) and every handshake `call()` is refused while any are unread: the
+      move's own reply() would otherwise read a pipelined CMD_TDI reply as its own and
+      commit a TAP state on the strength of it. `drain()` reads every outstanding
+      reply, forcing UNKNOWN on any bad one (exactly as reply() does) but reading the
+      rest regardless, so the reply stream is clean afterwards. A reply() for a txn
+      that is not the oldest outstanding one is refused without reading anything.
+  N2. Recovery after a pipelined failure is `drain()` then `resync()`.
+  N3. A CMD_TDI with nbits=0 is refused (the BMC's behaviour for it is not measured).
+
+  Also: a reply whose bytes stop arriving part-way (socket closed, timeout, Ctrl-C
+  inside the read) or whose header is malformed leaves the byte stream unframed, so
+  no later reply can be matched to its command. That POISONS the connection (`s.dead`):
+  every later write and read raises ConnectionError, nothing more is sent, and the
+  caller must open a new connection and start() again. Same for a failed write.
+  `CoE(ip, sock=...)` takes an already-made socket-like object (tests only; it never
+  dials when one is given).
 """
 import socket, struct
 
@@ -175,6 +196,8 @@ def _require_tdi_shape(payload):
     if dev != 0 or flags != 0x20:
         raise TapProtocolError("CMD_TDI requires dev=0, flags=0x20, got dev=%d flags=%#x"
                                 % (dev, flags))
+    if n == 0:
+        raise TapProtocolError("CMD_TDI with nbits=0 is refused (Task 9 N3)")
     need = 4 + (n + 7) // 8
     if len(payload) != need:
         raise TapProtocolError("CMD_TDI nbits=%d needs exactly %d payload bytes, got %d"
@@ -313,22 +336,49 @@ _TOKEN_STEPS = {
 }
 
 class CoE:
-    def __init__(s, ip, port=21363, timeout=10.0):
-        s.s = socket.create_connection((ip, port), timeout=timeout)
-        s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    def __init__(s, ip, port=21363, timeout=10.0, sock=None):
+        if sock is None:
+            s.s = socket.create_connection((ip, port), timeout=timeout)
+            s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        else:
+            s.s = sock                   # a fake transport (tests): never dials
         s.txn = 1
         s.tap = UNKNOWN                  # the real TAP's position is not known yet
+        s.outstanding = []               # CMD_TDI txns sent, replies not yet read (N1)
+        s.dead = None                    # reason, once the reply stream is unframed
+
+    def _poison(s, why):
+        """The byte stream can no longer be framed: nothing later can be trusted."""
+        s.tap = UNKNOWN
+        s.outstanding = []
+        if not s.dead:
+            s.dead = why
+
+    def _require_alive(s):
+        if s.dead:
+            raise ConnectionError("CoE connection is unusable (%s); open a new one and "
+                                  "start() again" % s.dead)
+
+    def _require_no_outstanding(s, what):
+        if s.outstanding:
+            raise TapProtocolError(
+                "%s refused: %d CMD_TDI repl%s still unread (txn %s); drain() first"
+                % (what, len(s.outstanding), "y" if len(s.outstanding) == 1 else "ies",
+                   ", ".join("%#06x" % t for t in s.outstanding)))
 
     def _raw_send(s, cmd, payload):
         """The only place that actually writes to the socket. No validation, no shadow
         update of its own beyond the universal rule: if the write itself fails (bytes
-        may have partially gone out), the shadow can no longer be trusted."""
+        may have partially gone out), the shadow can no longer be trusted, and neither
+        can the reply stream (the BMC may or may not answer a half-written command), so
+        the connection is poisoned."""
+        s._require_alive()
         t = s.txn
         s.txn = s.txn + 1 if s.txn < 0x7FFF else 1
         try:
             s.s.sendall(struct.pack("<HHI", 8 + len(payload), t, cmd) + payload)
         except BaseException:
-            s.tap = UNKNOWN
+            s._poison("a write failed part-way")
             raise
         return t
 
@@ -351,7 +401,9 @@ class CoE:
         if s.tap != SHIFT_DR:
             raise TapProtocolError(
                 "CMD_TDI sent while the shadow TAP is %r, not Shift-DR" % (s.tap,))
-        return s._raw_send(cmd, payload)        # tap unchanged: flags=0x20 cannot move it
+        t = s._raw_send(cmd, payload)           # tap unchanged: flags=0x20 cannot move it
+        s.outstanding.append(t)                 # N1: its reply is now owed
+        return t
 
     def _recv(s, n):
         b = bytearray()
@@ -367,7 +419,19 @@ class CoE:
         than `expect_txn`, a status other than STATUS_OK, or any other exception
         (BaseException included -- Ctrl-C must not look like success) all force
         `s.tap = UNKNOWN` and raise. There is no silent return on a mismatch (fix
-        round 3 item C)."""
+        round 3 item C).
+
+        N1: while CMD_TDI replies are outstanding, replies arrive in send order, so
+        `expect_txn` must be the oldest outstanding txn; anything else is refused
+        before reading (forcing UNKNOWN). A reply that is read completely removes the
+        oldest outstanding txn whatever it says. A read that fails part-way, or a
+        malformed header, poisons the connection (see the module docstring)."""
+        s._require_alive()
+        if s.outstanding and expect_txn != s.outstanding[0]:
+            s.tap = UNKNOWN
+            raise TapProtocolError(
+                "reply(%#06x) out of order: the oldest unread CMD_TDI reply is txn %#06x"
+                % (expect_txn, s.outstanding[0]))
         try:
             hdr = s._recv(8)
             L, t, st = struct.unpack("<HHI", hdr)
@@ -375,8 +439,10 @@ class CoE:
                 raise CoEError("reply length %d is less than the 8-byte header" % L)
             data = s._recv(L - 8)
         except BaseException:
-            s.tap = UNKNOWN
+            s._poison("a reply read failed part-way or was malformed")
             raise
+        if s.outstanding:
+            s.outstanding.pop(0)
         if t != expect_txn:
             s.tap = UNKNOWN
             raise CoEError("txn mismatch: expected %#06x, reply carried %#06x" % (expect_txn, t))
@@ -384,6 +450,28 @@ class CoE:
             s.tap = UNKNOWN
             raise CoEError("status %#010x, expected STATUS_OK %#010x" % (st, STATUS_OK))
         return st, data
+
+    def drain(s):
+        """N1/N2: read every outstanding CMD_TDI reply, oldest first. A bad one (txn
+        mismatch, non-OK status) forces UNKNOWN exactly as reply() does, and the rest
+        are still read, so afterwards no reply is owed and the next vetted move's reply
+        is its own. Returns (good, bad): good is [(txn, status, data)], bad is
+        [(txn, CoEError)]. Never restores a known state: after any bad reply the
+        shadow stays UNKNOWN and only resync() may run (N2: recovery after a pipelined
+        failure is drain() then resync()). A framing loss raises ConnectionError (the
+        connection is poisoned and nothing further can be read)."""
+        s._require_alive()
+        good, bad = [], []
+        while s.outstanding:
+            t = s.outstanding[0]
+            try:
+                st, data = s.reply(t)
+                good.append((t, st, data))
+            except CoEError as e:
+                if s.dead:
+                    raise ConnectionError("CoE reply framing lost during drain(): %s" % e)
+                bad.append((t, e))
+        return good, bad
 
     def _call_token(s, cmd, payload, token):
         """The only place a CMD_TMS payload is ever transmitted. Looks up which of
@@ -396,6 +484,8 @@ class CoE:
         success (fix round 3 items B and D)."""
         if cmd != CMD_TMS:
             raise TapProtocolError("_call_token is for CMD_TMS only")
+        s._require_alive()
+        s._require_no_outstanding("a vetted TMS move")
         n, tdi_bits, tms_bits = _require_tms_shape(payload)
         steps = _TOKEN_STEPS.get(token)
         if steps is None:
@@ -428,6 +518,8 @@ class CoE:
         transmitting, and never restores anything -- these can drive the real TAP by
         means this shadow does not model (fix round 3 item E), so start()'s closing
         resync() is load-bearing, not a courtesy."""
+        s._require_alive()
+        s._require_no_outstanding("a handshake call()")
         s.tap = UNKNOWN
         t = s._raw_send(cmd, payload)
         return s.reply(t)

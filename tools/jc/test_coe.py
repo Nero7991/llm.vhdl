@@ -53,6 +53,8 @@ def make_coe(sock=None, tap=coe.RUN_TEST_IDLE):
     c.s = sock if sock is not None else FakeTransport()
     c.txn = 1
     c.tap = tap
+    c.outstanding = []                  # Task 9 N1: unread CMD_TDI txns, in send order
+    c.dead = None                       # Task 9: set once reply framing is lost
     return c
 
 def test_tms_payloads_match_the_bridge_byte_for_byte():
@@ -331,7 +333,11 @@ def test_ctrl_c_mid_ir_scan_leaves_unknown_and_blocks_the_next_move():
     with pytest.raises(KeyboardInterrupt):
         c.ir_scan([coe.IR_BYPASS] * 2)
     assert c.tap is coe.UNKNOWN
-    with pytest.raises(coe.TapProtocolError):
+    # Task 9: an interrupted reply read now also poisons the connection (the reply may
+    # be half-read, so the stream cannot be framed again), so the refusal is the
+    # stricter ConnectionError rather than the UNKNOWN-state TapProtocolError.
+    assert c.dead
+    with pytest.raises(ConnectionError):
         c.to_shift_dr()
     assert len(c.s.sent) == 1                             # the refused move sent nothing new
 
@@ -468,3 +474,167 @@ def test_start_is_safe_from_every_real_tap_starting_state(real_start):
     c = make_coe(sock, tap=coe.UNKNOWN)
     c.start()
     assert c.tap == coe.RUN_TEST_IDLE == sock.real
+
+# ======================================================================
+# Task 9 (Task 8 final review items N1-N3, 2026-10-05): the client tracks the CMD_TDI
+# replies it has not read yet. A vetted TMS move or a handshake call() while any are
+# unread would read a pipelined CMD_TDI reply as its own (and decide the TAP's state
+# from it), so it is refused; drain() reads them all. Recovery after a pipelined
+# failure is drain() then resync(). A zero-bit CMD_TDI is refused (N3).
+# ======================================================================
+
+def _tdi8(c, v=0):
+    return c.send(coe.CMD_TDI, coe.dr_payload(8, bytes([v])))
+
+def test_send_tracks_outstanding_and_reply_clears_it_in_order():
+    c = make_coe(tap=coe.SHIFT_DR)
+    ts = [_tdi8(c) for _ in range(3)]
+    assert c.outstanding == ts
+    c.reply(ts[0])
+    assert c.outstanding == ts[1:]
+    c.reply(ts[1]); c.reply(ts[2])
+    assert c.outstanding == []
+
+def _moves(c):
+    return {"exit_dr_to_idle": lambda: c.exit_dr_to_idle(),
+            "resync": lambda: c.resync(),
+            "to_shift_dr": lambda: c.to_shift_dr(),
+            "ir_scan": lambda: c.ir_scan([coe.IR_USER4, coe.IR_BYPASS]),
+            "ir_shift_all_ones": lambda: c.ir_shift_all_ones(64),
+            "call": lambda: c.call(coe.CMD_HELLO)}
+
+@pytest.mark.parametrize("move", sorted(_moves(None)))
+def test_tms_moves_and_call_are_refused_while_tdi_replies_are_unread(move):
+    """N1: the refusal is the outstanding-reply guard itself (match="unread"), not the
+    state guard that would also refuse some of these from Shift-DR, and nothing is sent."""
+    c = make_coe(tap=coe.SHIFT_DR)
+    _tdi8(c)
+    n = len(c.s.sent)
+    with pytest.raises(coe.TapProtocolError, match="unread"):
+        _moves(c)[move]()
+    assert len(c.s.sent) == n
+
+def test_exit_dr_to_idle_is_allowed_once_every_reply_is_read():
+    c = make_coe(tap=coe.SHIFT_DR)
+    t = _tdi8(c)
+    c.reply(t)
+    c.exit_dr_to_idle()
+    assert c.tap == coe.RUN_TEST_IDLE
+
+def test_drain_reads_every_reply_and_keeps_shift_dr_when_all_are_good():
+    c = make_coe(tap=coe.SHIFT_DR)
+    ts = [_tdi8(c, k) for k in range(4)]
+    good, bad = c.drain()
+    assert [g[0] for g in good] == ts and bad == []
+    assert c.outstanding == [] and c.tap == coe.SHIFT_DR and c.s._buf == b""
+    c.exit_dr_to_idle()
+    assert c.tap == coe.RUN_TEST_IDLE
+
+def test_drain_forces_unknown_on_a_bad_reply_and_still_reads_the_rest():
+    sock = FakeTransport(status={2: 0xDEAD0000})
+    c = make_coe(sock, tap=coe.SHIFT_DR)
+    ts = [_tdi8(c) for _ in range(4)]
+    good, bad = c.drain()
+    assert [g[0] for g in good] == [ts[0], ts[1], ts[3]]
+    assert [b[0] for b in bad] == [ts[2]] and isinstance(bad[0][1], coe.CoEError)
+    assert c.tap is coe.UNKNOWN and c.outstanding == [] and sock._buf == b""
+    with pytest.raises(coe.TapProtocolError):
+        c.exit_dr_to_idle()                       # UNKNOWN: only resync() may run
+
+def test_drain_forces_unknown_on_a_txn_mismatch_too():
+    sock = FakeTransport(reply_txn={1: 99})
+    c = make_coe(sock, tap=coe.SHIFT_DR)
+    ts = [_tdi8(c) for _ in range(3)]
+    good, bad = c.drain()
+    assert [b[0] for b in bad] == [ts[1]] and c.tap is coe.UNKNOWN and c.outstanding == []
+
+def test_drain_with_nothing_outstanding_reads_nothing():
+    c = make_coe(tap=coe.SHIFT_DR)
+    assert c.drain() == ([], [])
+    assert c.tap == coe.SHIFT_DR and c.s.sent == []
+
+def test_reply_out_of_send_order_is_refused_without_consuming_anything():
+    c = make_coe(tap=coe.SHIFT_DR)
+    ts = [_tdi8(c) for _ in range(3)]
+    with pytest.raises(coe.TapProtocolError):
+        c.reply(ts[1])
+    assert c.outstanding == ts and c.tap is coe.UNKNOWN
+    good, bad = c.drain()
+    assert [g[0] for g in good] == ts and bad == []
+
+def test_pipelined_failure_recovery_is_drain_then_resync():
+    """N2: four CMD_TDI shifts in flight, the second reply bad. reply() forces UNKNOWN;
+    resync() is refused while two replies are still unread (it would read one of them
+    as its own); drain() reads them; resync() then lands the shadow AND an independent
+    model of the real TAP at Run-Test/Idle, and the normal sequence runs again."""
+    class RealTap(FakeTransport):
+        def __init__(self, state, **kw):
+            FakeTransport.__init__(self, **kw)
+            self.real = state
+        def sendall(self, b):
+            t, cmd = struct.unpack_from("<HI", b, 2)
+            if cmd == coe.CMD_TMS:
+                p = b[8:]
+                n = struct.unpack_from("<H", p, 2)[0]
+                for k in range(n):
+                    self.real = coe.TAP_NEXT[self.real][(p[5 + 2 * (k // 8)] >> (k % 8)) & 1]
+            FakeTransport.sendall(self, b)
+    sock = RealTap(coe.SHIFT_DR, status={1: 0xDEAD0000})
+    c = make_coe(sock, tap=coe.SHIFT_DR)
+    ts = [_tdi8(c, k) for k in range(4)]
+    c.reply(ts[0])
+    with pytest.raises(coe.CoEError):
+        c.reply(ts[1])
+    assert c.tap is coe.UNKNOWN
+    n = len(sock.sent)
+    with pytest.raises(coe.TapProtocolError, match="unread"):
+        c.resync()
+    assert len(sock.sent) == n
+    good, bad = c.drain()
+    assert [g[0] for g in good] == ts[2:] and bad == []
+    assert c.tap is coe.UNKNOWN                    # drain() never restores a known state
+    c.resync()
+    assert c.tap == coe.RUN_TEST_IDLE == sock.real
+    c.ir_scan([coe.IR_USER4, coe.IR_BYPASS])
+    c.to_shift_dr()
+    t = _tdi8(c)
+    c.reply(t)
+    c.exit_dr_to_idle()
+    assert c.tap == coe.RUN_TEST_IDLE == sock.real
+
+def test_lost_reply_framing_poisons_the_connection():
+    """A reply cut short (socket closed mid-header) leaves the byte stream unframed:
+    no later reply can be trusted, so drain() and every move refuse with
+    ConnectionError and nothing more is written. Recovery is a new connection."""
+    class Cut(FakeTransport):
+        def recv(self, n):
+            return b""
+    c = make_coe(Cut(), tap=coe.SHIFT_DR)
+    ts = [_tdi8(c) for _ in range(2)]
+    with pytest.raises(ConnectionError):
+        c.reply(ts[0])
+    assert c.tap is coe.UNKNOWN and c.dead
+    n = len(c.s.sent)
+    with pytest.raises(ConnectionError):
+        c.drain()
+    with pytest.raises(ConnectionError):
+        c.resync()
+    with pytest.raises(ConnectionError):
+        c.call(coe.CMD_HELLO)
+    assert len(c.s.sent) == n
+
+def test_cmd_tdi_with_zero_bits_is_refused():
+    """N3: nbits=0 is a shape this client never needs, and what the BMC does with it is
+    not measured, so it is refused before anything is sent."""
+    c = make_coe(tap=coe.SHIFT_DR)
+    with pytest.raises(coe.TapProtocolError):
+        c.send(coe.CMD_TDI, struct.pack("<BBH", 0, 0x20, 0))
+    assert c.s.sent == [] and c.outstanding == []
+
+def test_coe_takes_an_injected_socket_and_never_dials(monkeypatch):
+    def refuse(*a, **k):
+        raise AssertionError("a test tried to open a real socket")
+    monkeypatch.setattr(coe.socket, "create_connection", refuse)
+    sock = FakeTransport()
+    c = coe.CoE(None, sock=sock)
+    assert c.s is sock and c.tap is coe.UNKNOWN and c.outstanding == [] and not c.dead
