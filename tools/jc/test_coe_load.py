@@ -19,6 +19,36 @@ def make_manifest(tmp_path, sizes):
     mp.write_text(json.dumps(m))
     return str(mp)
 
+def make_single_piece_manifest(tmp_path, hbm_offset, nbytes, stack=None):
+    data = bytes((k * 5 + 1) & 0xFF for k in range(nbytes))
+    p = tmp_path / "p.bin"
+    p.write_bytes(data)
+    e = dict(file="p.bin", kind="f32blob", tensor="p", nbytes=nbytes, hbm_offset=hbm_offset,
+             blake2b_128=hashlib.blake2b(data, digest_size=16).hexdigest())
+    if stack is not None:
+        e["stack"] = stack
+    m = dict(format="test", geometry={}, hbm={}, files=[e])
+    mp = tmp_path / "manifest.json"
+    mp.write_text(json.dumps(m))
+    return str(mp)
+
+def make_two_piece_manifest(tmp_path, n0, n1):
+    """One file holding two pieces back-to-back in the FILE but far apart in HBM, the
+    shape a lane-striped v2 manifest uses (tools/hbm_map.py::file_pieces)."""
+    total = n0 + n1
+    data = bytes((k * 11 + 3) & 0xFF for k in range(total))
+    p = tmp_path / "striped.bin"
+    p.write_bytes(data)
+    pieces = [dict(hbm_offset=0, file_offset=0, nbytes=n0),
+              dict(hbm_offset=4096, file_offset=n0, nbytes=n1)]
+    e = dict(file="striped.bin", kind="f32blob", tensor="s", nbytes=total, hbm_offset=0,
+             stack=0, blake2b_128=hashlib.blake2b(data, digest_size=16).hexdigest(),
+             pieces=pieces)
+    m = dict(format="test", geometry={}, hbm={}, files=[e])
+    mp = tmp_path / "manifest.json"
+    mp.write_text(json.dumps(m))
+    return str(mp), data
+
 def test_plan_covers_every_byte_once(tmp_path):
     mp = make_manifest(tmp_path, [5000, 64, 4096])
     frames, sha = L.plan_frames(mp)
@@ -51,3 +81,70 @@ def test_plan_sha_changes_with_the_manifest(tmp_path):
     b = make_manifest(tmp_path, [96])
     _, s2 = L.plan_frames(b)
     assert s1 != s2
+
+# ---------------------------------------------------------------- fix round 1: (c)
+
+def test_range_crc_pads_with_zero_not_the_next_piece(tmp_path):
+    """The bug the review found: a short piece's range CRC used to be computed by
+    reading `n` (the 32-byte-rounded length) bytes straight out of the source file,
+    which -- when a second piece's bytes happen to sit right after it in the same file
+    -- pulls in real neighbour data instead of the zero padding the card actually
+    holds (jc_frame.build_slot zero-pads a frame's payload; jc_hbm_writer commits whole
+    words). expected_range_crc must now pad with zero itself, using the piece's own
+    unpadded length (`raw_n`)."""
+    mp, data = make_two_piece_manifest(tmp_path, 1000, 1048)
+    frames, _ = L.plan_frames(mp)
+    r0 = [f for f in frames if f.kind == "range" and f.addr == 0][0]
+    assert r0.n == 1024 and r0.raw_n == 1000
+    assert L.expected_range_crc(r0) == zlib.crc32(data[:1000] + bytes(24)) & 0xFFFFFFFF
+    assert L.expected_range_crc(r0) != zlib.crc32(data[:1024]) & 0xFFFFFFFF  # the old, wrong answer
+
+# ---------------------------------------------------------------- fix round 1: (d)
+
+def test_plan_sha_changes_when_only_the_content_digest_changes(tmp_path):
+    """Same file name, same address, same size -- only the bytes (and so the manifest's
+    blake2b_128) differ. The old plan_sha hashed only (file, addr, file_offset, nbytes)
+    and could not tell."""
+    p = tmp_path / "t0.bin"
+    mp = tmp_path / "manifest.json"
+    data_a = bytes(64)
+    p.write_bytes(data_a)
+    e = dict(file="t0.bin", kind="f32blob", tensor="t0", nbytes=64, hbm_offset=0, stack=0,
+             blake2b_128=hashlib.blake2b(data_a, digest_size=16).hexdigest())
+    mp.write_text(json.dumps(dict(format="test", geometry={}, hbm={}, files=[e])))
+    _, s1 = L.plan_frames(str(mp))
+
+    data_b = bytes(range(64))
+    p.write_bytes(data_b)
+    e["blake2b_128"] = hashlib.blake2b(data_b, digest_size=16).hexdigest()
+    mp.write_text(json.dumps(dict(format="test", geometry={}, hbm={}, files=[e])))
+    _, s2 = L.plan_frames(str(mp))
+    assert s1 != s2
+
+def test_plan_sha_changes_with_the_die(tmp_path):
+    mp = make_manifest(tmp_path, [64])
+    _, sa = L.plan_frames(mp, die="A")
+    _, sb = L.plan_frames(mp, die="B")
+    assert sa != sb
+
+# ---------------------------------------------------------------- fix round 1: (e)
+
+def test_plan_refuses_a_piece_past_the_hbm_map(tmp_path):
+    mp = make_single_piece_manifest(tmp_path, L.HBM_SIZE - 32, 64)   # 64 B, starts 32 B before the top
+    with pytest.raises(L.PlanError):
+        L.plan_frames(mp)
+
+def test_plan_refuses_a_piece_crossing_the_stack_boundary(tmp_path):
+    mp = make_single_piece_manifest(tmp_path, L.STACK_LINE - 32, 64)
+    with pytest.raises(L.PlanError):
+        L.plan_frames(mp)
+
+def test_plan_refuses_a_wrong_declared_stack(tmp_path):
+    mp = make_single_piece_manifest(tmp_path, 0, 64, stack=1)        # addr 0 is stack 0
+    with pytest.raises(L.PlanError):
+        L.plan_frames(mp)
+
+def test_plan_refuses_a_zero_length_piece(tmp_path):
+    mp = make_single_piece_manifest(tmp_path, 0, 0)
+    with pytest.raises(L.PlanError):
+        L.plan_frames(mp)

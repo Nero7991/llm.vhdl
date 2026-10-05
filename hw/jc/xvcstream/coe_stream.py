@@ -29,10 +29,12 @@ def main():
     c.call(0x80001011, bytes.fromhex("000c0c"))
     c.call(0x80001001, bytes.fromhex("0001"))
     # TAP: reset -> RTI -> Shift-IR, 64 ones (BYPASS everywhere), Update-IR -> RTI -> Shift-DR
+    # The IR shift goes through CoE.ir_shift_all_ones (fix round 1): send() refuses to
+    # clock any bits while the shadow TAP is already in Shift-IR unless the call carries
+    # that method's internal token, so the old hand-rolled toIR/shift/exitIR dance would
+    # now be refused if issued here as three separate raw calls.
     c.call(0x8000100e, tms_payload([1, 1, 1, 1, 1, 0]))
-    c.call(0x8000100e, tms_payload([1, 1, 0, 0]))
-    c.call(0x8000100e, ir_all_ones_payload(64))
-    c.call(0x8000100e, tms_payload([1, 0]))
+    c.ir_shift_all_ones(64)
     c.call(0x8000100e, tms_payload([1, 0, 0]))
     def dr(nb, tdi):
         return c.call(0x8000100f, struct.pack("<BBH", 0, 0x20, nb) + tdi)[1]
