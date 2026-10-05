@@ -313,3 +313,25 @@ Both dies hold `jc_axiprobe.bit`. Restart the bridge with
 **Consequence for the loader:** the host side is now this client, not XVC. A
 `BSCANE2` USER-register loader fed by `0x8000100f` streams at ~2.7 MB/s: ~43 min per
 die, ~1.5 h for both on the shared chain.
+
+## 13. UPDATE 2026-10-05: larger commands do not help. ~2.7 MB/s is the BMC's JTAG engine
+
+**Evidence (raw, 27 MHz, full check, BMC ping after each):**
+```
+COERATE tck=27000000 depth=1 bits/shift=32768 shifts=488  0.91s 2150.0 KB/s mean 1.860 ms/shift worst 1.88 ms  bad_bits=0
+COERATE tck=27000000 depth=2 bits/shift=32768 shifts=2441 3.63s 2688.3 KB/s mean 1.488 ms/shift worst 43.00 ms bad_bits=0
+COERATE tck=27000000 depth=4 bits/shift=32768 shifts=2441 3.61s 2704.8 KB/s mean 1.479 ms/shift worst 6.42 ms  bad_bits=0
+```
+**Answer.** 32,768-bit `0x8000100f` commands are accepted (the BMC is not capped at
+XVC's 16,384) and are clean, but pipelined they give 2,704.8 KB/s against 2,676.8 at
+16,384 bits: the same. **S12's ESTIMATE of ~3.0 MB/s from larger commands is
+WITHDRAWN**: pipelining had already hidden the per-command turnaround. The limit is
+the BMC's effective shift rate, ~22.2 Mbit/s (DERIVED: 32,768 bits / 1.479 ms), 82%
+of the 27 MHz TCK, consistent with the ~23 Mbit/s TDO chunk rate seen on the wire
+(S12). 65,528-bit commands were NOT tried: no expected gain, and an unknown hang risk.
+
+**Final figure for the host path:** ~2.7 MB/s, ~43 min per 7 GB die, ~1.5 h for both
+dies on the shared chain, through a direct pipelined CoE client at 27 MHz.
+
+**Measured and REJECTED, do not retry:** command size above 16,384 bits as a
+throughput lever (no gain when pipelined).
