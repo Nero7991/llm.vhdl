@@ -29,11 +29,14 @@ def main():
     c.call(0x80001011, bytes.fromhex("000c0c"))
     c.call(0x80001001, bytes.fromhex("0001"))
     # TAP: reset -> RTI -> Shift-IR, 64 ones (BYPASS everywhere), Update-IR -> RTI -> Shift-DR
-    # The IR shift goes through CoE.ir_shift_all_ones (fix round 1): send() refuses to
-    # clock any bits while the shadow TAP is already in Shift-IR unless the call carries
-    # that method's internal token, so the old hand-rolled toIR/shift/exitIR dance would
-    # now be refused if issued here as three separate raw calls.
-    c.call(0x8000100e, tms_payload([1, 1, 1, 1, 1, 0]))
+    # The reset goes through CoE.resync (fix round 2): the shadow TAP starts UNKNOWN, and
+    # every send is refused until resync() establishes a known state -- a raw TMS reset
+    # here would itself now be refused. The IR shift goes through CoE.ir_shift_all_ones
+    # (fix round 1): send() refuses to clock any bits while the shadow TAP is already in
+    # Shift-IR unless the call carries that method's internal token, so the old
+    # hand-rolled toIR/shift/exitIR dance would now be refused if issued here as three
+    # separate raw calls.
+    c.resync()
     c.ir_shift_all_ones(64)
     c.call(0x8000100e, tms_payload([1, 0, 0]))
     def dr(nb, tdi):
@@ -53,7 +56,11 @@ def main():
             tdi = os.urandom(nbytes); q.append((c.send(0x8000100f, hdr + tdi), tdi, time.perf_counter())); issued += 1
         t, tdi, ts = q.pop(0)
         rt, st, tdo = c.reply()
-        if rt != t or len(tdo) != nbytes: print("COE_FAIL txn/len", rt, t, len(tdo), hex(st), tdo.hex()); sys.exit(3)
+        # fix round 2 item 8: status was captured for the error message but never
+        # itself part of the pass/fail test, so a non-OK status with a coincidentally
+        # matching txn/length looked like success. Receive-side only; sends nothing new.
+        if rt != t or st != 0x8000000a or len(tdo) != nbytes:
+            print("COE_FAIL txn/len", rt, t, len(tdo), hex(st), tdo.hex()); sys.exit(3)
         worst = max(worst, time.perf_counter() - ts)
         ti = int.from_bytes(tdi, "little"); to_ = int.from_bytes(tdo, "little")
         if prev is None:

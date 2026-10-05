@@ -23,9 +23,24 @@ Fix round 1 (review: opus, 2026-10-05) corrected three planning defects:
   (e) Spec S5's preflight (aligned, in range, single stack, disjoint) was only partly
       implemented: alignment and pairwise overlap, but not the per-piece HBM range or
       stack checks. plan_frames now refuses a piece that runs past the die's 8 GiB HBM
-      map, a piece that straddles the 4 GiB stack line, and an entry whose declared
-      `stack` field disagrees with the stack its address is actually in. A zero-length
-      piece is refused outright (nothing to compare the range CRC against).
+      map, a piece that straddles the 4 GiB stack line. A zero-length piece is refused
+      outright (nothing to compare the range CRC against).
+
+Fix round 2 (re-review, 2026-10-05) corrected two more:
+  (6) the stack check above was wrong, not just incomplete: it compared the declared
+      `stack` field against EVERY piece's own address, but `stack` names the stack the
+      OBJECT's header (its first piece / its own `hbm_offset`) is in, not a claim that
+      every piece shares it -- a real lane-striped manifest deliberately puts some
+      lanes in the other stack (`tools/hbm_map.py`'s `manifest_piece_fails` P4 checks
+      the header only, for the same reason). The old per-piece version refused every
+      object that actually used both stacks: 1,488 of 3,473 pieces on a real 9B
+      manifest. Fixed to check once per entry, against `e["hbm_offset"]`, matching P4.
+  (7) a piece could declare a negative address or file offset, or a length that runs
+      past the end of its own source file, and nothing refused it (the file-offset
+      case silently read fewer bytes than declared and comparing against a short slice
+      happened to still produce *a* CRC, just not one of anything real). Both are now
+      refused in planning, same spirit as `fk33_load_weights.py`'s own preflight
+      `getsize` check.
 """
 import collections, hashlib, json, os, sys, zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,6 +75,7 @@ def plan_frames(manifest_path, die=None):
     h.update(("die=%s max_payload=%d\n" % (die, F.MAX_PAYLOAD_BYTES)).encode())
     for e in _entries(mani):
         path = os.path.join(root, e["file"])
+        filesize = os.path.getsize(path)
         dig = hashlib.blake2b(digest_size=16)
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 24), b""):
@@ -67,10 +83,19 @@ def plan_frames(manifest_path, die=None):
         if dig.hexdigest() != e["blake2b_128"]:
             raise PlanError("%s hashes to %s, the manifest says %s"
                             % (e["file"], dig.hexdigest(), e["blake2b_128"]))
+        declared = e.get("stack")
+        header_addr = int(e["hbm_offset"])
+        if declared is not None and int(declared) != _stack_of(header_addr):
+            raise PlanError("%s declares stack %s, its header at %#x is actually in "
+                            "stack %d" % (e["file"], declared, header_addr, _stack_of(header_addr)))
         for p in FLW.pieces_of(e):
             addr, foff, n = int(p["hbm_offset"]), int(p["file_offset"]), int(p["nbytes"])
             if n == 0:
                 raise PlanError("%s piece at %#x is zero length" % (e["file"], addr))
+            if addr < 0:
+                raise PlanError("%s piece has a negative HBM address %d" % (e["file"], addr))
+            if foff < 0:
+                raise PlanError("%s piece has a negative file offset %d" % (e["file"], foff))
             if addr % 32:
                 raise PlanError("%s piece at %#x is not 32-byte aligned" % (e["file"], addr))
             if addr + n > HBM_SIZE:
@@ -79,10 +104,9 @@ def plan_frames(manifest_path, die=None):
             if addr < STACK_LINE < addr + n:
                 raise PlanError("%s piece at %#x+%d spans the %d GiB HBM stack boundary"
                                 % (e["file"], addr, n, STACK_LINE >> 30))
-            declared = e.get("stack")
-            if declared is not None and int(declared) != _stack_of(addr):
-                raise PlanError("%s declares stack %s, its piece at %#x is actually in "
-                                "stack %d" % (e["file"], declared, addr, _stack_of(addr)))
+            if foff + n > filesize:
+                raise PlanError("%s piece at file +%d+%d runs past the file's own size %d"
+                                % (e["file"], foff, n, filesize))
             pieces.append((addr, path, foff, n))
             h.update(("%s %d %d %d %s\n" % (e["file"], addr, foff, n, e["blake2b_128"])).encode())
     pieces.sort()

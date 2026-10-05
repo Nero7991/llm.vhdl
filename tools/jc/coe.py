@@ -6,16 +6,50 @@ guard against shifting JPROGRAM or an eFUSE opcode (xcvu35p_fsvh2104.bsd); keep 
 
 Fix round 1 (review: opus, 2026-10-05): the allowlist alone was not a safety boundary,
 because `pair_payload`/`send` would happily transmit ANY bits, allowlisted or not, and
-nothing tracked which IEEE 1149.1 TAP state those bits would land in. A hand-built
-payload sent while the chain was already in Shift-IR could shift JPROGRAM straight
-through, allowlist or no allowlist. The fix moves the guard down to `send()`: CoE now
-keeps a shadow 16-state TAP machine, advanced by every TMS bit it transmits, and
-`send()` refuses (before anything reaches the socket) any CMD_TDI issued outside
-Shift-DR and any CMD_TMS payload that would clock a bit while the shadow TAP is
-already in Shift-IR, unless the call carries the private `_IR_TOKEN` that only
-`CoE.ir_scan` and `CoE.ir_shift_all_ones` hand out. The allowlist itself still lives in
-`ir_scan_payload` (now also pinned to the chain's exact device count), but it is no
-longer the only thing standing between a caller and JPROGRAM.
+nothing tracked which IEEE 1149.1 TAP state those bits would land in. The fix moved the
+guard down to `send()`: CoE keeps a shadow 16-state TAP machine, advanced by every TMS
+bit it transmits.
+
+Fix round 2 (re-review, 2026-10-05) found round 1's guard still had three gaps:
+
+  1. An UNTOKENED CMD_TMS could walk Capture-IR -> Exit1-IR -> Update-IR with no real
+     shift at all (e.g. `tms_payload([1,1,0,1,1,0])` from Run-Test/Idle), latching
+     whatever Capture-IR loaded (BSDL "...01", which can match ISC_PROGRAM and other
+     instructions on this device) as the live instruction. `send()` now refuses ANY
+     untokened transition INTO Capture-IR, and any untokened transition into Update-IR
+     whose immediately preceding state was Exit1-IR or Exit2-IR (the only two edges
+     into Update-IR from the IR side) -- not just "already in Shift-IR", which was
+     round 1's narrower rule and still kept, since it does not subsume this one (CMD_TMS
+     can enter the IR branch and reach Update-IR in a single call without ever passing
+     through a state that round 1's rule inspected).
+  2. The shadow could silently desync from the real TAP: round 1 started it at
+     Test-Logic-Reset (an assumption, not a fact) and committed a transmitted command's
+     predicted next state even when the reply reported a failure. The shadow now starts
+     UNKNOWN, is forced UNKNOWN by any exception from send()/reply(), by a txn mismatch,
+     or by a non-OK status, and is advanced only once a call is confirmed to have
+     succeeded. From UNKNOWN every send is refused except `CoE.resync()`, the one method
+     that does not require (or trust) a known starting state: it holds TDI=1 and plays a
+     fixed TMS sequence, derived by exhaustive search over all 16 possible starting
+     states (`tools/jc/derive_resync.py`), that never reaches Update-IR before at least
+     24 bits -- the chain's full IR length -- are known to have been freshly shifted
+     into the IR shift register, and that ends at Run-Test/Idle from every one of them.
+     `start()` calls it in place of a raw reset, and it is also how a TAP stranded in
+     Shift-IR (round 1's dead end, since nothing could leave Shift-IR without a token)
+     gets out.
+  3. The two per-call tokens (`_IR_TOKEN` for `ir_scan`, `_ALL_ONES_TOKEN` for
+     `ir_shift_all_ones`) were accepted as a bare "is this the right token" check with
+     no regard for what the payload under them actually contained, and `call()`'s public
+     signature exposed `_token` as an ordinary keyword, reachable by anyone holding a
+     reference to the token object. `send()` now decodes the bits under a token and
+     refuses unless they are EXACTLY the shape that method builds (the fixed toIR/exitIR
+     constants, plus either a validated 2-op `ir_scan_payload` or an all-ones run of at
+     least 24 bits with the right TMS tail) -- holding the token is no longer sufficient,
+     the payload has to match it. `call()`'s public parameters no longer include a token
+     at all; the three vetted methods reach the private `_call_token` helper instead.
+
+Exact payload shape is also now checked up front for every CMD_TMS/CMD_TDI (dev/flags
+bytes, and the body length matching the declared bit count with no trailing bytes) --
+fix round 2 item 4; round 1 only decoded the bits it needed and ignored the rest.
 """
 import socket, struct
 
@@ -30,7 +64,8 @@ STATUS_OK = 0x8000000A
 VU35P_X2_IDCODES = bytes.fromhex("9310b7149310b714")
 
 # The commands start() issues that carry no TMS/TDI bits and so never touch the shadow
-# TAP state. Anything else reaching send() that is not CMD_TMS or CMD_TDI is refused.
+# TAP state, even from UNKNOWN. Anything else reaching send() that is not CMD_TMS or
+# CMD_TDI is refused.
 _HANDSHAKE_CMDS = {CMD_HELLO, CMD_SPEED, CMD_MODE, CMD_IDCODES, CMD_IRLEN}
 
 # IEEE 1149.1 TAP controller states (Fig. 6-3). TAP_NEXT[state] = (next_on_tms0, next_on_tms1).
@@ -57,16 +92,27 @@ TAP_NEXT = {
     UPDATE_IR:        (RUN_TEST_IDLE, SELECT_DR),
 }
 
-# A private token. Not a public parameter: nothing outside this module can name it
-# without reaching into coe._IR_TOKEN, which is not something a caller does casually.
+# A shadow state meaning "the real TAP's position is not known" -- not one of the 16
+# real states, so it never matches a TAP_NEXT lookup by accident. CoE starts here; any
+# failed send/reply/call forces it back here; CoE.resync() is the only way out.
+UNKNOWN = -1
+
+# Private tokens. Not public parameters: nothing outside this module can name them
+# without reaching into coe._IR_TOKEN etc., which is not something a caller does
+# casually, and holding one is not enough on its own -- send() also checks that the
+# payload under it is exactly the shape the corresponding method builds.
 _IR_TOKEN = object()
+_ALL_ONES_TOKEN = object()
+_RESYNC_TOKEN = object()
 
 class IRNotAllowed(Exception):
     pass
 
 class TapProtocolError(Exception):
-    """A send/call would violate the shadow TAP state machine or the CoE reply
-    contract. Raised before anything is written to the socket."""
+    """A send/call would violate the shadow TAP state machine, the CoE payload shape,
+    or the reply contract. Raised before anything is written to the socket, except
+    where noted (a transmit or reply failure forces the shadow to UNKNOWN as part of
+    raising)."""
     pass
 
 class CoEError(Exception):
@@ -74,9 +120,19 @@ class CoEError(Exception):
     status other than STATUS_OK)."""
     pass
 
-def _decode_pair_payload(payload):
-    """Reverse of pair_payload: -> (count, tdi_bits, tms_bits)."""
+def _require_tms_shape(payload):
+    """CMD_TMS body: dev=0, flags=0, count, then exactly ceil(count/8) (TDI,TMS) byte
+    pairs -- no more, no less. Returns (count, tdi_bits, tms_bits)."""
+    if len(payload) < 4:
+        raise TapProtocolError("CMD_TMS payload shorter than its 4-byte header")
     dev, flags, n = struct.unpack_from("<BBH", payload, 0)
+    if dev != 0 or flags != 0:
+        raise TapProtocolError("CMD_TMS requires dev=0, flags=0, got dev=%d flags=%#x"
+                                % (dev, flags))
+    need = 4 + 2 * ((n + 7) // 8)
+    if len(payload) != need:
+        raise TapProtocolError("CMD_TMS count=%d needs exactly %d payload bytes, got %d"
+                                % (n, need, len(payload)))
     tdi_bits, tms_bits = [], []
     off = 4
     for k in range(0, n, 8):
@@ -87,6 +143,21 @@ def _decode_pair_payload(payload):
             tdi_bits.append((tb >> j) & 1)
             tms_bits.append((mb >> j) & 1)
     return n, tdi_bits, tms_bits
+
+def _require_tdi_shape(payload):
+    """CMD_TDI body: dev=0, flags=0x20, nbits, then exactly ceil(nbits/8) TDI bytes --
+    no more, no less. Returns nbits."""
+    if len(payload) < 4:
+        raise TapProtocolError("CMD_TDI payload shorter than its 4-byte header")
+    dev, flags, n = struct.unpack_from("<BBH", payload, 0)
+    if dev != 0 or flags != 0x20:
+        raise TapProtocolError("CMD_TDI requires dev=0, flags=0x20, got dev=%d flags=%#x"
+                                % (dev, flags))
+    need = 4 + (n + 7) // 8
+    if len(payload) != need:
+        raise TapProtocolError("CMD_TDI nbits=%d needs exactly %d payload bytes, got %d"
+                                % (n, need, len(payload)))
+    return n
 
 def pair_payload(tdi_bits, tms_bits):
     """0x8000100e body: dev 0, flags 0, count, then (TDI byte, TMS byte) pairs."""
@@ -117,7 +188,8 @@ def ir_scan_payload(ops_tdi_to_tdo):
     This is a pure builder: it validates the opcodes and the chain length, and raises
     IRNotAllowed before building anything, but building a valid payload here is NOT
     sufficient to send it -- CoE.send refuses to clock these bits unless the call
-    carries the internal token that only CoE.ir_scan hands out."""
+    carries the internal token CoE.ir_scan hands out, AND the bits under that token
+    decode back to exactly this builder's output for some allowlisted ops."""
     if len(ops_tdi_to_tdo) != CHAIN_DEVICES:
         raise IRNotAllowed("ir_scan needs exactly %d ops (one per chain device), got %d"
                             % (CHAIN_DEVICES, len(ops_tdi_to_tdo)))
@@ -138,43 +210,129 @@ def dr_payload(nbits, tdi):
     return struct.pack("<BBH", 0, 0x20, nbits) + tdi
 
 # Precomputed, byte-identical to what the manual TMS dance in coe_stream.py used to
-# send by hand: RTI -> Shift-IR, and Exit1-IR -> RTI.
+# send by hand: RTI -> Shift-IR, and Exit1-IR -> RTI. Used by both ir_scan and
+# ir_shift_all_ones, under either's token.
 _TO_IR = tms_payload([1, 1, 0, 0])
 _EXIT_IR = tms_payload([1, 0])
+
+def _ir_scan_ops_from_bits(tdi_bits):
+    """Reverse of ir_scan_payload's own bit-packing. None if the length is wrong for a
+    CHAIN_DEVICES-op scan."""
+    if len(tdi_bits) != CHAIN_DEVICES * IR_LEN:
+        return None
+    ops = []
+    for d in range(CHAIN_DEVICES):
+        v = 0
+        for i in range(IR_LEN):
+            v |= tdi_bits[d * IR_LEN + i] << i
+        ops.append(v)
+    ops.reverse()
+    return ops
+
+def _payload_matches_ir_token(payload, tdi_bits):
+    if payload in (_TO_IR, _EXIT_IR):
+        return True
+    ops = _ir_scan_ops_from_bits(tdi_bits)
+    if ops is None:
+        return False
+    try:
+        return payload == ir_scan_payload(ops)
+    except IRNotAllowed:
+        return False
+
+def _payload_matches_all_ones_token(payload, count, tdi_bits, tms_bits):
+    if payload in (_TO_IR, _EXIT_IR):
+        return True
+    if count < CHAIN_DEVICES * IR_LEN:
+        return False
+    if any(b != 1 for b in tdi_bits):
+        return False
+    return tms_bits == [0] * (count - 1) + [1]
+
+def _walk(state, tms_bits, guarded):
+    """Advance `state` through TAP_NEXT for each bit in tms_bits. When `guarded`
+    (an untokened CMD_TMS), refuse (fix round 2, item 1):
+      - clocking any bit while already in Shift-IR (round 1's rule: the only way to
+        shift real data into the IR without a vetted method),
+      - a transition INTO Capture-IR (the sole entry to the whole IR-side subgraph --
+        blocking it blocks every other way in too),
+      - a transition INTO Update-IR whose previous state was Exit1-IR or Exit2-IR (the
+        only two edges into Update-IR from the IR side: this is the latch itself)."""
+    for bit in tms_bits:
+        if guarded and state == SHIFT_IR:
+            raise TapProtocolError(
+                "CMD_TMS would clock a bit while the shadow TAP is in Shift-IR; route "
+                "IR shifts through CoE.ir_scan, CoE.ir_shift_all_ones, or CoE.resync")
+        new_state = TAP_NEXT[state][bit]
+        if guarded and new_state == CAPTURE_IR:
+            raise TapProtocolError(
+                "CMD_TMS would enter Capture-IR untokened; route IR access through "
+                "CoE.ir_scan, CoE.ir_shift_all_ones, or CoE.resync")
+        if guarded and new_state == UPDATE_IR and state in (EXIT1_IR, EXIT2_IR):
+            raise TapProtocolError(
+                "CMD_TMS would latch Update-IR from the IR side untokened (the capture "
+                "value is not safe to latch); route IR access through CoE.ir_scan, "
+                "CoE.ir_shift_all_ones, or CoE.resync")
+        state = new_state
+    return state
 
 class CoE:
     def __init__(s, ip, port=21363, timeout=10.0):
         s.s = socket.create_connection((ip, port), timeout=timeout)
         s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.txn = 1
-        s.tap = TEST_LOGIC_RESET
+        s.tap = UNKNOWN                  # the real TAP's position is not known yet
 
     def send(s, cmd, payload=b"", _token=None):
         if cmd == CMD_TMS:
-            count, tdi_bits, tms_bits = _decode_pair_payload(payload)
-            state = s.tap
-            for i in range(count):
-                if state == SHIFT_IR and _token is not _IR_TOKEN:
+            if _token is _RESYNC_TOKEN:
+                if payload != _RESYNC_PAYLOAD:
                     raise TapProtocolError(
-                        "CMD_TMS would clock a bit while the shadow TAP is in Shift-IR; "
-                        "route IR shifts through CoE.ir_scan or CoE.ir_shift_all_ones")
-                state = TAP_NEXT[state][tms_bits[i]]
-            next_tap = state
+                        "resync token used with a payload other than the derived "
+                        "resync sequence")
+                next_tap = RUN_TEST_IDLE     # guaranteed from EVERY starting state
+            else:
+                count, tdi_bits, tms_bits = _require_tms_shape(payload)
+                if _token is _IR_TOKEN:
+                    if not _payload_matches_ir_token(payload, tdi_bits):
+                        raise TapProtocolError(
+                            "ir_scan token used with a payload that is not the vetted "
+                            "toIR/opcode-shift/exitIR shape")
+                elif _token is _ALL_ONES_TOKEN:
+                    if not _payload_matches_all_ones_token(payload, count, tdi_bits, tms_bits):
+                        raise TapProtocolError(
+                            "ir_shift_all_ones token used with a payload that is not "
+                            "the vetted toIR/all-ones/exitIR shape")
+                if s.tap is UNKNOWN:
+                    raise TapProtocolError(
+                        "shadow TAP is UNKNOWN (never resynced, or a prior send/reply "
+                        "failed); call CoE.resync() first")
+                guarded = _token not in (_IR_TOKEN, _ALL_ONES_TOKEN)
+                next_tap = _walk(s.tap, tms_bits, guarded)
         elif cmd == CMD_TDI:
+            _require_tdi_shape(payload)
+            if s.tap is UNKNOWN:
+                raise TapProtocolError(
+                    "shadow TAP is UNKNOWN (never resynced, or a prior send/reply "
+                    "failed); call CoE.resync() first")
             if s.tap != SHIFT_DR:
                 raise TapProtocolError(
                     "CMD_TDI sent while the shadow TAP is in state %d, not Shift-DR (%d)"
                     % (s.tap, SHIFT_DR))
-            next_tap = s.tap                 # flags=0x20 holds TMS at 0 for the whole shift
+            next_tap = s.tap              # flags=0x20 holds TMS at 0 for the whole shift
         elif cmd in _HANDSHAKE_CMDS:
-            next_tap = s.tap                 # BMC-level commands; no TAP effect
+            next_tap = s.tap              # BMC-level commands; no TAP effect, any state
         else:
             raise TapProtocolError("unknown CoE command %#x" % cmd)
         # txn bit 15 is not a counter bit: txn 0x8000 drew a 4-byte error reply (MEASURED)
         t = s.txn
         s.txn = s.txn + 1 if s.txn < 0x7FFF else 1
-        s.s.sendall(struct.pack("<HHI", 8 + len(payload), t, cmd) + payload)
-        s.tap = next_tap
+        try:
+            s.s.sendall(struct.pack("<HHI", 8 + len(payload), t, cmd) + payload)
+        except Exception:
+            s.tap = UNKNOWN               # bytes may have partially gone out; forget it
+            raise
+        s._pending_tap = next_tap         # NOT committed yet -- call()/_call_token does that
         return t
 
     def _recv(s, n):
@@ -187,50 +345,79 @@ class CoE:
         return bytes(b)
 
     def reply(s):
-        hdr = s._recv(8)
-        L, t, st = struct.unpack("<HHI", hdr)
-        if L < 8:
-            raise CoEError("reply length %d is less than the 8-byte header" % L)
-        return t, st, s._recv(L - 8)
+        try:
+            hdr = s._recv(8)
+            L, t, st = struct.unpack("<HHI", hdr)
+            if L < 8:
+                raise CoEError("reply length %d is less than the 8-byte header" % L)
+            return t, st, s._recv(L - 8)
+        except Exception:
+            s.tap = UNKNOWN
+            raise
 
-    def call(s, cmd, payload=b"", _token=None):
-        t = s.send(cmd, payload, _token=_token)
-        rt, st, d = s.reply()
+    def _call_token(s, cmd, payload, token):
+        """send() + reply() + the commit discipline: the shadow only advances to the
+        state send() predicted once the reply is confirmed (matching txn, STATUS_OK);
+        any failure anywhere in this sequence leaves (or forces) the shadow at UNKNOWN.
+        Private: `token` is never a parameter a caller can reach through call()."""
+        t = s.send(cmd, payload, _token=token)
+        try:
+            rt, st, d = s.reply()
+        except Exception:
+            s.tap = UNKNOWN
+            raise
         if rt != t:
+            s.tap = UNKNOWN
             raise CoEError("txn mismatch: sent %#06x, reply carried %#06x" % (t, rt))
         if st != STATUS_OK:
+            s.tap = UNKNOWN
             raise CoEError("status %#010x, expected STATUS_OK %#010x" % (st, STATUS_OK))
+        s.tap = s._pending_tap
         return st, d
+
+    def call(s, cmd, payload=b""):
+        return s._call_token(cmd, payload, None)
 
     def ir_scan(s, ops):
         """The one vetted way to shift an IR opcode into every device on the chain:
         validates against the allowlist and the chain's device count FIRST (raises
-        IRNotAllowed, nothing sent), then drives RTI -> Shift-IR -> (ops) -> RTI with
-        the internal token, byte-identical to the old hand-rolled toIR/shift/exitIR
-        sequence."""
+        IRNotAllowed, nothing sent), then drives RTI -> Shift-IR -> (ops) -> RTI, every
+        sub-call under the internal token, byte-identical to the old hand-rolled
+        toIR/shift/exitIR sequence."""
         payload = ir_scan_payload(ops)
         if s.tap != RUN_TEST_IDLE:
             raise TapProtocolError(
-                "ir_scan must start from Run-Test/Idle, shadow TAP is in state %d" % s.tap)
-        s.call(CMD_TMS, _TO_IR)
-        s.call(CMD_TMS, payload, _token=_IR_TOKEN)
-        s.call(CMD_TMS, _EXIT_IR)
+                "ir_scan must start from Run-Test/Idle, shadow TAP is in state %r" % (s.tap,))
+        s._call_token(CMD_TMS, _TO_IR, _IR_TOKEN)
+        s._call_token(CMD_TMS, payload, _IR_TOKEN)
+        s._call_token(CMD_TMS, _EXIT_IR, _IR_TOKEN)
 
     def ir_shift_all_ones(s, n):
         """The raw-throughput measurement tool's own pattern (coe_stream.py): shifting
-        n >= chain IR bits of all-ones loads BYPASS into every device regardless of IR
-        length, independent of the allowlist (there is no opcode to check -- the bit
-        pattern is fixed and always safe). Kept here, not in coe_stream.py, so it goes
-        through the same TAP guard as ir_scan rather than hand-building IR payloads."""
-        if n < 1:
-            raise ValueError("ir_shift_all_ones needs at least 1 bit")
+        n >= the chain's IR length (24 bits: two 12-bit devices) of all-ones loads
+        BYPASS into every device regardless of IR length, independent of the allowlist
+        (there is no opcode to check -- the bit pattern is fixed and always safe).
+        Fewer than 24 bits would not necessarily clear every device's IR, so that is
+        refused outright."""
+        if n < CHAIN_DEVICES * IR_LEN:
+            raise ValueError("ir_shift_all_ones needs at least %d bits (the chain's IR "
+                              "length), got %d" % (CHAIN_DEVICES * IR_LEN, n))
         if s.tap != RUN_TEST_IDLE:
             raise TapProtocolError(
                 "ir_shift_all_ones must start from Run-Test/Idle, shadow TAP is in "
-                "state %d" % s.tap)
-        s.call(CMD_TMS, _TO_IR)
-        s.call(CMD_TMS, pair_payload([1] * n, [0] * (n - 1) + [1]), _token=_IR_TOKEN)
-        s.call(CMD_TMS, _EXIT_IR)
+                "state %r" % (s.tap,))
+        s._call_token(CMD_TMS, _TO_IR, _ALL_ONES_TOKEN)
+        s._call_token(CMD_TMS, pair_payload([1] * n, [0] * (n - 1) + [1]), _ALL_ONES_TOKEN)
+        s._call_token(CMD_TMS, _EXIT_IR, _ALL_ONES_TOKEN)
+
+    def resync(s):
+        """The one way to bring the shadow (and the real TAP) to a known state from ANY
+        starting condition, including a genuinely UNKNOWN shadow and a TAP stranded in
+        Shift-IR. Holds TDI=1 throughout and plays the fixed sequence derived by
+        tools/jc/derive_resync.py: safe (never reaches Update-IR before at least 24
+        fresh ones have been shifted into the IR register) and convergent (ends at
+        Run-Test/Idle) from every one of the TAP's 16 possible starting states."""
+        s._call_token(CMD_TMS, _RESYNC_PAYLOAD, _RESYNC_TOKEN)
 
     def start(s, hz=27_000_000):
         s.call(CMD_HELLO)
@@ -241,8 +428,19 @@ class CoE:
             raise RuntimeError("unexpected IDCODEs %s" % ids.hex())
         s.call(CMD_IRLEN, bytes.fromhex("000c0c"))
         s.call(CMD_MODE, bytes.fromhex("0001"))
+        s.resync()
         return ids
 
 # Backward-compatible aliases: short names used by the TAP checks above, kept at module
 # scope under both spellings so a test can refer to either coe.SHIFT_IR or the full name.
 TLR, RTI = TEST_LOGIC_RESET, RUN_TEST_IDLE
+
+# Derived by tools/jc/derive_resync.py (exhaustive BFS over all 16 starting states); see
+# that file's docstring for the exact safety property and CoE.resync's docstring for how
+# it is used. Length 55. test_coe.py::test_resync_sequence_is_derived_safely re-derives
+# and independently replays this exact list, so a hand transcription error cannot drift
+# from the search silently.
+_RESYNC_TMS = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+               0, 0, 1, 1, 0]
+_RESYNC_PAYLOAD = pair_payload([1] * len(_RESYNC_TMS), _RESYNC_TMS)
