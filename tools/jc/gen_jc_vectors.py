@@ -80,12 +80,44 @@ def gen_writer(rng):
         for k in range(h["nwords"]):
             ev.append("D %064x" % int.from_bytes(s[32 * (k + 1):32 * (k + 2)], "little"))
         ev.append("%s %08x" % ("P" if F.slot_crc_ok(s) else "F", h["seq"]))
+
+    # Fix round 2 (I1): a lost-verdict case where the displacing header differs from the
+    # orphan in BOTH address and seq. Every existing lost-verdict case in this generator
+    # (and in gen_loader_ovf) happens to have an orphan identical to its displacer, which
+    # let a mutant that keeps the ORPHAN's h_seq/h_addr/h_nw/h_flags/h_rlen on this branch
+    # (instead of loading the new header) survive both benches undetected: with an
+    # identical orphan/displacer there is nothing those stale fields could get wrong.
+    #
+    # seq 50 / addr 0x9000, 10 words: sent as a header plus only 4 of its 10 data words,
+    # then abandoned -- no verdict ever arrives for it, exactly the shape a dropped verdict
+    # or a dropped tail of data words leaves behind. `last` is one less than this is correct
+    # for after the frames above, since the earlier `frame(3, ...)` was a sequence gap and
+    # never committed, so seq 3 is free to reuse here. SAME nwords (10) as the orphan, so
+    # the word-count check at the verdict cannot by itself distinguish correct code from
+    # the mutant -- only loading the NEW header's seq/addr can.
+    orphan_seq, orphan_addr, nwords = 50, 0x9000, 10
+    orphan = F.build_slot(orphan_seq, orphan_addr, rng.randbytes(nwords * 32))
+    ev.append("H %064x" % int.from_bytes(orphan[:32], "little"))
+    for k in range(4):                                  # partial: 4 of 10, no verdict
+        ev.append("D %064x" % int.from_bytes(orphan[32 * (k + 1):32 * (k + 2)], "little"))
+    disp_seq, disp_addr = 3, 0xA000
+    disp = F.build_slot(disp_seq, disp_addr, rng.randbytes(nwords * 32))
+    ev.append("H %064x" % int.from_bytes(disp[:32], "little"))
+    for k in range(nwords):
+        ev.append("D %064x" % int.from_bytes(disp[32 * (k + 1):32 * (k + 2)], "little"))
+    ev.append("%s %08x" % ("P" if F.slot_crc_ok(disp) else "F", disp_seq))
+    m.crc_fail += 1          # the lost verdict itself: LoaderModel has no per-event notion
+                              # of an abandoned, never-completed frame, only per-slot feed()
+    m.feed(disp)              # the displacing frame commits normally
+
     st = m.status()
     with open(sim("jc_writer_vec.txt"), "w") as f:
         f.write("B %010x\n" % bad)
         f.write("\n".join(ev) + "\n")
         for a in sorted(m.mem):
             f.write("M %010x %064x\n" % (a, int.from_bytes(m.mem[a], "little")))
+        f.write("N %010x\n" % orphan_addr)   # must never have been written (ruling 6: the
+                                              # orphan's partial data is discarded whole)
         f.write("C %08x %08x %04x %04x %04x %04x\n" % (st["last"], st["committed"],
                 st["crc_fail"], st["seq_err"], st["dup"], st["bresp_err"]))
 
@@ -148,7 +180,14 @@ def gen_loader(rng):
     slots.append(bytes(bad))                                          # CRC fail
     slots.append(F.build_slot(seq, 0xE000, rng.randbytes(500))); seq += 1   # resend
     slots.append(F.build_slot(seq - 1, 0xE000, rng.randbytes(500)))   # duplicate
-    slots.append(F.range_crc_slot(seq, 0x0000, 0x0400 * 3)); seq += 1
+    # Fix round 2 (M4): 0x0000..0x1020 -- all of frame k=0's real data (up to 0x07C0),
+    # the zero padding out to k=1's page (0x1000), and the first 32 bytes (one word) of
+    # k=1's real payload. k=1's payload is never shorter than 32 bytes (rng.randrange's
+    # floor above), so this always crosses into genuine data from a SECOND frame
+    # regardless of the random length drawn for either frame, instead of the old
+    # 0x0000..0x0C00 range, which (after M3's 0x1000 spacing) covered only k=0's data
+    # plus unwritten zeros and never reached a second frame at all.
+    slots.append(F.range_crc_slot(seq, 0x0000, 0x1000 + 0x20)); seq += 1
     slots += [F.poll_slot()] * 3
     for s in slots:
         m.feed(s)
@@ -179,12 +218,27 @@ def gen_loader_ovf(rng):
       seq2 addr 0x1000 nwords 62   gate CLOSED -- queues whole (64 FIFO entries: hdr+62 data+
                                    verdict); writer is stuck on seq1's AW, so nothing drains
       seq3 addr 0x1800 nwords 61   gate CLOSED -- queues whole (63 entries). FIFO level is now
-                                   64 + 63 = 127, one below its 128-entry capacity
-      seq4 addr 0x2000 nwords 62   gate CLOSED -- only its HEADER fits (level 127 -> 128,
-                                   exactly at capacity); every other word of this frame (62
-                                   data + 1 verdict) arrives at a full FIFO and is DROPPED.
-                                   This sets status bit 179 (ovf). Gate reopens right after
-                                   this frame's slot ends.
+                                   64 + 63 = 127.
+      seq4 addr 0x2000 nwords 62   gate CLOSED -- only its HEADER and its first TWO DATA
+                                   words fit (level 127 -> 130); the real push-side capacity
+                                   here is 130, not the 128-entry DEPTH generic, because
+                                   rtl/async_fifo.vhd's 2-entry read-side output stage
+                                   (`ob`) prefetches from `mem` independently of whether the
+                                   writer is ready, so up to 2 beats the writer has not
+                                   consumed yet already read as "free" to the write side
+                                   (see FifoOverflowModel's docstring in jc_model.py for the
+                                   full mechanism). Every other word of this frame (the
+                                   remaining 60 data words + 1 verdict, 61 total) arrives at
+                                   a now-full FIFO and is DROPPED. This sets status bit 179
+                                   (ovf). MEASURED (a temporary per-slot accept/drop probe in
+                                   a scratch jc_frame_core.vhd, fix round 2): accepts 3,
+                                   drops 61. Gate reopens right after this frame's slot ends.
+                                   The final status/memory below (the T line) is INVARIANT
+                                   to the exact capacity over a wide range -- MEASURED (the
+                                   reviewer, confirmed independently against this same model
+                                   by sweeping FifoOverflowModel's depth) 128..190 total
+                                   capacity all give the identical T line; this is not a
+                                   knife edge pinned to 130.
       seq4 RESEND addr 0x2000     gate OPEN -- by the time this is shifted in, the writer has
                                    already (in aclk time, far faster than one TCK slot) drained
                                    the backlog: finished seq1's write, drained and committed

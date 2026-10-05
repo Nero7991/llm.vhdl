@@ -59,14 +59,28 @@ architecture rtl of jc_loader_core is
   attribute ASYNC_REG of trst_s1, trst_s2 : signal is "TRUE";
   attribute ASYNC_REG of trip_s1, trip_s2 : signal is "TRUE";
 begin
-  -- RESET, STATED HONESTLY (fix round 1, M1; the previous comment here overclaimed).
+  -- RESET, STATED HONESTLY (fix round 1, M1; fix round 2 corrected a remaining overclaim).
   --
   -- `arst` is an aclk-domain signal. It resets the FIFO's READ side (rrst => arst)
-  -- immediately, on the next aclk edge. It reaches the FIFO's WRITE side only through
-  -- trst_s1/trst_s2 below, which are clocked by TCK -- and TCK is stopped between host
-  -- commands (S4.1: "TCK runs only while bits shift"). So if `arst` pulses while TCK is
-  -- idle, the write side does NOT see it until TCK resumes; the two TCK edges this process
-  -- needs happen inside the host's next filler slot, which is exactly why that slot exists.
+  -- immediately, on the next aclk edge: `rp` (the read pointer) is zeroed right away.
+  --
+  -- It reaches the FIFO's WRITE side only through trst_s1/trst_s2 below, which are
+  -- clocked by TCK -- and TCK is stopped between host commands (S4.1: "TCK runs only
+  -- while bits shift"). This is NOT merely a delay. If `arst` is asserted and released
+  -- again entirely while TCK is idle, trst_s1 never samples a '1' at all: TCK has to be
+  -- running WHILE `arst` is high for the write side to see the pulse at all, delayed or
+  -- otherwise. A pulse that ends before TCK next ticks resets the write side NOT AT ALL,
+  -- full stop -- `wp` is left exactly where it was.
+  --
+  -- That mismatch matters because async_fifo's own memory array is never cleared by
+  -- either reset; only the pointers move. So a pulse of that shape leaves the read side
+  -- at rp=0 while the write side's wp (and the data already sitting in `mem`) are
+  -- unchanged, and the next read can come back with whatever stale beat happens to sit
+  -- at that low address from before the pulse -- the read side replaying old FIFO
+  -- contents it has no way to know are old. A reset is only genuinely seen by both sides
+  -- if it is HELD until TCK has definitely ticked at least once more, which is why the
+  -- host's filler slot exists: it guarantees TCK is running for long enough that a pulse
+  -- held across it cannot be missed.
   --
   -- `jc_frame_core` itself has NO reset input at all (see its entity). `desync_cnt` and
   -- `ovf_seen` are therefore sticky for the life of the configuration: nothing `arst` does,
@@ -74,10 +88,10 @@ begin
   -- or a reconfiguration) resets them to zero.
   --
   -- Net effect: `arst` can resynchronise the write-side FIFO pointers and the writer's own
-  -- counters (jc_hbm_writer does have a `rst` port), but it cannot roll back what
-  -- jc_frame_core has already counted, and it is not the recovery path for an overflow or a
-  -- desync in any case -- the recovery is always a HOST resend from last_committed + 1
-  -- (S4.1's resync procedure), never an `arst` pulse.
+  -- counters (jc_hbm_writer does have a `rst` port) PROVIDED it is held across a TCK tick;
+  -- it cannot roll back what jc_frame_core has already counted either way, and it is not
+  -- the recovery path for an overflow or a desync in any case -- the recovery is always a
+  -- HOST resend from last_committed + 1 (S4.1's resync procedure), never an `arst` pulse.
   process(tck)
   begin
     if rising_edge(tck) then

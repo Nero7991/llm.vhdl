@@ -1,6 +1,8 @@
 -- Bench for rtl/jc_hbm_writer.vhd: feeds the FIFO-side events of sim/jc_writer_vec.txt,
 -- serves AXI3 through sim/jc_axi3_mem.vhd (which checks every burst rule), then compares
--- memory and counters against the Python model's final state.
+-- memory and counters against the Python model's final state. Includes (fix round 2, I1)
+-- a lost-verdict case whose displacing header differs from the orphan in both address and
+-- seq, which an 'N' line checks is never written to memory at all.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -67,7 +69,7 @@ begin
     variable a : std_logic_vector(39 downto 0);
     variable s32, e32 : std_logic_vector(31 downto 0);
     variable e16a, e16b, e16c, e16d : std_logic_vector(15 downto 0);
-    variable checks, errors, nmem : natural := 0;
+    variable checks, errors, nmem, nabs : natural := 0;
     procedure chk(cond : boolean; msg : string) is
     begin
       checks := checks + 1;
@@ -99,6 +101,12 @@ begin
           peek_addr <= a; wait for 1 ns;
           chk(peek_hit = '1' and peek_data = w, "memory at " & to_hstring(a));
           nmem := nmem + 1;
+        when 'N' =>                                       -- fix round 2: must be absent
+          hread(l, a);
+          peek_addr <= a; wait for 1 ns;
+          chk(peek_hit = '0', "memory at " & to_hstring(a) &
+              " must be absent (an orphaned header's frame never committed)");
+          nabs := nabs + 1;
         when 'C' =>
           hread(l, s32); chk(last_seq = s32, "last_seq " & to_hstring(last_seq));
           hread(l, e32); chk(std_logic_vector(committed) = e32, "committed");
@@ -111,7 +119,8 @@ begin
     end loop;
     chk(axi_errors = 0, "AXI3 rule violations: " & integer'image(axi_errors));
     chk(crc_req = '0', "no range CRC was requested");
-    assert nmem = 97 report "expected 97 memory checks, did " & integer'image(nmem) severity failure;
+    assert nmem = 107 report "expected 107 memory checks, did " & integer'image(nmem) severity failure;
+    assert nabs = 1 report "expected 1 absence check, did " & integer'image(nabs) severity failure;
     if errors = 0 then
       report "PASS: tb_jc_hbm_writer checks=" & integer'image(checks);
     else

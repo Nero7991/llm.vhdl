@@ -88,9 +88,26 @@ class FifoOverflowModel:
     field, and a temporary `report` added inside jc_hbm_writer.vhd's TAG_HDR-in-S_COLLECT
     branch confirmed the lost-verdict path fires exactly once, matching this model's
     crc_fail=1.
+
+    FIFO CAPACITY, CORRECTED (fix round 2, I2): the real push-side capacity is `depth + 2`,
+    not `depth`. rtl/async_fifo.vhd's read side has a 2-entry output stage (`ob`) that
+    prefetches from the main `mem` array independently of whether the external consumer
+    (q_ready) is ready, as long as `ob` has room and `mem` has unread entries. Every beat
+    `ob` prefetches advances `rp`, which is what the WRITE side's `used_w = wp - rp_bin_w`
+    is computed from -- so from the write side's point of view, up to 2 beats that the
+    writer has not actually consumed yet (they are sitting in `ob`, not yet handed across
+    q_valid/q_ready) already look "free". A caller-chosen `OUT_STAGE` (default 2) models
+    this; the fix round 1 report, before this was known, assumed exactly `depth` and so
+    said seq4's frame in sim/tb_jc_loader_ovf.vhd would have only its header survive (1
+    accepted, 63 dropped); MEASURED (a temporary per-slot accept/drop probe in a scratch
+    jc_frame_core.vhd) it actually accepts 3 (header + 2 data words) and drops 61. The
+    scenario's final status/memory (T line) is unchanged either way -- see
+    tools/jc/gen_jc_vectors.py's gen_loader_ovf docstring for why, and the measured range
+    of capacities over which that holds.
     """
-    def __init__(self, depth=128):
+    def __init__(self, depth=128, out_stage=2):
         self.depth = depth
+        self.out_stage = out_stage   # async_fifo's `ob`: see this class's docstring
         self.queue = []           # pending FIFO entries, in order: ("H", hdr_dict) /
                                    # ("D", 32 bytes) / ("V", crc_ok_bool, seq)
         self.state = "HDR"        # writer state: HDR, COLLECT, BLOCKED
@@ -119,7 +136,7 @@ class FifoOverflowModel:
         self._push(("V", F.slot_crc_ok(slot), h["seq"]))
 
     def _push(self, item):
-        if len(self.queue) < self.depth:
+        if len(self.queue) < self.depth + self.out_stage:
             self.queue.append(item)
         else:
             self.ovf = True                                    # dropped: FIFO was full
