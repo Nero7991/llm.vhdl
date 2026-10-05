@@ -12,7 +12,7 @@ Usage: coe_stream.py <bmc_ip> <tck_hz> <bits_per_shift> <total_MB> <depth>
 import socket, struct, sys, time, os
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tools"))
-from jc.coe import CoE, tms_payload, pair_payload
+from jc.coe import CoE, tms_payload, pair_payload, CoEError
 
 def ir_all_ones_payload(n):
     return pair_payload([1] * n, [0] * (n - 1) + [1])
@@ -29,18 +29,20 @@ def main():
     c.call(0x80001011, bytes.fromhex("000c0c"))
     c.call(0x80001001, bytes.fromhex("0001"))
     # TAP: reset -> RTI -> Shift-IR, 64 ones (BYPASS everywhere), Update-IR -> RTI -> Shift-DR
-    # The reset goes through CoE.resync (fix round 2): the shadow TAP starts UNKNOWN, and
-    # every send is refused until resync() establishes a known state -- a raw TMS reset
-    # here would itself now be refused. The IR shift goes through CoE.ir_shift_all_ones
-    # (fix round 1): send() refuses to clock any bits while the shadow TAP is already in
-    # Shift-IR unless the call carries that method's internal token, so the old
-    # hand-rolled toIR/shift/exitIR dance would now be refused if issued here as three
-    # separate raw calls.
+    # Every TMS move now goes through a vetted CoE method (fix round 3): resync() in
+    # place of a raw reset, ir_shift_all_ones() for the IR shift (both already true as
+    # of fix rounds 1-2), and now to_shift_dr()/exit_dr_to_idle() in place of the old
+    # raw toDR/exit CMD_TMS calls through call() -- call() only accepts the handshake
+    # commands now, and there is no public way to send a CMD_TMS payload at all.
     c.resync()
     c.ir_shift_all_ones(64)
-    c.call(0x8000100e, tms_payload([1, 0, 0]))
+    c.to_shift_dr()
     def dr(nb, tdi):
-        return c.call(0x8000100f, struct.pack("<BBH", 0, 0x20, nb) + tdi)[1]
+        # CMD_TDI is pipelined, not request/reply like the handshake commands, so it
+        # goes through the public send()/reply() pair rather than call() (fix round 3
+        # item A: send() accepts only CMD_TDI, reply() now takes the expected txn).
+        t = c.send(0x8000100f, struct.pack("<BBH", 0, 0x20, nb) + tdi)
+        return c.reply(t)[1]
     tdo = dr(64, bytes([1]) + bytes(7))
     ones = [i for i in range(64) if (tdo[i >> 3] >> (i & 7)) & 1]
     print("DELAY", ones, flush=True)
@@ -55,12 +57,16 @@ def main():
         while issued < nsend and len(q) < depth:
             tdi = os.urandom(nbytes); q.append((c.send(0x8000100f, hdr + tdi), tdi, time.perf_counter())); issued += 1
         t, tdi, ts = q.pop(0)
-        rt, st, tdo = c.reply()
-        # fix round 2 item 8: status was captured for the error message but never
-        # itself part of the pass/fail test, so a non-OK status with a coincidentally
-        # matching txn/length looked like success. Receive-side only; sends nothing new.
-        if rt != t or st != 0x8000000a or len(tdo) != nbytes:
-            print("COE_FAIL txn/len", rt, t, len(tdo), hex(st), tdo.hex()); sys.exit(3)
+        # fix round 3 item C: reply() now takes the expected txn and checks it AND the
+        # status itself, raising CoEError (no silent return) on either mismatch --
+        # fix round 2 item 8's separate status check folds into that. Receive-side
+        # only; this changes nothing about what is sent.
+        try:
+            st, tdo = c.reply(t)
+        except CoEError as e:
+            print("COE_FAIL", e); sys.exit(3)
+        if len(tdo) != nbytes:
+            print("COE_FAIL len", len(tdo)); sys.exit(3)
         worst = max(worst, time.perf_counter() - ts)
         ti = int.from_bytes(tdi, "little"); to_ = int.from_bytes(tdo, "little")
         if prev is None:
@@ -71,7 +77,7 @@ def main():
     el = time.perf_counter() - t0; rate = done * nbytes / el
     print("COERATE tck=%d depth=%d bits/shift=%d shifts=%d %.2fs %.1f KB/s mean %.3f ms/shift worst %.2f ms bad_bits=%d -> 7GB in %.2f h"
           % (hz, depth, nbits, done, el, rate / 1024, el / done * 1e3, worst * 1e3, bad, 7e9 / rate / 3600), flush=True)
-    c.call(0x8000100e, tms_payload([1, 1, 0]))
+    c.exit_dr_to_idle()
     sys.exit(1 if bad else 0)
 
 if __name__ == "__main__":
