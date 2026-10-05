@@ -34,7 +34,7 @@ entity jc_axi3_mem is
     rdata     : out std_logic_vector(255 downto 0);
     rresp     : out std_logic_vector(1 downto 0);
     rlast     : out std_logic;
-    rvalid    : out std_logic;
+    rvalid    : out std_logic := '0';
     rready    : in  std_logic;
     poke_en   : in  std_logic := '0';
     poke_addr : in  std_logic_vector(39 downto 0) := (others => '0');

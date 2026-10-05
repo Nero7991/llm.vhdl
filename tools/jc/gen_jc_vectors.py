@@ -89,7 +89,22 @@ def gen_writer(rng):
         f.write("C %08x %08x %04x %04x %04x %04x\n" % (st["last"], st["committed"],
                 st["crc_fail"], st["seq_err"], st["dup"], st["bresp_err"]))
 
-GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer}
+def gen_crcunit(rng):
+    """Preloaded memory plus range requests with zlib CRCs over the same bytes."""
+    words = {}
+    for base in (0x0000, 0x0FC0, 0x2000):
+        for k in range(70):
+            words[base + 32 * k] = rng.randbytes(32)
+    reqs = [(0x0000, 32, 1), (0x0000, 70 * 32, 2), (0x0FC0, 5 * 32, 3),   # 5 beats across 4 KB
+            (0x2000, 16 * 32, 4), (0x2000, 17 * 32, 5), (0x2000, 0, 6)]  # 0 bytes: CRC of nothing
+    with open(sim("jc_crcunit_vec.txt"), "w") as f:
+        for a in sorted(words):
+            f.write("M %010x %064x\n" % (a, int.from_bytes(words[a], "little")))
+        for a, n, seq in reqs:
+            data = b"".join(words.get(x, bytes(32)) for x in range(a, a + n, 32))
+            f.write("R %010x %010x %08x %08x\n" % (a, n, seq, zlib.crc32(data) & 0xFFFFFFFF))
+
+GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer, "crcunit": gen_crcunit}
 
 def main():
     ap = argparse.ArgumentParser()
