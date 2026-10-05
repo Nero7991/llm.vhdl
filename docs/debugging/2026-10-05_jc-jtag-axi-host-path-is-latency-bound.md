@@ -204,3 +204,43 @@ longer the whole limit.
 - Whether the full-chain DR at 27 MHz is clean for USER registers (BYPASS only tested).
 - State left: `sqrl_bridge_tck27` running on the BC-250 with XVC on 2542; both dies
   hold `jc_axiprobe.bit`. The stock `sqrl_bridge` is unmodified beside it.
+
+## 11. UPDATE 2026-10-05: 54 MHz fails, 40.5 MHz is clean but buys ~4%. 27 MHz is the setting
+
+**Evidence (raw):**
+```
+# 54 MHz (108/2): the BMC accepts the speed, the chain does not work
+CoE JTAG Initialized to 54000000 MHz
+Board 0 Device 0 IDCODE(296e2127) Name: MX2100          <- wrong (VU35P is 14b71093)
+Board 0 Device 0 DNA: 000000000000000000000000
+Failed to get SQRL JTAG Board 0 Device 0 USER Fuse: 3
+# afterwards, at 13.5 MHz, Vivado: both dies still configured, probe intact
+CHK xcvu35p_0 AXI=1 ... SLR0.BIT[14]_DONE_PIN=1 ... SLR1.BIT[14]_DONE_PIN=1 ... IR.BIT05_DONE=1
+CHK xcvu35p_1 AXI=1 ... SLR0.BIT[14]_DONE_PIN=1 ... SLR1.BIT[14]_DONE_PIN=1 ... IR.BIT05_DONE=1
+# 40.5 MHz (27 + 13.5, not a power-of-two divide of 108): scan clean, FULL check
+CoE JTAG Initialized to 40500000 MHz
+Board 0 Device 0 IDCODE(14b71093) ... DNA: <redacted>
+XVCRATE depth=1 bits/shift=16384 shifts=4883  bytes=10000384  5.60s  1742.9 KB/s mean 1.15 ms worst 24.11 ms  bad_bits=0
+XVCRATE depth=1 bits/shift=16384 shifts=48829 bytes=100001792 66.19s 1475.4 KB/s mean 1.36 ms worst 865.22 ms bad_bits=0
+```
+
+**Answer.** 54 MHz corrupts the scan (no data path at all); it did no damage (both
+dies DONE, probe present). 40.5 MHz is error-free over 100 MB but sustains only
+1,475 KB/s against 27 MHz's 1,423 (+4%), with an 865 ms stall. At 40.5 MHz the bits
+of a shift take ~0.40 ms against 1.15-1.36 ms per shift: **the BMC's per-shift
+overhead (~0.8-1 ms) is now the limit, not TCK.** Whether the BMC really clocks
+40.5 MHz or rounds it (to 36 = 108/3?) is not determined; the rate cannot separate
+those because overhead dominates. **27 MHz is the recommended setting**: same
+sustained rate, more timing margin. Bridge left running at 27 MHz.
+
+**Measured and REJECTED, do not retry:** 54 MHz (scan corrupt). Raising TCK further
+to speed up the stream: the remaining time is per-shift overhead.
+
+**Trap hit:** `pkill -x sqrl_bridge_tck27` matches nothing (Linux truncates process
+names to 15 characters) and the old bridge kept port 2542; stop bridges by
+`/proc/PID/exe`. The "Carrier 0 / Module A" boundary-scan change is NOT a 27 MHz
+read error: the stock 13.5 MHz bridge reads the same with the probe loaded.
+
+**Remaining lever:** the per-shift overhead is in the bridge/BMC protocol, which XVC
+cannot batch beyond 16,384 bits. Going past ~1.5 MB/s means talking CoE directly
+(protocol RE) or the GTY path.
