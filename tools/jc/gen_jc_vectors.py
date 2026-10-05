@@ -111,7 +111,36 @@ def gen_crcunit(rng):
             f.write("R %010x %010x %08x %08x %d\n" %
                     (a, n, seq, zlib.crc32(data) & 0xFFFFFFFF, experr))
 
-GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer, "crcunit": gen_crcunit}
+def gen_loader(rng):
+    """One continuous scan as the host sends it, plus the model's final memory and status."""
+    from jc import jc_frame as F
+    from jc.jc_model import LoaderModel
+    m = LoaderModel()
+    slots = [bytes(F.SLOT_BYTES)]                                     # filler (lead = 0)
+    seq = 0
+    for k in range(12):
+        addr = 0x0400 * k + (0x0FE0 if k == 5 else 0)                 # k=5 crosses 4 KB
+        slots.append(F.build_slot(seq, addr, rng.randbytes(rng.randrange(32, 1985)))); seq += 1
+    bad = bytearray(F.build_slot(seq, 0x8000, rng.randbytes(500))); bad[999] ^= 2
+    slots.append(bytes(bad))                                          # CRC fail
+    slots.append(F.build_slot(seq, 0x8000, rng.randbytes(500))); seq += 1   # resend
+    slots.append(F.build_slot(seq - 1, 0x8000, rng.randbytes(500)))   # duplicate
+    slots.append(F.range_crc_slot(seq, 0x0000, 0x0400 * 3)); seq += 1
+    slots += [F.poll_slot()] * 3
+    for s in slots:
+        m.feed(s)
+    st = m.status()
+    with open(sim("jc_loader_vec.txt"), "w") as f:
+        for s in slots:
+            f.write("S %s\n" % F.slot_hex(s))
+        for a in sorted(m.mem):
+            f.write("M %010x %064x\n" % (a, int.from_bytes(m.mem[a], "little")))
+        f.write("T %08x %08x %04x %04x %04x %04x %08x %08x\n" % (
+            st["last"], st["committed"], st["crc_fail"], st["seq_err"], st["dup"],
+            st["desync"], st["range_crc"], st["range_seq"]))
+
+GENS = {"crc32": gen_crc32, "frame": gen_frame, "writer": gen_writer, "crcunit": gen_crcunit,
+        "loader": gen_loader}
 
 def main():
     ap = argparse.ArgumentParser()
