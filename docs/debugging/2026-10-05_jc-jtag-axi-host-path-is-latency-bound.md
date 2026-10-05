@@ -138,3 +138,69 @@ COMBINED TMS+TDI byte count. A loader must shift at most 16,384 bits per XVC cal
   aggregate does not double).
 - TCP pipelining (issuing the next shift before the reply) could hide part of the
   ~0.25 ms fixed cost; not tried.
+
+## 10. UPDATE 2026-10-05: what limits the stream, and two speed-ups measured
+
+**Question (Oren).** Can it go faster, and what is the limit: Ethernet (100 Mbit or
+1 Gbit?) or JTAG?
+
+**Answer, up front.** JTAG, set by the BMC's JTAG clock. Ethernet is 100 Mbit full
+duplex (MEASURED, `enp4s0` speed 100, duplex full; the BMC PHY is a 10/100 LAN8742)
+and the stream uses about 20% of it. `sqrl_bridge` hard-codes the CoE JTAG clock at
+13.5 MHz (one immediate, `mov $0xcdfe60,%esi` at file offset 0x6fae, the 2nd argument
+of the CoE speed call; no CLI option, and XVC `settck` is ignored). **A patched copy
+asking for 27 MHz is accepted by the BMC and streams 1,422.8 KB/s sustained over
+100 MB with ZERO bit errors under a full-bit check: 1.3 h per 7 GB die** (was 1.9 h).
+TCP pipelining adds +13% at 13.5 MHz and nothing useful at 27 MHz.
+
+**Procedure.** (1) Pipelining: the probe takes a `depth` argument and keeps that
+many shifts outstanding on the socket. (2) Clock: `sqrl_bridge_tck27` = the stock
+binary with the 4 bytes at 0x6fae changed from 13500000 to 27000000 (`cmp -l`: 4
+bytes differ, nothing else); the stock binary is untouched. Bridge restarted with
+`skip skip 2542` (no reprogram). 13.5 MHz = 108 MHz / 8 suggests an STM32 prescaler,
+so 27 MHz (/4) is a native step. (3) The integrity check was upgraded from sampled
+(every 997th bit) to EVERY bit (big-int compare of TDO against TDI delayed by d) for
+the 27 MHz soak, since rare bit errors are the risk of a faster clock.
+
+**Evidence (raw):**
+```
+# 13.5 MHz, pipelining depth sweep, 10 MB each, sampled check
+XVCRATE depth=1 bits/shift=16384 ... 1007.4 KB/s  mean 1.99 ms/shift  worst 2.88 ms  bad_samples=0
+XVCRATE depth=2 bits/shift=16384 ... 1107.9 KB/s  mean 1.81 ms/shift  worst 4.16 ms  bad_samples=0
+XVCRATE depth=4 bits/shift=16384 ... 1140.6 KB/s  mean 1.75 ms/shift  worst 7.56 ms  bad_samples=0
+# 27 MHz bridge log
+CoE JTAG Initialized to 27000000 MHz
+Board 0 Device 0 IDCODE(14b71093) Name: VU35P
+Board 0 Device 0 DNA: <redacted>          <- identical to the 13.5 MHz read
+# 27 MHz, sampled check
+XVCRATE depth=1 bits/shift=16384 ... 1533.9 KB/s  mean 1.30 ms/shift  worst 1.52 ms   bad_samples=0
+XVCRATE depth=4 bits/shift=16384 ... 1455.7 KB/s  mean 1.37 ms/shift  worst 934.04 ms bad_samples=0
+# 27 MHz, FULL check
+XVCRATE depth=1 bits/shift=16384 shifts=48829 bytes=100001792 68.64s 1422.8 KB/s mean 1.41 ms/shift worst 137.90 ms bad_bits=0
+# teeth: same check with the delay forced off by one, then the control
+XVCRATE depth=1 ... bad_bits=802562   (mutant, rc=1)
+XVCRATE depth=1 ... bad_bits=0        (control, rc=0)
+```
+DERIVED: at 27 MHz a 16,384-bit shift is 0.61 ms of clock against 1.30-1.41 ms
+measured, so per-shift overhead (~0.7 ms) is now about half the time; the clock is no
+longer the whole limit.
+
+**Measured and REJECTED, do not retry:**
+- Pipelining at 27 MHz: 1,455.7 KB/s at depth 4 against 1,533.9 at depth 1, with a
+  934 ms stall. Use depth 1.
+- "Ethernet is the limit": ~20% of a 100 Mbit link at 1 MB/s. The BMC link ceiling
+  (~12 MB/s) is far above any JTAG rate reached.
+
+**Measurement traps hit.**
+- The 13.5 MHz runs used the SAMPLED check (1 in 997 bits). Adequate for a rate
+  number, NOT for clearing a faster clock; the 27 MHz verdict rests on the full check.
+- One boundary-scan field read differently after the restart ("JungleCat Carrier: 1"
+  before, "0" after, LEDs now lit). The probe bitstream was loaded between the two
+  reads and drives those pins; IDCODE and DNA are bit-identical, so it is not read as
+  a 27 MHz scan error. Not proven either way.
+
+**Not determined.**
+- 54 MHz (108/2): not tried. The FPGA's own TCK limit and the module wiring decide it.
+- Whether the full-chain DR at 27 MHz is clean for USER registers (BYPASS only tested).
+- State left: `sqrl_bridge_tck27` running on the BC-250 with XVC on 2542; both dies
+  hold `jc_axiprobe.bit`. The stock `sqrl_bridge` is unmodified beside it.

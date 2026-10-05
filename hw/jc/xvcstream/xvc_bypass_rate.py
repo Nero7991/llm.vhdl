@@ -6,7 +6,8 @@ streams DR shifts of a given size. In BYPASS each device is a 1-bit register, so
 TDO is TDI delayed by N bits (N = devices on the chain). The delay is found once,
 then every later shift is checked against it.
 
-Usage: xvc_bypass_rate.py <host:port> <bits_per_shift> <total_MB> [timeout_s]
+Usage: xvc_bypass_rate.py <host:port> <bits_per_shift> <total_MB> [timeout_s] [depth]
+depth > 1 keeps that many shifts outstanding on the socket (TCP pipelining).
 Prints XVCRATE ... lines; exits nonzero on mismatch or hang (socket timeout).
 """
 import socket, struct, sys, time, os
@@ -38,6 +39,7 @@ def get_bit(buf, i): return (buf[i >> 3] >> (i & 7)) & 1
 def main():
     hp, nbits, total_mb = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
     to = float(sys.argv[4]) if len(sys.argv) > 4 else 10.0
+    depth = int(sys.argv[5]) if len(sys.argv) > 5 else 1
     host, port = hp.split(":")
     s = socket.create_connection((host, int(port)), timeout=to)
     s.sendall(b"getinfo:"); info = s.recv(64)
@@ -60,7 +62,7 @@ def main():
     print("XVCDELAY ones_at", ones, flush=True)
     if len(ones) != 1:
         print("XVCRATE_FAIL cannot find a single bypass delay"); sys.exit(2)
-    d = ones[0]
+    d = ones[0] + int(os.environ.get("XVC_TEETH_DELAY_OFFSET", "0"))   # teeth test only
     # stream: stay in Shift-DR (TMS all 0). Check TDO[i] == TDI[i-d] across shifts.
     nbytes = nbits // 8
     tms0 = bytes(nbytes)
@@ -68,23 +70,33 @@ def main():
     total = int(total_mb * 1e6)
     sent = 0; nshift = 0; prev_tail = None; bad = 0
     t0 = time.perf_counter(); worst = 0.0
-    while sent < total:
-        tdi = rnd(nbytes)
-        ts = time.perf_counter()
-        tdo = shift(s, nbits, tms0, tdi)
-        dt = time.perf_counter() - ts; worst = max(worst, dt)
-        # integrity: bit i of tdo equals bit i-d of the concatenated tdi stream
-        if prev_tail is not None:
-            for i in range(0, nbits, 997):          # sampled check, every ~1000th bit
-                j = i - d
-                exp = get_bit(tdi, j) if j >= 0 else get_bit(prev_tail, nbits + j)
-                if get_bit(tdo, i) != exp: bad += 1
+    hdr = b"shift:" + struct.pack("<I", nbits)
+    q = []                                   # TDI of shifts sent, reply not yet read
+    nsend = (total + nbytes - 1) // nbytes
+    issued = 0
+    mask = (1 << nbits) - 1
+    def check(tdi, tdo):
+        # FULL check: TDO is the TDI stream delayed by d bits (bit i = int bit i, LSB-first)
+        nonlocal prev_tail, bad
+        ti = int.from_bytes(tdi, "little"); to_ = int.from_bytes(tdo, "little")
+        if prev_tail is None:
+            exp = (ti << d) & mask; to_ &= ~((1 << d) - 1) & mask   # first d bits unknown
+        else:
+            exp = ((ti << d) | (int.from_bytes(prev_tail, "little") >> (nbits - d))) & mask
+        bad += bin(exp ^ to_).count("1")
         prev_tail = tdi
+    while nshift < nsend:
+        while issued < nsend and len(q) < depth:
+            tdi = rnd(nbytes); s.sendall(hdr + tms0 + tdi); q.append((tdi, time.perf_counter())); issued += 1
+        tdi, ts = q.pop(0)
+        tdo = recv_exact(s, nbytes)
+        worst = max(worst, time.perf_counter() - ts)
+        check(tdi, tdo)
         sent += nbytes; nshift += 1
     el = time.perf_counter() - t0
     rate = sent / el
-    print("XVCRATE bits/shift=%d shifts=%d bytes=%d %.2fs  %.1f KB/s  mean %.2f ms/shift  worst %.2f ms  bad_samples=%d  -> 7GB in %.1f h"
-          % (nbits, nshift, sent, el, rate / 1024, el / nshift * 1e3, worst * 1e3, bad, 7e9 / rate / 3600), flush=True)
+    print("XVCRATE depth=%d bits/shift=%d shifts=%d bytes=%d %.2fs  %.1f KB/s  mean %.2f ms/shift  worst %.2f ms  bad_bits=%d  -> 7GB in %.1f h"
+          % (depth, nbits, nshift, sent, el, rate / 1024, el / nshift * 1e3, worst * 1e3, bad, 7e9 / rate / 3600), flush=True)
     # leave the TAP in RTI
     tms_seq(s, [1, 1, 0])
     s.close()
