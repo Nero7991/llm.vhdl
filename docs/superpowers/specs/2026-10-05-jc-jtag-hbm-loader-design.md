@@ -219,3 +219,18 @@ the status word.
 | `tools/jc/coe_load.py`, `tools/jc/test_coe_load.py` | new |
 | `hw/jc/xvcstream/coe_stream.py` | reused as the client library |
 | `hw/fk33/host/fk33_load_weights.py`, `tools/hbm_map.py` | reused, unchanged |
+
+## 10. Plan-time amendments (2026-10-05)
+
+From `docs/superpowers/plans/2026-10-05-jc-jtag-hbm-loader.md`, "Plan-time rulings":
+1. GHDL-tested units live in `rtl/` (the regress closure covers only `rtl/`, `sim/`,
+   `sim/micro/`); `jc_frame_core` is the pure-VHDL receiver, `jc_frame_rx` the
+   `BSCANE2` wrapper in `hw/jc/loader/rtl/`.
+2. A bad-magic slot is dropped and counted, not latched; the host opens every scan with
+   a `16384 - lead` bit filler so frames align for either chain position.
+3. The frame CRC covers bytes `[0, 2016)` of the slot (all 63 words, zero-padded).
+4. `nwords = 0, flags = 0` is a status poll.
+5. FIFO words are 258 bits (2-bit tag + word).
+6. A word-count mismatch is a CRC failure.
+7. The FK33 image fingerprint record is out of scope.
+The status word layout is fixed by the plan's "Status word layout" table.
