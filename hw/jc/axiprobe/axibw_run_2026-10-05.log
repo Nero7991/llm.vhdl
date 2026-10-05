@@ -1,0 +1,92 @@
+WARNING: Default location for XILINX_HLS not found
+
+****** Vivado v2023.2 (64-bit)
+  **** SW Build 4029153 on Fri Oct 13 20:13:54 MDT 2023
+  **** IP Build 4028589 on Sat Oct 14 00:45:43 MDT 2023
+  **** SharedData Build 4025554 on Tue Oct 10 17:18:54 MDT 2023
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source measure_jtag_axi.tcl
+# set ADDR c0000000       ;
+# set lens {1 4 16 64 256}
+# set iters 200
+# open_hw_manager
+open_hw_manager: Time (s): cpu = 00:00:06 ; elapsed = 00:00:07 . Memory (MB): peak = 1331.832 ; gain = 0.027 ; free physical = 11223 ; free virtual = 61639
+# connect_hw_server -url localhost:3121
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+
+******** Xilinx cs_server v2023.2.0
+  ****** Build date   : Oct 10 2023-00:01:56
+    **** Build number : 2023.2.1696910516
+      ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+      ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+# set ok 0
+# for {set a 1} {$a <= 8} {incr a} {
+#   if {![catch {open_hw_target -xvc_url localhost:2542} err]} { set ok 1; break }
+#   puts "AXIBW_OPEN_RETRY $a: $err"
+#   catch {close_hw_target}
+#   after 3000
+# }
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:36731
+INFO: [Labtools 27-3414] Connected to existing cs_server.
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/localhost:2542
+ERROR: [Labtools 27-2269] No devices detected on target localhost:3121/xilinx_tcf/Xilinx/localhost:2542.
+Check cable connectivity and that the target board is powered up then
+use the disconnect_hw_server and connect_hw_server to re-register this hardware target.
+AXIBW_OPEN_RETRY 1: ERROR: [Common 17-39] 'open_hw_target' failed due to earlier errors.
+
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Xilinx/localhost:2542
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:36731
+INFO: [Labtools 27-3414] Connected to existing cs_server.
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Xilinx/localhost:2542
+# if {!$ok} { puts "AXIBW_NO_TARGET"; exit 1 }
+# puts "AXIBW_DEVICES [get_hw_devices]"
+AXIBW_DEVICES xcvu35p_0 xcvu35p_1
+# set dev [lindex [get_hw_devices] 0]
+# current_hw_device $dev
+# refresh_hw_device -quiet $dev
+# set axi [lindex [get_hw_axis] 0]
+# if {$axi eq ""} { puts "AXIBW_NO_HW_AXI (is jc_axiprobe.bit loaded?)"; exit 1 }
+# puts "JTAG_AXI measuring on $axi ($dev), BRAM @ 0x$ADDR"
+JTAG_AXI measuring on hw_axi_1 (xcvu35p_0), BRAM @ 0xc0000000
+# foreach L $lens {
+#   set bytes [expr {$L*4}]
+#   # distinct pattern per length so a stale BRAM cannot pass the readback
+#   set word [format %08X [expr {0x5A000000 + $L}]]
+#   set data [string repeat $word $L]
+#   if {[catch {
+#     delete_hw_axi_txn -quiet [get_hw_axi_txns -quiet {wtx rtx}]
+#     create_hw_axi_txn wtx $axi -address $ADDR -data $data -len $L -type write
+#     create_hw_axi_txn rtx $axi -address $ADDR -len $L -type read
+#     set t0 [clock microseconds]
+#     for {set i 0} {$i < $iters} {incr i} { run_hw_axi -quiet [get_hw_axi_txns wtx] }
+#     set t1 [clock microseconds]
+#     for {set i 0} {$i < $iters} {incr i} { run_hw_axi -quiet [get_hw_axi_txns rtx] }
+#     set t2 [clock microseconds]
+#     set rd [string toupper [get_property DATA [get_hw_axi_txns rtx]]]
+#     set match [expr {$rd eq $data}]
+#     set wbw [expr {double($iters*$bytes)/(($t1-$t0)/1e6)}]
+#     set rbw [expr {double($iters*$bytes)/(($t2-$t1)/1e6)}]
+#     puts [format "AXIBW len=%-4d burst=%-5dB iters=%d  write %.1f KB/s  read %.1f KB/s  readback=%s  -> 7GB write in %.1f h" \
+#           $L $bytes $iters [expr {$wbw/1024.0}] [expr {$rbw/1024.0}] [expr {$match ? "OK" : "MISMATCH"}] [expr {7.0e9/$wbw/3600.0}]]
+#     if {!$match} { puts "AXIBW_MISMATCH len=$L got [string range $rd 0 31]..." }
+#   } err]} { puts "AXIBW len=$L FAILED/HANG: $err"; break }
+# }
+AXIBW len=1    burst=4    B iters=200  write 0.2 KB/s  read 0.2 KB/s  readback=OK  -> 7GB write in 10461.1 h
+AXIBW len=4    burst=16   B iters=200  write 0.6 KB/s  read 0.7 KB/s  readback=OK  -> 7GB write in 3358.7 h
+AXIBW len=16   burst=64   B iters=200  write 2.7 KB/s  read 2.6 KB/s  readback=OK  -> 7GB write in 696.1 h
+AXIBW len=64   burst=256  B iters=200  write 10.5 KB/s  read 10.0 KB/s  readback=OK  -> 7GB write in 181.0 h
+AXIBW len=256  burst=1024 B iters=200  write 39.3 KB/s  read 38.6 KB/s  readback=OK  -> 7GB write in 48.3 h
+# puts "AXIBW_DONE"
+AXIBW_DONE
+INFO: [Common 17-206] Exiting Vivado at Mon Oct  5 14:32:11 2026...
