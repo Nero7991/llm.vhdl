@@ -20,20 +20,32 @@
 #        range-CRC path (sim/jc_loader_vec.txt has no BAD_RRESP_ADDR case) -- EXPECTED
 #        SURVIVED, showing tb_jc_hbm_crc (which does inject one) is the bench that owns
 #        this kill, not the end-to-end bench.
+#
+# Fix round 1 (2026-10-05, review): every row now carries an EXPECTED outcome and the row
+# is printed as "<tag> <result> expected <exp> OK|MISMATCH". A check nothing refuses on is
+# decoration in this project, so a mismatched row is not just noted -- the script exits 1
+# if ANY row mismatches (DID NOT ANALYZE is always a mismatch, whatever was expected) and
+# still exits 1 if Z0 does not report BADMUT. The PASS grep is anchored to GHDL's own
+# "(report note): PASS: <tb> checks=" text as a fixed string, so it cannot be fooled by a
+# vector file or patch log that happens to contain the substring "PASS: <tb>" elsewhere.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 GHDL=${GHDL:-ghdl}
 RUNROOT=/mnt/storage/fk33_builds/scratch/mutate_jc_loader_$(date +%Y%m%d_%H%M%S)_$$
 mkdir -p "$RUNROOT"
 DEPS="rtl/util_pkg.vhd rtl/jc_loader_pkg.vhd rtl/async_fifo.vhd rtl/jc_frame_core.vhd rtl/jc_hbm_writer.vhd rtl/jc_hbm_crc.vhd rtl/jc_status_sync.vhd rtl/jc_loader_core.vhd sim/jc_axi3_mem.vhd"
-NK=0; NS=0; NB=0; NT=0; Z0SEEN=0
+NT=0; NMISMATCH=0; Z0SEEN=0; Z0OK=0
+NCTRL=0; NCTRL_OK=0
+NMUT=0;  NMUT_OK=0
+NATTR=0; NATTR_OK=0
 
-run_row() {   # run_row <tag> <class> <rtlfile> <bench> <desc> <old> <new>
-  local tag=$1 cls=$2 file=$3 tb=$4 desc=$5 old=$6 new=$7
+run_row() {   # run_row <tag> <class> <rtlfile> <bench> <expected> <desc> <old> <new>
+  local tag=$1 cls=$2 file=$3 tb=$4 exp=$5 desc=$6 old=$7 new=$8
   local dir=$RUNROOT/$tag
   NT=$((NT+1))
   mkdir -p "$dir/work" "$dir/run"
   cp "$REPO/sim/"jc_*_vec.txt "$dir/run/"
+  local res mismatch=0
   if ! python3 - "$REPO/$file" "$dir/$(basename "$file")" "$old" "$new" <<'PY' 2>"$dir/patch.log"
 import sys
 src, dst, old, new = sys.argv[1:5]
@@ -44,55 +56,92 @@ if n != 1:
 open(dst, "w").write(s.replace(old, new))
 PY
   then
-    if [ "$tag" = Z0 ]; then Z0SEEN=1; printf '%-4s %-5s BADMUT   (required for the self-teeth row)\n' "$tag" "$cls"
-    else NB=$((NB+1)); printf '%-4s %-5s BADMUT   THIS ROW TESTED NOTHING -- %s\n' "$tag" "$cls" "$desc"; fi
-    return
-  fi
-  local f ok=1
-  for f in $DEPS; do
-    if [ "$f" = "$file" ]; then f="$dir/$(basename "$file")"; else f="$REPO/$f"; fi
-    "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$f" >>"$dir/analyze.log" 2>&1 || ok=0
-  done
-  "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$REPO/sim/$tb.vhd" >>"$dir/analyze.log" 2>&1 || ok=0
-  if [ $ok = 0 ]; then
-    printf '%-4s %-5s DID NOT ANALYZE -- %s\n' "$tag" "$cls" "$desc"; return
-  fi
-  ( cd "$dir/run" && timeout 900 "$GHDL" -r --std=08 -frelaxed --workdir="$dir/work" "$tb" \
-      --stop-time=40ms ) >"$dir/log" 2>&1
-  if grep -q "PASS: $tb" "$dir/log"; then
-    NS=$((NS+1)); printf '%-4s %-5s SURVIVED %s -- %s\n' "$tag" "$cls" "$tb" "$desc"
+    res=BADMUT
+    [ "$tag" = Z0 ] && Z0SEEN=1
   else
-    NK=$((NK+1)); printf '%-4s %-5s KILLED   %s -- %s\n' "$tag" "$cls" "$tb" "$desc"
+    local f ok=1
+    for f in $DEPS; do
+      if [ "$f" = "$file" ]; then f="$dir/$(basename "$file")"; else f="$REPO/$f"; fi
+      "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$f" >>"$dir/analyze.log" 2>&1 || ok=0
+    done
+    "$GHDL" -a --std=08 -frelaxed --workdir="$dir/work" "$REPO/sim/$tb.vhd" >>"$dir/analyze.log" 2>&1 || ok=0
+    if [ $ok = 0 ]; then
+      res="DID NOT ANALYZE"
+    else
+      ( cd "$dir/run" && timeout 900 "$GHDL" -r --std=08 -frelaxed --workdir="$dir/work" "$tb" \
+          --stop-time=40ms ) >"$dir/log" 2>&1
+      # Fixed-string match on GHDL's own report line, not a bare substring: the real line
+      # reads "<file>:<line>:<col>:@<time>:(report note): PASS: <tb> checks=<n>" and nothing
+      # else in a bench's output or a vector file can produce that exact "(report note):
+      # PASS: <tb> checks=" text.
+      if grep -qF "(report note): PASS: $tb checks=" "$dir/log"; then
+        res=SURVIVED
+      else
+        res=KILLED
+      fi
+    fi
   fi
+
+  case "$cls" in
+    CTRL) NCTRL=$((NCTRL+1));;
+    VALUE|PROTO|CDC) NMUT=$((NMUT+1));;
+    ATTR) NATTR=$((NATTR+1));;
+  esac
+
+  # DID NOT ANALYZE tested nothing, so it is always a mismatch no matter what was expected.
+  if [ "$res" = "DID NOT ANALYZE" ]; then
+    mismatch=1
+  elif [ "$res" = "$exp" ]; then
+    mismatch=0
+  else
+    mismatch=1
+  fi
+
+  local verdict
+  if [ $mismatch = 1 ]; then
+    verdict=MISMATCH
+    NMISMATCH=$((NMISMATCH+1))
+  else
+    verdict=OK
+    case "$cls" in
+      CTRL)  NCTRL_OK=$((NCTRL_OK+1));;
+      VALUE|PROTO|CDC) NMUT_OK=$((NMUT_OK+1));;
+      ATTR)  NATTR_OK=$((NATTR_OK+1));;
+      AUDIT) Z0OK=1;;
+    esac
+  fi
+
+  printf '%-4s %-16s expected %-16s %-8s -- %-5s %-18s %s\n' \
+    "$tag" "$res" "$exp" "$verdict" "$cls" "$tb" "$desc"
 }
 
 # control: the unmutated tree must pass every bench (a no-op patch on a unique anchor)
 for tb in tb_jc_crc32 tb_jc_frame_core tb_jc_hbm_writer tb_jc_hbm_crc tb_jc_loader_core tb_jc_loader_ovf; do
-  run_row "C_$tb" CTRL rtl/jc_loader_pkg.vhd "$tb" "control, no change" "x\"EDB88320\"" "x\"EDB88320\""
+  run_row "C_$tb" CTRL rtl/jc_loader_pkg.vhd "$tb" SURVIVED "control, no change" "x\"EDB88320\"" "x\"EDB88320\""
 done
 
-run_row Z0 AUDIT rtl/jc_loader_pkg.vhd tb_jc_crc32 "self-teeth: anchor not in the file" "THIS TEXT IS NOT IN THE FILE" "x"
-run_row M1 VALUE rtl/jc_loader_pkg.vhd tb_jc_crc32 "CRC polynomial one bit off" "x\"EDB88320\"" "x\"EDB88321\""
-run_row M2 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core "verdict ignores the CRC" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
-run_row M3 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core "magic not checked" "if word(31 downto 0) = JC_MAGIC_FRAME" "if true"
-run_row M4 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core "one payload word too many" "widx <= to_integer(nwords)" "widx <= to_integer(nwords) + 1"
-run_row M5 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core "desync not counted" "desync <= desync + 1;" "null;"
-run_row M6 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "commit on FAIL" "if tag = TAG_PASS and unsigned" "if unsigned"
-run_row M7 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "seq check removed" "elsif diff = 0 then" "elsif true then"
-run_row M8 PROTO rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "17-beat bursts" "n := to_unsigned(16, 8);" "n := to_unsigned(17, 8);"
-run_row M9 PROTO rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "4 KB rule off" "if to4k < n then n := to4k; end if;" "null;"
-run_row M10 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "BRESP errors not counted" "n_bresp <= n_bresp + 1;" "null;"
-run_row M11 VALUE rtl/jc_hbm_crc.vhd tb_jc_hbm_crc "CRC unit skips the last 32-bit lane" "if k = 7 then" "if k = 6 then"
-run_row M12 PROTO rtl/jc_hbm_crc.vhd tb_jc_hbm_crc "read bursts ignore 4 KB" "if to4k < n then n := to4k; end if;" "null;"
-run_row M13 CDC   rtl/jc_status_sync.vhd tb_jc_loader_core "status never updates in TCK" "st_r <= snap;" "null;"
-run_row M14 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core "range result not in status" "live(223 downto 192) <= res_crc;" "live(223 downto 192) <= (others => '0');"
+run_row Z0 AUDIT rtl/jc_loader_pkg.vhd tb_jc_crc32 BADMUT "self-teeth: anchor not in the file" "THIS TEXT IS NOT IN THE FILE" "x"
+run_row M1 VALUE rtl/jc_loader_pkg.vhd tb_jc_crc32 KILLED "CRC polynomial one bit off" "x\"EDB88320\"" "x\"EDB88321\""
+run_row M2 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "verdict ignores the CRC" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
+run_row M3 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "magic not checked" "if word(31 downto 0) = JC_MAGIC_FRAME" "if true"
+run_row M4 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "one payload word too many" "widx <= to_integer(nwords)" "widx <= to_integer(nwords) + 1"
+run_row M5 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "desync not counted" "desync <= desync + 1;" "null;"
+run_row M6 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "commit on FAIL" "if tag = TAG_PASS and unsigned" "if unsigned"
+run_row M7 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "seq check removed" "elsif diff = 0 then" "elsif true then"
+run_row M8 PROTO rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "17-beat bursts" "n := to_unsigned(16, 8);" "n := to_unsigned(17, 8);"
+run_row M9 PROTO rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "4 KB rule off" "if to4k < n then n := to4k; end if;" "null;"
+run_row M10 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "BRESP errors not counted" "n_bresp <= n_bresp + 1;" "null;"
+run_row M11 VALUE rtl/jc_hbm_crc.vhd tb_jc_hbm_crc KILLED "CRC unit skips the last 32-bit lane" "if k = 7 then" "if k = 6 then"
+run_row M12 PROTO rtl/jc_hbm_crc.vhd tb_jc_hbm_crc KILLED "read bursts ignore 4 KB" "if to4k < n then n := to4k; end if;" "null;"
+run_row M13 CDC   rtl/jc_status_sync.vhd tb_jc_loader_core KILLED "status never updates in TCK" "st_r <= snap;" "null;"
+run_row M14 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core KILLED "range result not in status" "live(223 downto 192) <= res_crc;" "live(223 downto 192) <= (others => '0');"
 # attribution: the writer bench must NOT see a frame-core mutant (it bypasses the core)
-run_row A1 ATTR rtl/jc_frame_core.vhd tb_jc_hbm_writer "M2 against a bench without the core" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
+run_row A1 ATTR rtl/jc_frame_core.vhd tb_jc_hbm_writer SURVIVED "M2 against a bench without the core" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
 # attribution: the end-to-end bench must also kill the frame-core CRC mutant on its own
-run_row A2 ATTR rtl/jc_frame_core.vhd tb_jc_loader_core "M2 seen end to end" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
+run_row A2 ATTR rtl/jc_frame_core.vhd tb_jc_loader_core KILLED "M2 seen end to end" "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
 
 # --- rows added 2026-10-05: reviewed by hand, now owned by the harness (see header) ---
-run_row M15 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "lost-verdict branch keeps the OLD header instead of reloading" \
+run_row M15 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer KILLED "lost-verdict branch keeps the OLD header instead of reloading" \
 "              elsif tag = TAG_HDR then          -- a frame lost its verdict: count, restart
                 n_crc <= n_crc + 1;
                 h_seq <= unsigned(d(63 downto 32)); h_addr <= unsigned(d(103 downto 64));
@@ -101,19 +150,28 @@ run_row M15 VALUE rtl/jc_hbm_writer.vhd tb_jc_hbm_writer "lost-verdict branch ke
 "              elsif tag = TAG_HDR then          -- a frame lost its verdict: count, restart
                 n_crc <= n_crc + 1;
                 cnt <= (others => '0');"
-run_row M16 VALUE rtl/jc_hbm_writer.vhd tb_jc_loader_ovf "lost-verdict branch does not count the failure" \
+run_row M16 VALUE rtl/jc_hbm_writer.vhd tb_jc_loader_ovf KILLED "lost-verdict branch does not count the failure" \
 "              elsif tag = TAG_HDR then          -- a frame lost its verdict: count, restart
                 n_crc <= n_crc + 1;" \
 "              elsif tag = TAG_HDR then          -- a frame lost its verdict: count, restart"
-run_row M17 VALUE rtl/jc_frame_core.vhd tb_jc_loader_ovf "ovf_seen never set" "        ovf <= '1';" "        null;"
-run_row M18 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core "live(177) wired to a constant instead of the trip sync" "  live(177)            <= trip_s2;" "  live(177)            <= '0';"
-run_row M19 VALUE rtl/jc_hbm_crc.vhd tb_jc_hbm_crc "rresp error flag never set" "              if rresp /= \"00\" then rerr <= '1'; end if;" "              null;"
+run_row M17 VALUE rtl/jc_frame_core.vhd tb_jc_loader_ovf KILLED "ovf_seen never set" "        ovf <= '1';" "        null;"
+run_row M18 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core KILLED "live(177) wired to a constant instead of the trip sync" "  live(177)            <= trip_s2;" "  live(177)            <= '0';"
+run_row M19 VALUE rtl/jc_hbm_crc.vhd tb_jc_hbm_crc KILLED "rresp error flag never set" "              if rresp /= \"00\" then rerr <= '1'; end if;" "              null;"
 # attribution: tb_jc_hbm_crc never elaborates jc_loader_core, so it cannot see M18
-run_row A3 ATTR rtl/jc_loader_core.vhd tb_jc_hbm_crc "M18 against a bench without the core" "  live(177)            <= trip_s2;" "  live(177)            <= '0';"
+run_row A3 ATTR rtl/jc_loader_core.vhd tb_jc_hbm_crc SURVIVED "M18 against a bench without the core" "  live(177)            <= trip_s2;" "  live(177)            <= '0';"
 # attribution: tb_jc_loader_core's vector never injects a bad RRESP on the range-CRC path,
 # so the end-to-end bench cannot see M19; tb_jc_hbm_crc (above) is the bench that owns it.
-run_row A4 ATTR rtl/jc_hbm_crc.vhd tb_jc_loader_core "M19 against the end-to-end bench, which never injects a bad RRESP" "              if rresp /= \"00\" then rerr <= '1'; end if;" "              null;"
+run_row A4 ATTR rtl/jc_hbm_crc.vhd tb_jc_loader_core SURVIVED "M19 against the end-to-end bench, which never injects a bad RRESP" "              if rresp /= \"00\" then rerr <= '1'; end if;" "              null;"
 
-printf 'kill ratio: %d KILLED of %d rows; %d SURVIVED; %d BADMUT\n' "$NK" "$NT" "$NS" "$NB"
+printf 'mutants killed %d/%d; controls passed %d/%d; attribution as expected %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
+  "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$NATTR_OK" "$NATTR" \
+  "$([ $Z0OK = 1 ] && echo ok || echo FAILED)" "$NT" "$NMISMATCH"
 printf 'scratch: %s\n' "$RUNROOT"
-[ $Z0SEEN = 1 ] || { echo "HARNESS FAILURE: Z0 did not report BADMUT"; exit 1; }
+# NT/Z0 arithmetic: every row is exactly one of CTRL, VALUE/PROTO/CDC (mutant), ATTR or the
+# single AUDIT row (Z0) -- NCTRL + NMUT + NATTR + 1 must equal NT.
+if [ $((NCTRL + NMUT + NATTR + 1)) -ne "$NT" ]; then
+  echo "HARNESS FAILURE: row classes do not add up to the row count ($NCTRL+$NMUT+$NATTR+1 != $NT)"
+  exit 1
+fi
+[ $Z0SEEN = 1 ] && [ $Z0OK = 1 ] || { echo "HARNESS FAILURE: Z0 did not report BADMUT"; exit 1; }
+[ $NMISMATCH = 0 ] || { echo "HARNESS FAILURE: $NMISMATCH row(s) MISMATCHED"; exit 1; }
