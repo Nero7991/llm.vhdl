@@ -71,8 +71,44 @@ transport's TCK rate), keeps polling while the die shows its own range frame com
 and the CRC unit busy instead of re-requesting the CRC, accepts a result a reopen's
 settled status already carries, and retries a piece once with a fresh seq after an HBM
 read error (RRESP) before reporting it.
+
+Fix round 3 (final review, 2026-10-05), host-only, no RTL/Vivado change:
+  1. `--hz` on load/verify/identify (default 27_000_000, refused above it or at/below
+     zero), passed to CoeTransport. Every range-wait budget already reads it off the
+     transport (`t.hz`, `range_polls`); this is what lets --hz actually move them.
+  2. The `dna_valid` timeout now also names HBM calibration (`hbm_ready0/1` holds the
+     loader core in reset until both stacks calibrate; LED_B is off until then), not
+     only "the die is not the loader" -- both are live explanations on real hardware.
+  3. MAX_RESYNCS is now a floor, not a hard cap: `--max-resyncs` (default 8, >= 1) sets
+     it, and the budget REFILLS -- an extra `--max-resyncs` is granted per 100,000 data
+     frames the die's own status shows committed this run (`_Session.max_committed`,
+     updated from every status word read, including through a resume). A short run sees
+     the bare floor; a multi-GB load earns a proportionally larger allowance for
+     transient events without raising the floor for a run that never gets that far.
+  4. `identify` now also prints the bit-reversed 96-bit DNA, labelled as such and as an
+     ESTIMATE (the reader's bit order is unconfirmed; Task 11 cross-checks it against
+     Vivado hardware manager). Printed only; the die record still stores the
+     un-reversed value `read_identity`/`_take` always reported -- nothing about what is
+     recorded, matched, or checked changes.
+  5. `plan_frames` (planning: manifest parse, hashing, preflight) now runs inside
+     main()'s own try/except, alongside dna_for and the checkpoint path's repo check: a
+     PlanError or a missing/unreadable manifest prints the `JCLOAD_ABORT` sentinel and
+     exits nonzero, the same as every other abort, instead of an uncaught traceback.
+  6. Each piece's expected range CRC is now computed ONCE, during plan_frames's own
+     hashing pass (the same streaming read that computes the manifest's blake2b check),
+     and frozen on the Frame (`exp_crc`) for a "range" frame. `expected_range_crc`
+     returns that stored value and reads nothing: before this, it (like `read_payload`
+     for the data send) re-read the file at compare time, so a file rewritten after
+     planning moved the "expected" value right along with the actual send, and the
+     blake2b check done at planning time caught nothing. `read_payload` still reads the
+     file live at send time (unavoidable -- that is what is actually transmitted), so
+     the rewritten bytes still reach the die; the range compare is what now catches the
+     mismatch. `plan_sha` is unchanged by this: it still folds in only
+     (file, addr, file_offset, nbytes, blake2b_128, die, MAX_PAYLOAD_BYTES) -- a derived
+     CRC is not identity data, so two manifests that plan identically still resume
+     against the same checkpoint.
 """
-import collections, contextlib, hashlib, json, math, os, re, sys, time, zlib
+import argparse, collections, contextlib, hashlib, json, math, os, re, sys, time, zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -81,7 +117,7 @@ from jc import jc_frame as F
 from jc import coe
 import fk33_load_weights as FLW
 
-Frame = collections.namedtuple("Frame", "seq addr path off n kind raw_n")
+Frame = collections.namedtuple("Frame", "seq addr path off n kind raw_n exp_crc")
 
 # Spec S2/S3: HBM is 8 GiB per die, two 4 GiB stacks ("no piece crosses the 4 GB stack
 # boundary"). Same values fk33_load_weights.py uses for the FK33's own (same-family) map.
@@ -107,10 +143,26 @@ def plan_frames(manifest_path, die=None):
     for e in _entries(mani):
         path = os.path.join(root, e["file"])
         filesize = os.path.getsize(path)
+        raw_pieces = list(FLW.pieces_of(e))
+        offs = [int(p["file_offset"]) for p in raw_pieces]
+        lens = [int(p["nbytes"]) for p in raw_pieces]
+        # One read of the file: the whole-file blake2b digest (the manifest's own
+        # integrity check) AND, in the same streaming pass, each piece's raw-byte
+        # CRC32 run (fix round 3 item 6) -- never re-read later for the range compare,
+        # so a file rewritten after this point cannot move the "expected" value along
+        # with it.
         dig = hashlib.blake2b(digest_size=16)
+        crc = [0] * len(raw_pieces)
+        pos = 0
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 24), b""):
                 dig.update(chunk)
+                end = pos + len(chunk)
+                for i in range(len(raw_pieces)):
+                    lo, hi = max(pos, offs[i]), min(end, offs[i] + lens[i])
+                    if lo < hi:
+                        crc[i] = zlib.crc32(chunk[lo - pos:hi - pos], crc[i])
+                pos = end
         if dig.hexdigest() != e["blake2b_128"]:
             raise PlanError("%s hashes to %s, the manifest says %s"
                             % (e["file"], dig.hexdigest(), e["blake2b_128"]))
@@ -119,7 +171,7 @@ def plan_frames(manifest_path, die=None):
         if declared is not None and int(declared) != _stack_of(header_addr):
             raise PlanError("%s declares stack %s, its header at %#x is actually in "
                             "stack %d" % (e["file"], declared, header_addr, _stack_of(header_addr)))
-        for p in FLW.pieces_of(e):
+        for i, p in enumerate(raw_pieces):
             addr, foff, n = int(p["hbm_offset"]), int(p["file_offset"]), int(p["nbytes"])
             if n == 0:
                 raise PlanError("%s piece at %#x is zero length" % (e["file"], addr))
@@ -138,21 +190,25 @@ def plan_frames(manifest_path, die=None):
             if foff + n > filesize:
                 raise PlanError("%s piece at file +%d+%d runs past the file's own size %d"
                                 % (e["file"], foff, n, filesize))
-            pieces.append((addr, path, foff, n))
+            padded = (n + 31) // 32 * 32
+            pcrc = crc[i]
+            if padded > n:
+                pcrc = zlib.crc32(bytes(padded - n), pcrc)
+            pieces.append((addr, path, foff, n, pcrc & 0xFFFFFFFF))
             h.update(("%s %d %d %d %s\n" % (e["file"], addr, foff, n, e["blake2b_128"])).encode())
     pieces.sort()
-    for (a0, _, _, n0), (a1, _, _, _) in zip(pieces, pieces[1:]):
+    for (a0, _, _, n0, _), (a1, _, _, _, _) in zip(pieces, pieces[1:]):
         if a0 + (n0 + 31) // 32 * 32 > a1:
             raise PlanError("pieces overlap after padding: %#x+%d reaches %#x" % (a0, n0, a1))
     seq = 0
-    for addr, path, foff, n in pieces:
+    for addr, path, foff, n, _ in pieces:
         k = 0
         while k < n:
             m = min(F.MAX_PAYLOAD_BYTES, n - k)
-            frames.append(Frame(seq, addr + k, path, foff + k, m, "data", m)); seq += 1
+            frames.append(Frame(seq, addr + k, path, foff + k, m, "data", m, None)); seq += 1
             k += m
-    for addr, path, foff, n in pieces:
-        frames.append(Frame(seq, addr, path, foff, (n + 31) // 32 * 32, "range", n)); seq += 1
+    for addr, path, foff, n, exp_crc in pieces:
+        frames.append(Frame(seq, addr, path, foff, (n + 31) // 32 * 32, "range", n, exp_crc)); seq += 1
     return frames, h.hexdigest()
 
 def read_payload(fr):
@@ -161,19 +217,23 @@ def read_payload(fr):
         return fh.read(fr.n)
 
 def expected_range_crc(fr):
-    """CRC over the piece's real (`raw_n`) bytes, zero-padded to the frame's 32-byte
-    length `n` -- the same padding jc_frame.build_slot applies before the writer commits
-    whole words, never bytes read from whatever happens to follow in the source file."""
-    with open(fr.path, "rb") as fh:
-        fh.seek(fr.off)
-        raw = fh.read(fr.raw_n)
-    return zlib.crc32(raw.ljust(fr.n, b"\0")) & 0xFFFFFFFF
+    """The piece's range CRC (over its real `raw_n` bytes, zero-padded to the frame's
+    32-byte length `n` -- the same padding jc_frame.build_slot applies before the writer
+    commits whole words), computed ONCE by plan_frames during its hashing pass and
+    frozen on the Frame as `exp_crc` (fix round 3 item 6). Returns that stored value;
+    reads nothing. A Frame not produced by plan_frames (or a "data" frame, which has no
+    range CRC) has no stored value and is refused rather than silently re-derived."""
+    if fr.exp_crc is None:
+        raise ValueError("expected_range_crc: %r has no stored exp_crc (not a range "
+                          "frame from plan_frames)" % (fr,))
+    return fr.exp_crc
 
 
 # ====================================================================== Task 9
 
 FILLER_BITS = F.SLOT_BITS
-MAX_RESYNCS = 8           # resyncs/recoveries/tail resends per run, then give up
+MAX_RESYNCS = 8           # resyncs/recoveries/tail resends: the floor (--max-resyncs)
+REFILL_FRAMES = 100_000   # frames committed per extra MAX_RESYNCS granted (fix round 3 item 3)
 MAX_POLLS = 32            # status polls per wait; small so a wrong --chain fails fast
 CKPT_EVERY = 1000         # frames between checkpoint writes
 NONE = 0xFFFFFFFF         # status "last committed seq" before anything committed
@@ -217,6 +277,17 @@ def dna_mask(v):
     only. Only identify prints the full value."""
     h = dna_hex(v)
     return "%s...%s" % (h[:4], h[-4:])
+
+def dna_bitrev(v):
+    """The DNA with its F.DNA_BITS (96) bits reversed end for end. Fix round 3 item 4:
+    identify also prints this, labelled as such and as an ESTIMATE -- the reader's bit
+    order is not yet confirmed; Task 11 cross-checks it against Vivado hardware
+    manager. Printed only: it never reaches the die record or any comparison."""
+    n = F.DNA_BITS
+    out = 0
+    for i in range(n):
+        out |= ((v >> i) & 1) << (n - 1 - i)
+    return out
 
 def _git_root_above(path):
     """The first directory at or above the RESOLVED parent of `path` holding a `.git`
@@ -537,6 +608,7 @@ class _Session:
         s.identified = False
         s.st = None
         s.max_piece = 0           # bytes; the Loader sets its largest range piece
+        s.max_committed = 0       # highest "committed" any status has shown (fix round 3 item 3)
 
     def _dna_mismatch(s, got):
         when = ("the die changed under the run" if s.identified else
@@ -555,6 +627,8 @@ class _Session:
         st = status_of(s.t.recv(), s.t.status_offset)
         if st["magic"] != F.MAGIC_STAT:
             return None
+        if st["committed"] > s.max_committed:
+            s.max_committed = st["committed"]
         if s.dna is not None:
             if st["dna_valid"] and st["dna"] != s.dna:
                 raise LoadAborted(s._dna_mismatch(st["dna"]))
@@ -624,7 +698,9 @@ class _Session:
             if polls >= MAX_POLLS:
                 raise LoadAborted("the die's identity (dna_valid) never became valid in %d "
                                   "polls: the bitstream's DNA reader is not running or the "
-                                  "die is not the loader; check the bitstream" % MAX_POLLS)
+                                  "die is not the loader, or HBM has not finished calibrating "
+                                  "(the core is held in reset until both stacks calibrate; "
+                                  "LED_B off); check the bitstream" % MAX_POLLS)
             s.t.send(F.poll_slot())
             x = s._take()
             polls += 1
@@ -655,13 +731,16 @@ class Loader(_Session):
     mismatch aborts naming the pieces. The die's status, never the checkpoint, says
     how far a load got; the checkpoint only binds a resume to the plan's sha."""
     def __init__(s, t, frames, plan_sha, ckpt_path, resume=False, *, dna,
-                 dna_label="the die record"):
+                 dna_label="the die record", max_resyncs=MAX_RESYNCS):
         if dna is None:
             raise ValueError("the Loader needs the die's expected DNA (from --dies)")
+        if max_resyncs < 1:
+            raise ValueError("max_resyncs must be >= 1, got %r" % (max_resyncs,))
         _Session.__init__(s, t, dna, dna_label)
         if not frames or [f.seq for f in frames] != list(range(len(frames))):
             raise ValueError("frames must be plan_frames() output: seq 0..n-1 in order")
         s.frames, s.sha, s.ckpt, s.resume = frames, plan_sha, ckpt_path, resume
+        s.max_resyncs = max_resyncs
         s.ranges = [f for f in frames if f.kind == "range"]
         s.nd = len(frames) - len(s.ranges)
         s.max_piece = max((f.n for f in s.ranges), default=0)
@@ -695,11 +774,22 @@ class Loader(_Session):
                 return "ok", st
         return "timeout", st
 
+    def _budget(s):
+        """The resync/recovery/tail-resend budget: s.max_resyncs (--max-resyncs, floor),
+        plus one more full allowance per REFILL_FRAMES data frames the die's own status
+        has shown committed this run (fix round 3 item 3) -- a long load earns a
+        proportionally larger allowance for transient events without raising the floor
+        for a run that never commits that many frames."""
+        return s.max_resyncs * (1 + s.max_committed // REFILL_FRAMES)
+
     def _count_retry(s, why):
         s.resyncs += 1
         s.causes.append(why)
-        if s.resyncs > MAX_RESYNCS:
-            raise LoadAborted("giving up after %d resyncs; last cause: %s" % (MAX_RESYNCS, why))
+        budget = s._budget()
+        if s.resyncs > budget:
+            raise LoadAborted("giving up after %d resyncs (budget %d: max_resyncs=%d, "
+                              "%d frames committed); last cause: %s"
+                              % (s.resyncs - 1, budget, s.max_resyncs, s.max_committed, why))
 
     def _reopen(s, why, faulted):
         """Leave Shift-DR (or, after a LinkFault, drain and resync), re-enter it and
@@ -1039,8 +1129,30 @@ masked, first and last 4 hex digits). Do not commit its output, or paste it into
 repo, an issue or a log under version control; the record file and checkpoints are
 refused anywhere inside a git checkout or worktree."""
 
+MAX_HZ = 27_000_000       # the BMC's rated TCK rate (fix round 3 item 1)
+
+def _hz_type(s):
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--hz must be an integer, got %r" % s)
+    if v <= 0:
+        raise argparse.ArgumentTypeError("--hz must be > 0, got %d" % v)
+    if v > MAX_HZ:
+        raise argparse.ArgumentTypeError("--hz must not exceed %d (the BMC's rated TCK "
+                                          "rate), got %d" % (MAX_HZ, v))
+    return v
+
+def _max_resyncs_type(s):
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--max-resyncs must be an integer, got %r" % s)
+    if v < 1:
+        raise argparse.ArgumentTypeError("--max-resyncs must be >= 1, got %d" % v)
+    return v
+
 def main(argv=None):
-    import argparse
     ap = argparse.ArgumentParser(description="Load or verify a Jungle Cat die's HBM over "
                                  "JTAG, or record a die's identity (main session only: "
                                  "this opens the board's JTAG).")
@@ -1055,12 +1167,23 @@ def main(argv=None):
         p.add_argument("--dies", required=True,
                        help="die record, JSON {\"A\": \"<24 hex digits>\", \"B\": ...}, kept "
                        "outside the repo; written by identify")
+        p.add_argument("--hz", type=_hz_type, default=MAX_HZ,
+                       help=("JTAG TCK rate in Hz passed to the BMC (default: %(default)s); "
+                       "must be > 0 and <= {0} (the BMC's rated rate). Every range-wait "
+                       "budget scales with it").format(MAX_HZ))
     for name in ("load", "verify"):
         p = sub.add_parser(name)
         p.add_argument("manifest")
         common(p)
         p.add_argument("--resume", action="store_true")
         p.add_argument("--ckpt", default=None)
+        p.add_argument("--max-resyncs", type=_max_resyncs_type, default=MAX_RESYNCS,
+                       help=("resyncs/recoveries/tail-resends allowed before giving up "
+                       "(default: %(default)s); must be >= 1. The budget refills: an "
+                       "extra --max-resyncs allowance is granted per {0} data frames the "
+                       "die has committed this run, so a long load gets a proportionally "
+                       "larger allowance for transient events than a short one"
+                       ).format(REFILL_FRAMES))
     p = sub.add_parser("identify", description=IDENTIFY_HELP,
                        formatter_class=argparse.RawDescriptionHelpFormatter)
     common(p)
@@ -1069,7 +1192,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.cmd == "identify":
         try:
-            t = CoeTransport(a.bmc, a.die, a.chain)
+            t = CoeTransport(a.bmc, a.die, a.chain, hz=a.hz)
             dna, how = identify(t, a.die, a.dies, force=a.force)
         except (LoadAborted, LinkFault) as e:
             print("JCIDENTIFY_ABORT %s" % e)
@@ -1079,26 +1202,32 @@ def main(argv=None):
             return 2
         print("JCIDENTIFY_DONE die=%s chain=%s dna=%s %s in %s; cross-check this value "
               "against Vivado hardware manager's DNA for that chain position (identify "
-              "--help)" % (a.die, a.chain, dna_hex(dna), how, a.dies))
+              "--help); bit-reversed dna=%s (bit order ESTIMATE, Task 11 cross-checks "
+              "against Vivado)" % (a.die, a.chain, dna_hex(dna), how, a.dies,
+                                   dna_hex(dna_bitrev(dna))))
         return 0
     try:
         dna = dna_for(a.dies, a.die)
-    except LoadAborted as e:
-        print("JCLOAD_ABORT %s" % e)
-        return 2
-    label = "the die record %s (die %s)" % (a.dies, a.die)
-    frames, sha = plan_frames(a.manifest, die=a.die)
-    ck = a.ckpt or default_ckpt(sha, a.die)
-    try:
+        label = "the die record %s (die %s)" % (a.dies, a.die)
+        frames, sha = plan_frames(a.manifest, die=a.die)
+        ck = a.ckpt or default_ckpt(sha, a.die)
         _outside_repo(ck, "the checkpoint")
     except LoadAborted as e:
         print("JCLOAD_ABORT %s" % e)
         return 2
+    except PlanError as e:
+        print("JCLOAD_ABORT %s" % e)
+        return 2
+    except OSError as e:
+        print("JCLOAD_ABORT manifest %s is unreadable (%s: %s)"
+              % (a.manifest, type(e).__name__, e))
+        return 2
     os.makedirs(os.path.dirname(os.path.abspath(ck)), exist_ok=True)
     t0 = time.time()
     try:
-        t = CoeTransport(a.bmc, a.die, a.chain)
-        ld = Loader(t, frames, sha, ck, resume=a.resume, dna=dna, dna_label=label)
+        t = CoeTransport(a.bmc, a.die, a.chain, hz=a.hz)
+        ld = Loader(t, frames, sha, ck, resume=a.resume, dna=dna, dna_label=label,
+                   max_resyncs=a.max_resyncs)
         if a.cmd == "load":
             st = ld.run_load()
             n = sum(f.n for f in frames if f.kind == "data")

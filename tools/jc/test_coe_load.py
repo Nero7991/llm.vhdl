@@ -1433,3 +1433,218 @@ def test_i1_cli_refuses_a_ckpt_in_a_checkout_before_the_board(tmp_path, monkeypa
                  "--dies", dies_file(tmp_path, {"A": DEFAULT_DNA}), "--ckpt", ck])
     assert rc == 2 and re_match_line(capsys.readouterr().out, r"^JCLOAD_ABORT the checkpoint .*git checkout")
     assert not os.path.exists(ck)
+
+# ======================================================================
+# Final review (fix round 3, 2026-10-05): items 1-6
+# ======================================================================
+
+# ---------------------------------------------------------------- item 1: --hz
+
+def test_cli_hz_default_reaches_the_transport(tmp_path, monkeypatch):
+    mp = make_manifest(tmp_path, [64])
+    seen = {}
+    def fake_transport(ip, die, chain, hz=None, client=None):
+        seen["hz"] = hz
+        return L.FakeTransport(LoaderModel(), lead=1)
+    monkeypatch.setattr(L, "CoeTransport", fake_transport)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    assert rc == 0 and seen["hz"] == 27_000_000
+
+def test_cli_hz_override_reaches_the_transport(tmp_path, monkeypatch):
+    mp = make_manifest(tmp_path, [64])
+    seen = {}
+    def fake_transport(ip, die, chain, hz=None, client=None):
+        seen["hz"] = hz
+        return L.FakeTransport(LoaderModel(), lead=1)
+    monkeypatch.setattr(L, "CoeTransport", fake_transport)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json"), "--hz", "1000000"])
+    assert rc == 0 and seen["hz"] == 1_000_000
+
+def test_cli_hz_also_reaches_identify(tmp_path, monkeypatch):
+    seen = {}
+    def fake_transport(ip, die, chain, hz=None, client=None):
+        seen["hz"] = hz
+        return L.FakeTransport(LoaderModel(dna=DNA_A), lead=1)
+    monkeypatch.setattr(L, "CoeTransport", fake_transport)
+    rc = L.main(["identify", "--bmc", "192.0.2.1", "--chain", "AB", "--die", "A",
+                 "--dies", str(tmp_path / "dies.json"), "--hz", "5000000"])
+    assert rc == 0 and seen["hz"] == 5_000_000
+
+def test_cli_hz_27000000_is_accepted_exactly(tmp_path, monkeypatch):
+    mp = make_manifest(tmp_path, [64])
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(), lead=1))
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json"), "--hz", "27000000"])
+    assert rc == 0
+
+@pytest.mark.parametrize("hz", ["27000001", "100000000"])
+def test_cli_hz_refuses_above_27mhz(tmp_path, hz):
+    mp = make_manifest(tmp_path, [64])
+    with pytest.raises(SystemExit) as e:
+        L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                "--dies", str(tmp_path / "dies.json"), "--hz", hz])
+    assert e.value.code == 2
+
+@pytest.mark.parametrize("hz", ["0", "-1"])
+def test_cli_hz_refuses_zero_or_negative(tmp_path, hz):
+    mp = make_manifest(tmp_path, [64])
+    with pytest.raises(SystemExit) as e:
+        L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                "--dies", str(tmp_path / "dies.json"), "--hz", hz])
+    assert e.value.code == 2
+
+def test_range_wait_budget_scales_with_hz():
+    """Range-wait budgets already scale with t.hz (range_polls); this is the relationship
+    --hz now actually controls end-to-end (test_cli_hz_override_reaches_the_transport)."""
+    n = 1 << 20
+    fast = L.range_polls(n, L.RANGE_EXPECT_BPS, 27_000_000)
+    slow = L.range_polls(n, L.RANGE_EXPECT_BPS, 1_000_000)
+    assert fast > slow >= L.MAX_POLLS
+
+# ---------------------------------------------------------------- item 2: HBM calibration
+
+def test_identify_timeout_message_mentions_hbm_calibration(tmp_path):
+    frames, sha = plan(tmp_path, (64,))
+    m = LoaderModel(dna=0, dna_valid=0)
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="HBM has not finished calibrating") as e:
+        Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=DNA_A).run_load()
+    assert "LED_B" in str(e.value)
+
+# ---------------------------------------------------------------- item 3: --max-resyncs + refill
+
+def test_cli_max_resyncs_default_and_override(tmp_path, monkeypatch):
+    mp = make_manifest(tmp_path, [64])
+    seen = {}
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(), lead=1))
+    real_init = L.Loader.__init__
+    def capturing_init(self, *a, **k):
+        seen["max_resyncs"] = k.get("max_resyncs")
+        return real_init(self, *a, **k)
+    monkeypatch.setattr(L.Loader, "__init__", capturing_init)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    assert rc == 0 and seen["max_resyncs"] == L.MAX_RESYNCS
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck2.json"), "--max-resyncs", "3"])
+    assert rc == 0 and seen["max_resyncs"] == 3
+
+@pytest.mark.parametrize("v", ["0", "-1"])
+def test_cli_max_resyncs_refuses_below_one(tmp_path, v):
+    mp = make_manifest(tmp_path, [64])
+    with pytest.raises(SystemExit) as e:
+        L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                "--dies", str(tmp_path / "dies.json"), "--max-resyncs", v])
+    assert e.value.code == 2
+
+def test_loader_refuses_max_resyncs_below_one(tmp_path):
+    frames, sha = plan(tmp_path, (64,))
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    with pytest.raises(ValueError, match="max_resyncs"):
+        Ld(t, frames, sha, str(tmp_path / "ck.json"), max_resyncs=0)
+
+def test_max_resyncs_budget_without_refill_is_bounded(tmp_path):
+    """Direct on the budget/counting primitives (_count_retry/_budget), not through a
+    full run_load(): the pipelined data phase can fold several failing frames into one
+    resync (they are drained and resent together), so a scenario built out of N distinct
+    fail_seqs does not reliably produce N distinct resyncs. The accounting itself is
+    what item 3 changed, so test it directly."""
+    frames, sha = plan(tmp_path, (64,))
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"), max_resyncs=2)
+    ld._count_retry("probe 1")
+    ld._count_retry("probe 2")
+    with pytest.raises(L.LoadAborted, match="resyncs"):
+        ld._count_retry("probe 3")
+
+def test_max_resyncs_budget_refills_per_100k_frames_committed(tmp_path):
+    """Same bare max_resyncs=2 budget, but the die's status has shown 250,000 frames
+    committed (as if this run resumed a long session): the refill rule (an extra
+    --max-resyncs allowance per 100,000 data frames committed) must grant
+    2 * (1 + 2) = 6 total before giving up, not the bare 2."""
+    frames, sha = plan(tmp_path, (64,))
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"), max_resyncs=2)
+    ld.max_committed = 250_000
+    assert ld._budget() == 6
+    for i in range(6):
+        ld._count_retry("probe %d" % i)          # must not raise: within the refilled budget
+    with pytest.raises(L.LoadAborted, match="resyncs"):
+        ld._count_retry("probe 7")               # the 7th exceeds even the refilled budget
+
+# ---------------------------------------------------------------- item 4: bit-reversed DNA
+
+def test_dna_bitrev_reverses_96_bits():
+    assert L.dna_bitrev(0xFF) == 0xFF << 88
+    assert L.dna_bitrev(1) == 1 << 95
+    assert L.dna_bitrev(L.dna_bitrev(DNA_A)) == DNA_A
+
+def test_identify_prints_the_bit_reversed_dna_without_changing_what_is_recorded(tmp_path, monkeypatch, capsys):
+    p = str(tmp_path / "dies.json")
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(dna=DNA_A), lead=1))
+    rc = L.main(["identify", "--bmc", "192.0.2.1", "--chain", "AB", "--die", "A", "--dies", p])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert L.dna_hex(DNA_A) in out
+    assert L.dna_hex(L.dna_bitrev(DNA_A)) in out
+    assert "bit-reversed" in out or "bitrev" in out
+    assert "ESTIMATE" in out and "Task 11" in out
+    assert L.read_dies(p) == {"A": DNA_A}          # the recorded value is NOT reversed
+
+# ---------------------------------------------------------------- item 5: plan_frames outside the try
+
+def test_cli_plan_error_prints_the_abort_sentinel_not_a_traceback(tmp_path, capsys):
+    mp = make_manifest(tmp_path, [64])
+    (tmp_path / "t0.bin").write_bytes(b"\xFF" * 64)         # now hashes wrong -> PlanError
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    out, err = capsys.readouterr()
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT ")
+    assert "Traceback" not in err and "Traceback" not in out
+
+def test_cli_missing_manifest_prints_the_abort_sentinel_not_a_traceback(tmp_path, capsys):
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", str(tmp_path / "no_such_manifest.json"), "--bmc", "192.0.2.1",
+                 "--die", "A", "--chain", "AB", "--dies", dies,
+                 "--ckpt", str(tmp_path / "ck.json")])
+    out, err = capsys.readouterr()
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT ")
+    assert "Traceback" not in err and "Traceback" not in out
+
+# ---------------------------------------------------------------- item 6: range CRC frozen at planning
+
+def test_expected_range_crc_is_the_frozen_planning_value(tmp_path):
+    """plan_frames computes each range frame's expected CRC once, during its hash pass
+    (one read); expected_range_crc returns that stored value rather than re-reading."""
+    mp, data = make_two_piece_manifest(tmp_path, 1000, 1048)
+    frames, _ = L.plan_frames(mp)
+    r0 = [f for f in frames if f.kind == "range" and f.addr == 0][0]
+    assert r0.exp_crc == zlib.crc32(data[:1000] + bytes(24)) & 0xFFFFFFFF
+    assert L.expected_range_crc(r0) == r0.exp_crc
+    # Rewriting the file now must not change what expected_range_crc returns (frozen).
+    (tmp_path / "striped.bin").write_bytes(bytes(len(data)))
+    assert L.expected_range_crc(r0) == r0.exp_crc
+
+def test_range_compare_uses_the_crc_frozen_at_planning_not_a_rewritten_file(tmp_path):
+    """A file rewritten AFTER planning (consistently -- same length, so the manifest's
+    own geometry still matches) used to still pass: expected_range_crc re-read the file
+    at compare time, same as the payload re-read at send time, so both sides silently
+    moved together and the blake2b check done at planning time meant nothing. The
+    expected range CRC is now computed once during the planning hash pass and frozen on
+    the Frame; the die commits the NEW bytes (read_payload reads live), so the range
+    compare must now catch the mismatch rather than report DONE."""
+    frames, sha = plan(tmp_path, (64,))
+    fr = next(f for f in frames if f.kind == "data")
+    data = open(fr.path, "rb").read()
+    open(fr.path, "wb").write(bytes(b ^ 0xFF for b in data))   # same length, different bytes
+    m = LoaderModel()
+    ld = Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json"))
+    with pytest.raises(L.LoadAborted, match="range CRC"):
+        ld.run_load()
