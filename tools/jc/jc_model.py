@@ -6,8 +6,13 @@ definitions in jc_frame.py and nothing with the RTL.
 import math, zlib
 from . import jc_frame as F
 
+# Task 9b: the die identity the model reports in status [351:256] (dna_valid at [352]).
+# A MADE-UP value: no DNA read from real hardware is ever committed to this repo.
+DEFAULT_DNA = 0x0123456789ABCDEF00C0FFEE
+
 class LoaderModel:
-    def __init__(self, bad_bresp_addrs=()):
+    def __init__(self, bad_bresp_addrs=(), dna=DEFAULT_DNA, dna_valid=1):
+        self.dna, self.dna_valid = dna, dna_valid
         self.mem = {}
         self.bad_bresp_addrs = set(bad_bresp_addrs)
         self.last = 0xFFFFFFFF
@@ -53,7 +58,8 @@ class LoaderModel:
                     crc_fail=self.crc_fail, seq_err=self.seq_err, desync=self.desync,
                     bresp_err=self.bresp_err, dup=self.dup, busy=0, hbm_trip=0,
                     range_valid=self.range_valid, fifo_ovf=0, range_rerr=0,
-                    range_crc=self.range_crc, range_seq=self.range_seq)
+                    range_crc=self.range_crc, range_seq=self.range_seq,
+                    dna=self.dna, dna_valid=self.dna_valid)
 
 class FifoOverflowModel:
     """Fix round 1 (I1): an explicit model of jc_frame_core -> async_fifo(DEPTH) ->
@@ -118,7 +124,9 @@ class FifoOverflowModel:
     `crc_ticks_per_byte` None (the default, and every existing caller) behaviour is
     unchanged: a range request commits at once and status() is the same as before.
     """
-    def __init__(self, depth=128, out_stage=2, crc_ticks_per_byte=None):
+    def __init__(self, depth=128, out_stage=2, crc_ticks_per_byte=None, dna=DEFAULT_DNA,
+                 dna_valid=1):
+        self.dna, self.dna_valid = dna, dna_valid
         self.crc_tpb = crc_ticks_per_byte
         self.now = 0
         self.crc_done_at = 0
@@ -163,7 +171,8 @@ class FifoOverflowModel:
                     bresp_err=0, dup=self.dup, busy=busy, hbm_trip=0,
                     range_valid=int(self.range_issued and not self._crc_busy()),
                     fifo_ovf=int(self.ovf), range_rerr=0,
-                    range_crc=self.range_crc, range_seq=self.range_seq)
+                    range_crc=self.range_crc, range_seq=self.range_seq,
+                    dna=self.dna, dna_valid=self.dna_valid)
 
     def set_gate(self, open_):
         self.gate_open = open_

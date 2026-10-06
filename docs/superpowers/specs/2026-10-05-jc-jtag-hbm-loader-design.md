@@ -234,3 +234,55 @@ From `docs/superpowers/plans/2026-10-05-jc-jtag-hbm-loader.md`, "Plan-time rulin
 6. A word-count mismatch is a CRC failure.
 7. The FK33 image fingerprint record is out of scope.
 The status word layout is fixed by the plan's "Status word layout" table.
+
+## 11. Amendment, 2026-10-05: die identity (Task 9b, Oren's decision)
+
+Appended; nothing above is edited. Reason: the Task 9 review found that once BOTH dies
+run the loader, `(die=A, chain=AB)` and `(die=B, chain=BA)` put identical traffic on
+the wire, so a wrong `--chain` loads die B's weights into die A with nothing noticing.
+
+**Status word, 384 bits.** `[255:0]` is unchanged (4.4). `[351:256]` is the die's 96-bit
+DNA_PORTE2 value, `[352]` is `dna_valid`, `[383:353]` is zero. The slot stays 16,384
+bits; TDO bits past 383 in a slot are zero. `jc_frame_core` shifts 384 bits LSB first
+from the start of each slot; `jc_status_sync` carries 384 bits (width generic `W`,
+default 384) with the same toggle handshake; the magic/desync/ovf merge is unchanged.
+
+**Reader.** `rtl/jc_dna_reader.vhd` (aclk domain, pure VHDL, instantiated by
+`jc_loader_core`) drives the primitive's pins: after reset release one READ period, then
+95 SHIFT periods, sampling DOUT after the READ and after each SHIFT (96 bits), then
+`dna_valid` rises (sticky until reset) and `dna_clk` stops. `dna_clk` is register-divided
+from aclk, one period = `2 * DIV` aclk cycles (default `DIV = 10`: 22.5 MHz at a 450 MHz
+aclk, 10 MHz at 200 MHz); READ and SHIFT change, and DOUT is sampled, only on the
+`dna_clk` falling edge, `DIV` aclk cycles from either rising edge. The DNA_PORTE2
+instance itself (CLK, READ, SHIFT, DIN tied 0, DOUT) belongs in the synthesis-only
+wrapper (Task 10), since the GHDL gate cannot elaborate UNISIM; GHDL benches use
+`sim/jc_dna_model.vhd`, which also counts setup/hold and period violations.
+ESTIMATE, not datasheet figures (AMD UG570/DS923 are not in `docs/datasheets/`): the bit
+order (the first bit out of DOUT after READ is `dna(0)`) and the 25 MHz CLK ceiling.
+Task 10 constrains `dna_clk`; Task 11 cross-checks the value read through the loader
+against Vivado hardware manager's per-device DNA on silicon.
+
+**Host check.** `coe_load.py load|verify` require `--dies FILE`, a JSON record
+`{"A": "<24 hex digits>", "B": "<24 hex digits>"}` (either key may be absent) kept
+OUTSIDE the repository: no DNA read from real hardware is ever committed. On every scan
+open, after the magic check and the settle: wait (bounded, `MAX_POLLS`) for
+`dna_valid`, then abort unless `dna == record[die]`, naming both values and saying
+"check --chain and --die". After that every status must keep `dna_valid = 1` and the
+same DNA (a reset, reconfiguration or swap mid-run aborts). A die missing from the record
+aborts with instructions to run `identify`. The checkpoint records the DNA; a checkpoint
+whose DNA differs from the record's (or that has none) is refused before the board is
+touched.
+
+**Identify.** `coe_load.py identify --bmc IP --chain {AB,BA} --die NAME --dies FILE
+[--force]` opens a scan at that chain position, reads the DNA and writes `record[NAME]`
+(creating the file). It refuses to change a different existing entry without `--force`,
+and always refuses a DNA the record already gives the other die. identify cannot tell AB
+from BA by itself, so the procedure is: once, at bring-up, for each die, cross-checked
+against Vivado hardware manager's DNA for the device at that JTAG position.
+
+**Range-CRC wait (Task 9 review minors, same task).** The wait is time-based from the
+transport's TCK rate (`RANGE_EXPECT_BPS`, `RANGE_FLOOR_BPS`), keeps polling while the
+die shows its own range frame committed and the CRC unit busy instead of re-requesting,
+accepts a result a reopen's settled status already carries, and retries a piece once
+with a fresh seq after an HBM read error; a read error that repeats aborts saying
+`load --resume` re-checks every piece (no reload needed for a read error).

@@ -4,6 +4,11 @@
 -- One continuous Shift-DR carries back-to-back 16,384-bit slots. Capture resets the bit
 -- counter. TCK runs only while bits shift, so everything a slot owes (the verdict push)
 -- completes inside its own 224 pad bits.
+--
+-- Task 9b: the status word is JC_STATUS_BITS (384) wide: [255:0] as before, [351:256] the
+-- DNA_PORTE2 die identity, [352] dna_valid, [383:353] zero (all supplied by the aclk side
+-- through st_in). It shifts out LSB first from the start of every slot; TDO is zero for
+-- the slot's remaining bits, since zeros fill the register from the top.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -20,7 +25,7 @@ entity jc_frame_core is
     w_valid    : out std_logic;
     w_data     : out std_logic_vector(JC_FIFO_W-1 downto 0);
     w_ready    : in  std_logic;
-    st_in      : in  std_logic_vector(255 downto 0);
+    st_in      : in  std_logic_vector(JC_STATUS_BITS-1 downto 0);
     desync_cnt : out unsigned(15 downto 0);
     ovf_seen   : out std_logic
   );
@@ -34,15 +39,15 @@ architecture rtl of jc_frame_core is
   signal good   : std_logic := '0';
   signal nwords : unsigned(15 downto 0) := (others => '0');
   signal seq    : std_logic_vector(31 downto 0) := (others => '0');
-  signal st_sr  : std_logic_vector(255 downto 0) := (others => '0');
+  signal st_sr  : std_logic_vector(JC_STATUS_BITS-1 downto 0) := (others => '0');
   signal desync : unsigned(15 downto 0) := (others => '0');
   signal ovf    : std_logic := '0';
   signal wv     : std_logic := '0';
   signal wd     : std_logic_vector(JC_FIFO_W-1 downto 0) := (others => '0');
 
-  function merged(st : std_logic_vector(255 downto 0); d : unsigned(15 downto 0);
+  function merged(st : std_logic_vector(JC_STATUS_BITS-1 downto 0); d : unsigned(15 downto 0);
                   o  : std_logic) return std_logic_vector is
-    variable v : std_logic_vector(255 downto 0) := st;
+    variable v : std_logic_vector(JC_STATUS_BITS-1 downto 0) := st;
   begin
     v(31 downto 0)    := JC_MAGIC_STAT;
     v(143 downto 128) := std_logic_vector(d);
@@ -74,7 +79,7 @@ begin
       elsif sel = '1' and shift = '1' then
         word  := tdi & sr(255 downto 1);
         sr    <= word;
-        st_sr <= '0' & st_sr(255 downto 1);
+        st_sr <= '0' & st_sr(JC_STATUS_BITS-1 downto 1);
         if bitcnt < JC_CRC_FIRST then
           crc <= crc32_bit(crc, tdi);
         elsif bitcnt <= JC_CRC_LAST then

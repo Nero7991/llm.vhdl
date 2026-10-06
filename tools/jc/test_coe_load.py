@@ -226,8 +226,14 @@ def test_plan_refuses_a_piece_past_the_files_own_size(tmp_path):
 # below makes any attempt fail loudly, and every CoE client is built on a fake socket.
 # ======================================================================
 import struct
-from jc.jc_model import LoaderModel
+from jc.jc_model import LoaderModel, DEFAULT_DNA
 from jc import coe
+
+def Ld(*a, **k):
+    """The Loader with the die identity the models report by default (Task 9b). Tests
+    about the identity itself pass dna= explicitly."""
+    k.setdefault("dna", DEFAULT_DNA)
+    return L.Loader(*a, **k)
 
 @pytest.fixture(autouse=True)
 def _no_real_sockets(monkeypatch):
@@ -248,7 +254,7 @@ def test_clean_load_matches_the_file_bytes(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     t = L.FakeTransport(m, lead=1)
-    st = L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    st = Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert st["last"] == frames[-1].seq and st["busy"] == 0
     assert_die_holds_the_plan(m, frames)
     assert m.crc_fail == m.seq_err == 0
@@ -257,7 +263,7 @@ def test_resync_after_crc_failure_with_pipeline(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     t = L.FakeTransport(m, lead=0, fail_seqs={2})
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq
     assert ld.resyncs == 1 and st["crc_fail"] == 1
@@ -266,7 +272,7 @@ def test_resync_after_crc_failure_with_pipeline(tmp_path):
 def test_completion_waits_for_status(tmp_path):
     frames, sha = plan(tmp_path, (64,))
     t = L.FakeTransport(LoaderModel(), lead=1, lag_slots=4)
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and st["busy"] == 0
     assert ld.resyncs == 0                     # waited for the lagged status, resent nothing
@@ -274,7 +280,7 @@ def test_completion_waits_for_status(tmp_path):
 def test_wrong_chain_position_aborts_fast(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(), lead=1, wrong_lead=True)
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     with pytest.raises(L.LoadAborted, match="chain"):
         ld.run_load()
     assert t.sent < 64
@@ -285,11 +291,11 @@ def test_resume_continues_from_fpga_status(tmp_path):
     ck = str(tmp_path / "ck.json")
     t = L.FakeTransport(m, lead=1, drop_after=16)
     with pytest.raises(ConnectionError):
-        L.Loader(t, frames, sha, ck).run_load()
+        Ld(t, frames, sha, ck).run_load()
     committed = m.last
     assert committed != 0xFFFFFFFF and committed < frames[-1].seq   # a partial load
     t2 = L.FakeTransport(m, lead=1)
-    st = L.Loader(t2, frames, sha, ck, resume=True).run_load()
+    st = Ld(t2, frames, sha, ck, resume=True).run_load()
     assert st["last"] == frames[-1].seq
     assert t2.first_seq_sent == committed + 1
     assert_die_holds_the_plan(m, frames)
@@ -300,19 +306,19 @@ def test_resume_refuses_other_plan(tmp_path):
     ck = str(tmp_path / "ck.json")
     t = L.FakeTransport(m, lead=1, drop_after=16)
     with pytest.raises(ConnectionError):
-        L.Loader(t, frames, sha, ck).run_load()
+        Ld(t, frames, sha, ck).run_load()
     t2 = L.FakeTransport(m, lead=1)
     with pytest.raises(L.LoadAborted, match="plan"):
-        L.Loader(t2, frames, "0" * 64, ck, resume=True).run_load()
+        Ld(t2, frames, "0" * 64, ck, resume=True).run_load()
     assert t2.sent == 0                         # refused before touching the board
 
 def test_verify_reports_a_corrupted_word(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json"))
     ld.run_load()
     m.mem[0x40] = b"\xEE" * 32
-    bad = L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck2.json")).run_verify()
+    bad = Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck2.json")).run_verify()
     assert len(bad) == 1 and bad[0][0].addr == 0
     fr, got, want = bad[0]
     assert want == L.expected_range_crc(fr) and got != want
@@ -325,15 +331,15 @@ def test_verify_of_a_clean_load_passes_under_a_long_status_lag(tmp_path):
     range result (or aborted). Verify must wait for its own range_seq."""
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    L.Loader(L.FakeTransport(m, lead=1, lag_slots=4), frames, sha, str(tmp_path / "ck.json")).run_load()
-    bad = L.Loader(L.FakeTransport(m, lead=1, lag_slots=4), frames, sha,
+    Ld(L.FakeTransport(m, lead=1, lag_slots=4), frames, sha, str(tmp_path / "ck.json")).run_load()
+    bad = Ld(L.FakeTransport(m, lead=1, lag_slots=4), frames, sha,
                    str(tmp_path / "ck2.json")).run_verify()
     assert bad == []
 
 def test_dropped_frame_mid_stream_is_resent(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=1, drop_seqs={3}), frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(L.FakeTransport(m, lead=1, drop_seqs={3}), frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1 and m.seq_err > 0
     assert_die_holds_the_plan(m, frames)
@@ -343,7 +349,7 @@ def test_dropped_last_frame_is_resent_after_the_completion_wait(tmp_path):
     tail never committed and resend it."""
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=1, drop_seqs={frames[-1].seq}), frames, sha,
+    ld = Ld(L.FakeTransport(m, lead=1, drop_seqs={frames[-1].seq}), frames, sha,
                   str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1
@@ -352,7 +358,7 @@ def test_dropped_last_frame_is_resent_after_the_completion_wait(tmp_path):
 def test_desync_slot_triggers_resync(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=0, desync_seqs={4}), frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(L.FakeTransport(m, lead=0, desync_seqs={4}), frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1
     assert_die_holds_the_plan(m, frames)
@@ -364,7 +370,7 @@ def test_link_fault_recovers_with_recover_then_reopen(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     t = L.FakeTransport(m, lead=1, fault_sends={5})
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1 and t.recovers == 1
     assert_die_holds_the_plan(m, frames)
@@ -373,34 +379,34 @@ def test_link_faults_are_bounded(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(), lead=1, fault_sends=set(range(4, 10000)))
     with pytest.raises(L.LoadAborted, match="resyncs"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert t.recovers <= L.MAX_RESYNCS
 
 def test_repeated_crc_failures_are_bounded(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(), lead=1, fail_seqs={2}, fail_forever=True)
     with pytest.raises(L.LoadAborted, match="resyncs"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
 
 def test_fresh_load_refuses_a_die_that_already_holds_frames(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     with pytest.raises(ConnectionError):
-        L.Loader(L.FakeTransport(m, lead=1, drop_after=16), frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(L.FakeTransport(m, lead=1, drop_after=16), frames, sha, str(tmp_path / "ck.json")).run_load()
     with pytest.raises(L.LoadAborted, match="resume"):
-        L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
 
 def test_resume_without_a_checkpoint_is_refused(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(), lead=1)
     with pytest.raises(L.LoadAborted, match="checkpoint"):
-        L.Loader(t, frames, sha, str(tmp_path / "none.json"), resume=True).run_load()
+        Ld(t, frames, sha, str(tmp_path / "none.json"), resume=True).run_load()
     assert t.sent == 0
 
 def test_checkpoint_records_plan_and_progress(tmp_path):
     frames, sha = plan(tmp_path)
     ck = tmp_path / "ck.json"
-    L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(ck)).run_load()
+    Ld(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(ck)).run_load()
     d = json.loads(ck.read_text())
     assert d["plan_sha"] == sha and d["last"] == frames[-1].seq
 
@@ -408,18 +414,18 @@ def test_hbm_temperature_trip_aborts(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(), lead=0, lag_slots=0, trip_after=4)
     with pytest.raises(L.LoadAborted, match="temperature"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
 
 def test_hbm_write_response_error_aborts(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel(bad_bresp_addrs={0})
     with pytest.raises(L.LoadAborted, match="BRESP"):
-        L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
 
 def test_loader_refuses_frames_out_of_seq_order(tmp_path):
     frames, sha = plan(tmp_path)
     with pytest.raises(ValueError):
-        L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames[1:], sha, str(tmp_path / "ck.json"))
+        Ld(L.FakeTransport(LoaderModel(), lead=1), frames[1:], sha, str(tmp_path / "ck.json"))
 
 # ---------------------------------------------------------------- CoeTransport, modelled chain
 
@@ -431,54 +437,60 @@ class ChainSock:
     rtl/jc_frame_core.vhd: Capture-DR resets the bit counter and loads the status
     shift register; every 16,384 bits is one slot, fed to a LoaderModel; the status
     register reloads at every slot boundary and shifts out LSB first, one bit per TCK
-    (TDO = st_sr(0)). The other die has no loader: USER4 on it drives TDO low.
+    (TDO = st_sr(0)). The other die has no loader: USER4 on it drives TDO low --
+    unless `other` gives it a model too (Task 9b: both dies run the loader, each with
+    its own receiver state and its own DNA in its model).
 
     Every Update-IR value is recorded; any one off the allowlist, a CMD_TDI outside
     Shift-DR, or a CMD_TDI shift under an instruction other than BYPASS/USER4 is
     recorded as a violation. `bad_status_tdi` makes the n-th CMD_TDI reply carry a bad status
     (its bits are still shifted); `flip_seqs` corrupts one bit of that frame once."""
     def __init__(s, model, loader_pos, lag=1, bad_status_tdi=(), flip_seqs=(),
-                 start=coe.TEST_LOGIC_RESET):
+                 start=coe.TEST_LOGIC_RESET, other=None):
         s.m, s.pos, s.lag = model, loader_pos, lag
+        s.models = {loader_pos: model}
+        if other is not None:
+            s.models[1 - loader_pos] = other
         s.bad, s.flip = set(bad_status_tdi), set(flip_seqs)
         s.state = start
         s.ir = [coe.IR_IDCODE, coe.IR_IDCODE]
         s.irsr = [0, 0]
         s.byp = [0, 0]
-        s.bitcnt, s.acc, s.st_sr, s.sthist = 0, 0, 0, []
+        s.bitcnt, s.acc, s.st_sr, s.sthist = [0, 0], [0, 0], [0, 0], [[], []]
         s.q, s.ntdi = b"", 0
         s.ir_updates, s.violations = [], []
 
     def setsockopt(s, *a):
         pass
 
-    def _status(s):
-        s.sthist.append(dict(s.m.status()))
-        return int.from_bytes(F.pack_status(s.sthist[max(0, len(s.sthist) - 1 - s.lag)]), "little")
+    def _status(s, d):
+        h = s.sthist[d]
+        h.append(dict(s.models[d].status()))
+        return int.from_bytes(F.pack_status(h[max(0, len(h) - 1 - s.lag)]), "little")
 
-    def _core(s, n, x):
+    def _core(s, d, n, x):
         out, i = 0, 0
         while i < n:
-            take = min(n - i, F.SLOT_BITS - s.bitcnt)
-            out |= (s.st_sr & ((1 << take) - 1)) << i
-            s.st_sr >>= take
-            s.acc |= ((x >> i) & ((1 << take) - 1)) << s.bitcnt
-            s.bitcnt += take
+            take = min(n - i, F.SLOT_BITS - s.bitcnt[d])
+            out |= (s.st_sr[d] & ((1 << take) - 1)) << i
+            s.st_sr[d] >>= take
+            s.acc[d] |= ((x >> i) & ((1 << take) - 1)) << s.bitcnt[d]
+            s.bitcnt[d] += take
             i += take
-            if s.bitcnt == F.SLOT_BITS:
-                slot = s.acc.to_bytes(F.SLOT_BYTES, "little")
+            if s.bitcnt[d] == F.SLOT_BITS:
+                slot = s.acc[d].to_bytes(F.SLOT_BYTES, "little")
                 h = F.parse_header(slot)
                 if h["magic"] == F.MAGIC_FRAME and h["seq"] in s.flip and (h["nwords"] or h["flags"]):
                     s.flip.discard(h["seq"])
                     b = bytearray(slot); b[100] ^= 1; slot = bytes(b)
-                s.m.feed(slot)
-                s.st_sr = s._status()
-                s.bitcnt, s.acc = 0, 0
+                s.models[d].feed(slot)
+                s.st_sr[d] = s._status(d)
+                s.bitcnt[d], s.acc[d] = 0, 0
         return out
 
     def _dev(s, d, n, x, tdi_cmd=False):
         if s.ir[d] == coe.IR_USER4:
-            return s._core(n, x) if d == s.pos else 0
+            return s._core(d, n, x) if d in s.models else 0
         if tdi_cmd and s.ir[d] != coe.IR_BYPASS:
             # resync() legitimately passes Shift-DR under any IR (TDI=1); a CMD_TDI
             # shift under IDCODE etc. would misalign every slot, so that is flagged
@@ -502,8 +514,8 @@ class ChainSock:
             s.irsr[1] = (s.irsr[1] >> 1) | (o0 << 11)
         elif st == coe.CAPTURE_DR:
             for d in range(2):
-                if d == s.pos and s.ir[d] == coe.IR_USER4:
-                    s.bitcnt, s.acc, s.st_sr = 0, 0, s._status()
+                if d in s.models and s.ir[d] == coe.IR_USER4:
+                    s.bitcnt[d], s.acc[d], s.st_sr[d] = 0, 0, s._status(d)
                 else:
                     s.byp[d] = 0
         elif st == coe.CAPTURE_IR:
@@ -565,7 +577,7 @@ def test_coe_transport_loads_over_a_modelled_chain(tmp_path, die, chain, pos):
     m = LoaderModel()
     t, sock, client = chain_transport(m, die, chain, pos)
     assert t.lead == pos and t.status_offset == 1
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 0
     assert_die_holds_the_plan(m, frames)
@@ -576,7 +588,7 @@ def test_coe_transport_resyncs_after_a_crc_failure(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     t, sock, client = chain_transport(m, "B", "AB", 1, flip_seqs={3})
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1 and m.crc_fail == 1
     assert_die_holds_the_plan(m, frames)
@@ -597,7 +609,7 @@ def test_coe_transport_recovers_from_a_bad_reply_by_drain_then_resync(tmp_path, 
         unread.append(len(client.outstanding))
         return real_drain()
     client.drain = drain
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1
     assert unread == [0 if bad_tdi == 6 else t.depth - 1]
@@ -609,17 +621,17 @@ def test_coe_transport_wrong_chain_aborts(tmp_path):
     m = LoaderModel()
     t, sock, client = chain_transport(m, "A", "BA", 0)       # A is really at position 0
     with pytest.raises(L.LoadAborted, match="chain"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert m.committed == 0 and sock.violations == []
 
 def test_coe_transport_verify_reports_a_corrupted_word(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     t, sock, client = chain_transport(m, "B", "AB", 1)
-    L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     m.mem[8192 + 0x20] = b"\x11" * 32                         # second word of t1 (64 B at 8192)
     t2, sock2, client2 = chain_transport(m, "B", "AB", 1)
-    bad = L.Loader(t2, frames, sha, str(tmp_path / "ck2.json")).run_verify()
+    bad = Ld(t2, frames, sha, str(tmp_path / "ck2.json")).run_verify()
     assert [b[0].addr for b in bad] == [8192]
     assert_chain_clean(sock2, client2)
 
@@ -649,7 +661,7 @@ def test_a_fault_on_the_last_frame_is_caught_by_its_counter_not_the_timeout(tmp_
     MAX_POLLS and resend the tail as if the frame had vanished."""
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=1, **{fault: {frames[-1].seq}}), frames, sha,
+    ld = Ld(L.FakeTransport(m, lead=1, **{fault: {frames[-1].seq}}), frames, sha,
                   str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1
@@ -657,13 +669,18 @@ def test_a_fault_on_the_last_frame_is_caught_by_its_counter_not_the_timeout(tmp_
     assert_die_holds_the_plan(m, frames)
 
 def test_verify_reports_an_hbm_read_error_as_bad(tmp_path):
+    """Task 9b M2: a piece is retried once with a fresh seq after a read error, so it is
+    reported only when the retry reads in error too. Verify's seqs continue after the
+    load; with use_plan_seqs off the retry is the very next seq."""
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
-    second = frames[-1].seq + 2                     # verify's seqs continue after the load
-    bad = L.Loader(L.FakeTransport(m, lead=1, rerr_seqs={second}), frames, sha,
-                   str(tmp_path / "ck2.json")).run_verify()
+    Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    second = frames[-1].seq + 2
+    ld = Ld(L.FakeTransport(m, lead=1, rerr_seqs={second, second + 1}), frames, sha,
+            str(tmp_path / "ck2.json"))
+    bad = ld.run_verify()
     assert [(b[0].addr, b[1]) for b in bad] == [(8192, None)]
+    assert any(c.startswith("HBM read error on piece 1") for c in ld.causes), ld.causes
 
 def test_verify_waits_for_its_own_range_result_not_a_stale_one(tmp_path):
     """The writer's `last` can move before the CRC unit's result does: the status that
@@ -671,8 +688,8 @@ def test_verify_waits_for_its_own_range_result_not_a_stale_one(tmp_path):
     Verify must match range_seq, or it compares the previous piece's CRC."""
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
-    bad = L.Loader(L.FakeTransport(m, lead=1, lag_slots=0, stale_range=True), frames, sha,
+    Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    bad = Ld(L.FakeTransport(m, lead=1, lag_slots=0, stale_range=True), frames, sha,
                    str(tmp_path / "ck2.json")).run_verify()
     assert bad == []
 
@@ -684,7 +701,7 @@ from jc.jc_model import FifoOverflowModel
 def partial_load(m, frames, sha, ck, **kw):
     """A load cut short by a dropped link, leaving the die mid data phase."""
     with pytest.raises(ConnectionError):
-        L.Loader(L.FakeTransport(m, lead=1, drop_after=14, **kw), frames, sha, ck).run_load()
+        Ld(L.FakeTransport(m, lead=1, drop_after=14, **kw), frames, sha, ck).run_load()
     nd = sum(f.kind == "data" for f in frames)
     assert m.last != 0xFFFFFFFF and m.last < nd - 1, m.last
     return nd
@@ -700,9 +717,9 @@ def test_c1_verify_refuses_a_partially_loaded_die(tmp_path):
     before = m.last
     t = L.FakeTransport(m, lead=1)
     with pytest.raises(L.LoadAborted, match="finish the load"):
-        L.Loader(t, frames, sha, str(tmp_path / "v.json")).run_verify()
+        Ld(t, frames, sha, str(tmp_path / "v.json")).run_verify()
     assert m.last == before and t.state == "closed"
-    st = L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True).run_load()
+    st = Ld(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True).run_load()
     assert st["last"] == frames[-1].seq
     assert_die_holds_the_plan(m, frames)
 
@@ -713,9 +730,9 @@ def test_resume_after_verify_of_a_complete_die_rechecks_every_piece(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
     ck = str(tmp_path / "ck.json")
-    L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck).run_load()
-    assert L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify() == []
-    ld = L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True)
+    Ld(L.FakeTransport(m, lead=1), frames, sha, ck).run_load()
+    assert Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify() == []
+    ld = Ld(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True)
     st = ld.run_load()
     nr = sum(f.kind == "range" for f in frames)
     assert ld.already_complete and len(ld.range_results) == nr
@@ -723,7 +740,7 @@ def test_resume_after_verify_of_a_complete_die_rechecks_every_piece(tmp_path):
 
 def test_load_compares_every_piece_and_reports_the_results(tmp_path):
     frames, sha = plan(tmp_path)
-    ld = L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json"))
     ld.run_load()
     ranges = [f for f in frames if f.kind == "range"]
     assert sorted(ld.range_results) == list(range(len(ranges)))
@@ -749,10 +766,10 @@ def test_i1_resume_onto_another_plans_bytes_aborts_on_range_mismatch(tmp_path):
     partial_load(LoaderModel(), fy, shy, ck)
     m2 = LoaderModel()
     with pytest.raises(ConnectionError):
-        L.Loader(L.FakeTransport(m2, lead=1, drop_after=20), fx, shx, str(tmp_path / "ckX.json")).run_load()
+        Ld(L.FakeTransport(m2, lead=1, drop_after=20), fx, shx, str(tmp_path / "ckX.json")).run_load()
     t = L.FakeTransport(m2, lead=1)
     with pytest.raises(L.LoadAborted, match="range CRC") as e:
-        L.Loader(t, fy, shy, ck, resume=True).run_load()
+        Ld(t, fy, shy, ck, resume=True).run_load()
     assert "0x0" in str(e.value)                              # names the first piece
     assert t.state == "closed"
 
@@ -765,7 +782,7 @@ def test_i3_range_phase_survives_crc_busy_time_and_a_finite_fifo(tmp_path):
     frames, sha = plan(tmp_path, [64] * 100)
     m = FifoOverflowModel(depth=128, crc_ticks_per_byte=20 / 64)
     t = L.FakeTransport(m, lead=1, lag_slots=1)
-    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert not m.ovf and m.crc_fail == 0 and ld.resyncs == 0
     assert st["last"] == frames[-1].seq and len(ld.range_results) == 100
@@ -803,7 +820,7 @@ def test_i2_resume_onto_a_die_with_a_bresp_error_aborts(tmp_path):
     for da in range(8, 40):
         m = LoaderModel(bad_bresp_addrs={frames[3].addr})
         try:
-            L.Loader(L.FakeTransport(m, lead=1, lag_slots=4, drop_after=da), frames, sha, ck).run_load()
+            Ld(L.FakeTransport(m, lead=1, lag_slots=4, drop_after=da), frames, sha, ck).run_load()
         except ConnectionError:
             if m.bresp_err and m.last < frames[-1].seq:
                 break
@@ -813,16 +830,16 @@ def test_i2_resume_onto_a_die_with_a_bresp_error_aborts(tmp_path):
         pytest.fail("no drop point left an unseen BRESP error")
     t = L.FakeTransport(m, lead=1, lag_slots=4)
     with pytest.raises(L.LoadAborted, match="BRESP"):
-        L.Loader(t, frames, sha, ck, resume=True).run_load()
+        Ld(t, frames, sha, ck, resume=True).run_load()
     assert t.state == "closed"
 
 def test_i2_verify_refuses_a_die_with_a_bresp_error(tmp_path):
     frames, sha = plan(tmp_path)
     m = LoaderModel()
-    L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
     m.bresp_err = 1
     with pytest.raises(L.LoadAborted, match="BRESP"):
-        L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify()
+        Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify()
 
 @pytest.mark.parametrize("content", ["{not json", "[1,2]", "null", '{"plan_sha": null}', '{"x": 1}'])
 def test_corrupt_or_foreign_checkpoint_is_a_clean_refusal(tmp_path, content):
@@ -831,7 +848,7 @@ def test_corrupt_or_foreign_checkpoint_is_a_clean_refusal(tmp_path, content):
     p.write_text(content)
     t = L.FakeTransport(LoaderModel(), lead=1)
     with pytest.raises(L.LoadAborted, match="delete it"):
-        L.Loader(t, frames, sha, str(p), resume=True).run_load()
+        Ld(t, frames, sha, str(p), resume=True).run_load()
     assert t.sent == 0
 
 def test_checkpoint_is_fsynced_before_it_replaces_the_old_one(tmp_path, monkeypatch):
@@ -840,7 +857,7 @@ def test_checkpoint_is_fsynced_before_it_replaces_the_old_one(tmp_path, monkeypa
     monkeypatch.setattr(L.os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
     monkeypatch.setattr(L.os, "replace", lambda a, b: (events.append("replace"), real_replace(a, b))[1])
     frames, sha = plan(tmp_path, (64,))
-    L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    Ld(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
     assert events and events[0] == "fsync"
     assert all(events[i] == "fsync" for i in range(0, len(events), 2))
     assert all(events[i] == "replace" for i in range(1, len(events), 2))
@@ -851,8 +868,10 @@ def test_cli_turns_socket_errors_into_the_abort_sentinel(tmp_path, monkeypatch, 
     def boom(*a, **k):
         raise exc
     monkeypatch.setattr(L, "CoeTransport", boom)
+    dies = tmp_path / "dies.json"
+    dies.write_text(json.dumps({"A": L.dna_hex(DEFAULT_DNA)}))
     rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
-                 "--ckpt", str(tmp_path / "ck.json")])
+                 "--dies", str(dies), "--ckpt", str(tmp_path / "ck.json")])
     assert rc == 2
     assert re_match_line(capsys.readouterr().out, r"^JCLOAD_ABORT ")
 
@@ -866,25 +885,26 @@ def test_an_abort_closes_the_scan_on_the_real_client(tmp_path):
     frames, sha = plan(tmp_path)
     t, sock, client = chain_transport(LoaderModel(), "A", "BA", 0)
     with pytest.raises(L.LoadAborted):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert client.outstanding == [] and client.tap == coe.RUN_TEST_IDLE == sock.state
 
 def test_an_abort_closes_the_fake_scan(tmp_path):
     frames, sha = plan(tmp_path)
     t = L.FakeTransport(LoaderModel(bad_bresp_addrs={0}), lead=1)
     with pytest.raises(L.LoadAborted, match="BRESP"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert t.state == "closed" and t.abort_closes == 1
 
 def test_range_wait_scales_with_the_piece_size(tmp_path):
     """A big piece's CRC can take longer than MAX_POLLS polls (9B card 0: up to 2.28 MB
-    per piece). The wait allows MAX_POLLS + n / RANGE_BYTES_PER_POLL polls; here a 1 MiB
-    piece's CRC takes 40 slots, more than MAX_POLLS, and must not be called lost."""
+    per piece). The wait allows MAX_POLLS + the piece at RANGE_EXPECT_BPS (Task 9b M3:
+    in TIME, from the transport's TCK rate); here a 1 MiB piece's CRC takes 40 slots,
+    more than MAX_POLLS, and must not be called lost."""
     n = 1 << 20
     frames, sha = plan(tmp_path, (n,))
-    assert 40 > L.MAX_POLLS and 40 < L.MAX_POLLS + n // L.RANGE_BYTES_PER_POLL
+    assert 40 > L.MAX_POLLS and 40 < L.range_polls(n, L.RANGE_EXPECT_BPS, 27_000_000)
     m = FifoOverflowModel(depth=128, crc_ticks_per_byte=40 / n)
-    ld = L.Loader(L.FakeTransport(m, lead=1, lag_slots=1), frames, sha, str(tmp_path / "ck.json"))
+    ld = Ld(L.FakeTransport(m, lead=1, lag_slots=1), frames, sha, str(tmp_path / "ck.json"))
     ld.run_load()
     assert ld.resyncs == 0 and len(ld.range_results) == 1
 
@@ -894,7 +914,7 @@ def test_dropped_last_data_frame_is_resent_after_the_data_phase_wait(tmp_path):
     frames, sha = plan(tmp_path)
     nd = sum(f.kind == "data" for f in frames)
     m = LoaderModel()
-    ld = L.Loader(L.FakeTransport(m, lead=1, drop_seqs={nd - 1}), frames, sha,
+    ld = Ld(L.FakeTransport(m, lead=1, drop_seqs={nd - 1}), frames, sha,
                   str(tmp_path / "ck.json"))
     st = ld.run_load()
     assert st["last"] == frames[-1].seq and ld.resyncs == 1
@@ -907,6 +927,384 @@ def test_an_abort_with_replies_in_flight_drains_and_leaves_shift_dr(tmp_path):
     frames, sha = plan(tmp_path)
     t, sock, client = chain_transport(LoaderModel(bad_bresp_addrs={0}), "A", "AB", 0)
     with pytest.raises(L.LoadAborted, match="BRESP"):
-        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
     assert client.outstanding == [] and client.tap == coe.RUN_TEST_IDLE == sock.state
     assert sock.violations == []
+
+# ======================================================================
+# Task 9b: DNA_PORTE2 die identity in the 384-bit status word, the die record (--dies)
+# and `identify`. Every DNA below is MADE UP (distinct halves, not palindromes); no DNA
+# read from real hardware is ever committed.
+# ======================================================================
+DNA_A = 0x13579BDF2468ACE0F1E2D3C4
+DNA_B = 0xF00DCAFE12345678DEADBEA7
+
+def dies_file(tmp_path, rec, name="dies.json"):
+    p = tmp_path / name
+    p.write_text(json.dumps({k: L.dna_hex(v) for k, v in rec.items()}))
+    return str(p)
+
+def count_range_sends(t):
+    """Wrap t.send to count range-CRC frames put on the wire."""
+    n = [0]
+    real = t.send
+    def send(slot):
+        if F.parse_header(slot)["flags"] & F.FLAG_RANGE_CRC:
+            n[0] += 1
+        return real(slot)
+    t.send = send
+    return n
+
+def test_a_die_with_another_dna_aborts_before_any_data_frame(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=DNA_A)
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="check --chain and --die") as e:
+        Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=DNA_B).run_load()
+    assert L.dna_hex(DNA_A) in str(e.value) and L.dna_hex(DNA_B) in str(e.value)
+    assert t.first_seq_sent is None and m.committed == 0 and t.state == "closed"
+
+def test_two_loaders_wrong_chain_is_caught_by_the_dna(tmp_path):
+    """The scenario Task 9's review found: BOTH dies run the loader, the real chain is AB
+    (die A nearest TDI). (die=A, chain=AB) and (die=B, chain=BA) put identical traffic
+    on the wire, so before Task 9b `--die B --chain BA` loaded die A undetected. Now the
+    DNA die A reports does not match the record's B and the load aborts with nothing
+    written to either die."""
+    frames, sha = plan(tmp_path)
+    mA, mB = LoaderModel(dna=DNA_A), LoaderModel(dna=DNA_B)
+    rec = {"A": DNA_A, "B": DNA_B}
+    tA, sockA, _ = chain_transport(LoaderModel(), "A", "AB", 0)
+    tBx, sockBx, _ = chain_transport(LoaderModel(), "B", "BA", 0)
+    assert (tA.ops, tA.lead, tA.status_offset) == (tBx.ops, tBx.lead, tBx.status_offset)
+
+    # the mistake: die B, chain BA -> USER4 on position 0, which is really die A
+    t, sock, client = chain_transport(mA, "B", "BA", 0, other=mB)
+    with pytest.raises(L.LoadAborted, match="check --chain and --die") as e:
+        Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=rec["B"]).run_load()
+    assert L.dna_hex(DNA_A) in str(e.value) and L.dna_hex(DNA_B) in str(e.value)
+    assert mA.committed == 0 and mB.committed == 0
+    assert_chain_clean(sock, client)
+
+    # the right setting loads die B and leaves die A alone
+    t, sock, client = chain_transport(mB, "B", "AB", 1, other=mA)
+    st = Ld(t, frames, sha, str(tmp_path / "ck2.json"), dna=rec["B"]).run_load()
+    assert st["last"] == frames[-1].seq and st["dna"] == DNA_B
+    assert_die_holds_the_plan(mB, frames)
+    assert mA.committed == 0 and mA.mem == {}
+    assert_chain_clean(sock, client)
+
+def test_a_late_dna_valid_is_waited_for(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=DNA_A)
+    t = L.FakeTransport(m, lead=1, dna_valid_after=20)
+    st = Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=DNA_A).run_load()
+    assert st["last"] == frames[-1].seq and ld_ok(st)
+    assert_die_holds_the_plan(m, frames)
+
+def ld_ok(st):
+    return st["dna_valid"] == 1 and st["dna"] == DNA_A
+
+def test_dna_valid_never_set_aborts_after_bounded_polls(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=0, dna_valid=0)
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="dna_valid"):
+        Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=DNA_A).run_load()
+    assert t.first_seq_sent is None and m.committed == 0
+    assert t.sent <= 2 * L.MAX_POLLS and t.state == "closed"
+
+class SwappingModel(LoaderModel):
+    """A die whose identity changes after `after` real frames (stands in for a die that
+    was reconfigured or a chain that changed under the run)."""
+    def __init__(s, after, new_dna, new_valid, **kw):
+        super().__init__(**kw)
+        s.after, s.new = after, (new_dna, new_valid)
+    def feed(s, slot):
+        super().feed(slot)
+        if s.committed >= s.after:
+            s.dna, s.dna_valid = s.new
+
+@pytest.mark.parametrize("new,match", [((DNA_B, 1), "changed under the run"),
+                                       ((0, 0), "went invalid")])
+def test_a_dna_change_mid_run_aborts(tmp_path, new, match):
+    frames, sha = plan(tmp_path)
+    m = SwappingModel(5, *new, dna=DNA_A)
+    with pytest.raises(L.LoadAborted, match=match):
+        Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json"), dna=DNA_A).run_load()
+    assert m.last < frames[-1].seq
+
+def test_checkpoint_records_the_dna(tmp_path):
+    frames, sha = plan(tmp_path)
+    ck = tmp_path / "ck.json"
+    Ld(L.FakeTransport(LoaderModel(dna=DNA_A), lead=1), frames, sha, str(ck), dna=DNA_A).run_load()
+    assert json.loads(ck.read_text())["dna"] == L.dna_hex(DNA_A)
+
+@pytest.mark.parametrize("ck_dna", [L.dna_hex(DNA_B), None])
+def test_resume_refuses_a_checkpoint_for_another_dna(tmp_path, ck_dna):
+    """A checkpoint written for another die's DNA (or by a loader that recorded none) is
+    refused before the board is touched."""
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=DNA_A)
+    ck = tmp_path / "ck.json"
+    with pytest.raises(ConnectionError):
+        Ld(L.FakeTransport(m, lead=1, drop_after=16), frames, sha, str(ck), dna=DNA_A).run_load()
+    d = json.loads(ck.read_text())
+    assert d["dna"] == L.dna_hex(DNA_A)
+    if ck_dna is None:
+        del d["dna"]
+    else:
+        d["dna"] = ck_dna
+    ck.write_text(json.dumps(d))
+    t2 = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="DNA"):
+        Ld(t2, frames, sha, str(ck), dna=DNA_A, resume=True).run_load()
+    assert t2.sent == 0 and t2.opens == 0
+
+def test_resume_with_the_same_dna_still_works(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=DNA_A)
+    ck = str(tmp_path / "ck.json")
+    with pytest.raises(ConnectionError):
+        Ld(L.FakeTransport(m, lead=1, drop_after=16), frames, sha, ck, dna=DNA_A).run_load()
+    st = Ld(L.FakeTransport(m, lead=1), frames, sha, ck, dna=DNA_A, resume=True).run_load()
+    assert st["last"] == frames[-1].seq
+
+# ---------------------------------------------------------------- die record
+
+@pytest.mark.parametrize("content,match", [
+    ('{"A": "0123"}', "24 hex digits"),
+    ('{"C": "%s"}' % L.dna_hex(DNA_A), "keys"),
+    ('["%s"]' % L.dna_hex(DNA_A), "keys"),
+    ('{not json', "unreadable"),
+    ('{"A": "%s", "B": "%s"}' % (L.dna_hex(DNA_A), L.dna_hex(DNA_A)), "same DNA"),
+    ('{"A": 5}', "24 hex digits")])
+def test_a_bad_die_record_is_refused(tmp_path, content, match):
+    p = tmp_path / "dies.json"
+    p.write_text(content)
+    with pytest.raises(L.LoadAborted, match=match):
+        L.read_dies(str(p))
+
+def test_a_die_missing_from_the_record_says_run_identify(tmp_path):
+    p = dies_file(tmp_path, {"A": DNA_A})
+    assert L.dna_for(p, "A") == DNA_A
+    with pytest.raises(L.LoadAborted, match="identify"):
+        L.dna_for(p, "B")
+    with pytest.raises(L.LoadAborted, match="identify"):
+        L.dna_for(str(tmp_path / "absent.json"), "A")
+
+def test_the_die_record_may_not_live_in_the_repo():
+    inside = os.path.join(L.REPO, "tools", "jc", "dies_should_never_exist.json")
+    assert not os.path.exists(inside)
+    with pytest.raises(L.LoadAborted, match="outside"):
+        L.read_dies(inside)
+    with pytest.raises(L.LoadAborted, match="outside"):
+        L.write_dies(inside, {"A": DNA_A})
+    assert not os.path.exists(inside)
+
+def test_cli_load_requires_dies(tmp_path):
+    mp = make_manifest(tmp_path, [64])
+    with pytest.raises(SystemExit) as e:
+        L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB"])
+    assert e.value.code == 2
+
+def test_cli_load_with_the_die_missing_from_the_record_aborts_before_the_board(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, [64])
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: pytest.fail("touched the board"))
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "B", "--chain", "AB",
+                 "--dies", dies_file(tmp_path, {"A": DNA_A}), "--ckpt", str(tmp_path / "ck.json")])
+    out = capsys.readouterr().out
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT .*identify")
+
+def test_cli_load_passes_the_record_dna_to_the_loader(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, [64])
+    m = LoaderModel(dna=DNA_B)
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(m, lead=1))
+    dies = dies_file(tmp_path, {"A": DNA_A, "B": DNA_B})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    out = capsys.readouterr().out
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT die identity mismatch")
+    assert dies in out and m.committed == 0
+
+# ---------------------------------------------------------------- identify
+
+def test_identify_writes_refuses_overwrite_and_honours_force(tmp_path):
+    p = str(tmp_path / "sub" / "dies.json")                # parent created
+    assert L.identify(L.FakeTransport(LoaderModel(dna=DNA_A), lead=1), "A", p) == (DNA_A, "added")
+    assert json.loads(open(p).read()) == {"A": L.dna_hex(DNA_A)}
+    assert L.identify(L.FakeTransport(LoaderModel(dna=DNA_A), lead=1), "A", p) == (DNA_A, "unchanged")
+    other = 0x0F1E2D3C4B5A69788796A5B4
+    with pytest.raises(L.LoadAborted, match="--force"):
+        L.identify(L.FakeTransport(LoaderModel(dna=other), lead=1), "A", p)
+    assert json.loads(open(p).read()) == {"A": L.dna_hex(DNA_A)}
+    assert L.identify(L.FakeTransport(LoaderModel(dna=other), lead=1), "A", p, force=True) == (other, "replaced")
+    assert json.loads(open(p).read()) == {"A": L.dna_hex(other)}
+    assert L.identify(L.FakeTransport(LoaderModel(dna=DNA_B), lead=1), "B", p) == (DNA_B, "added")
+    assert L.read_dies(p) == {"A": other, "B": DNA_B}
+
+def test_identify_refuses_the_other_dies_dna_even_with_force(tmp_path):
+    p = dies_file(tmp_path, {"A": DNA_A})
+    for force in (False, True):
+        with pytest.raises(L.LoadAborted, match="already records as die A"):
+            L.identify(L.FakeTransport(LoaderModel(dna=DNA_A), lead=1), "B", p, force=force)
+    assert L.read_dies(p) == {"A": DNA_A}
+
+def test_identify_refuses_a_bad_record_before_the_board(tmp_path):
+    p = tmp_path / "dies.json"
+    p.write_text("{broken")
+    t = L.FakeTransport(LoaderModel(dna=DNA_A), lead=1)
+    with pytest.raises(L.LoadAborted, match="unreadable"):
+        L.identify(t, "A", str(p))
+    assert t.opens == 0
+
+def test_identify_waits_for_dna_valid_and_aborts_if_never(tmp_path):
+    p = str(tmp_path / "dies.json")
+    assert L.identify(L.FakeTransport(LoaderModel(dna=DNA_A), lead=1, dna_valid_after=20), "A", p)[0] == DNA_A
+    t = L.FakeTransport(LoaderModel(dna=0, dna_valid=0), lead=1)
+    with pytest.raises(L.LoadAborted, match="dna_valid"):
+        L.identify(t, "B", p)
+    assert L.read_dies(p) == {"A": DNA_A} and t.state == "closed"
+
+def test_identify_over_a_modelled_chain_reads_the_die_at_that_position(tmp_path):
+    """Both dies run the loader, the real chain is AB. identify A with chain AB reads A;
+    then identify B with the WRONG chain BA reads A again, which the record already
+    holds for A: refused. With the right chain it records B."""
+    p = str(tmp_path / "dies.json")
+    mA, mB = LoaderModel(dna=DNA_A), LoaderModel(dna=DNA_B)
+    t, sock, client = chain_transport(mA, "A", "AB", 0, other=mB)
+    assert L.identify(t, "A", p) == (DNA_A, "added")
+    assert_chain_clean(sock, client)
+    t, sock, client = chain_transport(mA, "B", "BA", 0, other=mB)
+    with pytest.raises(L.LoadAborted, match="already records as die A"):
+        L.identify(t, "B", p)
+    t, sock, client = chain_transport(mB, "B", "AB", 1, other=mA)
+    assert L.identify(t, "B", p) == (DNA_B, "added")
+    assert_chain_clean(sock, client)
+    assert mA.committed == mB.committed == 0
+    assert L.read_dies(p) == {"A": DNA_A, "B": DNA_B}
+
+def test_cli_identify(tmp_path, monkeypatch, capsys):
+    p = str(tmp_path / "dies.json")
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(dna=DNA_B), lead=1))
+    rc = L.main(["identify", "--bmc", "192.0.2.1", "--chain", "BA", "--die", "B", "--dies", p])
+    out = capsys.readouterr().out
+    assert rc == 0 and re_match_line(out, r"^JCIDENTIFY_DONE die=B chain=BA dna=%s added" % L.dna_hex(DNA_B))
+    assert L.read_dies(p) == {"B": DNA_B}
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(dna=DNA_A), lead=1))
+    rc = L.main(["identify", "--bmc", "192.0.2.1", "--chain", "BA", "--die", "B", "--dies", p])
+    assert rc == 2 and re_match_line(capsys.readouterr().out, r"^JCIDENTIFY_ABORT .*--force")
+
+def test_identify_help_states_the_cross_check_procedure(capsys):
+    with pytest.raises(SystemExit):
+        L.main(["identify", "--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    for phrase in ("CANNOT tell AB from BA", "ONCE, at bring-up", "Vivado hardware manager",
+                   "outside the repo"):
+        assert phrase.lower() in out.lower(), phrase
+
+# ---------------------------------------------------------------- Task 9 minors M1-M3
+
+TPB_RTL = 1500e-9 / 512 / 0.607e-3          # slots per byte at the RTL-derived CRC rate
+
+@pytest.mark.parametrize("slow", [10, 100])
+def test_m1_a_slow_crc_on_a_1mb_piece_completes_without_a_rerequest(tmp_path, slow):
+    """The reviewer's rangeattack.py: a CRC 10x slower than the RTL-derived rate on a
+    1 MB piece used to time out, reopen and re-request until MAX_RESYNCS. The wait must
+    keep polling while the die shows the frame committed and the CRC unit busy."""
+    frames, sha = plan(tmp_path, (1 << 20, 64))
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=TPB_RTL * slow)
+    t = L.FakeTransport(m, lead=1, lag_slots=2)
+    nr = count_range_sends(t)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq and ld.resyncs == 0
+    assert nr[0] == 2 and len(ld.range_results) == 2
+
+def test_m1_a_crc_that_never_finishes_gives_up_bounded(tmp_path):
+    frames, sha = plan(tmp_path, (64,))
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=1e9)
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted):
+        Ld(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    assert t.sent < 2000
+
+def test_m1_a_reopen_accepts_the_result_its_settled_status_carries(tmp_path):
+    """A bad CoE reply on the poll right after a range frame: recover, reopen, and the
+    settled status already carries that frame's result -- accept it, do not send the
+    range frame again (that would queue a second CRC of the same piece)."""
+    frames, sha = plan(tmp_path, (64,))
+    nd = sum(f.kind == "data" for f in frames)
+    m = LoaderModel()
+    probe = L.FakeTransport(LoaderModel(), lead=1)
+    nsend = count_range_sends(probe)
+    sends_before_range = []
+    real = probe.send
+    def send(slot):
+        if F.parse_header(slot)["flags"] & F.FLAG_RANGE_CRC and not sends_before_range:
+            sends_before_range.append(probe.sent)
+        return real(slot)
+    probe.send = send
+    Ld(probe, frames, sha, str(tmp_path / "p.json")).run_load()
+    k = sends_before_range[0] + 1                       # the first poll after the range frame
+    t = L.FakeTransport(m, lead=1, fault_sends={k})
+    nr = count_range_sends(t)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert t.recovers == 1 and ld.resyncs == 1
+    assert nr[0] == 1 and len(ld.range_results) == 1 and st["last"] == frames[-1].seq
+
+def test_m2_one_read_error_is_retried_and_the_load_completes(tmp_path):
+    frames, sha = plan(tmp_path)
+    first = next(f.seq for f in frames if f.kind == "range")
+    t = L.FakeTransport(LoaderModel(), lead=1, rerr_seqs={first + 1})
+    nr = count_range_sends(t)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
+    ld.run_load()
+    nrange = sum(f.kind == "range" for f in frames)
+    assert nr[0] == nrange + 1 and ld.resyncs == 0
+    assert all(g == w for g, w in ld.range_results.values())
+    assert ld.causes == ["HBM read error on piece 1 (seq %d): retried once" % (first + 1)]
+
+def test_m2_a_repeated_read_error_aborts_saying_resume_rechecks(tmp_path):
+    frames, sha = plan(tmp_path)
+    first, final = next(f.seq for f in frames if f.kind == "range"), frames[-1].seq
+    m = LoaderModel()
+    ck = str(tmp_path / "ck.json")
+    with pytest.raises(L.LoadAborted, match="--resume.*no reload needed") as e:
+        Ld(L.FakeTransport(m, lead=1, rerr_seqs={first + 1, final + 1}), frames, sha, ck).run_load()
+    assert "RERR" in str(e.value)
+    ld = Ld(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True)
+    ld.run_load()                                           # the advice works
+    assert ld.already_complete and all(g == w for g, w in ld.range_results.values())
+
+def test_m3_the_range_wait_is_time_based():
+    """At a slower TCK each poll slot takes longer, so the same CRC time is fewer polls."""
+    n = 1 << 20
+    fast, slow = L.range_polls(n, L.RANGE_EXPECT_BPS, 27_000_000), L.range_polls(n, L.RANGE_EXPECT_BPS, 2_700_000)
+    assert fast > slow >= L.MAX_POLLS
+    # 1 MiB at 100 MB/s is 10.5 ms; a 27 MHz slot is 0.607 ms: 18 polls beyond MAX_POLLS
+    assert fast == L.MAX_POLLS + 18
+
+def test_m1_a_reopen_while_a_long_crc_runs_waits_for_it_to_settle(tmp_path):
+    """A bad CoE reply right after the range frame of a 1 MiB piece whose CRC runs ~500
+    slots (100x slower than the RTL-derived rate): the reopen's settle sees busy = 1 for
+    far longer than MAX_POLLS and must keep polling while the die reports busy, then take
+    the result its settled status carries."""
+    frames, sha = plan(tmp_path, (1 << 20,))
+    nd = sum(f.kind == "data" for f in frames)
+    probe = L.FakeTransport(FifoOverflowModel(depth=128, crc_ticks_per_byte=TPB_RTL * 100), lead=1)
+    at = []
+    real = probe.send
+    def send(slot):
+        if F.parse_header(slot)["flags"] & F.FLAG_RANGE_CRC and not at:
+            at.append(probe.sent)
+        return real(slot)
+    probe.send = send
+    Ld(probe, frames, sha, str(tmp_path / "p.json")).run_load()
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=TPB_RTL * 100)
+    t = L.FakeTransport(m, lead=1, fault_sends={at[0] + 1})
+    nr = count_range_sends(t)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert t.recovers == 1 and nr[0] == 1 and len(ld.range_results) == 1
+    assert st["last"] == frames[-1].seq and all(g == w for g, w in ld.range_results.values())

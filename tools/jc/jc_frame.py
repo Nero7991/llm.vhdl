@@ -49,22 +49,28 @@ def parse_header(slot):
 def slot_crc_ok(slot):
     return struct.unpack_from("<I", slot, CRC_OFFSET)[0] == zlib.crc32(slot[:CRC_OFFSET]) & 0xFFFFFFFF
 
-# (name, lsb, width) -- the plan's "Status word layout" table
+# (name, lsb, width) -- the plan's "Status word layout" table. Task 9b (Oren 2026-10-05)
+# widened the word from 256 to 384 bits: [351:256] is the die's 96-bit DNA_PORTE2 value,
+# [352] dna_valid, [383:353] zero. TDO bits past 383 in a slot are zero.
+STATUS_BITS = 384
+STATUS_BYTES = STATUS_BITS // 8
+DNA_BITS = 96
 STATUS_FIELDS = [("magic", 0, 32), ("last", 32, 32), ("committed", 64, 32),
                  ("crc_fail", 96, 16), ("seq_err", 112, 16), ("desync", 128, 16),
                  ("bresp_err", 144, 16), ("dup", 160, 16), ("busy", 176, 1),
                  ("hbm_trip", 177, 1), ("range_valid", 178, 1), ("fifo_ovf", 179, 1),
-                 ("range_rerr", 180, 1), ("range_crc", 192, 32), ("range_seq", 224, 32)]
+                 ("range_rerr", 180, 1), ("range_crc", 192, 32), ("range_seq", 224, 32),
+                 ("dna", 256, DNA_BITS), ("dna_valid", 352, 1)]
 
-def parse_status(b32):
-    v = int.from_bytes(b32[:32], "little")
+def parse_status(b):
+    v = int.from_bytes(b[:STATUS_BYTES], "little")
     return {n: (v >> lsb) & ((1 << w) - 1) for n, lsb, w in STATUS_FIELDS}
 
 def pack_status(d):
     v = 0
     for n, lsb, w in STATUS_FIELDS:
         v |= (d[n] & ((1 << w) - 1)) << lsb
-    return v.to_bytes(32, "little")
+    return v.to_bytes(STATUS_BYTES, "little")
 
 def bursts(addr, nbeats):
     """AXI3 split: at most 16 beats of 32 bytes, never across a 4 KB boundary."""

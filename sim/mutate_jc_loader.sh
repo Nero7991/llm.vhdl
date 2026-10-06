@@ -21,6 +21,23 @@
 #        SURVIVED, showing tb_jc_hbm_crc (which does inject one) is the bench that owns
 #        this kill, not the end-to-end bench.
 #
+# Rows added by Task 9b (DNA_PORTE2 die identity, 384-bit status):
+#   C_tb_jc_dna_reader  the unmutated tree against the new reader bench.
+#   M20  jc_dna_reader assembles the bits in the reversed order (first bit out -> dna(95)).
+#   M21  jc_dna_reader never raises dna_valid (owning bench: tb_jc_dna_reader).
+#   M22  the same mutant seen end to end by tb_jc_loader_core.
+#   M23  jc_loader_core ties the status DNA field to zero instead of the reader's value.
+#   M24  jc_dna_reader changes READ/SHIFT on the dna_clk RISING edge instead of the
+#        falling one; the values still come out right, so only sim/jc_dna_model.vhd's
+#        setup/hold counter can kill it.
+#   M25  jc_dna_reader's default DIV drops to 4 (dna_clk 56 MHz at a 450 MHz aclk).
+#   M26  jc_frame_core drops status bits 383:256 (shifts a 256-bit word as before).
+#   M27  jc_frame_core shifts ones in behind the status (TDO past bit 383 not zero).
+#   A5   M23 against tb_jc_dna_reader, which never elaborates jc_loader_core --
+#        EXPECTED SURVIVED.
+#   A6   M20 against tb_jc_loader_core: the end-to-end bench must see a reversed DNA
+#        too -- EXPECTED KILLED.
+#
 # Fix round 1 (2026-10-05, review): every row now carries an EXPECTED outcome and the row
 # is printed as "<tag> <result> expected <exp> OK|MISMATCH". A check nothing refuses on is
 # decoration in this project, so a mismatched row is not just noted -- the script exits 1
@@ -33,7 +50,7 @@ REPO=$(cd "$(dirname "$0")/.." && pwd)
 GHDL=${GHDL:-ghdl}
 RUNROOT=/mnt/storage/fk33_builds/scratch/mutate_jc_loader_$(date +%Y%m%d_%H%M%S)_$$
 mkdir -p "$RUNROOT"
-DEPS="rtl/util_pkg.vhd rtl/jc_loader_pkg.vhd rtl/async_fifo.vhd rtl/jc_frame_core.vhd rtl/jc_hbm_writer.vhd rtl/jc_hbm_crc.vhd rtl/jc_status_sync.vhd rtl/jc_loader_core.vhd sim/jc_axi3_mem.vhd"
+DEPS="rtl/util_pkg.vhd rtl/jc_loader_pkg.vhd rtl/async_fifo.vhd rtl/jc_frame_core.vhd rtl/jc_hbm_writer.vhd rtl/jc_hbm_crc.vhd rtl/jc_status_sync.vhd rtl/jc_dna_reader.vhd rtl/jc_loader_core.vhd sim/jc_axi3_mem.vhd sim/jc_dna_model.vhd"
 NT=0; NMISMATCH=0; Z0SEEN=0; Z0OK=0
 NCTRL=0; NCTRL_OK=0
 NMUT=0;  NMUT_OK=0
@@ -116,7 +133,7 @@ PY
 }
 
 # control: the unmutated tree must pass every bench (a no-op patch on a unique anchor)
-for tb in tb_jc_crc32 tb_jc_frame_core tb_jc_hbm_writer tb_jc_hbm_crc tb_jc_loader_core tb_jc_loader_ovf; do
+for tb in tb_jc_crc32 tb_jc_frame_core tb_jc_hbm_writer tb_jc_hbm_crc tb_jc_loader_core tb_jc_loader_ovf tb_jc_dna_reader; do
   run_row "C_$tb" CTRL rtl/jc_loader_pkg.vhd "$tb" SURVIVED "control, no change" "x\"EDB88320\"" "x\"EDB88320\""
 done
 
@@ -162,6 +179,18 @@ run_row A3 ATTR rtl/jc_loader_core.vhd tb_jc_hbm_crc SURVIVED "M18 against a ben
 # attribution: tb_jc_loader_core's vector never injects a bad RRESP on the range-CRC path,
 # so the end-to-end bench cannot see M19; tb_jc_hbm_crc (above) is the bench that owns it.
 run_row A4 ATTR rtl/jc_hbm_crc.vhd tb_jc_loader_core SURVIVED "M19 against the end-to-end bench, which never injects a bad RRESP" "              if rresp /= \"00\" then rerr <= '1'; end if;" "              null;"
+
+# --- rows added by Task 9b (see header) ---
+run_row M20 VALUE rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "DNA bits assembled in reversed order" "nxt := dna_dout & sr(95 downto 1);" "nxt := sr(94 downto 0) & dna_dout;"
+run_row M21 VALUE rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "dna_valid never set" "                vld <= '1';" "                null;"
+run_row M22 VALUE rtl/jc_dna_reader.vhd tb_jc_loader_core KILLED "dna_valid never set, end to end" "                vld <= '1';" "                null;"
+run_row M23 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core KILLED "status DNA field tied to zero" "  live(351 downto 256) <= dna;" "  live(351 downto 256) <= (others => '0');"
+run_row M24 PROTO rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "READ/SHIFT change on the dna_clk rising edge" "  constant STEP_PH : natural := 2 * DIV - 1;" "  constant STEP_PH : natural := DIV - 1;"
+run_row M25 PROTO rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "default DIV 4: dna_clk over 25 MHz at 450 MHz" "  generic(DIV : positive := 10);" "  generic(DIV : positive := 4);"
+run_row M26 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "status bits 383:256 dropped" "    variable v : std_logic_vector(JC_STATUS_BITS-1 downto 0) := st;" "    variable v : std_logic_vector(JC_STATUS_BITS-1 downto 0) := (JC_STATUS_BITS-1 downto 256 => '0') & st(255 downto 0);"
+run_row M27 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "ones shifted in behind the status" "        st_sr <= '0' & st_sr(JC_STATUS_BITS-1 downto 1);" "        st_sr <= '1' & st_sr(JC_STATUS_BITS-1 downto 1);"
+run_row A5 ATTR rtl/jc_loader_core.vhd tb_jc_dna_reader SURVIVED "M23 against a bench without the core" "  live(351 downto 256) <= dna;" "  live(351 downto 256) <= (others => '0');"
+run_row A6 ATTR rtl/jc_dna_reader.vhd tb_jc_loader_core KILLED "M20 seen end to end" "nxt := dna_dout & sr(95 downto 1);" "nxt := sr(94 downto 0) & dna_dout;"
 
 printf 'mutants killed %d/%d; controls passed %d/%d; attribution as expected %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
   "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$NATTR_OK" "$NATTR" \

@@ -11,6 +11,8 @@ package jc_loader_pkg is
   constant JC_CRC_FIRST   : natural := 63 * 256;           -- 16128
   constant JC_CRC_LAST    : natural := JC_CRC_FIRST + 31;  -- 16159
   constant JC_FIFO_W      : natural := 258;
+  -- Task 9b: status word width (was 256). [351:256] DNA, [352] dna_valid, [383:353] zero.
+  constant JC_STATUS_BITS : natural := 384;
   constant JC_MAGIC_FRAME : std_logic_vector(31 downto 0) := x"4A4C4431";
   constant JC_MAGIC_STAT  : std_logic_vector(31 downto 0) := x"4A4C5354";
   constant TAG_DATA : std_logic_vector(1 downto 0) := "00";

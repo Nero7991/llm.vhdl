@@ -1,18 +1,29 @@
 -- Jungle Cat loader: composition (spec S3). TCK side: jc_frame_core. Crossing:
 -- async_fifo (258 x 128) for words, jc_status_sync for status. aclk side: jc_hbm_writer
 -- (AXI3 write channels) and jc_hbm_crc (AXI3 read channels) share one master port.
+--
+-- Task 9b: jc_dna_reader (aclk) reads the die's DNA_PORTE2 after reset and puts the
+-- 96-bit value and dna_valid into the status word ([351:256], [352]; [383:353] zero).
+-- The dna_clk/dna_read/dna_shift/dna_dout ports go to a DNA_PORTE2 primitive that is
+-- NOT instantiated here: this file is GHDL-tested (mcode, no UNISIM), so the primitive
+-- belongs in the synthesis-only wrapper Task 10 builds (DNA_PORTE2: CLK => dna_clk,
+-- READ => dna_read, SHIFT => dna_shift, DIN => '0', DOUT => dna_dout). Benches connect
+-- sim/jc_dna_model.vhd instead. Task 10 also constrains dna_clk (a register-divided
+-- clock, aclk / (2 * DNA_DIV)).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 use work.jc_loader_pkg.all;
 
 entity jc_loader_core is
-  generic(ADDR_W : positive := 33);
+  generic(ADDR_W : positive := 33; DNA_DIV : positive := 10);
   port(
     tck, sel, capture, shift, tdi : in  std_logic;
     tdo          : out std_logic;
     aclk, arst   : in  std_logic;
     hbm_cat_trip : in  std_logic;
+    dna_clk, dna_read, dna_shift : out std_logic;
+    dna_dout     : in  std_logic;
     m_awaddr  : out std_logic_vector(ADDR_W-1 downto 0);
     m_awlen   : out std_logic_vector(3 downto 0);
     m_awsize  : out std_logic_vector(2 downto 0);
@@ -44,7 +55,9 @@ end entity;
 architecture rtl of jc_loader_core is
   signal w_valid, w_ready, q_valid, q_ready : std_logic;
   signal w_data, q_data : std_logic_vector(JC_FIFO_W-1 downto 0);
-  signal st_tck, live : std_logic_vector(255 downto 0);
+  signal st_tck, live : std_logic_vector(JC_STATUS_BITS-1 downto 0);
+  signal dna : std_logic_vector(95 downto 0);
+  signal dna_valid : std_logic;
   signal desync : unsigned(15 downto 0);
   signal ovf : std_logic;
   signal trst_s1, trst_s2 : std_logic := '1';
@@ -146,6 +159,12 @@ begin
              rready => m_rready, res_valid => res_valid, res_err => res_err,
              res_crc => res_crc, res_seq => res_seq);
 
+  dnar : entity work.jc_dna_reader
+    generic map(DIV => DNA_DIV)
+    port map(clk => aclk, rst => arst, dna_clk => dna_clk, dna_read => dna_read,
+             dna_shift => dna_shift, dna_dout => dna_dout, dna => dna,
+             dna_valid => dna_valid);
+
   -- aclk-side status (the plan's "Status word layout"); the core fills magic, desync, ovf
   live(31 downto 0)    <= (others => '0');
   live(63 downto 32)   <= last_seq;
@@ -163,7 +182,11 @@ begin
   live(191 downto 181) <= (others => '0');
   live(223 downto 192) <= res_crc;
   live(255 downto 224) <= res_seq;
+  live(351 downto 256) <= dna;
+  live(352)            <= dna_valid;
+  live(383 downto 353) <= (others => '0');
 
   sync : entity work.jc_status_sync
+    generic map(W => JC_STATUS_BITS)
     port map(aclk => aclk, live => live, tck => tck, st_tck => st_tck);
 end architecture;

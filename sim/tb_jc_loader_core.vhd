@@ -30,6 +30,11 @@ architecture sim of tb_jc_loader_core is
   signal peek_data : std_logic_vector(255 downto 0);
   signal peek_hit : std_logic;
   signal axi_errors : natural;
+  -- Task 9b: the die identity. A made-up value with distinct halves (no real DNA is ever
+  -- committed); sim/jc_dna_model.vhd stands in for DNA_PORTE2.
+  constant SIM_DNA : std_logic_vector(95 downto 0) := x"0A1B2C3D4E5F60718293A4B5";
+  signal dna_clk, dna_read, dna_shift, dna_dout : std_logic;
+  signal dna_errors, dna_reads, dna_shifts : natural;
   -- fix round 1, I2: exercised partway through the final poll slots (hbm_cat_trip has no
   -- dedicated vector field; it is driven directly here, not read from the vector file).
   signal hbm_trip : std_logic := '0';
@@ -40,6 +45,8 @@ begin
   dut : entity work.jc_loader_core
     port map(tck => tck, sel => sel, capture => capture, shift => shift, tdi => tdi,
              tdo => tdo, aclk => aclk, arst => arst, hbm_cat_trip => hbm_trip,
+             dna_clk => dna_clk, dna_read => dna_read, dna_shift => dna_shift,
+             dna_dout => dna_dout,
              m_awaddr => awaddr, m_awlen => awlen, m_awsize => awsize, m_awburst => awburst,
              m_awvalid => awvalid, m_awready => awready, m_wdata => wdata, m_wstrb => wstrb,
              m_wlast => wlast, m_wvalid => wvalid, m_wready => wready, m_bresp => bresp,
@@ -47,6 +54,13 @@ begin
              m_arsize => arsize, m_arburst => arburst, m_arvalid => arvalid,
              m_arready => arready, m_rdata => rdata, m_rresp => rresp, m_rlast => rlast,
              m_rvalid => rvalid, m_rready => rready);
+
+  -- T_MARGIN = one aclk period (the reader's own clock)
+  dnam : entity work.jc_dna_model
+    generic map(SIM_DNA => SIM_DNA, T_MARGIN => CLK_P, T_CLK_MIN => 40 ns)
+    port map(clk => dna_clk, read => dna_read, shift => dna_shift, din => '0',
+             dout => dna_dout, errors => dna_errors, reads => dna_reads,
+             shifts => dna_shifts);
 
   mem : entity work.jc_axi3_mem
     generic map(ADDR_W => 33, IDX_W => 11, STALL => true)
@@ -64,7 +78,8 @@ begin
     variable l : line;
     variable c : character;
     variable slot : std_logic_vector(JC_SLOT_BITS-1 downto 0);
-    variable st : std_logic_vector(255 downto 0);
+    variable st : std_logic_vector(JC_STATUS_BITS-1 downto 0);
+    variable tail_zero : boolean := true;
     variable a : std_logic_vector(39 downto 0);
     variable w : std_logic_vector(255 downto 0);
     variable e32 : std_logic_vector(31 downto 0);
@@ -88,7 +103,11 @@ begin
         for i in 0 to JC_SLOT_BITS - 1 loop
           tdi <= slot(i);
           wait until rising_edge(tck);
-          if i < 256 then st(i) := tdo; end if;
+          if i < JC_STATUS_BITS then
+            st(i) := tdo;
+          elsif tdo /= '0' then
+            tail_zero := false;
+          end if;
           wait until falling_edge(tck);
         end loop;
         nslot := nslot + 1;
@@ -122,12 +141,21 @@ begin
         chk(st(179) = '0' and st(180) = '0', "no overflow, no read error");
         chk(st(159 downto 144) = x"0000", "no BRESP errors");
         chk(st(191 downto 181) = "00000000000", "status bits 191:181 must be zero");
+        -- Task 9b: die identity in the final status, upper bits zero
+        chk(st(351 downto 256) = SIM_DNA, "dna " & to_hstring(st(351 downto 256)) &
+            " expected " & to_hstring(SIM_DNA));
+        chk(st(352) = '1', "dna_valid must be set");
+        chk(st(383 downto 353) = (383 downto 353 => '0'), "status bits 383:353 must be zero");
         -- fix round 1, I2: raised two slots ago (at nslot=18); must read set by now.
         chk(st(177) = '1', "HBM trip must read set in the final poll");
       end if;
     end loop;
     shift <= '0';
     chk(axi_errors = 0, "AXI3 rule violations: " & integer'image(axi_errors));
+    chk(tail_zero, "TDO bits past 383 must be zero in every slot");
+    chk(dna_errors = 0 and dna_reads = 1 and dna_shifts = 95,
+        "DNA_PORTE2 model: errors " & integer'image(dna_errors) & " reads " &
+        integer'image(dna_reads) & " shifts " & integer'image(dna_shifts));
     assert nslot = 20 report "expected 20 slots" severity failure;
     assert nmem > 100 report "too few memory checks: " & integer'image(nmem) severity failure;
     assert nT = 1 report "expected exactly 1 status line, got " & integer'image(nT) severity failure;

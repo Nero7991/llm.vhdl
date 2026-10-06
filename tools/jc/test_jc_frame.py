@@ -27,8 +27,22 @@ def test_header_rejects_bad_input():
 def test_status_round_trip():
     d = dict(magic=F.MAGIC_STAT, last=5, committed=6, crc_fail=1, seq_err=2, desync=3,
              bresp_err=4, dup=5, busy=1, hbm_trip=0, range_valid=1, fifo_ovf=0,
-             range_rerr=0, range_crc=0xDEADBEEF, range_seq=9)
+             range_rerr=0, range_crc=0xDEADBEEF, range_seq=9,
+             dna=0x13579BDF2468ACE0F1E2D3C4, dna_valid=1)
     assert F.parse_status(F.pack_status(d)) == d
+
+def test_status_is_384_bits_with_the_dna_at_256():
+    """Task 9b layout, checked against the integer directly, not through the field table:
+    [351:256] dna, [352] dna_valid, [383:353] zero."""
+    dna = 0x13579BDF2468ACE0F1E2D3C4          # made up, distinct halves
+    zero = dict((n, 0) for n, _, _ in F.STATUS_FIELDS)
+    b = F.pack_status(dict(zero, dna=dna, dna_valid=1))
+    assert F.STATUS_BITS == 384 and len(b) == 48
+    v = int.from_bytes(b, "little")
+    assert v & ((1 << 256) - 1) == 0
+    assert (v >> 256) & ((1 << 96) - 1) == dna
+    assert (v >> 352) & 1 == 1 and v >> 353 == 0
+    assert F.parse_status(b)["dna"] == dna
 
 def test_bursts_respect_16_beats_and_4k():
     assert F.bursts(0x0, 62) == [(0x0, 16), (0x200, 16), (0x400, 16), (0x600, 14)]
