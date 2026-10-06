@@ -11,10 +11,12 @@
 --
 -- dna_clk: a register-divided clock, one period = 2 * DIV aclk cycles (high for DIV, low
 -- for DIV). The DEFAULT DIV = 10 gives 22.5 MHz at a 450 MHz aclk and 10 MHz at 200 MHz;
--- the brief's ceiling is 25 MHz at 450 MHz (DIV >= 9). The 25 MHz figure is the brief's,
--- NOT a datasheet value: the primitive's real maximum CLK is in AMD UG570/DS923, which
--- are not in docs/datasheets/ -- ESTIMATE until Task 10 constrains dna_clk and Task 11
--- reads a die on silicon.
+-- the brief's ceiling was 25 MHz at 450 MHz (DIV >= 9), an ESTIMATE with no datasheet.
+-- MEASURED (Task 10, Vivado 2023.2 library, xcvu35p -1, routed timing_summary.rpt):
+-- DNA_PORTE2/CLK Min Period 4.875 ns (205 MHz) and Low/High Pulse Width 2.275 ns. The
+-- Jungle Cat build runs DIV = 10 at 200 MHz: 100 ns period, 50 ns high and low, slack
+-- 95.125 ns (period) and 47.725 ns (pulse). The READ/SHIFT setup/hold arcs are timed
+-- too (hw/jc/loader/results/2026-10-05/). Bit order (below) is still ESTIMATE.
 --
 -- TIMING OF THE PINS: dna_clk rises on the aclk edge that takes ph from DIV-1 to DIV and
 -- falls on the edge that takes it from 2*DIV-1 to 0. dna_read and dna_shift change ONLY

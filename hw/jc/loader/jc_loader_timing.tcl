@@ -27,7 +27,7 @@
 #       destination sample interval, and 5 ns is the smaller of the two).
 #   *             -> trst_s1_reg            arst into TCK (2FF, ASYNC_REG), 5 ns
 #   *             -> trip_s1_reg            hbm_cat_trip into aclk (2FF, ASYNC_REG),
-#       false path (an HBM hard-block level with no fabric clock; see jcl_cdc)
+#       false path (a quasi-static level; see jcl_cdc)
 
 proc jcl_cells {pat} {
   set c [get_cells -quiet -hierarchical -filter "NAME =~ \"$pat\""]
@@ -93,7 +93,45 @@ proc jcl_cdc {core clk_a clk_t aclk_p tck_p} {
   set_bus_skew $gp -from [jcl_src $rpt $clk_a] -to $rpt
   set_max_delay -datapath_only $aclk_p -from $clk_a -to $tr
   # hbm_cat_trip: a quasi-static level (HBM catastrophic temperature) into a 2FF
-  # ASYNC_REG synchroniser; its source is an HBM hard-block pin with no fabric clock, so
-  # it cannot be bounded -from a clock. Latency is irrelevant to a trip flag.
+  # ASYNC_REG synchroniser. In the full build it is launched by the HBM APB block on
+  # PCLK = clk_out1 (100 MHz), which is RELATED to aclk (same MMCM), so Vivado could time
+  # it; it is cut anyway because the 2FF already absorbs any phase and latency is
+  # irrelevant to a trip flag. (An earlier comment here said the source had no fabric
+  # clock; that was wrong, corrected in Task 10 fix round 1.)
   set_false_path -to [jcl_pins "${core}trip_s1_reg/D"]
+}
+
+# BSCANE2 TDI (Task 10 fix round 1). INTERNAL_TDI -> TDI is a combinational arc from an
+# UNCLOCKED startpoint, so the TDI paths into the TCK-domain receiver (sr, crc, wd,
+# rx_crc) were unconstrained (timing_summary "From Clock: (none) To Clock: tck_user4",
+# 18 endpoints, slack inf). The host drives TDI on the falling TCK edge and the receiver
+# samples on the rising edge: half a TCK period bounds it.
+proc jcl_tdi {bscan_pat half_p} {
+  set src [jcl_pins "${bscan_pat}/INTERNAL_TDI"]
+  if {[llength $src] != 1} { error "JCLOADER_CONSTRAINT_EMPTY expected one INTERNAL_TDI, got [llength $src]" }
+  set ep [all_fanout -endpoints_only -flat $src]
+  if {[llength $ep] == 0} { error "JCLOADER_CONSTRAINT_EMPTY no endpoints from $src" }
+  puts "JCLOADER_CONSTRAINT_MATCH tdi_endpoints [llength $ep]"
+  set_max_delay -datapath_only $half_p -from $src -to $ep
+  return $ep
+}
+
+# DNA_PORTE2 DOUT -> the reader's sample registers (Task 10 fix round 1). jc_dna_reader
+# samples DOUT on the aclk edge where ph = 2*DIV-1, which is DIV aclk periods after the
+# dna_clk rising edge that moved DOUT; the default analysis checked it one aclk later
+# (the design's false critical path, +0.521 ns). Setup DIV, hold DIV-1 (-end, aclk
+# periods), so the hold check stays at the launch edge. Every dna_clk -> aclk path must
+# start at the DNA_PORTE2 (the only dna_clk-clocked cell) or the proc refuses.
+proc jcl_dna_mcp {div clk_dna clk_a} {
+  set paths [get_timing_paths -setup -from $clk_dna -to $clk_a -max_paths 1000 -nworst 1]
+  if {[llength $paths] == 0} { error "JCLOADER_CONSTRAINT_EMPTY no dna_clk -> aclk paths" }
+  foreach p $paths {
+    set sp [get_property STARTPOINT_PIN $p]
+    if {[get_property REF_NAME [get_cells -of_objects $sp]] ne "DNA_PORTE2"} {
+      error "JCLOADER_DNA_MCP refused: dna_clk -> aclk path starts at $sp, not a DNA_PORTE2"
+    }
+  }
+  puts "JCLOADER_CONSTRAINT_MATCH dna_mcp paths [llength $paths]"
+  set_multicycle_path $div -setup -end -from $clk_dna -to $clk_a
+  set_multicycle_path [expr {$div - 1}] -hold -end -from $clk_dna -to $clk_a
 }

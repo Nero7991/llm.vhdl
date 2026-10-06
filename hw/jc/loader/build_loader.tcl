@@ -85,6 +85,10 @@ if {[catch {
   puts "JCLOADER_ACLK $aclk_clk period $aclk_p"
   if {abs($aclk_p - 5.0) > 0.001} { error "aclk period $aclk_p, expected 5.000" }
   jcl_cdc $CORE $aclk_clk [get_clocks tck_user4] $aclk_p $TCK_P
+  # Task 10 fix round 1 (the shipped 2026-10-05 bitstream was routed BEFORE these two;
+  # they were verified post hoc on its routed checkpoint, posthoc_constraints.tcl)
+  jcl_tdi "*u_jc_frx/u_jc_bscan" [expr {$TCK_P / 2.0}]
+  jcl_dna_mcp $DNA_DIV [get_clocks dna_clk] $aclk_clk
   # BSCANE2 SEL/SHIFT/CAPTURE/TDI/TDO: no extra bound. A set_max_delay on them works only
   # by path segmentation (CRITICAL WARNING Constraints 18-515, MEASURED in full1), and
   # with the clock on INTERNAL_TCK the primitive's own arcs time them against tck_user4.

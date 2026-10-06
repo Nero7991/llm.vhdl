@@ -23,8 +23,10 @@
 --  * fan_ctl and LED_A..D are driven, with the pins hw/jc/axiprobe used on silicon:
 --    fan on (as the census and axiprobe bitstreams), LED_A configured, LED_B loader out
 --    of reset, LED_C HBM catastrophic trip, LED_D aclk heartbeat.
---  * DNA_DIV = 10 at the 200 MHz aclk: dna_clk = 200 / 20 = 10 MHz (see the report for
---    the DNA_PORTE2 timing Vivado reports at that rate).
+--  * DNA_DIV = 10 at the 200 MHz aclk: dna_clk = 200 / 20 = 10 MHz. Vivado's library
+--    limit for DNA_PORTE2/CLK is 4.875 ns min period and 2.275 ns min pulse width
+--    (MEASURED, routed timing summary), so 100 ns / 50 ns has wide margin; the DNA bit
+--    order is still ESTIMATE (rtl/jc_dna_reader.vhd).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
