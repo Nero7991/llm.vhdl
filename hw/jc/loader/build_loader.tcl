@@ -127,12 +127,19 @@ foreach pn {READ SHIFT DIN} {
 report_timing -setup -from [get_pins $dna/DOUT] -max_paths 1 -append -file $rp/dna_timing.rpt
 report_timing -hold  -from [get_pins $dna/DOUT] -max_paths 1 -append -file $rp/dna_timing.rpt
 report_pulse_width -all -cells $dna -file $rp/dna_pulse_width.rpt
-# each named crossing, by destination, with the bound that covers it
-set fh [open $rp/cdc_paths.rpt w]; close $fh
-foreach t {sync/st_r_reg* sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg*
-           fifo/rp_g_s1_reg* trst_s1_reg trip_s1_reg} {
-  report_timing -to [get_cells -hier -filter "NAME =~ \"${CORE}$t\""] -max_paths 2 -nworst 1 \
-    -append -file $rp/cdc_paths.rpt
+# each named crossing's DATA path: -from the source clock -to the synchroniser D pins
+# (a -to <cells> report picks the worst path into any pin of those cells, which is a
+# same-clock CE or R path, not the crossing; MEASURED in full3, fixed after it, and
+# results/2026-10-05/full/cdc_crossings.rpt came from this form run on full3's dcp)
+set fh [open $rp/cdc_crossings.rpt w]; close $fh
+set T [get_clocks tck_user4]
+foreach {name src dst} [list snap_to_st_r $aclk_clk sync/st_r_reg* pub_to_tgl $aclk_clk sync/tgl_s1_reg \
+    ack_to_ack_s1 $T sync/ack_s1_reg wp_gray $T fifo/wp_g_s1_reg* rp_gray $aclk_clk fifo/rp_g_s1_reg* \
+    arst_to_trst $aclk_clk trst_s1_reg] {
+  set pins [get_pins -of_objects [get_cells -hier -filter "NAME =~ \"${CORE}$dst\""] -filter {REF_PIN_NAME == D}]
+  set p [get_timing_paths -setup -from $src -to $pins -max_paths 1]
+  puts "JCLOADER_CROSS $name slack [get_property SLACK $p] requirement [get_property REQUIREMENT $p] exception {[get_property EXCEPTION $p]}"
+  report_timing -from $src -to $pins -max_paths 1 -append -file $rp/cdc_crossings.rpt
 }
 
 # ---- BSCAN census: exactly one chain-4 BSCANE2 (ours); nothing else on 4 ----------------

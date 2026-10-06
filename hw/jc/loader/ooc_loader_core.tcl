@@ -59,12 +59,15 @@ report_exceptions -file $out/exceptions.rpt
 report_exceptions -ignored -file $out/exceptions_ignored.rpt
 report_bus_skew -file $out/bus_skew.rpt
 report_methodology -file $out/methodology.rpt
-# each named crossing, by destination, so the report shows the bound that covers it
-set fh [open $out/cdc_paths.rpt w]; close $fh
-foreach t {sync/st_r_reg* sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg*
-           fifo/rp_g_s1_reg* trst_s1_reg trip_s1_reg} {
-  report_timing -to [get_cells -hier -filter "NAME =~ \"$t\""] -max_paths 2 -nworst 1 \
-    -append -file $out/cdc_paths.rpt
+# each named crossing's DATA path: -from the source clock -to the synchroniser D pins
+set fh [open $out/cdc_crossings.rpt w]; close $fh
+foreach {name src dst} {snap_to_st_r aclk sync/st_r_reg* pub_to_tgl aclk sync/tgl_s1_reg
+                        ack_to_ack_s1 tck sync/ack_s1_reg wp_gray tck fifo/wp_g_s1_reg*
+                        rp_gray aclk fifo/rp_g_s1_reg* arst_to_trst aclk trst_s1_reg} {
+  set pins [get_pins -of_objects [get_cells -hier -filter "NAME =~ \"$dst\""] -filter {REF_PIN_NAME == D}]
+  set p [get_timing_paths -setup -from [get_clocks $src] -to $pins -max_paths 1]
+  puts "JCL_OOC_CROSS $name slack [get_property SLACK $p] requirement [get_property REQUIREMENT $p]"
+  report_timing -from [get_clocks $src] -to $pins -max_paths 1 -append -file $out/cdc_crossings.rpt
 }
 
 set rs [report_route_status -return_string]
