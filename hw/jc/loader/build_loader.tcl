@@ -81,12 +81,12 @@ if {[catch {
   puts "JCLOADER_ACLK $aclk_clk period $aclk_p"
   if {abs($aclk_p - 5.0) > 0.001} { error "aclk period $aclk_p, expected 5.000" }
   jcl_cdc $CORE $aclk_clk [get_clocks tck_user4] $aclk_p $TCK_P
-  # BSCANE2 data pins: the TAP moves SEL/SHIFT/CAPTURE/TDI on TCK and samples TDO on the
-  # falling TCK edge, so half a TCK period bounds both directions.
-  set half [expr {$TCK_P / 2.0}]
-  set bs [get_cells -hierarchical -filter {NAME =~ "*u_jc_frx/u_jc_bscan"}]
-  set_max_delay -datapath_only $half -from [get_pins -of_objects $bs -filter {REF_PIN_NAME =~ SEL || REF_PIN_NAME =~ SHIFT || REF_PIN_NAME =~ CAPTURE || REF_PIN_NAME =~ TDI}]
-  set_max_delay -datapath_only $half -to [get_pins -of_objects $bs -filter {REF_PIN_NAME == TDO}]
+  # BSCANE2 SEL/SHIFT/CAPTURE/TDI/TDO carry no timing arcs to TCK in Vivado's model, so
+  # they are not constrained here: a set_max_delay on them only works by path
+  # segmentation (CRITICAL WARNING Constraints 18-515, MEASURED in the first full run),
+  # and -datapath_only -to TDO needs a -from that does not exist. Their timing is the
+  # TAP's (TDI/SEL/SHIFT settle a full TCK before the next rising edge, TDO is sampled
+  # on the falling edge); recorded as an accepted unconstrained path class in the report.
 } err]} { jcl_fail "constraints: $err" }
 if {[llength $badn] > 0} { jcl_fail "netlist: [llength $badn] loader inputs constant or open" }
 
@@ -150,7 +150,7 @@ puts "JCLOADER_BSCAN_SUMMARY total=$nall chain4=$n4 chain4_loader=$n4ours"
 if {$n4 != 1 || $n4ours != 1} { jcl_fail "bscan census: chain4=$n4 chain4_loader=$n4ours" }
 
 set rs [report_route_status -return_string]
-if {![regexp {routing errors\s*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcl_fail "route status" }
+if {![regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcl_fail "route status" }
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 set whs [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -hold]]
 puts "JCLOADER_WNS $wns"

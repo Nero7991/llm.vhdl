@@ -36,7 +36,10 @@ create_clock -name tck  -period $TCK_P  [get_ports tck]
 jcl_dna_clock "" $DNA_DIV
 # the two aclk-domain inputs, so -from [get_clocks aclk] reaches them as it does in the
 # full build (where arst is a register and hbm_cat_trip an HBM pin)
-set_input_delay -clock aclk 0.000 [get_ports {arst hbm_cat_trip}]
+# (harness only: -min 0.5 stands for a parent register's clock-to-out plus route; at 0
+# the unrouted port produced 195 hold "failures" into dnar/ck_reg and its siblings)
+set_input_delay -clock aclk -max 2.000 [get_ports {arst hbm_cat_trip}]
+set_input_delay -clock aclk -min 0.500 [get_ports {arst hbm_cat_trip}]
 jcl_cdc "" [get_clocks aclk] [get_clocks tck] $ACLK_P $TCK_P
 
 opt_design
@@ -65,7 +68,7 @@ foreach t {sync/st_r_reg* sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg*
 }
 
 set rs [report_route_status -return_string]
-if {[regexp {routing errors\s*:\s*(\d+)} $rs -> nerr] && $nerr == 0} {
+if {[regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] && $nerr == 0} {
   puts "JCL_OOC_ROUTE routing_errors 0"
 } else {
   puts "JCL_OOC_ROUTE_FAIL"

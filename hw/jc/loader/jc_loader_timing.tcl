@@ -51,6 +51,7 @@ proc jcl_dna_clock {core div} {
   set src [jcl_pins "${core}dnar/ck_reg/C"]
   set q   [jcl_pins "${core}dnar/ck_reg/Q"]
   create_generated_clock -name dna_clk -source $src -divide_by [expr {2 * $div}] $q
+  update_timing -quiet
   puts "JCLOADER_DNA_CLOCK divide_by [expr {2 * $div}] period [get_property PERIOD [get_clocks dna_clk]]"
 }
 
