@@ -34,7 +34,10 @@ source $repo/hw/jc/loader/jc_loader_timing.tcl
 create_clock -name aclk -period $ACLK_P [get_ports aclk]
 create_clock -name tck  -period $TCK_P  [get_ports tck]
 jcl_dna_clock "" $DNA_DIV
-jcl_cdc "" $ACLK_P $TCK_P
+# the two aclk-domain inputs, so -from [get_clocks aclk] reaches them as it does in the
+# full build (where arst is a register and hbm_cat_trip an HBM pin)
+set_input_delay -clock aclk 0.000 [get_ports {arst hbm_cat_trip}]
+jcl_cdc "" [get_clocks aclk] [get_clocks tck] $ACLK_P $TCK_P
 
 opt_design
 place_design
@@ -53,16 +56,13 @@ report_exceptions -file $out/exceptions.rpt
 report_exceptions -ignored -file $out/exceptions_ignored.rpt
 report_bus_skew -file $out/bus_skew.rpt
 report_methodology -file $out/methodology.rpt
-# each named crossing, so the report shows the bound that covers it
+# each named crossing, by destination, so the report shows the bound that covers it
 set fh [open $out/cdc_paths.rpt w]; close $fh
-foreach {f t} {sync/snap_reg* sync/st_r_reg* sync/pub_reg sync/tgl_s1_reg
-               sync/ack_reg sync/ack_s1_reg fifo/wp_g_reg* fifo/wp_g_s1_reg*
-               fifo/rp_g_reg* fifo/rp_g_s1_reg*} {
-  report_timing -from [get_cells -hier -filter "NAME =~ \"$f\""] \
-    -to [get_cells -hier -filter "NAME =~ \"$t\""] -max_paths 1 -append -file $out/cdc_paths.rpt
+foreach t {sync/st_r_reg* sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg*
+           fifo/rp_g_s1_reg* trst_s1_reg trip_s1_reg} {
+  report_timing -to [get_cells -hier -filter "NAME =~ \"$t\""] -max_paths 2 -nworst 1 \
+    -append -file $out/cdc_paths.rpt
 }
-report_timing -to [get_pins -hier -filter {NAME =~ "trst_s1_reg/D"}] -append -file $out/cdc_paths.rpt
-report_timing -to [get_pins -hier -filter {NAME =~ "trip_s1_reg/D"}] -append -file $out/cdc_paths.rpt
 
 set rs [report_route_status -return_string]
 if {[regexp {routing errors\s*:\s*(\d+)} $rs -> nerr] && $nerr == 0} {

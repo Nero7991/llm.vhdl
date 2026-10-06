@@ -26,7 +26,8 @@
 #       (the XPM convention; a gray bus is safe while its skew is under one
 #       destination sample interval, and 5 ns is the smaller of the two).
 #   *             -> trst_s1_reg            arst into TCK (2FF, ASYNC_REG), 5 ns
-#   *             -> trip_s1_reg            hbm_cat_trip into aclk (2FF, ASYNC_REG)
+#   *             -> trip_s1_reg            hbm_cat_trip into aclk (2FF, ASYNC_REG),
+#       false path (an HBM hard-block level with no fabric clock; see jcl_cdc)
 
 proc jcl_cells {pat} {
   set c [get_cells -quiet -hierarchical -filter "NAME =~ \"$pat\""]
@@ -53,22 +54,45 @@ proc jcl_dna_clock {core div} {
   puts "JCLOADER_DNA_CLOCK divide_by [expr {2 * $div}] period [get_property PERIOD [get_clocks dna_clk]]"
 }
 
-proc jcl_cdc {core aclk_p tck_p} {
-  set_max_delay -datapath_only $tck_p \
-    -from [jcl_cells "${core}sync/snap_reg*"] -to [jcl_cells "${core}sync/st_r_reg*"]
-  set_max_delay -datapath_only $aclk_p \
-    -from [jcl_cells "${core}sync/pub_reg"] -to [jcl_cells "${core}sync/tgl_s1_reg"]
-  set_max_delay -datapath_only $aclk_p \
-    -from [jcl_cells "${core}sync/ack_reg"] -to [jcl_cells "${core}sync/ack_s1_reg"]
+# The startpoints, clocked by clk, of the D inputs of the cells dst: the real source
+# registers of a crossing whatever synthesis merged (used for set_bus_skew, which needs
+# startpoints rather than a clock).
+proc jcl_src {dst clk} {
+  set sp [all_fanin -startpoints_only -flat [get_pins -of_objects $dst -filter {REF_PIN_NAME == D}]]
+  set keep {}
+  foreach p $sp {
+    set c [get_clocks -quiet -of_objects $p]
+    if {[llength $c] && [lsearch -exact [get_property NAME $c] [get_property NAME $clk]] >= 0} { lappend keep $p }
+  }
+  if {[llength $keep] == 0} { error "JCLOADER_CONSTRAINT_EMPTY startpoints of $dst on $clk" }
+  puts "JCLOADER_CONSTRAINT_MATCH startpoints [llength $keep] -> [llength $dst] cells on [get_property NAME $clk]"
+  return $keep
+}
+
+# FROM A CLOCK, TO THE SYNCHRONISER CELLS. The first version used -from <source
+# register pattern> and the OOC run showed why that is wrong: wp_g_s1_reg has 8 bits but
+# only 7 wp_g_reg cells exist, because synthesis merged the gray MSB (equal to the binary
+# MSB) into wp_reg[7]; a -from register list would have left that bit unconstrained.
+# -from <source clock> -to <destination cells> covers every path of the crossing whatever
+# synthesis named or merged on the source side. clk_a is aclk, clk_t is TCK.
+proc jcl_cdc {core clk_a clk_t aclk_p tck_p} {
   set gp [expr {min($aclk_p, $tck_p)}]
-  set wpf [jcl_cells "${core}fifo/wp_g_reg*"]
+  set st  [jcl_cells "${core}sync/st_r_reg*"]
+  set tg  [jcl_cells "${core}sync/tgl_s1_reg"]
+  set ak  [jcl_cells "${core}sync/ack_s1_reg"]
   set wpt [jcl_cells "${core}fifo/wp_g_s1_reg*"]
-  set rpf [jcl_cells "${core}fifo/rp_g_reg*"]
   set rpt [jcl_cells "${core}fifo/rp_g_s1_reg*"]
-  set_max_delay -datapath_only $gp -from $wpf -to $wpt
-  set_bus_skew $gp -from $wpf -to $wpt
-  set_max_delay -datapath_only $gp -from $rpf -to $rpt
-  set_bus_skew $gp -from $rpf -to $rpt
-  set_max_delay -datapath_only $aclk_p -to [jcl_pins "${core}trst_s1_reg/D"]
-  set_max_delay -datapath_only $aclk_p -to [jcl_pins "${core}trip_s1_reg/D"]
+  set tr  [jcl_cells "${core}trst_s1_reg"]
+  set_max_delay -datapath_only $tck_p  -from $clk_a -to $st
+  set_max_delay -datapath_only $aclk_p -from $clk_a -to $tg
+  set_max_delay -datapath_only $aclk_p -from $clk_t -to $ak
+  set_max_delay -datapath_only $gp -from $clk_t -to $wpt
+  set_bus_skew $gp -from [jcl_src $wpt $clk_t] -to $wpt
+  set_max_delay -datapath_only $gp -from $clk_a -to $rpt
+  set_bus_skew $gp -from [jcl_src $rpt $clk_a] -to $rpt
+  set_max_delay -datapath_only $aclk_p -from $clk_a -to $tr
+  # hbm_cat_trip: a quasi-static level (HBM catastrophic temperature) into a 2FF
+  # ASYNC_REG synchroniser; its source is an HBM hard-block pin with no fabric clock, so
+  # it cannot be bounded -from a clock. Latency is irrelevant to a trip flag.
+  set_false_path -to [jcl_pins "${core}trip_s1_reg/D"]
 }
