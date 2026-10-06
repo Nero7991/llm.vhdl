@@ -758,11 +758,13 @@ class Loader(_Session):
             raise ValueError("--corrupt-seq must name a data frame (seq 0..%d), got %r"
                              % (s.nd - 1, corrupt_seq))
         s.corrupt_seq = corrupt_seq
+        s.data_bytes_sent = 0     # payload bytes of data frames this run put on the wire
 
     def _slot(s, fr):
         if fr.kind == "range":
             return F.range_crc_slot(fr.seq, fr.addr, fr.n)
         slot = F.build_slot(fr.seq, fr.addr, read_payload(fr))
+        s.data_bytes_sent += fr.n
         if fr.seq == s.corrupt_seq:
             s.corrupt_seq = None                   # first send only
             b = bytearray(slot)
@@ -1247,7 +1249,7 @@ def main(argv=None):
                    corrupt_seq=a.corrupt_seq if a.cmd == "load" else None)
         if a.cmd == "load":
             st = ld.run_load()
-            n = sum(f.n for f in frames if f.kind == "data")
+            n = ld.data_bytes_sent          # this run only (a resume sends the remainder)
             dt = max(time.time() - t0, 1e-9)
             if ld.already_complete:
                 print("JCLOAD_DONE already complete: %d pieces re-checked by range CRC, "
@@ -1255,8 +1257,8 @@ def main(argv=None):
                                                      ld.resyncs, dt))
             else:
                 print("JCLOAD_DONE last=%d committed=%d crc_fail=%d resyncs=%d pieces=%d "
-                      "matched %.0f s %.2f MB/s" % (st["last"], st["committed"],
-                      st["crc_fail"], ld.resyncs, len(ld.range_results), dt, n / dt / 1e6))
+                      "matched %.0f s, this run sent %d data bytes at %.2f MB/s" % (st["last"], st["committed"],
+                      st["crc_fail"], ld.resyncs, len(ld.range_results), dt, n, n / dt / 1e6))
             return 0
         bad = ld.run_verify()
     except (LoadAborted, LinkFault) as e:

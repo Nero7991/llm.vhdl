@@ -1668,3 +1668,19 @@ def test_corrupt_seq_refuses_a_range_frame(tmp_path):
     with pytest.raises(ValueError, match="data frame"):
         Ld(L.FakeTransport(LoaderModel(), lead=0), frames, sha, str(tmp_path / "ck.json"),
            corrupt_seq=rng)
+
+def test_done_line_rate_counts_only_bytes_sent_this_run(tmp_path, capsys, monkeypatch):
+    """MEASURED 2026-10-06 on silicon: after 7 resumed attempts the final attempt printed
+    '40.54 MB/s', the whole plan's bytes over that one attempt's time. The rate must count
+    only the data bytes this run actually sent."""
+    frames, sha = plan(tmp_path, (5000, 64, 4096))
+    m = LoaderModel()
+    t = L.FakeTransport(m, lead=0)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"))
+    ld.run_load()
+    sent_all = ld.data_bytes_sent
+    assert sent_all >= sum(f.n for f in frames if f.kind == "data")
+    t2 = L.FakeTransport(m, lead=0)
+    ld2 = Ld(t2, frames, sha, str(tmp_path / "ck.json"), resume=True)
+    ld2.run_load()
+    assert ld2.data_bytes_sent == 0             # nothing left to send on a complete die

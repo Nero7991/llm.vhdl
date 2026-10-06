@@ -53,3 +53,19 @@ A rebuild needs ~15 GB on the workstation (llama-server stopped; does not fit be
 
 Details, adaptations from the plan, and every accepted warning: the Task 10 report
 (`.superpowers/sdd/2026-10-05-jc-jtag-hbm-loader/task-10-report.md`).
+
+## On silicon (2026-10-06)
+
+- Chain order MEASURED: `--chain AB` (die A = module A = Vivado `xcvu35p_0`, nearest TDI).
+  `identify` DNA equals the bridge's DNA and Vivado's `REGISTER.DNA.SLR0` for both dies, not
+  bit-reversed. Keep the die record OUTSIDE the repo (`--dies`).
+- Loaded and verified: card 0 (qwen38-27b-card0-b0-32, 7,170 pieces) on die A, card 1
+  (qwen38-27b-card1-b33-63, 6,750 pieces) on die B; per-piece range CRC all matched,
+  JCVERIFY_PASS, and 1,000 of 1,000 independent `jtag_hbm` windows per die match the files.
+- The BMC ends each CoE connection after ~290 s of streaming (reset or silence, alternating),
+  so a full die is ~10 connections: loop `coe_load.py load ... --resume` until `JCLOAD_DONE`.
+  ~42-54 min per die wall time. Cause open; see
+  `docs/debugging/2026-10-05_jc-jtag-axi-host-path-is-latency-bound.md` section 14.
+- `sqrl_bridge` loads only the FIRST file of a comma list onto every device.
+- Independent readback: `tools/jc/spot_check.tcl` (device by DNA, master by `CELL_NAME`) with
+  `tools/jc/spot_check_compare.py` (one file) or `tools/jc/spot_check_manifest.py` (manifest).

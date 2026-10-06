@@ -335,3 +335,120 @@ dies on the shared chain, through a direct pipelined CoE client at 27 MHz.
 
 **Measured and REJECTED, do not retry:** command size above 16,384 bits as a
 throughput lever (no gain when pipelined).
+
+## 14. UPDATE 2026-10-06: the BSCAN loader on silicon. Both 27B images loaded and verified
+
+**Question.** Does the loader (branch `jc-loader`, bitstream
+`hw/jc/loader/results/2026-10-05/full/jc_loader.bit`, sha256 `ece8aa08...4b281`, part
+`xcvu35p-fsvh2104-1-e`) put a 27B card image into each VU35P's HBM correctly, at what rate,
+and does anything independent of the loader agree?
+
+**Answer.** Yes. Card 0's image (7.1 GB, 7,170 pieces) is in die A and card 1's (6,750 pieces)
+in die B; every piece's range CRC, read back from HBM by the card, equals the CRC of the
+file, and an independent JTAG-AXI readback of 1,000 random 256-byte windows per die matches
+the files (1,000 of 1,000 on each die). The data rate is the measured ~2.6 MB/s, but the BMC drops
+each connection after ~290 s of streaming, so a die takes ~10 resumed connections, about
+42 min (die A) and 54 min (die B) wall time.
+
+### Procedure, in order, and what each step isolates
+
+1. `sqrl_bridge_tck27 C<bmc> jc_loader.bit,jc_loader.bit skip 2542`: `Bitstream Loaded` on
+   devices 0 and 1, `Houseclean OK` each. **NOTE: the bridge loads only the FIRST file of a
+   comma list onto every device** (MEASURED the same day with the pin finder: `Using
+   Bitstream pinfinder_A.bit` for device 0 AND device 1). Every earlier load used the same
+   file twice, which hid it.
+2. `coe_load.py identify --die A|B --chain AB`: the DNA read through the loader's
+   DNA_PORTE2 equals, digit for digit and NOT bit-reversed, the DNA the bridge reports for
+   device 0 (die A) and device 1 (die B), and Vivado's `REGISTER.DNA.SLR0` of `xcvu35p_0`
+   and `xcvu35p_1`. This settles three things at once: the chain order is AB (die A nearest
+   TDI, Vivado device 0), the reader's bit-order ESTIMATE is right, and both dies' HBM
+   calibrated (the DNA reader sits behind the core reset, which waits for both stacks'
+   `apb_complete`). The record lives outside the repo (`--dies`); no DNA is written here.
+3. 100 MB random file at `0x1_8000_0000` (stack 1), die A: load then verify.
+4. Same 1,000-window spot check through `jtag_hbm` (BSCAN user chain 1, HBM SAXI_16): shares
+   nothing with the loader (different BSCAN chain, AXI master and HBM port).
+5. Fault injection: the same 100 MB plan on die B with `--corrupt-seq 1000` (one payload bit
+   flipped after the CRC, first send only).
+6. Card 0 to die A and card 1 to die B through an auto-resume wrapper (re-run
+   `load --resume` until `JCLOAD_DONE`), then `verify`, then the manifest spot check
+   (`tools/jc/spot_check_manifest.py`, 1,000 distinct windows inside random pieces).
+
+### Evidence (raw)
+
+```
+# step 3, die A
+JCLOAD_DONE last=52852 committed=52853 crc_fail=0 resyncs=0 pieces=1 matched 40 s 2.61 MB/s
+JCVERIFY_PASS 1 pieces, 0 bad
+# step 4, die A
+SPOT_DEVICE xcvu35p_0 AXI hw_axi_2
+SPOT_DONE 1000
+SPOT_COMPARE windows=1000 match=1000 order=hi_first bad=[]
+# step 5, die B
+JCLOAD_DONE last=52852 committed=52853 crc_fail=1 resyncs=1 pieces=1 matched 40 s 2.60 MB/s
+JCVERIFY_PASS 1 pieces, 0 bad
+# step 6, die A (after two earlier connections A2, A3; see below)
+ATTEMPT 1 rc=2 secs=298 ... (TimeoutError: timed out)
+ATTEMPT 2 rc=2 secs=320 ... (ConnectionResetError)
+ATTEMPT 3 rc=2 secs=323 ... (TimeoutError)
+ATTEMPT 4 rc=2 secs=320 ... (ConnectionResetError)
+ATTEMPT 5 rc=2 secs=323 ... (TimeoutError)
+ATTEMPT 6 rc=2 secs=323 ... (ConnectionResetError)
+ATTEMPT 7 rc=2 secs=319 ... (TimeoutError)
+ATTEMPT 8 rc=0 secs=196 JCLOAD_DONE last=3593948 committed=3593949 crc_fail=9 resyncs=0 pieces=7170 matched
+VERIFY rc=0 JCVERIFY_PASS 7170 pieces, 0 bad
+# step 6, die B (after one earlier 56 s connection)
+ATTEMPT 1 rc=2 secs=60 ... (ConnectionResetError)
+ATTEMPTS 2-10 rc=2 secs=320 or 323, alternating ConnectionResetError / TimeoutError
+ATTEMPT 11 rc=0 secs=151 JCLOAD_DONE last=3735241 committed=3735242 crc_fail=10 resyncs=0 pieces=6750 matched
+VERIFY rc=0 JCVERIFY_PASS 6750 pieces, 0 bad
+# step 6, manifest spot check through jtag_hbm, 1,000 distinct windows per die
+die A: SPOT_DEVICE xcvu35p_0 AXI hw_axi_2 / SPOT_DONE 1000
+       SPOT_COMPARE windows=1000 expected=1000 match=1000 bad=[]
+die B: SPOT_DEVICE xcvu35p_1 AXI hw_axi_4 / SPOT_DONE 1000
+       SPOT_COMPARE windows=1000 expected=1000 match=1000 bad=[]
+```
+
+Each attempt's `secs` includes ~30 s of hashing the 7 GB at planning, so a connection lives
+~290 s. `crc_fail` is the die's count since configuration and includes frames cut off when a
+connection dropped; the per-piece range CRCs show none of them landed. The `MB/s` printed
+by the final attempt (40.54, 56.87) is WRONG: it divided the whole plan's bytes by that one
+attempt's time. Fixed in this commit (the line now prints the bytes this run sent).
+
+### Measured and REJECTED, do not retry
+
+- **"The connection drops are packet loss on the BC-250 link."** During a 290 s connection
+  that ended in a reset (A3), sampled every 10 s: `txdrop=508 tcp_retrans=217
+  qdisc_drop=0` at every sample, start to end. No loss, no retransmission. The BMC ends the
+  connection by itself.
+- **"The BMC drops connections after a fixed one minute."** Die B's first two connections
+  lasted ~56-60 s, but every other connection (20 of them) lasted ~290 s.
+
+### Root-caused on the way: a stale reply from a previous session
+
+The first 27B load (die A) aborted on its first exchange, 29 s in (all of it hashing):
+`JCLOAD_ABORT txn mismatch: expected 0x0001, reply carried 0x0000`. Nothing had been sent but
+the HELLO, so nothing was written. The bridge had been stopped seconds earlier; the BMC
+still held a reply from that session and delivered it to the next connection (the bridge's
+own log shows the mirror case, `Orphaned Transaction 0000`, when it connects after our
+client). `CoE.start()` now discards whatever the BMC holds until 0.3 s pass with nothing
+arriving, before any command (commit 32618d2; a test reproduces the exact error first).
+
+### Measurement traps hit
+
+- The spot check's first two runs found no device: Vivado exposes the DNA as
+  `REGISTER.DNA.SLR0` (`0x` plus 32 hex digits), not `REGISTER.EFUSE.FUSE_DNA`; and the hw_axi
+  `NAME`s are generic (`hw_axi_1..4`) even with the `.ltx` loaded, so the master is chosen by
+  `CELL_NAME =~ *jtag_hbm`. `jtag_hbm` is 64 bits wide, so a 256-byte window is 32 beats.
+- My first manifest spot-check generator drew windows with replacement; its teeth test
+  showed a clean run would have reported failure (`expected=18` for 20 reads). Windows are
+  now distinct.
+
+### Open, not yet answered
+
+- What sets the ~290 s connection life: a BMC timer, a command count, or a byte count. The
+  rate was constant, so these are not separated. Run one connection at `--hz 13500000`: if
+  it still lives ~290 s it is a timer; if ~580 s it is bytes or commands. If it is a timer,
+  the client can reconnect proactively before it and avoid the 10 s timeout on every other
+  connection.
+- Why the connection ends alternately by RST and by silence (strictly alternating, both dies).
+- Why die B's first connection of a session twice lasted only ~1 minute.
