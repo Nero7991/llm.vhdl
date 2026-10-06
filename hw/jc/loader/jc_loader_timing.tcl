@@ -120,18 +120,21 @@ proc jcl_tdi {bscan_pat half_p} {
 # samples DOUT on the aclk edge where ph = 2*DIV-1, which is DIV aclk periods after the
 # dna_clk rising edge that moved DOUT; the default analysis checked it one aclk later
 # (the design's false critical path, +0.521 ns). Setup DIV, hold DIV-1 (-end, aclk
-# periods), so the hold check stays at the launch edge. Every dna_clk -> aclk path must
-# start at the DNA_PORTE2 (the only dna_clk-clocked cell) or the proc refuses.
-proc jcl_dna_mcp {div clk_dna clk_a} {
-  set paths [get_timing_paths -setup -from $clk_dna -to $clk_a -max_paths 1000 -nworst 1]
-  if {[llength $paths] == 0} { error "JCLOADER_CONSTRAINT_EMPTY no dna_clk -> aclk paths" }
+# periods), so the hold check stays at the launch edge.
+# -from the DNA_PORTE2 CELL, not -from the dna_clk clock: the first post-hoc run showed a
+# dna_clk -> aclk path from dnar/ck_reg/Q (the generated clock's own source register,
+# whose Q feeds back into its D), which is a genuine one-aclk path and must NOT be
+# relaxed. The guard refuses unless every DNA_PORTE2 -> aclk endpoint is in the reader.
+proc jcl_dna_mcp {div clk_a} {
+  set dna [get_cells -quiet -hierarchical -filter {REF_NAME == DNA_PORTE2}]
+  if {[llength $dna] != 1} { error "JCLOADER_CONSTRAINT_EMPTY expected one DNA_PORTE2, got [llength $dna]" }
+  set paths [get_timing_paths -setup -from $dna -to $clk_a -max_paths 1000 -nworst 1]
+  if {[llength $paths] == 0} { error "JCLOADER_CONSTRAINT_EMPTY no DNA_PORTE2 -> aclk paths" }
   foreach p $paths {
-    set sp [get_property STARTPOINT_PIN $p]
-    if {[get_property REF_NAME [get_cells -of_objects $sp]] ne "DNA_PORTE2"} {
-      error "JCLOADER_DNA_MCP refused: dna_clk -> aclk path starts at $sp, not a DNA_PORTE2"
-    }
+    set e [get_property ENDPOINT_PIN $p]
+    if {![string match "*dnar/*" $e]} { error "JCLOADER_DNA_MCP refused: DNA_PORTE2 path ends at $e, outside jc_dna_reader" }
   }
   puts "JCLOADER_CONSTRAINT_MATCH dna_mcp paths [llength $paths]"
-  set_multicycle_path $div -setup -end -from $clk_dna -to $clk_a
-  set_multicycle_path [expr {$div - 1}] -hold -end -from $clk_dna -to $clk_a
+  set_multicycle_path $div -setup -end -from $dna -to $clk_a
+  set_multicycle_path [expr {$div - 1}] -hold -end -from $dna -to $clk_a
 }

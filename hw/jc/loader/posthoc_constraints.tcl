@@ -25,7 +25,8 @@ report_timing -from [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTER
 report_timing -from $clk_d -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_dout_before.rpt
 
 jcl_tdi "*u_jc_frx/u_jc_bscan" [expr {$TCK_P / 2.0}]
-jcl_dna_mcp 10 $clk_d $clk_a
+jcl_dna_mcp 10 $clk_a
+set dnac [get_cells -hier -filter {REF_NAME == DNA_PORTE2}]
 update_timing -full
 
 set src [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTERNAL_TDI"}]
@@ -34,10 +35,11 @@ report_timing -hold -from $src -to $ep -max_paths 20 -nworst 1 -file $out/tdi_af
 set p [get_timing_paths -setup -from $src -to $ep -max_paths 1]
 set n [llength [get_timing_paths -setup -from $src -to $ep -max_paths 1000 -nworst 1]]
 puts "JCLOADER_POSTHOC_TDI paths $n worst_slack [get_property SLACK $p] requirement [get_property REQUIREMENT $p] exception {[get_property EXCEPTION $p]} endpoint [get_property ENDPOINT_PIN $p]"
-report_timing -from $clk_d -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_dout_after.rpt
-report_timing -hold -from $clk_d -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_dout_after_hold.rpt
-set p [get_timing_paths -setup -from $clk_d -to $clk_a -max_paths 1]
-set h [get_timing_paths -hold -from $clk_d -to $clk_a -max_paths 1]
+report_timing -from $clk_d -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_clk_to_aclk_after.rpt
+report_timing -from $dnac -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_dout_after.rpt
+report_timing -hold -from $dnac -to $clk_a -max_paths 10 -nworst 1 -file $out/dna_dout_after_hold.rpt
+set p [get_timing_paths -setup -from $dnac -to $clk_a -max_paths 1]
+set h [get_timing_paths -hold -from $dnac -to $clk_a -max_paths 1]
 puts "JCLOADER_POSTHOC_DNA setup_slack [get_property SLACK $p] requirement [get_property REQUIREMENT $p] hold_slack [get_property SLACK $h] endpoint [get_property ENDPOINT_PIN $p]"
 
 report_timing_summary -max_paths 10 -report_unconstrained -file $out/timing_summary.rpt
