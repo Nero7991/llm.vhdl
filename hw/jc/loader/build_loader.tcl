@@ -72,8 +72,12 @@ foreach b $badn { puts "JCLOADER_NETLIST_CONST $b" }
 # ---- clocks and CDC ---------------------------------------------------------------------
 source $here/jc_loader_timing.tcl
 if {[catch {
-  set tckpin [jcl_pins "*u_jc_frx/u_jc_bscan/TCK"]
-  if {[llength $tckpin] != 1} { error "expected one loader BSCANE2 TCK pin, got [llength $tckpin]" }
+  # The clock goes on the primitive's INTERNAL_TCK pin, as Vivado's own constraint for the
+  # debug hub's BSCANE2 does: on the TCK output pin it is TIMING-2 (invalid primary clock
+  # source, the pin has an arc from INTERNAL_TCK) and leaves TDO an unconstrained endpoint
+  # (both MEASURED in the first complete build, full2).
+  set tckpin [jcl_pins "*u_jc_frx/u_jc_bscan/INTERNAL_TCK"]
+  if {[llength $tckpin] != 1} { error "expected one loader BSCANE2 INTERNAL_TCK pin, got [llength $tckpin]" }
   create_clock -name tck_user4 -period $TCK_P $tckpin
   jcl_dna_clock $CORE $DNA_DIV
   set aclk_clk [get_clocks -of_objects [jcl_pins "${CORE}sync/pub_reg/C"]]
@@ -81,12 +85,9 @@ if {[catch {
   puts "JCLOADER_ACLK $aclk_clk period $aclk_p"
   if {abs($aclk_p - 5.0) > 0.001} { error "aclk period $aclk_p, expected 5.000" }
   jcl_cdc $CORE $aclk_clk [get_clocks tck_user4] $aclk_p $TCK_P
-  # BSCANE2 SEL/SHIFT/CAPTURE/TDI/TDO carry no timing arcs to TCK in Vivado's model, so
-  # they are not constrained here: a set_max_delay on them only works by path
-  # segmentation (CRITICAL WARNING Constraints 18-515, MEASURED in the first full run),
-  # and -datapath_only -to TDO needs a -from that does not exist. Their timing is the
-  # TAP's (TDI/SEL/SHIFT settle a full TCK before the next rising edge, TDO is sampled
-  # on the falling edge); recorded as an accepted unconstrained path class in the report.
+  # BSCANE2 SEL/SHIFT/CAPTURE/TDI/TDO: no extra bound. A set_max_delay on them works only
+  # by path segmentation (CRITICAL WARNING Constraints 18-515, MEASURED in full1), and
+  # with the clock on INTERNAL_TCK the primitive's own arcs time them against tck_user4.
 } err]} { jcl_fail "constraints: $err" }
 if {[llength $badn] > 0} { jcl_fail "netlist: [llength $badn] loader inputs constant or open" }
 
@@ -143,8 +144,12 @@ foreach c [get_cells -hierarchical -filter {REF_NAME == BSCANE2}] {
   if {$ch == 4} { incr n4; if {[string match "*u_jc_frx/u_jc_bscan" $c]} { incr n4ours } }
 }
 foreach d [get_debug_cores -quiet] {
-  if {[catch {get_property C_USER_SCAN_CHAIN $d} uc]} { set uc "n/a" }
-  puts "JCLOADER_DEBUGCORE $d C_USER_SCAN_CHAIN=$uc"
+  # only the hub carries the property; querying it on the jtag_axi cores prints ERROR 12-4444
+  if {[llength [list_property $d C_USER_SCAN_CHAIN]]} {
+    puts "JCLOADER_DEBUGCORE $d C_USER_SCAN_CHAIN=[get_property C_USER_SCAN_CHAIN $d]"
+  } else {
+    puts "JCLOADER_DEBUGCORE $d"
+  }
 }
 puts "JCLOADER_BSCAN_SUMMARY total=$nall chain4=$n4 chain4_loader=$n4ours"
 if {$n4 != 1 || $n4ours != 1} { jcl_fail "bscan census: chain4=$n4 chain4_loader=$n4ours" }
