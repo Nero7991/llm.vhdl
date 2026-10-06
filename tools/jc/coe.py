@@ -77,7 +77,8 @@ Task 9 (Task 8 final review, items N1-N3, 2026-10-05):
   `CoE(ip, sock=...)` takes an already-made socket-like object (tests only; it never
   dials when one is given).
 """
-import socket, struct
+import socket
+import time, struct
 
 IR_BYPASS, IR_IDCODE, IR_USER3, IR_USER4 = 0xFFF, 0x249, 0x8A4, 0x8E4
 IR_ALLOW = {IR_BYPASS, IR_IDCODE, IR_USER3, IR_USER4}
@@ -588,7 +589,36 @@ class CoE:
         the resend-from-last-committed-seq design (Task 9) is what recovers it."""
         s._call_token(CMD_TMS, _RESYNC_PAYLOAD, _RESYNC_TOKEN)
 
+    def _flush_stale(s, quiet=0.3, cap=3.0):
+        """Discard bytes the BMC still holds from a PREVIOUS connection before this one
+        sends anything. MEASURED 2026-10-05: after a sqrl_bridge session was stopped,
+        the next connection's HELLO got a reply carrying txn 0x0000 and the load
+        aborted on the txn check (the bridge's own log shows the mirror case,
+        "Orphaned Transaction 0000"). Reads until `quiet` seconds pass with nothing
+        arriving, at most `cap` seconds; no JTAG command has been sent yet and the
+        shadow TAP is UNKNOWN, so nothing here can move the TAP. A fake transport
+        without settimeout() is skipped."""
+        s.flushed = 0
+        if not hasattr(s.s, "settimeout"):
+            return
+        old = s.s.gettimeout() if hasattr(s.s, "gettimeout") else None
+        t_end = time.monotonic() + cap
+        try:
+            s.s.settimeout(quiet)
+            while time.monotonic() < t_end:
+                try:
+                    c = s.s.recv(4096)
+                except socket.timeout:
+                    break
+                if not c:
+                    s._poison("the BMC closed the connection before the handshake")
+                    raise ConnectionError("CoE closed")
+                s.flushed += len(c)
+        finally:
+            s.s.settimeout(old)
+
     def start(s, hz=27_000_000):
+        s._flush_stale()
         s.call(CMD_HELLO)
         s.call(CMD_SPEED, struct.pack("<II", 0, hz))
         s.call(CMD_MODE, bytes.fromhex("0002"))

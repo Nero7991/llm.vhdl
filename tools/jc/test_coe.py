@@ -1,4 +1,4 @@
-import os, struct, sys
+import os, socket, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest
 from jc import coe
@@ -638,3 +638,35 @@ def test_coe_takes_an_injected_socket_and_never_dials(monkeypatch):
     sock = FakeTransport()
     c = coe.CoE(None, sock=sock)
     assert c.s is sock and c.tap is coe.UNKNOWN and c.outstanding == [] and not c.dead
+
+class StaleSock(FakeTransport):
+    """A real-socket-like fake: the BMC still holds a reply from a previous connection
+    (MEASURED 2026-10-05 on silicon: the first load after a sqrl_bridge session got a
+    reply carrying txn 0x0000 to its HELLO). recv() times out when nothing is queued."""
+    def __init__(self, stale=b"", **k):
+        FakeTransport.__init__(self, **k)
+        self._buf = stale
+        self._timeout = None
+    def settimeout(self, t):
+        self._timeout = t
+    def gettimeout(self):
+        return self._timeout
+    def recv(self, n):
+        if not self._buf:
+            raise socket.timeout("timed out")
+        return FakeTransport.recv(self, n)
+
+def test_start_discards_a_stale_reply_left_by_a_previous_connection():
+    stale = struct.pack("<HHI", 8, 0x0000, coe.STATUS_OK)
+    sock = StaleSock(stale, cmd_data={coe.CMD_IDCODES: coe.VU35P_X2_IDCODES})
+    c = make_coe(sock, tap=coe.UNKNOWN)
+    assert c.start(hz=27_000_000) == coe.VU35P_X2_IDCODES
+    assert c.flushed == len(stale)
+    assert c.tap == coe.RUN_TEST_IDLE
+
+def test_start_flush_restores_the_socket_timeout():
+    sock = StaleSock(b"", cmd_data={coe.CMD_IDCODES: coe.VU35P_X2_IDCODES})
+    sock.settimeout(10.0)
+    c = make_coe(sock, tap=coe.UNKNOWN)
+    c.start(hz=27_000_000)
+    assert c.flushed == 0 and sock.gettimeout() == 10.0
