@@ -675,3 +675,238 @@ def test_verify_waits_for_its_own_range_result_not_a_stale_one(tmp_path):
     bad = L.Loader(L.FakeTransport(m, lead=1, lag_slots=0, stale_range=True), frames, sha,
                    str(tmp_path / "ck2.json")).run_verify()
     assert bad == []
+
+# ======================================================================
+# Task 9 fix round 1 (review 2026-10-05; probes /home/orencollaco/regress_scratch/jc9_rev/)
+# ======================================================================
+from jc.jc_model import FifoOverflowModel
+
+def partial_load(m, frames, sha, ck, **kw):
+    """A load cut short by a dropped link, leaving the die mid data phase."""
+    with pytest.raises(ConnectionError):
+        L.Loader(L.FakeTransport(m, lead=1, drop_after=14, **kw), frames, sha, ck).run_load()
+    nd = sum(f.kind == "data" for f in frames)
+    assert m.last != 0xFFFFFFFF and m.last < nd - 1, m.last
+    return nd
+
+def test_c1_verify_refuses_a_partially_loaded_die(tmp_path):
+    """verify_then_resume.py: verify used to run its range frames on a partial die,
+    whose writer commits them, so `last` jumped into the data seqs and a later
+    --resume skipped data frames 4-8 and reported success."""
+    frames, sha = plan(tmp_path, (5000, 64, 4096, 20000, 9000))
+    m = LoaderModel()
+    ck = str(tmp_path / "ck.json")
+    partial_load(m, frames, sha, ck)
+    before = m.last
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="finish the load"):
+        L.Loader(t, frames, sha, str(tmp_path / "v.json")).run_verify()
+    assert m.last == before and t.state == "closed"
+    st = L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True).run_load()
+    assert st["last"] == frames[-1].seq
+    assert_die_holds_the_plan(m, frames)
+
+def test_resume_after_verify_of_a_complete_die_rechecks_every_piece(tmp_path):
+    """After a full load and a verify the die's last is past the plan's final seq.
+    --resume must not call that 'another plan': it re-checks every piece by range CRC
+    (fresh seqs) and reports the die already complete."""
+    frames, sha = plan(tmp_path)
+    m = LoaderModel()
+    ck = str(tmp_path / "ck.json")
+    L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck).run_load()
+    assert L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify() == []
+    ld = L.Loader(L.FakeTransport(m, lead=1), frames, sha, ck, resume=True)
+    st = ld.run_load()
+    nr = sum(f.kind == "range" for f in frames)
+    assert ld.already_complete and len(ld.range_results) == nr
+    assert st["last"] == frames[-1].seq + 2 * nr            # load's ranges, verify's, these
+
+def test_load_compares_every_piece_and_reports_the_results(tmp_path):
+    frames, sha = plan(tmp_path)
+    ld = L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json"))
+    ld.run_load()
+    ranges = [f for f in frames if f.kind == "range"]
+    assert sorted(ld.range_results) == list(range(len(ranges)))
+    assert all(got == want == L.expected_range_crc(ranges[i])
+               for i, (got, want) in ld.range_results.items())
+
+def test_i1_resume_onto_another_plans_bytes_aborts_on_range_mismatch(tmp_path):
+    """holes.py P2: plan Y partly loaded, bitstream reloaded, plan X (same layout,
+    different bytes) partly loaded, then Y resumed with Y's checkpoint. The die's last
+    says Y is far along, but the bytes below it are X's: the range phase must catch it."""
+    dy, dx = tmp_path / "y", tmp_path / "x"
+    dy.mkdir(); dx.mkdir()
+    fy, shy = L.plan_frames(make_manifest(dy, [5000, 64, 4096, 20000]))
+    mpx = make_manifest(dx, [5000, 64, 4096, 20000])
+    mani = json.load(open(mpx))
+    for e in mani["files"]:
+        p = dx / e["file"]
+        b = bytes(x ^ 0x5A for x in p.read_bytes()); p.write_bytes(b)
+        e["blake2b_128"] = hashlib.blake2b(b, digest_size=16).hexdigest()
+    json.dump(mani, open(mpx, "w"))
+    fx, shx = L.plan_frames(mpx)
+    ck = str(tmp_path / "ckY.json")
+    partial_load(LoaderModel(), fy, shy, ck)
+    m2 = LoaderModel()
+    with pytest.raises(ConnectionError):
+        L.Loader(L.FakeTransport(m2, lead=1, drop_after=20), fx, shx, str(tmp_path / "ckX.json")).run_load()
+    t = L.FakeTransport(m2, lead=1)
+    with pytest.raises(L.LoadAborted, match="range CRC") as e:
+        L.Loader(t, fy, shy, ck, resume=True).run_load()
+    assert "0x0" in str(e.value)                              # names the first piece
+    assert t.state == "closed"
+
+def test_i3_range_phase_survives_crc_busy_time_and_a_finite_fifo(tmp_path):
+    """The review's crcqueue.py: on the 9B manifest the CRC unit needs longer than the
+    range frames take to send, so a pipelined range phase backs range frames up in the
+    128+2-entry FIFO until it overflows. Here each 64-byte piece's CRC takes 20 slots
+    (FifoOverflowModel with CRC timing): the serialised range phase must load and check
+    all 100 pieces with no overflow and no resync."""
+    frames, sha = plan(tmp_path, [64] * 100)
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=20 / 64)
+    t = L.FakeTransport(m, lead=1, lag_slots=1)
+    ld = L.Loader(t, frames, sha, str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert not m.ovf and m.crc_fail == 0 and ld.resyncs == 0
+    assert st["last"] == frames[-1].seq and len(ld.range_results) == 100
+    assert_die_holds_the_plan(m, frames)
+
+def test_i3_the_timed_model_overflows_on_a_pipelined_range_burst():
+    """Teeth for the test above: the same model, fed range frames back to back (what
+    the old run_load did), overflows."""
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=20 / 64)
+    for k in range(70):
+        m.tick(1)
+        m.feed_slot(F.build_slot(k, 0, b"\1" * 32))
+    for k in range(70, 170):
+        m.tick(1)
+        m.feed_slot(F.range_crc_slot(k, 0, 64))
+    assert m.ovf
+
+def test_i3_timed_model_reports_busy_until_the_crc_is_done():
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=10 / 64)
+    m.feed_slot(F.build_slot(0, 0, b"\7" * 64))
+    m.feed_slot(F.range_crc_slot(1, 0, 64))
+    st = m.loader_status()
+    assert st["last"] == 1 and st["range_seq"] == 1 and st["busy"] == 1 and st["range_valid"] == 0
+    m.tick(10)
+    st = m.loader_status()
+    assert st["busy"] == 0 and st["range_valid"] == 1
+    assert st["range_crc"] == zlib.crc32(b"\7" * 64) & 0xFFFFFFFF
+
+def test_i2_resume_onto_a_die_with_a_bresp_error_aborts(tmp_path):
+    """holes.py P1: a BRESP error committed just before the link dropped (the lagged
+    status never showed it), then --resume: the new run's baseline used to absorb it.
+    A fresh configuration starts at 0, so any nonzero count at open aborts."""
+    frames, sha = plan(tmp_path, (5000, 64, 4096, 20000))
+    ck = str(tmp_path / "ck.json")
+    for da in range(8, 40):
+        m = LoaderModel(bad_bresp_addrs={frames[3].addr})
+        try:
+            L.Loader(L.FakeTransport(m, lead=1, lag_slots=4, drop_after=da), frames, sha, ck).run_load()
+        except ConnectionError:
+            if m.bresp_err and m.last < frames[-1].seq:
+                break
+        except L.LoadAborted:
+            continue
+    else:
+        pytest.fail("no drop point left an unseen BRESP error")
+    t = L.FakeTransport(m, lead=1, lag_slots=4)
+    with pytest.raises(L.LoadAborted, match="BRESP"):
+        L.Loader(t, frames, sha, ck, resume=True).run_load()
+    assert t.state == "closed"
+
+def test_i2_verify_refuses_a_die_with_a_bresp_error(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel()
+    L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    m.bresp_err = 1
+    with pytest.raises(L.LoadAborted, match="BRESP"):
+        L.Loader(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "v.json")).run_verify()
+
+@pytest.mark.parametrize("content", ["{not json", "[1,2]", "null", '{"plan_sha": null}', '{"x": 1}'])
+def test_corrupt_or_foreign_checkpoint_is_a_clean_refusal(tmp_path, content):
+    frames, sha = plan(tmp_path, (64,))
+    p = tmp_path / "c.json"
+    p.write_text(content)
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    with pytest.raises(L.LoadAborted, match="delete it"):
+        L.Loader(t, frames, sha, str(p), resume=True).run_load()
+    assert t.sent == 0
+
+def test_checkpoint_is_fsynced_before_it_replaces_the_old_one(tmp_path, monkeypatch):
+    events = []
+    real_fsync, real_replace = os.fsync, os.replace
+    monkeypatch.setattr(L.os, "fsync", lambda fd: (events.append("fsync"), real_fsync(fd))[1])
+    monkeypatch.setattr(L.os, "replace", lambda a, b: (events.append("replace"), real_replace(a, b))[1])
+    frames, sha = plan(tmp_path, (64,))
+    L.Loader(L.FakeTransport(LoaderModel(), lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    assert events and events[0] == "fsync"
+    assert all(events[i] == "fsync" for i in range(0, len(events), 2))
+    assert all(events[i] == "replace" for i in range(1, len(events), 2))
+
+@pytest.mark.parametrize("exc", [TimeoutError("timed out"), ConnectionResetError("reset")])
+def test_cli_turns_socket_errors_into_the_abort_sentinel(tmp_path, monkeypatch, capsys, exc):
+    mp = make_manifest(tmp_path, [64])
+    def boom(*a, **k):
+        raise exc
+    monkeypatch.setattr(L, "CoeTransport", boom)
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--ckpt", str(tmp_path / "ck.json")])
+    assert rc == 2
+    assert re_match_line(capsys.readouterr().out, r"^JCLOAD_ABORT ")
+
+def re_match_line(text, pat):
+    import re
+    return re.search(pat, text, re.M) is not None
+
+def test_an_abort_closes_the_scan_on_the_real_client(tmp_path):
+    """Wrong --chain aborts mid-scan: the transport must drain and leave Shift-DR
+    (shadow and modelled real TAP both back at Run-Test/Idle), not strand it."""
+    frames, sha = plan(tmp_path)
+    t, sock, client = chain_transport(LoaderModel(), "A", "BA", 0)
+    with pytest.raises(L.LoadAborted):
+        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    assert client.outstanding == [] and client.tap == coe.RUN_TEST_IDLE == sock.state
+
+def test_an_abort_closes_the_fake_scan(tmp_path):
+    frames, sha = plan(tmp_path)
+    t = L.FakeTransport(LoaderModel(bad_bresp_addrs={0}), lead=1)
+    with pytest.raises(L.LoadAborted, match="BRESP"):
+        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    assert t.state == "closed" and t.abort_closes == 1
+
+def test_range_wait_scales_with_the_piece_size(tmp_path):
+    """A big piece's CRC can take longer than MAX_POLLS polls (9B card 0: up to 2.28 MB
+    per piece). The wait allows MAX_POLLS + n / RANGE_BYTES_PER_POLL polls; here a 1 MiB
+    piece's CRC takes 40 slots, more than MAX_POLLS, and must not be called lost."""
+    n = 1 << 20
+    frames, sha = plan(tmp_path, (n,))
+    assert 40 > L.MAX_POLLS and 40 < L.MAX_POLLS + n // L.RANGE_BYTES_PER_POLL
+    m = FifoOverflowModel(depth=128, crc_ticks_per_byte=40 / n)
+    ld = L.Loader(L.FakeTransport(m, lead=1, lag_slots=1), frames, sha, str(tmp_path / "ck.json"))
+    ld.run_load()
+    assert ld.resyncs == 0 and len(ld.range_results) == 1
+
+def test_dropped_last_data_frame_is_resent_after_the_data_phase_wait(tmp_path):
+    """The data phase's own tail: nothing after the last DATA frame raises a counter
+    before the range phase, so the data-phase wait must notice and resend it."""
+    frames, sha = plan(tmp_path)
+    nd = sum(f.kind == "data" for f in frames)
+    m = LoaderModel()
+    ld = L.Loader(L.FakeTransport(m, lead=1, drop_seqs={nd - 1}), frames, sha,
+                  str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq and ld.resyncs == 1
+    assert ld.causes == ["seq %d never committed" % (nd - 1)]
+    assert_die_holds_the_plan(m, frames)
+
+def test_an_abort_with_replies_in_flight_drains_and_leaves_shift_dr(tmp_path):
+    """A BRESP abort lands while 3 pipelined CMD_TDI replies are unread: abort_close
+    must drain them, or exit_dr_to_idle is refused and the TAP is left in Shift-DR."""
+    frames, sha = plan(tmp_path)
+    t, sock, client = chain_transport(LoaderModel(bad_bresp_addrs={0}), "A", "AB", 0)
+    with pytest.raises(L.LoadAborted, match="BRESP"):
+        L.Loader(t, frames, sha, str(tmp_path / "ck.json")).run_load()
+    assert client.outstanding == [] and client.tap == coe.RUN_TEST_IDLE == sock.state
+    assert sock.violations == []

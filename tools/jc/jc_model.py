@@ -3,7 +3,7 @@
 The oracle for every loader bench and for the host tests. It shares the format
 definitions in jc_frame.py and nothing with the RTL.
 """
-import zlib
+import math, zlib
 from . import jc_frame as F
 
 class LoaderModel:
@@ -104,8 +104,26 @@ class FifoOverflowModel:
     scenario's final status/memory (T line) is unchanged either way -- see
     tools/jc/gen_jc_vectors.py's gen_loader_ovf docstring for why, and the measured range
     of capacities over which that holds.
+
+    CRC TIMING (Task 9 fix round 1, optional): with `crc_ticks_per_byte` set, the model
+    also has jc_hbm_crc's busy time. A caller advances time with `tick(n)` (the loader
+    tests use one tick per slot shifted). A range request the writer decides on while
+    the CRC unit is still busy waits in a CRCWAIT state (jc_hbm_writer waits for
+    crc_busy = '0' before issuing, and drains nothing from the FIFO meanwhile), so
+    whatever arrives behind it backs up in the FIFO exactly as a data frame does behind
+    a shut AW gate. Issuing commits the frame (last/committed move at once, as the
+    writer hands the request over) and starts a CRC that takes
+    ceil(range_len * crc_ticks_per_byte) ticks; until then busy = 1 and range_valid = 0.
+    `loader_status()` gives the full status dict LoaderModel.status() gives. With
+    `crc_ticks_per_byte` None (the default, and every existing caller) behaviour is
+    unchanged: a range request commits at once and status() is the same as before.
     """
-    def __init__(self, depth=128, out_stage=2):
+    def __init__(self, depth=128, out_stage=2, crc_ticks_per_byte=None):
+        self.crc_tpb = crc_ticks_per_byte
+        self.now = 0
+        self.crc_done_at = 0
+        self.range_seq = self.range_crc = self.range_valid = 0
+        self.range_issued = False
         self.depth = depth
         self.out_stage = out_stage   # async_fifo's `ob`: see this class's docstring
         self.queue = []           # pending FIFO entries, in order: ("H", hdr_dict) /
@@ -120,6 +138,32 @@ class FifoOverflowModel:
         self.committed = self.crc_fail = self.seq_err = self.dup = self.desync = 0
         self.ovf = False
         self.gate_open = True
+
+    def tick(self, n=1):
+        self.now += n
+        self._drain()
+
+    def _crc_busy(self):
+        return self.crc_tpb is not None and self.now < self.crc_done_at
+
+    def _issue_range(self, h):
+        data = b"".join(self.mem.get(a, bytes(32))
+                        for a in range(h["addr"], h["addr"] + h["range_len"], 32))
+        self.range_crc = zlib.crc32(data) & 0xFFFFFFFF
+        self.range_seq = h["seq"]
+        self.range_issued = True
+        if self.crc_tpb is not None:
+            self.crc_done_at = self.now + math.ceil(h["range_len"] * self.crc_tpb - 1e-9)
+        self.last = h["seq"]; self.committed += 1
+
+    def loader_status(self):
+        busy = int(self.state != "HDR" or self._crc_busy())
+        return dict(magic=F.MAGIC_STAT, last=self.last, committed=self.committed,
+                    crc_fail=self.crc_fail, seq_err=self.seq_err, desync=self.desync,
+                    bresp_err=0, dup=self.dup, busy=busy, hbm_trip=0,
+                    range_valid=int(self.range_issued and not self._crc_busy()),
+                    fifo_ovf=int(self.ovf), range_rerr=0,
+                    range_crc=self.range_crc, range_seq=self.range_seq)
 
     def set_gate(self, open_):
         self.gate_open = open_
@@ -144,6 +188,11 @@ class FifoOverflowModel:
 
     def _drain(self):
         while True:
+            if self.state == "CRCWAIT":
+                if self._crc_busy():
+                    return
+                self._issue_range(self.pending)
+                self.pending = None; self.state = "HDR"
             if self.state == "BLOCKED":
                 if not self.gate_open:
                     return
@@ -178,8 +227,12 @@ class FifoOverflowModel:
                         diff = (self.h["seq"] - expect) & 0xFFFFFFFF
                         if diff == 0:
                             if self.h["flags"] & F.FLAG_RANGE_CRC:
-                                self.last = self.h["seq"]; self.committed += 1
-                                self.state = "HDR"                 # not AW-gated
+                                if self._crc_busy():               # waits for jc_hbm_crc
+                                    self.pending = self.h
+                                    self.state = "CRCWAIT"
+                                else:
+                                    self._issue_range(self.h)      # not AW-gated
+                                    self.state = "HDR"
                             elif self.gate_open:
                                 for k, w in enumerate(self.buf):
                                     self.mem[self.h["addr"] + 32 * k] = w

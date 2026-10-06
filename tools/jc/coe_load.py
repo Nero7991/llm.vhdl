@@ -191,6 +191,10 @@ class FakeTransport:
     as the real writer's `last` can move before the CRC unit's), a wrong chain
     setting, and a dropped connection (`drop_after` sends).
 
+    `model` is a LoaderModel, or (fix round 1) a jc_model.FifoOverflowModel built with
+    `crc_ticks_per_byte`: then every slot shifted advances its clock one tick, so the
+    CRC unit's busy time and the finite FIFO behind it are modelled too.
+
     It also enforces the same protocol CoeTransport's CoE client does: open_scan only
     when closed; send/recv only while open; close_scan only with every TDO read;
     after a LinkFault nothing but recover(). A loader that breaks the order fails
@@ -206,14 +210,19 @@ class FakeTransport:
         s.prev_rep, s.staled = None, set()
         s.depth, s.status_offset = 4, 1
         s.hist, s.out, s.sent, s.first_seq_sent = [], [], 0, None
-        s.state, s.opens, s.recovers = "closed", 0, 0
+        s.state, s.opens, s.recovers, s.abort_closes = "closed", 0, 0, 0
         s.misaligned = False
+        s._feed = getattr(model, "feed_slot", None) or model.feed
+        s._status = getattr(model, "loader_status", None) or model.status
+        s._tick = getattr(model, "tick", None)
 
     def _shift(s, slot):
         """One slot on the wire: what the die does with it, and the TDO it returns."""
-        s.hist.append(dict(s.m.status()))
+        if s._tick is not None:
+            s._tick(1)
+        s.hist.append(dict(s._status()))
         if s.misaligned:
-            s.m.feed(bytes(F.SLOT_BYTES))          # the die sees garbage, TDO no status
+            s._feed(bytes(F.SLOT_BYTES))          # the die sees garbage, TDO no status
             return bytes(F.SLOT_BYTES)
         h = F.parse_header(slot)
         real = h["magic"] == F.MAGIC_FRAME and (h["nwords"] or h["flags"])
@@ -221,13 +230,13 @@ class FakeTransport:
             s.drop.discard(h["seq"])                  # lost: never reaches the writer
         elif real and h["seq"] in s.desync:
             s.desync.discard(h["seq"])
-            b = bytearray(slot); b[0] ^= 1; s.m.feed(bytes(b))
+            b = bytearray(slot); b[0] ^= 1; s._feed(bytes(b))
         elif real and h["seq"] in s.fail:
             if not s.fail_forever:
                 s.fail.discard(h["seq"])
-            b = bytearray(slot); b[100] ^= 1; s.m.feed(bytes(b))
+            b = bytearray(slot); b[100] ^= 1; s._feed(bytes(b))
         else:
-            s.m.feed(slot)
+            s._feed(slot)
         st = dict(s.hist[max(0, len(s.hist) - 1 - s.lag)])
         if s.trip_after is not None and s.sent >= s.trip_after:
             st["hbm_trip"] = 1
@@ -282,6 +291,13 @@ class FakeTransport:
         s.out.clear()
         s.state = "closed"; s.recovers += 1
 
+    def abort_close(s):
+        """What CoeTransport.abort_close does: whatever state, end closed."""
+        s.out.clear()
+        if s.state != "closed":
+            s.abort_closes += 1
+        s.state = "closed"
+
 @contextlib.contextmanager
 def _link():
     """A bad CoE reply becomes LinkFault (recoverable). Everything else, the CoE
@@ -304,7 +320,12 @@ class CoeTransport:
     Alignment: `lead` BYPASS devices sit between TDI and the die, each delaying the
     data by one bit, so the scan opens with a 16384 - lead bit filler (one desync on
     the die) and later slots start on the die's slot boundary. The status word comes
-    out `lead` + (devices between the die and TDO) bits into each command's TDO."""
+    out `lead` + (devices between the die and TDO) bits into each command's TDO.
+
+    PARKED RISK (review fix round 1, not fixed): if BOTH dies carry the loader
+    bitstream, a wrong --chain selects USER4 on the OTHER die, whose status word is just
+    as valid, so nothing here can tell and that die gets loaded. Telling them apart
+    needs a die identity in the status word (an RTL/spec change)."""
     def __init__(s, ip, die, chain, hz=27_000_000, client=None):
         if len(chain) != coe.CHAIN_DEVICES or sorted(chain) != ["A", "B"] or die not in chain:
             raise ValueError("chain must be AB or BA and contain the die")
@@ -357,16 +378,51 @@ class CoeTransport:
             s.c.drain()
             s.c.resync()
 
+    def abort_close(s):
+        """On an abort: read what is owed and leave Shift-DR, swallowing secondary
+        errors (the abort's own reason is what the caller reports). From UNKNOWN the
+        only legal move is resync(). A dead connection is left as it is."""
+        s.pending = []
+        for step in (lambda: s.c.drain(),
+                     lambda: s.c.exit_dr_to_idle() if s.c.tap == coe.SHIFT_DR else None,
+                     lambda: s.c.resync() if s.c.tap is coe.UNKNOWN else None):
+            try:
+                step()
+            except Exception:
+                pass
+
+RANGE_BYTES_PER_POLL = 64 * 1024   # CRC bytes allowed per extra poll while waiting
+
 class Loader:
+    """Data phase: data frames pipelined `depth` deep, resync on a counter move,
+    recover() on a LinkFault, until the die's status shows the last data frame.
+
+    Range phase (fix round 1, I1+I3): one range frame at a time, then poll until the
+    status carries THAT frame's own range_seq with range_valid=1 and busy=0, and
+    compare its CRC with expected_range_crc(). Serialised because the CRC unit is
+    slower than the wire on real pieces (review: >= 2.76 s of CRC against 2.11 s of
+    range frames on the 9B card-0 manifest), and a pipelined burst backs range frames
+    up in the FIFO until it overflows. The plan's own range frames go first, while
+    their seqs are still uncommitted; any piece not checked in THIS run (its range
+    frame committed by an earlier, interrupted run, or a result missed across a
+    resync, or a resume onto a die whose last is already past the plan) is checked
+    again with a fresh seq. A load is done only when every piece matched; any
+    mismatch aborts naming the pieces. The die's status, never the checkpoint, says
+    how far a load got; the checkpoint only binds a resume to the plan's sha."""
     def __init__(s, t, frames, plan_sha, ckpt_path, resume=False):
         if not frames or [f.seq for f in frames] != list(range(len(frames))):
             raise ValueError("frames must be plan_frames() output: seq 0..n-1 in order")
         s.t, s.frames, s.sha, s.ckpt, s.resume = t, frames, plan_sha, ckpt_path, resume
+        s.ranges = [f for f in frames if f.kind == "range"]
+        s.nd = len(frames) - len(s.ranges)
+        if not s.ranges or s.nd == 0 or any(f.kind != "data" for f in frames[:s.nd]):
+            raise ValueError("frames must be data frames, then one range frame per piece")
         s.resyncs = 0
-        s.causes = []             # why each resync / recovery / tail resend happened
+        s.causes = []             # why each resync / recovery / resend happened
         s.st = None
         s.saved_last = None
-        s.base_bresp = None
+        s.range_results = {}      # piece index -> (got or None on an HBM read error, want)
+        s.already_complete = False
 
     def _slot(s, fr):
         if fr.kind == "range":
@@ -381,10 +437,13 @@ class Loader:
         if st["hbm_trip"]:
             raise LoadAborted("HBM catastrophic temperature trip reported at seq %d: stop "
                               "and check the card's cooling" % st["last"])
-        if s.base_bresp is not None and st["bresp_err"] != s.base_bresp:
-            raise LoadAborted("HBM write response error (BRESP count %d -> %d) by seq %d: "
+        if st["bresp_err"] != 0:
+            # I2: a fresh configuration starts at 0, so any nonzero count means some
+            # committed write failed -- in this run or one before it (a resume must not
+            # absorb it into a baseline)
+            raise LoadAborted("HBM write response error (BRESP count %d) by seq %d: "
                               "committed data is suspect; reload the bitstream and load "
-                              "again" % (s.base_bresp, st["bresp_err"], st["last"]))
+                              "again" % (st["bresp_err"], st["last"]))
         s.st = st
         return st
 
@@ -416,11 +475,11 @@ class Loader:
                               "on the JTAG chain)" % MAX_POLLS)
         raise LoadAborted("status never settled in %d polls (busy=%d)" % (MAX_POLLS, prev["busy"] if prev else -1))
 
-    def _poll_until(s, pred, base):
+    def _poll_until(s, pred, base, polls=MAX_POLLS):
         """Poll until pred(status). Returns ("ok", st), ("err", st) if an error counter
         moved off `base`, or ("timeout", last good status or None)."""
         st = None
-        for _ in range(MAX_POLLS):
+        for _ in range(polls):
             s.t.send(F.poll_slot())
             x = s._take()
             if x is None:
@@ -456,29 +515,26 @@ class Loader:
     def _open(s):
         try:
             s.t.open_scan()
-            st = s._poll_settled()
+            return s._poll_settled()
         except LinkFault as e:
-            st = s._reopen("link: %s" % e, True)
-        if s.base_bresp is None:
-            s.base_bresp = st["bresp_err"]
-        return st
-
-    def _next(s, st):
-        nxt = 0 if st["last"] == NONE else st["last"] + 1
-        if nxt > len(s.frames):
-            raise LoadAborted("the die holds seq %d, beyond this plan's last seq %d: it was "
-                              "loaded from another plan; reload the bitstream"
-                              % (st["last"], s.frames[-1].seq))
-        return nxt
+            return s._reopen("link: %s" % e, True)
 
     def _check_ckpt(s):
         if os.path.exists(s.ckpt):
-            with open(s.ckpt) as f:
-                ck = json.load(f)
-            if ck.get("plan_sha") != s.sha:
-                raise LoadAborted("the checkpoint %s is for a different plan (%s); reload "
-                                  "the bitstream to start over"
-                                  % (s.ckpt, str(ck.get("plan_sha"))[:12]))
+            how = ("delete it to start a fresh load (the die's own status says how far a "
+                   "load got, the file only binds --resume to a plan), or pass --ckpt for "
+                   "this plan's checkpoint")
+            try:
+                with open(s.ckpt) as f:
+                    ck = json.load(f)
+            except (OSError, ValueError) as e:
+                raise LoadAborted("the checkpoint %s is unreadable (%s): %s" % (s.ckpt, e, how))
+            if not isinstance(ck, dict) or not isinstance(ck.get("plan_sha"), str):
+                raise LoadAborted("%s is not a loader checkpoint: %s" % (s.ckpt, how))
+            if ck["plan_sha"] != s.sha:
+                raise LoadAborted("the checkpoint %s is for a different plan (%s): reload the "
+                                  "bitstream to start over, or %s"
+                                  % (s.ckpt, ck["plan_sha"][:12], how))
         elif s.resume:
             raise LoadAborted("--resume given but no checkpoint at %s" % s.ckpt)
 
@@ -486,6 +542,8 @@ class Loader:
         tmp = s.ckpt + ".tmp"
         with open(tmp, "w") as f:
             json.dump(dict(plan_sha=s.sha, last=None if last == NONE else last), f)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, s.ckpt)
         s.saved_last = last
 
@@ -496,37 +554,45 @@ class Loader:
         if s.saved_last in (None, NONE) or (last - s.saved_last) & M32 >= CKPT_EVERY:
             s._save_ckpt(last)
 
+    def _aborting(s, fn):
+        """Run fn; on LoadAborted close the scan cleanly first, then re-raise."""
+        try:
+            return fn()
+        except LoadAborted:
+            s.t.abort_close()
+            raise
+
     def run_load(s):
-        s._check_ckpt()
-        st = s._open()
-        if st["last"] != NONE and not s.resume:
-            raise LoadAborted("the die already holds frames up to seq %d; use --resume with "
-                              "the same plan, or reload the bitstream" % st["last"])
-        final = s.frames[-1].seq
-        nxt = s._next(st)
+        return s._aborting(s._run_load)
+
+    def run_verify(s):
+        return s._aborting(s._run_verify)
+
+    def _data_phase(s, st):
+        """Pipelined data frames until the status shows the last one committed."""
+        lastd = s.nd - 1
+        done = lambda x: x["last"] != NONE and x["last"] >= lastd and x["busy"] == 0
+        nxt = 0 if st["last"] == NONE else st["last"] + 1
         base = _errs(st)
-        s._save_ckpt(st["last"])
-        inflight, stalls, end = 0, 0, len(s.frames)
-        done = lambda x: x["last"] == final and x["busy"] == 0
+        inflight, stalls = 0, 0
         while True:
             try:
-                while nxt < end and inflight < s.t.depth:
+                while nxt < s.nd and inflight < s.t.depth:
                     s.t.send(s._slot(s.frames[nxt])); nxt += 1; inflight += 1
                 if inflight == 0:
                     how, st = s._poll_until(done, base)
                     if how == "ok":
-                        s._save_ckpt(st["last"])
-                        s.t.close_scan()
+                        s._maybe_ckpt(st)
                         return st
                     if st is None:
-                        raise LoadAborted("no status word while waiting for completion: "
-                                          "check --chain")
+                        raise LoadAborted("no status word while waiting for the data "
+                                          "phase to finish: check --chain")
                     if how == "err":
                         st = s._reopen("error counters %s -> %s" % (base, _errs(st)), False)
                     else:
                         # frames vanished without moving a counter: resend the tail
-                        s._count_retry("seq %d never committed" % final)
-                    base, nxt = _errs(st), s._next(st)
+                        s._count_retry("seq %d never committed" % lastd)
+                    base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
                     continue
                 st = s._take(); inflight -= 1
                 if st is None:
@@ -540,54 +606,104 @@ class Loader:
                     while inflight:
                         s._take(); inflight -= 1
                     st = s._reopen(why, False)
-                    base, nxt = _errs(st), s._next(st)
+                    base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
                     continue
                 s._maybe_ckpt(st)
             except LinkFault as e:
                 inflight = 0
                 st = s._reopen("link: %s" % e, True)
-                base, nxt = _errs(st), s._next(st)
+                base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
 
-    def run_verify(s):
-        """Range-CRC every piece again (fresh seqs continue after the die's last) and
-        compare with the CRC of the blake2b-checked file bytes. Returns the mismatches
-        as (Frame, got, want); got is None when the die reported an HBM read error."""
-        st = s._open()
+    def _range_phase(s, st, use_plan_seqs):
+        """Range-check every piece, one frame at a time (see the class docstring).
+        Fills s.range_results; returns the last status."""
+        s.range_results = {}
+        first, final = s.ranges[0].seq, s.frames[-1].seq
         base = _errs(st)
-        seq = (st["last"] + 1) & M32
-        bad = []
-        ranges = [f for f in s.frames if f.kind == "range"]
-        i = 0
-        while i < len(ranges):
-            fr = ranges[i]
+        while len(s.range_results) < len(s.ranges):
+            seq = (st["last"] + 1) & M32
+            i = seq - first if use_plan_seqs and first <= seq <= final else None
+            if i is None or i in s.range_results:
+                i = next(k for k in range(len(s.ranges)) if k not in s.range_results)
+            fr = s.ranges[i]
             try:
                 s.t.send(F.range_crc_slot(seq, fr.addr, fr.n))
                 s._take()
-                how, st = s._poll_until(lambda x, q=seq: x["range_seq"] == q and
-                                        x["range_valid"] == 1 and x["last"] == q and
-                                        x["busy"] == 0, base)
+                pred = (lambda x, q=seq: x["range_seq"] == q and x["range_valid"] == 1 and
+                        x["last"] == q and x["busy"] == 0)
+                how, x = s._poll_until(pred, base, MAX_POLLS + fr.n // RANGE_BYTES_PER_POLL)
                 if how == "ok":
                     want = expected_range_crc(fr)
-                    if st["range_rerr"]:
-                        bad.append((fr, None, want))
-                    elif st["range_crc"] != want:
-                        bad.append((fr, st["range_crc"], want))
-                    seq = (seq + 1) & M32
-                    i += 1
+                    s.range_results[i] = (None if x["range_rerr"] else x["range_crc"], want)
+                    st = x
+                    s._maybe_ckpt(st)
                     continue
-                if st is None:
-                    raise LoadAborted("no status word during verify: check --chain")
+                if x is None:
+                    raise LoadAborted("no status word during the range phase: check --chain")
                 if how == "timeout":
-                    raise LoadAborted("range CRC for seq %d never reported" % seq)
-                st = s._reopen("error counters during verify %s -> %s" % (base, _errs(st)), False)
+                    st = s._reopen("range CRC for seq %d never reported" % seq, False)
+                else:
+                    st = s._reopen("error counters %s -> %s in the range phase"
+                                   % (base, _errs(x)), False)
             except LinkFault as e:
                 st = s._reopen("link: %s" % e, True)
-            base, seq = _errs(st), (st["last"] + 1) & M32
+            base = _errs(st)
+        return st
+
+    def _mismatches(s):
+        return [(s.ranges[i], got, want) for i, (got, want) in sorted(s.range_results.items())
+                if got != want]
+
+    def _run_load(s):
+        s._check_ckpt()
+        st = s._open()
+        if st["last"] != NONE and not s.resume:
+            raise LoadAborted("the die already holds frames up to seq %d; use --resume with "
+                              "the same plan, or reload the bitstream" % st["last"])
+        s._save_ckpt(st["last"])
+        final = s.frames[-1].seq
+        if st["last"] != NONE and st["last"] >= final:
+            # every frame of the plan is committed (a finished load, maybe verified
+            # since): nothing to send but the range checks, which decide
+            s.already_complete = True
+        else:
+            st = s._data_phase(st)
+        st = s._range_phase(st, use_plan_seqs=not s.already_complete)
+        s._save_ckpt(st["last"])
+        bad = s._mismatches()
+        if bad:
+            raise LoadAborted("%d of %d pieces failed the range CRC after loading: %s%s; "
+                              "the die does not hold this plan, reload the bitstream and "
+                              "load again"
+                              % (len(bad), len(s.ranges),
+                                 ", ".join("%#x+%d got %s want %08x"
+                                           % (f.addr, f.n, "RERR" if g is None else "%08x" % g, w)
+                                           for f, g, w in bad[:8]),
+                                 " ..." if len(bad) > 8 else ""))
         try:
             s.t.close_scan()
         except LinkFault:
             s.t.recover()                              # every result is already in hand
-        return bad
+        return st
+
+    def _run_verify(s):
+        """Range-CRC every piece again (fresh seqs continue after the die's last) and
+        compare with the CRC of the blake2b-checked file bytes. Returns the mismatches
+        as (Frame, got, want); got is None when the die reported an HBM read error.
+        Refused on a die that does not hold the whole plan yet (C1): the writer commits
+        range frames like any other, so a verify on a partial die would move `last`
+        into the plan's data seqs and a later --resume would skip those frames."""
+        st = s._open()
+        if st["last"] == NONE or st["last"] < s.frames[-1].seq:
+            raise LoadAborted("the die holds frames only up to seq %s, the plan needs %d: "
+                              "finish the load (load --resume) before verify"
+                              % ("none" if st["last"] == NONE else st["last"], s.frames[-1].seq))
+        st = s._range_phase(st, use_plan_seqs=False)
+        try:
+            s.t.close_scan()
+        except LinkFault:
+            s.t.recover()
+        return s._mismatches()
 
 def main(argv=None):
     import argparse
@@ -598,7 +714,9 @@ def main(argv=None):
     ap.add_argument("--bmc", required=True, help="BMC address, e.g. 192.0.2.1 (no default)")
     ap.add_argument("--die", required=True, choices=["A", "B"])
     ap.add_argument("--chain", required=True, choices=["AB", "BA"],
-                    help="dies in order from TDI to TDO, measured at bring-up")
+                    help="dies in order from TDI to TDO, measured at bring-up. RISK: if "
+                    "both dies carry the loader, a wrong --chain loads the other die "
+                    "undetected")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--ckpt", default=None)
     a = ap.parse_args(argv)
@@ -613,16 +731,22 @@ def main(argv=None):
             st = ld.run_load()
             n = sum(f.n for f in frames if f.kind == "data")
             dt = max(time.time() - t0, 1e-9)
-            print("JCLOAD_DONE last=%d committed=%d crc_fail=%d resyncs=%d %.0f s %.2f MB/s"
-                  % (st["last"], st["committed"], st["crc_fail"], ld.resyncs, dt, n / dt / 1e6))
+            if ld.already_complete:
+                print("JCLOAD_DONE already complete: %d pieces re-checked by range CRC, "
+                      "last=%d resyncs=%d %.0f s" % (len(ld.range_results), st["last"],
+                                                     ld.resyncs, dt))
+            else:
+                print("JCLOAD_DONE last=%d committed=%d crc_fail=%d resyncs=%d pieces=%d "
+                      "matched %.0f s %.2f MB/s" % (st["last"], st["committed"],
+                      st["crc_fail"], ld.resyncs, len(ld.range_results), dt, n / dt / 1e6))
             return 0
         bad = ld.run_verify()
     except (LoadAborted, LinkFault) as e:
         print("JCLOAD_ABORT %s" % e)
         return 2
-    except ConnectionError as e:
-        print("JCLOAD_ABORT connection lost (%s); the die keeps what it committed: run "
-              "again with --resume" % e)
+    except (ConnectionError, TimeoutError, OSError) as e:
+        print("JCLOAD_ABORT connection lost (%s: %s); the die keeps what it committed: "
+              "run again with --resume" % (type(e).__name__, e))
         return 2
     for fr, got, want in bad[:20]:
         print("JCVERIFY_BAD addr=%#x n=%d got=%s want=%08x"
