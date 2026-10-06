@@ -1,0 +1,735 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:36:44 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -hold -from [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTERNAL_TDI"}] -to [all_fanout -endpoints_only -flat [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTERNAL_TDI"}]] -max_paths 20 -nworst 1 -file /home/labuser/jcl_posthoc/run/post_constraints/tdi_after_hold.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.712ns  (logic 0.465ns (17.147%)  route 2.247ns (82.853%))
+  Logic Levels:           1  (BSCANE2=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.406ns (routing 0.783ns, distribution 0.623ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.247     2.712    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.406     8.879    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.756ns  (logic 0.465ns (16.870%)  route 2.291ns (83.130%))
+  Logic Levels:           1  (BSCANE2=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.421ns (routing 0.783ns, distribution 0.638ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.291     2.756    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.421     8.894    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.767ns  (logic 0.465ns (16.806%)  route 2.302ns (83.194%))
+  Logic Levels:           1  (BSCANE2=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.402ns (routing 0.783ns, distribution 0.619ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.302     2.767    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.402     8.875    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.848ns  (logic 0.485ns (17.029%)  route 2.363ns (82.971%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.357     2.822    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_C5LUT_SLICEL_I1_O)
+                                                      0.020     2.842 r  jcl_i/loader/inst/u_jc_core/rx/crc[21]_i_1/O
+                         net (fo=1, routed)           0.006     2.848    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[21]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.858ns  (logic 0.498ns (17.422%)  route 2.360ns (82.578%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.405ns (routing 0.783ns, distribution 0.622ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.354     2.819    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y14         LUT3 (Prop_D5LUT_SLICEL_I1_O)
+                                                      0.033     2.852 r  jcl_i/loader/inst/u_jc_core/rx/crc[27]_i_1/O
+                         net (fo=1, routed)           0.006     2.858    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[27]
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.405     8.878    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.860ns  (logic 0.488ns (17.062%)  route 2.372ns (82.938%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.364     2.829    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_C5LUT_SLICEM_I1_O)
+                                                      0.023     2.852 r  jcl_i/loader/inst/u_jc_core/rx/crc[30]_i_1/O
+                         net (fo=1, routed)           0.008     2.860    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[30]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.861ns  (logic 0.487ns (17.021%)  route 2.374ns (82.979%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.357     2.822    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_C6LUT_SLICEL_I1_O)
+                                                      0.022     2.844 r  jcl_i/loader/inst/u_jc_core/rx/crc[20]_i_1/O
+                         net (fo=1, routed)           0.017     2.861    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[20]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.861ns  (logic 0.489ns (17.091%)  route 2.372ns (82.909%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.363     2.828    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_D5LUT_SLICEM_I1_O)
+                                                      0.024     2.852 r  jcl_i/loader/inst/u_jc_core/rx/crc[24]_i_1/O
+                         net (fo=1, routed)           0.009     2.861    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[24]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.868ns  (logic 0.499ns (17.398%)  route 2.369ns (82.602%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.361     2.826    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_B5LUT_SLICEM_I1_O)
+                                                      0.034     2.860 r  jcl_i/loader/inst/u_jc_core/rx/crc[5]_i_1/O
+                         net (fo=1, routed)           0.008     2.868    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[5]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.870ns  (logic 0.500ns (17.419%)  route 2.370ns (82.581%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.405ns (routing 0.783ns, distribution 0.622ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.354     2.819    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y14         LUT3 (Prop_D6LUT_SLICEL_I1_O)
+                                                      0.035     2.854 r  jcl_i/loader/inst/u_jc_core/rx/crc[26]_i_1/O
+                         net (fo=1, routed)           0.016     2.870    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[26]
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.405     8.878    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.875ns  (logic 0.487ns (16.938%)  route 2.388ns (83.062%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.364     2.829    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_C6LUT_SLICEM_I1_O)
+                                                      0.022     2.851 r  jcl_i/loader/inst/u_jc_core/rx/crc[29]_i_1/O
+                         net (fo=1, routed)           0.024     2.875    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[29]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.876ns  (logic 0.487ns (16.932%)  route 2.389ns (83.068%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.363     2.828    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_D6LUT_SLICEM_I1_O)
+                                                      0.022     2.850 r  jcl_i/loader/inst/u_jc_core/rx/crc[23]_i_1/O
+                         net (fo=1, routed)           0.026     2.876    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[23]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.882ns  (logic 0.500ns (17.348%)  route 2.382ns (82.652%))
+  Logic Levels:           2  (BSCANE2=1 LUT2=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.422ns (routing 0.783ns, distribution 0.639ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.361     2.826    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT2 (Prop_B6LUT_SLICEM_I1_O)
+                                                      0.035     2.861 r  jcl_i/loader/inst/u_jc_core/rx/crc[31]_i_2/O
+                         net (fo=1, routed)           0.021     2.882    jcl_i/loader/inst/u_jc_core/rx/crc[31]_i_2_n_0
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.422     8.895    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.886ns  (logic 0.498ns (17.253%)  route 2.388ns (82.747%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.381     2.846    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_B5LUT_SLICEL_I1_O)
+                                                      0.033     2.879 r  jcl_i/loader/inst/u_jc_core/rx/crc[9]_i_1/O
+                         net (fo=1, routed)           0.007     2.886    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[9]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.891ns  (logic 0.522ns (18.055%)  route 2.369ns (81.945%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.363     2.828    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_D5LUT_SLICEL_I1_O)
+                                                      0.057     2.885 r  jcl_i/loader/inst/u_jc_core/rx/crc[19]_i_1/O
+                         net (fo=1, routed)           0.006     2.891    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[19]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.897ns  (logic 0.501ns (17.291%)  route 2.396ns (82.709%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.381     2.846    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_B6LUT_SLICEL_I1_O)
+                                                      0.036     2.882 r  jcl_i/loader/inst/u_jc_core/rx/crc[8]_i_1/O
+                         net (fo=1, routed)           0.015     2.897    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[8]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        2.903ns  (logic 0.524ns (18.049%)  route 2.379ns (81.951%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.410ns (routing 0.783ns, distribution 0.627ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.363     2.828    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_D6LUT_SLICEL_I1_O)
+                                                      0.059     2.887 r  jcl_i/loader/inst/u_jc_core/rx/crc[15]_i_1/O
+                         net (fo=1, routed)           0.016     2.903    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[15]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.410     8.883    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]/C
+
+Slack:                    inf
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             (none)
+  Path Type:              Hold (Min at Fast Process Corner)
+  Data Path Delay:        3.052ns  (logic 0.558ns (18.280%)  route 2.494ns (81.720%))
+  Logic Levels:           4  (BSCANE2=1 CARRY8=1 LUT3=1 LUT4=1)
+  Clock Uncertainty:      0.025ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
+    Total System Jitter     (TSJ):    0.050ns
+    Total Input Jitter      (TIJ):    0.000ns
+    Discrete Jitter          (DJ):    0.000ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Destination): 1.408ns (routing 0.783ns, distribution 0.625ns)
+  Timing Exception:       False Path
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      0.465     0.465 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          2.356     2.821    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y13         LUT4 (Prop_C6LUT_SLICEL_I1_O)
+                                                      0.040     2.861 r  jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_4/O
+                         net (fo=1, routed)           0.008     2.869    jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_4_n_0
+    SLICE_X14Y13         CARRY8 (Prop_CARRY8_SLICEL_S[2]_CO[2])
+                                                      0.018     2.887 f  jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]_i_2/CO[2]
+                         net (fo=1, routed)           0.114     3.001    jcl_i/loader/inst/u_jc_core/rx/wd1
+    SLICE_X12Y12         LUT3 (Prop_D6LUT_SLICEL_I2_O)
+                                                      0.035     3.036 r  jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_1/O
+                         net (fo=1, routed)           0.016     3.052    jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_1_n_0
+    SLICE_X12Y12         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, routed)           1.554     7.454    jcl_i/loader/inst/u_jc_frx/tck_raw
+    BUFGCE_X0Y44         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.019     7.473 r  jcl_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+    X1Y0 (CLOCK_ROOT)    net (fo=1344, routed)        1.408     8.881    jcl_i/loader/inst/u_jc_core/rx/tck_o
+    SLICE_X12Y12         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/C
+
+
+
+

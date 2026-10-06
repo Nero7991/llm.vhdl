@@ -1,0 +1,34 @@
+unit=jcl_posthoc.service cgroup=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/jcl_posthoc.service requested_cap=11G swap_kill=4294967296
+readback MemoryHigh=11811160064
+readback memory.high=11811160064
+sample 1791254162 current=17891328 swap.current=0 memory.peak=17891328 sys.MemAvailable=14692495360 sys.SwapFree=50297995264
+sample 1791254164 current=126095360 swap.current=0 memory.peak=126103552 sys.MemAvailable=14590013440 sys.SwapFree=50297995264
+sample 1791254166 current=470474752 swap.current=0 memory.peak=470487040 sys.MemAvailable=14239973376 sys.SwapFree=50297995264
+sample 1791254168 current=470405120 swap.current=0 memory.peak=470487040 sys.MemAvailable=14239760384 sys.SwapFree=50297995264
+sample 1791254170 current=473145344 swap.current=0 memory.peak=473403392 sys.MemAvailable=14236069888 sys.SwapFree=50297995264
+sample 1791254172 current=475025408 swap.current=0 memory.peak=475242496 sys.MemAvailable=14235553792 sys.SwapFree=50297995264
+sample 1791254174 current=764170240 swap.current=0 memory.peak=764432384 sys.MemAvailable=13941948416 sys.SwapFree=50297995264
+sample 1791254176 current=1412976640 swap.current=0 memory.peak=1412976640 sys.MemAvailable=13300858880 sys.SwapFree=50297995264
+sample 1791254178 current=1799544832 swap.current=0 memory.peak=1799806976 sys.MemAvailable=12902948864 sys.SwapFree=50297995264
+sample 1791254180 current=1853554688 swap.current=0 memory.peak=1853554688 sys.MemAvailable=12857139200 sys.SwapFree=50297995264
+sample 1791254182 current=1929052160 swap.current=0 memory.peak=1929052160 sys.MemAvailable=12782907392 sys.SwapFree=50297995264
+sample 1791254184 current=2045968384 swap.current=0 memory.peak=2045968384 sys.MemAvailable=12662599680 sys.SwapFree=50297995264
+sample 1791254186 current=2408775680 swap.current=0 memory.peak=2408775680 sys.MemAvailable=12302479360 sys.SwapFree=50297995264
+sample 1791254188 current=2421399552 swap.current=0 memory.peak=2421399552 sys.MemAvailable=12290863104 sys.SwapFree=50297995264
+sample 1791254191 current=2421399552 swap.current=0 memory.peak=2421399552 sys.MemAvailable=12289724416 sys.SwapFree=50297995264
+sample 1791254193 current=2462818304 swap.current=0 memory.peak=2462818304 sys.MemAvailable=12252364800 sys.SwapFree=50297995264
+sample 1791254195 current=2614861824 swap.current=0 memory.peak=2615123968 sys.MemAvailable=12099166208 sys.SwapFree=50297995264
+sample 1791254197 current=2701508608 swap.current=0 memory.peak=2701770752 sys.MemAvailable=12011995136 sys.SwapFree=50297995264
+sample 1791254199 current=2741727232 swap.current=0 memory.peak=2741727232 sys.MemAvailable=11970347008 sys.SwapFree=50297995264
+sample 1791254201 current=2837532672 swap.current=0 memory.peak=2837798912 sys.MemAvailable=11876458496 sys.SwapFree=50297995264
+sample 1791254203 current=2859352064 swap.current=0 memory.peak=2859958272 sys.MemAvailable=11859267584 sys.SwapFree=50297995264
+sample 1791254205 current=2861527040 swap.current=0 memory.peak=2869071872 sys.MemAvailable=11854209024 sys.SwapFree=50297995264
+sample 1791254207 current=2879664128 swap.current=0 memory.peak=2886000640 sys.MemAvailable=11838574592 sys.SwapFree=50297995264
+sample 1791254209 current=2880053248 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11830255616 sys.SwapFree=50297995264
+sample 1791254211 current=2879598592 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11828166656 sys.SwapFree=50297995264
+sample 1791254213 current=2879598592 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11828424704 sys.SwapFree=50297995264
+sample 1791254215 current=2879598592 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11828166656 sys.SwapFree=50297995264
+sample 1791254217 current=2879340544 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11828162560 sys.SwapFree=50297995264
+sample 1791254219 current=2879340544 swap.current=0 memory.peak=2887069696 sys.MemAvailable=11828420608 sys.SwapFree=50297995264
+sampled_peak_current=2880053248 sampled_peak_swap=0 last_memory.peak=2887069696 sys_min_MemAvailable=11828162560 sys_min_SwapFree=50297995264
+RC=0

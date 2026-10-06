@@ -1,0 +1,609 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:36:44 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTERNAL_TDI"}] -to [all_fanout -endpoints_only -flat [get_pins -hier -filter {NAME =~ "*u_jc_frx/u_jc_bscan/INTERNAL_TDI"}]] -max_paths 20 -nworst 1 -file /home/labuser/jcl_posthoc/run/post_constraints/tdi_after.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             7.119ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        11.427ns  (logic 6.186ns (54.134%)  route 5.241ns (45.866%))
+  Logic Levels:           4  (BSCANE2=1 CARRY8=1 LUT3=1 LUT4=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.901    10.801    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y13         LUT4 (Prop_C6LUT_SLICEL_I1_O)
+                                                      0.113    10.914 r  jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_4/O
+                         net (fo=1, routed)           0.011    10.925    jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_4_n_0
+    SLICE_X14Y13         CARRY8 (Prop_CARRY8_SLICEL_S[2]_CO[2])
+                                                      0.074    10.999 f  jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]_i_2/CO[2]
+                         net (fo=1, routed)           0.271    11.270    jcl_i/loader/inst/u_jc_core/rx/wd1
+    SLICE_X12Y12         LUT3 (Prop_D6LUT_SLICEL_I2_O)
+                                                      0.099    11.369 r  jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_1/O
+                         net (fo=1, routed)           0.058    11.427    jcl_i/loader/inst/u_jc_core/rx/wd[256]_i_1_n_0
+    SLICE_X12Y12         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X12Y12         FDRE (Setup_DFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -11.427    
+  -------------------------------------------------------------------
+                         slack                                  7.119    
+
+Slack (MET) :             7.491ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        11.055ns  (logic 6.074ns (54.946%)  route 4.981ns (45.054%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.923    10.823    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_D6LUT_SLICEL_I1_O)
+                                                      0.174    10.997 r  jcl_i/loader/inst/u_jc_core/rx/crc[15]_i_1/O
+                         net (fo=1, routed)           0.058    11.055    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[15]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_DFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[15]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -11.055    
+  -------------------------------------------------------------------
+                         slack                                  7.491    
+
+Slack (MET) :             7.508ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        11.038ns  (logic 6.093ns (55.203%)  route 4.945ns (44.797%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.923    10.823    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_D5LUT_SLICEL_I1_O)
+                                                      0.193    11.016 r  jcl_i/loader/inst/u_jc_core/rx/crc[19]_i_1/O
+                         net (fo=1, routed)           0.022    11.038    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[19]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_DFF2_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[19]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -11.038    
+  -------------------------------------------------------------------
+                         slack                                  7.508    
+
+Slack (MET) :             7.531ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        11.015ns  (logic 6.000ns (54.470%)  route 5.015ns (45.530%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.957    10.857    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_B6LUT_SLICEL_I1_O)
+                                                      0.100    10.957 r  jcl_i/loader/inst/u_jc_core/rx/crc[8]_i_1/O
+                         net (fo=1, routed)           0.058    11.015    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[8]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_BFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[8]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -11.015    
+  -------------------------------------------------------------------
+                         slack                                  7.531    
+
+Slack (MET) :             7.536ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        11.010ns  (logic 6.027ns (54.740%)  route 4.983ns (45.260%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.957    10.857    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_B5LUT_SLICEL_I1_O)
+                                                      0.127    10.984 r  jcl_i/loader/inst/u_jc_core/rx/crc[9]_i_1/O
+                         net (fo=1, routed)           0.026    11.010    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[9]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_BFF2_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[9]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -11.010    
+  -------------------------------------------------------------------
+                         slack                                  7.536    
+
+Slack (MET) :             7.564ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.982ns  (logic 6.000ns (54.637%)  route 4.982ns (45.363%))
+  Logic Levels:           2  (BSCANE2=1 LUT2=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.912    10.812    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT2 (Prop_B6LUT_SLICEM_I1_O)
+                                                      0.100    10.912 r  jcl_i/loader/inst/u_jc_core/rx/crc[31]_i_2/O
+                         net (fo=1, routed)           0.070    10.982    jcl_i/loader/inst/u_jc_core/rx/crc[31]_i_2_n_0
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_BFF_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[31]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.982    
+  -------------------------------------------------------------------
+                         slack                                  7.564    
+
+Slack (MET) :             7.574ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.972ns  (logic 6.026ns (54.924%)  route 4.946ns (45.076%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.912    10.812    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_B5LUT_SLICEM_I1_O)
+                                                      0.126    10.938 r  jcl_i/loader/inst/u_jc_core/rx/crc[5]_i_1/O
+                         net (fo=1, routed)           0.034    10.972    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[5]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_BFF2_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[5]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.972    
+  -------------------------------------------------------------------
+                         slack                                  7.574    
+
+Slack (MET) :             7.581ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.965ns  (logic 5.962ns (54.375%)  route 5.003ns (45.625%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.921    10.821    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_D6LUT_SLICEM_I1_O)
+                                                      0.062    10.883 r  jcl_i/loader/inst/u_jc_core/rx/crc[23]_i_1/O
+                         net (fo=1, routed)           0.082    10.965    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[23]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_DFF_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[23]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.965    
+  -------------------------------------------------------------------
+                         slack                                  7.581    
+
+Slack (MET) :             7.586ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.960ns  (logic 5.962ns (54.399%)  route 4.998ns (45.601%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.921    10.821    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_C6LUT_SLICEM_I1_O)
+                                                      0.062    10.883 r  jcl_i/loader/inst/u_jc_core/rx/crc[29]_i_1/O
+                         net (fo=1, routed)           0.077    10.960    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[29]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_CFF_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[29]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.960    
+  -------------------------------------------------------------------
+                         slack                                  7.586    
+
+Slack (MET) :             7.592ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.954ns  (logic 5.999ns (54.764%)  route 4.955ns (45.236%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.897    10.797    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y14         LUT3 (Prop_D6LUT_SLICEL_I1_O)
+                                                      0.099    10.896 r  jcl_i/loader/inst/u_jc_core/rx/crc[26]_i_1/O
+                         net (fo=1, routed)           0.058    10.954    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[26]
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y14         FDSE (Setup_DFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[26]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.954    
+  -------------------------------------------------------------------
+                         slack                                  7.592    
+
+Slack (MET) :             7.605ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.941ns  (logic 5.982ns (54.677%)  route 4.959ns (45.323%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.921    10.821    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_D5LUT_SLICEM_I1_O)
+                                                      0.082    10.903 r  jcl_i/loader/inst/u_jc_core/rx/crc[24]_i_1/O
+                         net (fo=1, routed)           0.038    10.941    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[24]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_DFF2_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[24]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.941    
+  -------------------------------------------------------------------
+                         slack                                  7.605    
+
+Slack (MET) :             7.606ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.940ns  (logic 5.984ns (54.700%)  route 4.956ns (45.300%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.921    10.821    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         LUT3 (Prop_C5LUT_SLICEM_I1_O)
+                                                      0.084    10.905 r  jcl_i/loader/inst/u_jc_core/rx/crc[30]_i_1/O
+                         net (fo=1, routed)           0.035    10.940    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[30]
+    SLICE_X13Y13         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDSE (Setup_CFF2_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[30]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.940    
+  -------------------------------------------------------------------
+                         slack                                  7.606    
+
+Slack (MET) :             7.609ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.937ns  (logic 6.018ns (55.023%)  route 4.919ns (44.977%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.897    10.797    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y14         LUT3 (Prop_D5LUT_SLICEL_I1_O)
+                                                      0.118    10.915 r  jcl_i/loader/inst/u_jc_core/rx/crc[27]_i_1/O
+                         net (fo=1, routed)           0.022    10.937    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[27]
+    SLICE_X14Y14         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y14         FDSE (Setup_DFF2_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[27]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.937    
+  -------------------------------------------------------------------
+                         slack                                  7.609    
+
+Slack (MET) :             7.618ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.928ns  (logic 5.963ns (54.569%)  route 4.965ns (45.431%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.906    10.806    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_C6LUT_SLICEL_I1_O)
+                                                      0.063    10.869 r  jcl_i/loader/inst/u_jc_core/rx/crc[20]_i_1/O
+                         net (fo=1, routed)           0.059    10.928    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[20]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_CFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[20]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.928    
+  -------------------------------------------------------------------
+                         slack                                  7.618    
+
+Slack (MET) :             7.634ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]/D
+                            (rising edge-triggered cell FDSE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.912ns  (logic 5.983ns (54.832%)  route 4.929ns (45.168%))
+  Logic Levels:           2  (BSCANE2=1 LUT3=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.906    10.806    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X14Y11         LUT3 (Prop_C5LUT_SLICEL_I1_O)
+                                                      0.083    10.889 r  jcl_i/loader/inst/u_jc_core/rx/crc[21]_i_1/O
+                         net (fo=1, routed)           0.023    10.912    jcl_i/loader/inst/u_jc_core/rx/crc32_bit[21]
+    SLICE_X14Y11         FDSE                                         r  jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X14Y11         FDSE (Setup_CFF2_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/crc_reg[21]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.912    
+  -------------------------------------------------------------------
+                         slack                                  7.634    
+
+Slack (MET) :             7.777ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.769ns  (logic 5.900ns (54.789%)  route 4.869ns (45.211%))
+  Logic Levels:           1  (BSCANE2=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.869    10.769    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X12Y23         FDRE (Setup_BFF_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/wd_reg[255]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.769    
+  -------------------------------------------------------------------
+                         slack                                  7.777    
+
+Slack (MET) :             7.812ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.734ns  (logic 5.900ns (54.965%)  route 4.834ns (45.035%))
+  Logic Levels:           1  (BSCANE2=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.834    10.734    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X13Y13         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X13Y13         FDRE (Setup_HFF2_SLICEM_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/rx_crc_reg[31]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.734    
+  -------------------------------------------------------------------
+                         slack                                  7.812    
+
+Slack (MET) :             7.913ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+                            (internal pin)
+  Destination:            jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck_user4
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            18.519ns  (MaxDelay Path 18.519ns)
+  Data Path Delay:        10.633ns  (logic 5.900ns (55.490%)  route 4.733ns (44.510%))
+  Logic Levels:           1  (BSCANE2=1)
+  Timing Exception:       MaxDelay Path 18.519ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     BSCANE2                      0.000     0.000 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TDI
+    CONFIG_SITE_X0Y0     BSCANE2 (Prop_BSCAN4_CONFIG_SITE_INTERNAL_TDI_TDI)
+                                                      5.900     5.900 r  jcl_i/loader/inst/u_jc_frx/u_jc_bscan/TDI
+                         net (fo=18, routed)          4.733    10.633    jcl_i/loader/inst/u_jc_core/rx/tdi_o
+    SLICE_X12Y23         FDRE                                         r  jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   18.519    18.519    
+    SLICE_X12Y23         FDRE (Setup_FFF2_SLICEL_C_D)
+                                                      0.027    18.546    jcl_i/loader/inst/u_jc_core/rx/sr_reg[255]
+  -------------------------------------------------------------------
+                         required time                         18.546    
+                         arrival time                         -10.633    
+  -------------------------------------------------------------------
+                         slack                                  7.913    
+
+
+
+

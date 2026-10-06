@@ -1,0 +1,8 @@
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_frx/u_jc_bscan/INTERNAL_TDI
+JCLOADER_CONSTRAINT_MATCH tdi_endpoints 18
+JCLOADER_CONSTRAINT_MATCH dna_mcp paths 2
+JCLOADER_POSTHOC_TDI paths 18 worst_slack 7.119 requirement 18.519 exception {MaxDelay Path 18.519ns -datapath_only} endpoint jcl_i/loader/inst/u_jc_core/rx/wd_reg[256]/D
+JCLOADER_POSTHOC_DNA setup_slack 45.521 requirement 50.000 hold_slack 1.038 endpoint jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]/D
+JCLOADER_POSTHOC_WNS 0.703
+JCLOADER_POSTHOC_WHS 0.010
+JCLOADER_POSTHOC_DONE

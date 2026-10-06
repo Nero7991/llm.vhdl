@@ -1,0 +1,247 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:36:44 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks dna_clk] -to [get_clocks clk_out3_jcl_clk_wiz_0_0] -max_paths 10 -nworst 1 -file /home/labuser/jcl_posthoc/run/post_constraints/dna_clk_to_aclk_after.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             4.684ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q
+                            (clock source 'dna_clk'  {rise@0.000ns fall@50.000ns period=100.000ns})
+  Destination:            jcl_i/loader/inst/u_jc_core/dnar/ck_reg/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcl_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             clk_out3_jcl_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (clk_out3_jcl_clk_wiz_0_0 rise@5.000ns - dna_clk rise@0.000ns)
+  Data Path Delay:        0.178ns  (logic 0.064ns (35.923%)  route 0.114ns (64.077%))
+  Logic Levels:           1  (LUT4=1)
+  Clock Path Skew:        -0.107ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    3.339ns = ( 8.339 - 5.000 ) 
+    Source Clock Delay      (SCD):    3.125ns
+    Clock Pessimism Removal (CPR):    -0.321ns
+  Clock Uncertainty:      0.058ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.092ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.461ns (routing 0.185ns, distribution 1.276ns)
+  Clock Net Delay (Destination): 1.274ns (routing 0.170ns, distribution 1.104ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock dna_clk rise edge)    0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.833     0.933 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.983    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.983 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.404     1.387    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                     -0.106     1.281 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.259     1.540    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.568 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.461     3.029    jcl_i/loader/inst/u_jc_core/dnar/aclk
+  -------------------------------------------------------------------    -------------------
+    SLICE_X155Y80        FDRE (Prop_HFF_SLICEL_C_Q)
+                                                      0.096     3.125 r  jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q
+                         net (fo=2, routed)           0.054     3.179    jcl_i/loader/inst/u_jc_core/dnar/CLK
+    SLICE_X155Y80        LUT4 (Prop_H6LUT_SLICEL_I2_O)
+                                                      0.064     3.243 r  jcl_i/loader/inst/u_jc_core/dnar/ck_i_1/O
+                         net (fo=1, routed)           0.060     3.303    jcl_i/loader/inst/u_jc_core/dnar/ck_i_1_n_0
+    SLICE_X155Y80        FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/ck_reg/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcl_clk_wiz_0_0 rise edge)
+                                                      5.000     5.000 r  
+    BC26                                              0.000     5.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     5.079    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.697     5.776 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     5.816    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     5.816 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.351     6.167    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                      0.644     6.811 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.230     7.041    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.065 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.274     8.339    jcl_i/loader/inst/u_jc_core/dnar/aclk
+    SLICE_X155Y80        FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/ck_reg/C
+                         clock pessimism             -0.321     8.018    
+                         clock uncertainty           -0.058     7.960    
+    SLICE_X155Y80        FDRE (Setup_HFF_SLICEL_C_D)
+                                                      0.027     7.987    jcl_i/loader/inst/u_jc_core/dnar/ck_reg
+  -------------------------------------------------------------------
+                         required time                          7.987    
+                         arrival time                          -3.303    
+  -------------------------------------------------------------------
+                         slack                                  4.684    
+
+Slack (MET) :             45.521ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_dna/CLK
+                            (rising edge-triggered cell DNA_PORTE2 clocked by dna_clk  {rise@0.000ns fall@50.000ns period=100.000ns})
+  Destination:            jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcl_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             clk_out3_jcl_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            50.000ns  (clk_out3_jcl_clk_wiz_0_0 rise@50.000ns - dna_clk rise@0.000ns)
+  Data Path Delay:        2.927ns  (logic 2.094ns (71.539%)  route 0.833ns (28.461%))
+  Logic Levels:           0  
+  Clock Path Skew:        -1.520ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    3.529ns = ( 8.529 - 5.000 ) 
+    Source Clock Delay      (SCD):    4.638ns
+    Clock Pessimism Removal (CPR):    -0.411ns
+  Clock Uncertainty:      0.058ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.092ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.461ns (routing 0.185ns, distribution 1.276ns)
+  Clock Net Delay (Destination): 1.464ns (routing 0.170ns, distribution 1.294ns)
+  Timing Exception:       MultiCycle Path   Setup -end   10
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock dna_clk rise edge)    0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.833     0.933 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.983    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.983 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.404     1.387    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                     -0.106     1.281 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.259     1.540    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.568 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.461     3.029    jcl_i/loader/inst/u_jc_core/dnar/aclk
+    SLICE_X155Y80        FDRE (Prop_HFF_SLICEL_C_Q)
+                                                      0.096     3.125 r  jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q
+                         net (fo=2, routed)           1.513     4.638    jcl_i/loader/inst/CLK
+    CONFIG_SITE_X0Y0     DNA_PORTE2                                   r  jcl_i/loader/inst/u_jc_dna/CLK
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     DNA_PORTE2 (Prop_DNA_PORT_CONFIG_SITE_CLK_DOUT)
+                                                      2.094     6.732 r  jcl_i/loader/inst/u_jc_dna/DOUT
+                         net (fo=2, routed)           0.833     7.566    jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]_0[0]
+    SLICE_X215Y91        FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcl_clk_wiz_0_0 rise edge)
+                                                     50.000    50.000 r  
+    BC26                                              0.000    50.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079    50.079    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.697    50.776 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040    50.816    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000    50.816 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.351    51.167    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                      0.644    51.811 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.230    52.041    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024    52.065 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.464    53.529    jcl_i/loader/inst/u_jc_core/dnar/aclk
+    SLICE_X215Y91        FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]/C
+                         clock pessimism             -0.411    53.118    
+                         clock uncertainty           -0.058    53.060    
+    SLICE_X215Y91        FDRE (Setup_EFF_SLICEL_C_D)
+                                                      0.027    53.087    jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]
+  -------------------------------------------------------------------
+                         required time                         53.087    
+                         arrival time                          -7.566    
+  -------------------------------------------------------------------
+                         slack                                 45.521    
+
+Slack (MET) :             45.919ns  (required time - arrival time)
+  Source:                 jcl_i/loader/inst/u_jc_dna/CLK
+                            (rising edge-triggered cell DNA_PORTE2 clocked by dna_clk  {rise@0.000ns fall@50.000ns period=100.000ns})
+  Destination:            jcl_i/loader/inst/u_jc_core/dnar/sr_reg[95]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcl_clk_wiz_0_0  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             clk_out3_jcl_clk_wiz_0_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            50.000ns  (clk_out3_jcl_clk_wiz_0_0 rise@50.000ns - dna_clk rise@0.000ns)
+  Data Path Delay:        2.570ns  (logic 2.094ns (81.476%)  route 0.476ns (18.524%))
+  Logic Levels:           0  
+  Clock Path Skew:        -1.479ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    3.570ns = ( 8.570 - 5.000 ) 
+    Source Clock Delay      (SCD):    4.638ns
+    Clock Pessimism Removal (CPR):    -0.411ns
+  Clock Uncertainty:      0.058ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.092ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.461ns (routing 0.185ns, distribution 1.276ns)
+  Clock Net Delay (Destination): 1.505ns (routing 0.170ns, distribution 1.335ns)
+  Timing Exception:       MultiCycle Path   Setup -end   10
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock dna_clk rise edge)    0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.833     0.933 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.983    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.983 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.404     1.387    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                     -0.106     1.281 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.259     1.540    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.568 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.461     3.029    jcl_i/loader/inst/u_jc_core/dnar/aclk
+    SLICE_X155Y80        FDRE (Prop_HFF_SLICEL_C_Q)
+                                                      0.096     3.125 r  jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q
+                         net (fo=2, routed)           1.513     4.638    jcl_i/loader/inst/CLK
+    CONFIG_SITE_X0Y0     DNA_PORTE2                                   r  jcl_i/loader/inst/u_jc_dna/CLK
+  -------------------------------------------------------------------    -------------------
+    CONFIG_SITE_X0Y0     DNA_PORTE2 (Prop_DNA_PORT_CONFIG_SITE_CLK_DOUT)
+                                                      2.094     6.732 r  jcl_i/loader/inst/u_jc_dna/DOUT
+                         net (fo=2, routed)           0.476     7.209    jcl_i/loader/inst/u_jc_core/dnar/val_reg[95]_0[0]
+    SLICE_X220Y102       FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/sr_reg[95]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcl_clk_wiz_0_0 rise edge)
+                                                     50.000    50.000 r  
+    BC26                                              0.000    50.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079    50.079    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.697    50.776 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040    50.816    jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000    50.816 r  jcl_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.351    51.167    jcl_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT2)
+                                                      0.644    51.811 r  jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, routed)           0.230    52.041    jcl_i/clk_wiz_0/inst/clk_out3_jcl_clk_wiz_0_0
+    BUFGCE_X0Y34         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024    52.065 r  jcl_i/clk_wiz_0/inst/clkout3_buf/O
+    X4Y1 (CLOCK_ROOT)    net (fo=10149, routed)       1.505    53.570    jcl_i/loader/inst/u_jc_core/dnar/aclk
+    SLICE_X220Y102       FDRE                                         r  jcl_i/loader/inst/u_jc_core/dnar/sr_reg[95]/C
+                         clock pessimism             -0.411    53.159    
+                         clock uncertainty           -0.058    53.101    
+    SLICE_X220Y102       FDRE (Setup_EFF_SLICEM_C_D)
+                                                      0.027    53.128    jcl_i/loader/inst/u_jc_core/dnar/sr_reg[95]
+  -------------------------------------------------------------------
+                         required time                         53.128    
+                         arrival time                          -7.209    
+  -------------------------------------------------------------------
+                         slack                                 45.919    
+
+
+
+

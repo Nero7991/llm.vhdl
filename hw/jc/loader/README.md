@@ -43,5 +43,13 @@ that ran on the Jungle Cat with. The module is -2L; -1 timing is the conservativ
 - Debug cores (ltx): `jcl_i/jtag_axi_0` (BRAM, slave 0) and `jcl_i/jtag_hbm`
   (HBM SAXI_16, slave 1), both on user chain 1.
 
+**Post hoc (Task 10 fix round 1).** The shipped `.bit` was routed before two constraints
+existed: the BSCANE2 TDI bound (`jcl_tdi`, TDI was unconstrained) and the DNA DOUT
+multicycle (`jcl_dna_mcp`). `posthoc_constraints.tcl` applied both to full4's routed
+checkpoint without re-implementing (`results/2026-10-05/post_constraints/`): TDI worst
++7.119 ns of 18.519, DNA DOUT setup +45.521 / hold +1.038, design WNS +0.703 / WHS
++0.010. DNA_PORTE2/CLK library limits: min period 4.875 ns, pulse 2.275 ns.
+A rebuild needs ~15 GB on the workstation (llama-server stopped; does not fit beside it).
+
 Details, adaptations from the plan, and every accepted warning: the Task 10 report
 (`.superpowers/sdd/2026-10-05-jc-jtag-hbm-loader/task-10-report.md`).
