@@ -1648,3 +1648,23 @@ def test_range_compare_uses_the_crc_frozen_at_planning_not_a_rewritten_file(tmp_
     ld = Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json"))
     with pytest.raises(L.LoadAborted, match="range CRC"):
         ld.run_load()
+
+def test_corrupt_seq_flips_one_payload_bit_once_and_the_load_recovers(tmp_path):
+    """--corrupt-seq (Task 11 step 5, silicon fault injection): the named data frame goes
+    out once with one payload bit flipped, the die's CRC check rejects it, the loader
+    resyncs and resends it intact, and the die ends up holding the plan."""
+    frames, sha = plan(tmp_path)
+    m = LoaderModel()
+    t = L.FakeTransport(m, lead=0)
+    ld = Ld(t, frames, sha, str(tmp_path / "ck.json"), corrupt_seq=2)
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq
+    assert ld.resyncs == 1 and st["crc_fail"] == 1
+    assert_die_holds_the_plan(m, frames)
+
+def test_corrupt_seq_refuses_a_range_frame(tmp_path):
+    frames, sha = plan(tmp_path)
+    rng = [f.seq for f in frames if f.kind == "range"][0]
+    with pytest.raises(ValueError, match="data frame"):
+        Ld(L.FakeTransport(LoaderModel(), lead=0), frames, sha, str(tmp_path / "ck.json"),
+           corrupt_seq=rng)

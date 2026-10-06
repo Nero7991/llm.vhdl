@@ -731,7 +731,7 @@ class Loader(_Session):
     mismatch aborts naming the pieces. The die's status, never the checkpoint, says
     how far a load got; the checkpoint only binds a resume to the plan's sha."""
     def __init__(s, t, frames, plan_sha, ckpt_path, resume=False, *, dna,
-                 dna_label="the die record", max_resyncs=MAX_RESYNCS):
+                 dna_label="the die record", max_resyncs=MAX_RESYNCS, corrupt_seq=None):
         if dna is None:
             raise ValueError("the Loader needs the die's expected DNA (from --dies)")
         if max_resyncs < 1:
@@ -752,11 +752,23 @@ class Loader(_Session):
         s.rerr_retried = set()    # pieces already retried once after an HBM read error
         s.range_results = {}      # piece index -> (got or None on an HBM read error, want)
         s.already_complete = False
+        # Debug fault injection (--corrupt-seq, Task 11): this data frame goes out ONCE with
+        # one payload bit flipped after its CRC was computed, so the die must reject it.
+        if corrupt_seq is not None and not (0 <= corrupt_seq < s.nd):
+            raise ValueError("--corrupt-seq must name a data frame (seq 0..%d), got %r"
+                             % (s.nd - 1, corrupt_seq))
+        s.corrupt_seq = corrupt_seq
 
     def _slot(s, fr):
         if fr.kind == "range":
             return F.range_crc_slot(fr.seq, fr.addr, fr.n)
-        return F.build_slot(fr.seq, fr.addr, read_payload(fr))
+        slot = F.build_slot(fr.seq, fr.addr, read_payload(fr))
+        if fr.seq == s.corrupt_seq:
+            s.corrupt_seq = None                   # first send only
+            b = bytearray(slot)
+            b[32] ^= 0x01                          # bit 0 of payload byte 0 (word 1)
+            slot = bytes(b)
+        return slot
 
     def _poll_until(s, pred, base, polls=MAX_POLLS):
         """Poll until pred(status). Returns ("ok", st), ("err", st) if an error counter
@@ -1184,6 +1196,10 @@ def main(argv=None):
                        "die has committed this run, so a long load gets a proportionally "
                        "larger allowance for transient events than a short one"
                        ).format(REFILL_FRAMES))
+        p.add_argument("--corrupt-seq", type=int, default=None,
+                       help=("DEBUG (load only): send this data frame once with one payload "
+                             "bit flipped, to prove on silicon that the die's CRC check "
+                             "rejects it and the loader resends it"))
     p = sub.add_parser("identify", description=IDENTIFY_HELP,
                        formatter_class=argparse.RawDescriptionHelpFormatter)
     common(p)
@@ -1227,7 +1243,8 @@ def main(argv=None):
     try:
         t = CoeTransport(a.bmc, a.die, a.chain, hz=a.hz)
         ld = Loader(t, frames, sha, ck, resume=a.resume, dna=dna, dna_label=label,
-                   max_resyncs=a.max_resyncs)
+                   max_resyncs=a.max_resyncs,
+                   corrupt_seq=a.corrupt_seq if a.cmd == "load" else None)
         if a.cmd == "load":
             st = ld.run_load()
             n = sum(f.n for f in frames if f.kind == "data")
