@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+----------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version              : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date                      : Mon Oct  5 21:15:46 2026
+| Host                      : cachyos-bc250 running 64-bit CachyOS
+| Command                   : report_io -file /home/orencollaco/jc_pinfinder_build/build_a/report_io_A.rpt
+| Design                    : pinfinder_top
+| Device                    : xcvu35p
+| Speed File                : -2L
+| Package                   : fsvh2104
+| Package Version           : PRODUCTION 1.1 3/19/2019
+| Package Pin Delay Version : PRODUCTION 1.0 10/30/2017
+
+(full report has one row per physical package pin on the device; filtered here to the pins this design uses)
+
+| BC26       | sysclk_clk_p | High Performance | IO_L14P_T2L_N2_GC_A04_D20_65       | 0          | INPUT         | LVDS        |      65 |            |                         |      | 100Ohm Differential |                 NONE |           | FIXED      |           | TRUE     |      | NONE             |              | FALSE             | EQ_NONE      |
+| BC27       | sysclk_clk_n | High Performance | IO_L14N_T2L_N3_GC_A05_D21_65       | 0          | INPUT         | LVDS        |      65 |            |                         |      | 100Ohm Differential |                 NONE |           | FIXED      |           | TRUE     |      | NONE             |              | FALSE             | EQ_NONE      |
+| F10        | out_g10_n    | High Performance | IO_L12N_T1U_N11_GC_67              | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| F12        | out_f13_n    | High Performance | IO_L11N_T1U_N9_GC_67               | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| F13        | out_f13_p    | High Performance | IO_L11P_T1U_N8_GC_67               | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| G10        | out_g10_p    | High Performance | IO_L12P_T1U_N10_GC_67              | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| J9         | LED_C        | High Performance | IO_L4N_T0U_N7_DBC_AD7N_67          | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| J10        | LED_D        | High Performance | IO_L4P_T0U_N6_DBC_AD7P_67          | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| K9         | LED_B        | High Performance | IO_L3N_T0L_N5_AD15N_67             | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| K10        | LED_A        | High Performance | IO_L3P_T0L_N4_AD15P_67             | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| K11        | LED_RGB_R    | High Performance | IO_L2N_T0L_N3_67                   | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| L11        | LED_RGB_B    | High Performance | IO_L2P_T0L_N2_67                   | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |
+| L12        | LED_RGB_G    | High Performance | IO_L1N_T0L_N1_DBC_67               | 0          | OUTPUT        | LVCMOS18    |      67 |          4 |                         | SLOW |                     |                 NONE |           | FIXED      |           |          |      | NONE             |              |                   |              |

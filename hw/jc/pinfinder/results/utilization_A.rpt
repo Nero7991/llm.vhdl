@@ -1,0 +1,45 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Mon Oct  5 21:15:43 2026
+| Host         : cachyos-bc250 running 64-bit CachyOS
+| Command      : report_utilization -file /home/orencollaco/jc_pinfinder_build/build_a/utilization_A.rpt
+| Design       : pinfinder_top
+| Device       : xcvu35p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. CLB Logic
+1.1 Summary of Registers by Type
+2. CLB Logic Distribution
+3. BLOCKRAM
+4. ARITHMETIC
+5. I/O
+6. CLOCK
+7. ADVANCED
+8. CONFIGURATION
+9. Primitives
+10. Black Boxes
+11. Instantiated Netlists
+12. SLR Connectivity
+13. SLR Connectivity Matrix
+14. SLR CLB Logic and Dedicated Block Utilization
+15. SLR IO Utilization
+
+1. CLB Logic
+------------
+
++-------------------------+------+-------+------------+-----------+-------+
+|        Site Type        | Used | Fixed | Prohibited | Available | Util% |
++-------------------------+------+-------+------------+-----------+-------+
+| CLB LUTs                |   66 |     0 |          0 |    871680 | <0.01 |
+|   LUT as Logic          |   66 |     0 |          0 |    871680 | <0.01 |
+|   LUT as Memory         |    0 |     0 |          0 |    403200 |  0.00 |
+| CLB Registers           |  209 |     0 |          0 |   1743360 |  0.01 |
+|   Register as Flip Flop |  209 |     0 |          0 |   1743360 |  0.01 |
+|   Register as Latch     |    0 |     0 |          0 |   1743360 |  0.00 |
