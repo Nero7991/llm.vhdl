@@ -111,6 +111,16 @@ begin
           wait until falling_edge(tck);
         end loop;
         nslot := nslot + 1;
+        -- Task 9b fix round 1 (M4): the first slot's status was captured ~0.2 us after
+        -- reset release, long before the DNA read can finish (97 dna_clk periods = 9.7
+        -- us at DNA_DIV 10 and 200 MHz), so it must show a real status (magic) with
+        -- dna_valid clear and the DNA field still zero.
+        if nslot = 1 then
+          chk(st(31 downto 0) = JC_MAGIC_STAT, "first status magic " & to_hstring(st(31 downto 0)));
+          chk(st(352) = '0', "dna_valid must be clear in the first status");
+          chk(st(351 downto 256) = (351 downto 256 => '0'),
+              "DNA field must be zero before the read completes: " & to_hstring(st(351 downto 256)));
+        end if;
         -- fix round 1, I2: slots 18-20 are the three trailing polls (17 real/control slots
         -- precede them). Slot 18's status was loaded at its own start, before hbm_trip is
         -- raised below, so it must still read clear; raising it here gives the CDC (2 aclk

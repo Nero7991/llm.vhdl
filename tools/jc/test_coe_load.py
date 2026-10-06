@@ -944,6 +944,12 @@ def dies_file(tmp_path, rec, name="dies.json"):
     p.write_text(json.dumps({k: L.dna_hex(v) for k, v in rec.items()}))
     return str(p)
 
+def assert_masked(text, *dnas):
+    """Fix round 1, M6: load/verify name each DNA masked, never in full."""
+    for v in dnas:
+        assert L.dna_mask(v) in text, (L.dna_mask(v), text)
+        assert L.dna_hex(v) not in text and L.dna_hex(v).upper() not in text, text
+
 def count_range_sends(t):
     """Wrap t.send to count range-CRC frames put on the wire."""
     n = [0]
@@ -961,7 +967,7 @@ def test_a_die_with_another_dna_aborts_before_any_data_frame(tmp_path):
     t = L.FakeTransport(m, lead=1)
     with pytest.raises(L.LoadAborted, match="check --chain and --die") as e:
         Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=DNA_B).run_load()
-    assert L.dna_hex(DNA_A) in str(e.value) and L.dna_hex(DNA_B) in str(e.value)
+    assert_masked(str(e.value), DNA_A, DNA_B)
     assert t.first_seq_sent is None and m.committed == 0 and t.state == "closed"
 
 def test_two_loaders_wrong_chain_is_caught_by_the_dna(tmp_path):
@@ -981,7 +987,7 @@ def test_two_loaders_wrong_chain_is_caught_by_the_dna(tmp_path):
     t, sock, client = chain_transport(mA, "B", "BA", 0, other=mB)
     with pytest.raises(L.LoadAborted, match="check --chain and --die") as e:
         Ld(t, frames, sha, str(tmp_path / "ck.json"), dna=rec["B"]).run_load()
-    assert L.dna_hex(DNA_A) in str(e.value) and L.dna_hex(DNA_B) in str(e.value)
+    assert_masked(str(e.value), DNA_A, DNA_B)
     assert mA.committed == 0 and mB.committed == 0
     assert_chain_clean(sock, client)
 
@@ -1125,6 +1131,7 @@ def test_cli_load_passes_the_record_dna_to_the_loader(tmp_path, monkeypatch, cap
     out = capsys.readouterr().out
     assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT die identity mismatch")
     assert dies in out and m.committed == 0
+    assert_masked(out, DNA_A, DNA_B)
 
 # ---------------------------------------------------------------- identify
 
@@ -1308,3 +1315,121 @@ def test_m1_a_reopen_while_a_long_crc_runs_waits_for_it_to_settle(tmp_path):
     st = ld.run_load()
     assert t.recovers == 1 and nr[0] == 1 and len(ld.range_results) == 1
     assert st["last"] == frames[-1].seq and all(g == w for g, w in ld.range_results.values())
+
+
+# ======================================================================
+# Task 9b fix round 1 (review 2026-10-05)
+# ======================================================================
+
+def test_dna_mask():
+    assert L.dna_mask(DEFAULT_DNA) == "0123...ffee"
+    assert L.dna_mask(0) == "0000...0000"
+
+def test_m6_a_foreign_checkpoint_names_the_dnas_masked(tmp_path):
+    frames, sha = plan(tmp_path)
+    m = LoaderModel(dna=DNA_A)
+    ck = tmp_path / "ck.json"
+    with pytest.raises(ConnectionError):
+        Ld(L.FakeTransport(m, lead=1, drop_after=16), frames, sha, str(ck), dna=DNA_A).run_load()
+    d = json.loads(ck.read_text()); d["dna"] = L.dna_hex(DNA_B); ck.write_text(json.dumps(d))
+    with pytest.raises(L.LoadAborted, match="DNA") as e:
+        Ld(L.FakeTransport(m, lead=1), frames, sha, str(ck), dna=DNA_A, resume=True).run_load()
+    assert_masked(str(e.value), DNA_A, DNA_B)
+
+def test_m6_only_identify_prints_the_full_dna(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, [64])
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    m = LoaderModel()                                   # one die for both commands
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(m, lead=1))
+    for cmd in ("load", "verify"):
+        rc = L.main([cmd, mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                     "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+        assert rc == 0
+    out = capsys.readouterr().out
+    assert L.dna_hex(DEFAULT_DNA) not in out
+    rc = L.main(["identify", "--bmc", "192.0.2.1", "--chain", "AB", "--die", "A",
+                 "--dies", dies])
+    assert rc == 0 and L.dna_hex(DEFAULT_DNA) in capsys.readouterr().out
+
+@pytest.mark.parametrize("content", ['{"A": "%s\\n"}' % L.dna_hex(DNA_A),
+                                     '{"A": "%s "}' % L.dna_hex(DNA_A)])
+def test_m3_a_dna_with_trailing_characters_is_refused(tmp_path, content):
+    p = tmp_path / "dies.json"
+    p.write_text(content)
+    with pytest.raises(L.LoadAborted, match="24 hex digits"):
+        L.read_dies(str(p))
+
+def test_m3_duplicate_keys_in_the_die_record_are_refused(tmp_path):
+    """json.load keeps the LAST of two equal keys silently; the record must refuse."""
+    p = tmp_path / "dies.json"
+    p.write_text('{"A": "%s", "A": "%s"}' % (L.dna_hex(DNA_A), L.dna_hex(DNA_B)))
+    with pytest.raises(L.LoadAborted, match="duplicate"):
+        L.read_dies(str(p))
+
+def _checkout_of_this_file():
+    d = os.path.dirname(os.path.realpath(__file__))
+    while not os.path.lexists(os.path.join(d, ".git")):
+        if os.path.dirname(d) == d:
+            pytest.skip("this test file is not inside a git checkout")
+        d = os.path.dirname(d)
+    return d
+
+def test_i1_a_relative_path_at_the_repo_root_is_refused(tmp_path, monkeypatch):
+    root = _checkout_of_this_file()
+    monkeypatch.chdir(root)
+    assert not os.path.exists("ck_i1_should_never_exist.json")
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        L.read_dies("dies_i1_should_never_exist.json")
+    frames, sha = plan(tmp_path)
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        Ld(t, frames, sha, "ck_i1_should_never_exist.json").run_load()
+    assert t.opens == 0 and not os.path.exists("ck_i1_should_never_exist.json")
+
+def test_i1_another_worktree_is_refused(tmp_path):
+    """A linked worktree has a `.git` FILE, not a directory; and it is not the checkout
+    coe_load.py runs from (the old guard compared against REPO only)."""
+    wt = tmp_path / "wt27"
+    (wt / "sub").mkdir(parents=True)
+    (wt / ".git").write_text("gitdir: /nowhere/.git/worktrees/wt27\n")
+    p = str(wt / "sub" / "dies.json")
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        L.write_dies(p, {"A": DNA_A})
+    assert not os.path.exists(p)
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        L.read_dies(p, must_exist=False)
+    frames, sha = plan(tmp_path)
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        Ld(t, frames, sha, str(wt / "ck.json")).run_load()
+    assert t.opens == 0 and not (wt / "ck.json").exists()
+
+def test_i1_a_symlinked_directory_into_a_checkout_is_refused(tmp_path):
+    """tmp_path/link -> <checkout>/tools: the textual path has no .git above it, the
+    resolved one does. An abspath-based guard would accept it."""
+    root = _checkout_of_this_file()
+    link = tmp_path / "link"
+    os.symlink(os.path.join(root, "tools"), str(link))
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        L.read_dies(str(link / "dies_i1_should_never_exist.json"))
+    frames, sha = plan(tmp_path)
+    t = L.FakeTransport(LoaderModel(), lead=1)
+    with pytest.raises(L.LoadAborted, match="git checkout"):
+        Ld(t, frames, sha, str(link / "ck_i1_should_never_exist.json")).run_load()
+    assert t.opens == 0
+    assert not os.path.exists(os.path.join(root, "tools", "ck_i1_should_never_exist.json"))
+
+def test_i1_the_default_checkpoint_path_is_accepted():
+    p = L.default_ckpt("0" * 64, "A")
+    assert p.startswith(L.CKPT_DIR + os.sep)
+    L._outside_repo(p, "the checkpoint")                 # must not raise
+
+def test_i1_cli_refuses_a_ckpt_in_a_checkout_before_the_board(tmp_path, monkeypatch, capsys):
+    root = _checkout_of_this_file()
+    mp = make_manifest(tmp_path, [64])
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: pytest.fail("touched the board"))
+    ck = os.path.join(root, "ck_i1_should_never_exist.json")
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies_file(tmp_path, {"A": DEFAULT_DNA}), "--ckpt", ck])
+    assert rc == 2 and re_match_line(capsys.readouterr().out, r"^JCLOAD_ABORT the checkpoint .*git checkout")
+    assert not os.path.exists(ck)

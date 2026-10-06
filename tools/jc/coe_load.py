@@ -200,17 +200,45 @@ def status_of(tdo, offset):
 # ---------------------------------------------------------------- die record (Task 9b)
 
 DIE_NAMES = ("A", "B")
-_DNA_HEX = re.compile(r"^[0-9a-fA-F]{24}$")
+_DNA_HEX = re.compile(r"[0-9a-fA-F]{24}")        # used with fullmatch (M3)
+
+def _no_dup_keys(pairs):
+    keys = [k for k, _ in pairs]
+    dup = sorted(set(k for k in keys if keys.count(k) > 1))
+    if dup:
+        raise ValueError("duplicate key(s) %s" % ", ".join(dup))
+    return dict(pairs)
 
 def dna_hex(v):
     return "%024x" % v
 
-def _outside_repo(path):
-    """The die record holds real hardware DNA: it must never live in the repo."""
-    rp, repo = os.path.realpath(path), os.path.realpath(REPO)
-    if rp == repo or rp.startswith(repo + os.sep):
-        raise LoadAborted("the die record %s is inside the repository (%s): keep it outside "
-                          "the repo, no DNA from real hardware is ever committed" % (path, repo))
+def dna_mask(v):
+    """A DNA as printed by load/verify (fix round 1, M6): first and last 4 hex digits
+    only. Only identify prints the full value."""
+    h = dna_hex(v)
+    return "%s...%s" % (h[:4], h[-4:])
+
+def _git_root_above(path):
+    """The first directory at or above the RESOLVED parent of `path` holding a `.git`
+    entry (a checkout's directory or a worktree's file), else None."""
+    d = os.path.dirname(os.path.realpath(path))
+    while True:
+        if os.path.lexists(os.path.join(d, ".git")):
+            return d
+        up = os.path.dirname(d)
+        if up == d:
+            return None
+        d = up
+
+def _outside_repo(path, what="the die record"):
+    """Files holding a real DNA (the die record, a checkpoint) must never sit inside ANY
+    git checkout or worktree, this one or another (fix round 1, I1): refuse a path whose
+    resolved parent chain holds a `.git` file or directory."""
+    root = _git_root_above(path)
+    if root is not None:
+        raise LoadAborted("%s %s is inside a git checkout or worktree (%s has a .git entry): "
+                          "keep it outside every repository, no DNA from real hardware is "
+                          "ever committed" % (what, path, root))
 
 def read_dies(path, must_exist=True):
     """Parse a die record: JSON {"A": "<24 hex digits>", "B": "<24 hex digits>"}, either
@@ -223,7 +251,7 @@ def read_dies(path, must_exist=True):
         return {}
     try:
         with open(path) as f:
-            d = json.load(f)
+            d = json.load(f, object_pairs_hook=_no_dup_keys)
     except (OSError, ValueError) as e:
         raise LoadAborted("the die record %s is unreadable (%s)" % (path, e))
     if not isinstance(d, dict) or not set(d) <= set(DIE_NAMES):
@@ -231,7 +259,7 @@ def read_dies(path, must_exist=True):
                           % (path, "/".join(DIE_NAMES)))
     out = {}
     for k, v in d.items():
-        if not isinstance(v, str) or not _DNA_HEX.match(v):
+        if not isinstance(v, str) or not _DNA_HEX.fullmatch(v):
             raise LoadAborted("the die record %s: die %s must be 24 hex digits (96 bits), "
                               "got %r" % (path, k, v))
         out[k] = int(v, 16)
@@ -515,7 +543,7 @@ class _Session:
                 "found before any data frame was sent; a wrong --chain selects the other die")
         return ("die identity mismatch: the die at this chain position reports DNA %s, "
                 "but %s says it is %s (%s): check --chain and --die"
-                % (dna_hex(got), s.dna_label, dna_hex(s.dna), when))
+                % (dna_mask(got), s.dna_label, dna_mask(s.dna), when))
 
     def _take(s):
         """Read the oldest outstanding TDO. None if it carries no status word.
@@ -696,6 +724,7 @@ class Loader(_Session):
             return s._reopen("link: %s" % e, True)
 
     def _check_ckpt(s):
+        _outside_repo(s.ckpt, "the checkpoint")
         if os.path.exists(s.ckpt):
             how = ("delete it to start a fresh load (the die's own status says how far a "
                    "load got, the file only binds --resume to a plan), or pass --ckpt for "
@@ -712,13 +741,17 @@ class Loader(_Session):
                                   "bitstream to start over, or %s"
                                   % (s.ckpt, ck["plan_sha"][:12], how))
             if ck.get("dna") != dna_hex(s.dna):
+                got = ck.get("dna")
+                got = (dna_mask(int(got, 16)) if isinstance(got, str) and _DNA_HEX.fullmatch(got)
+                       else "none" if got is None else "an unreadable value")
                 raise LoadAborted("the checkpoint %s was written for die DNA %s, this run "
                                   "expects %s (%s): check --die and --dies, or %s"
-                                  % (s.ckpt, ck.get("dna"), dna_hex(s.dna), s.dna_label, how))
+                                  % (s.ckpt, got, dna_mask(s.dna), s.dna_label, how))
         elif s.resume:
             raise LoadAborted("--resume given but no checkpoint at %s" % s.ckpt)
 
     def _save_ckpt(s, last):
+        _outside_repo(s.ckpt, "the checkpoint")
         tmp = s.ckpt + ".tmp"
         with open(tmp, "w") as f:
             json.dump(dict(plan_sha=s.sha, dna=dna_hex(s.dna),
@@ -937,6 +970,11 @@ class Loader(_Session):
             s.t.recover()
         return s._mismatches()
 
+CKPT_DIR = "/mnt/storage/fk33_builds/jc_load"
+
+def default_ckpt(sha, die):
+    return os.path.join(CKPT_DIR, "%s_%s.json" % (sha[:12], die))
+
 def read_identity(t):
     """Open a scan on transport `t`, settle, wait for dna_valid and return the DNA the
     die at that chain position reports (Task 9b). Closes the scan either way."""
@@ -994,7 +1032,12 @@ DNA of each device on the chain (device 0 is the one nearest TDI) and confirm th
 identify printed for --die matches the device at the position --chain puts that die in.
 Then keep the file; do not re-identify to make a load go through. identify refuses to
 record a DNA the file already gives the other die, and refuses to change an existing
-entry without --force."""
+entry without --force.
+
+identify is the only command that prints a die's full DNA (load and verify show it
+masked, first and last 4 hex digits). Do not commit its output, or paste it into the
+repo, an issue or a log under version control; the record file and checkpoints are
+refused anywhere inside a git checkout or worktree."""
 
 def main(argv=None):
     import argparse
@@ -1045,7 +1088,12 @@ def main(argv=None):
         return 2
     label = "the die record %s (die %s)" % (a.dies, a.die)
     frames, sha = plan_frames(a.manifest, die=a.die)
-    ck = a.ckpt or "/mnt/storage/fk33_builds/jc_load/%s_%s.json" % (sha[:12], a.die)
+    ck = a.ckpt or default_ckpt(sha, a.die)
+    try:
+        _outside_repo(ck, "the checkpoint")
+    except LoadAborted as e:
+        print("JCLOAD_ABORT %s" % e)
+        return 2
     os.makedirs(os.path.dirname(os.path.abspath(ck)), exist_ok=True)
     t0 = time.time()
     try:

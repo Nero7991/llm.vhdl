@@ -33,6 +33,10 @@
 #   M25  jc_dna_reader's default DIV drops to 4 (dna_clk 56 MHz at a 450 MHz aclk).
 #   M26  jc_frame_core drops status bits 383:256 (shifts a 256-bit word as before).
 #   M27  jc_frame_core shifts ones in behind the status (TDO past bit 383 not zero).
+#   M28  jc_loader_core ties live(352) (dna_valid) to '1' (fix round 1, M4: killed by
+#        tb_jc_loader_core's first-status check, dna_valid clear before the read ends).
+#   M29  jc_dna_reader presents the assembly register instead of the latched value
+#        (dna non-zero before dna_valid; reviewer's R3 shape).
 #   A5   M23 against tb_jc_dna_reader, which never elaborates jc_loader_core --
 #        EXPECTED SURVIVED.
 #   A6   M20 against tb_jc_loader_core: the end-to-end bench must see a reversed DNA
@@ -189,6 +193,8 @@ run_row M24 PROTO rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "READ/SHIFT chan
 run_row M25 PROTO rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "default DIV 4: dna_clk over 25 MHz at 450 MHz" "  generic(DIV : positive := 10);" "  generic(DIV : positive := 4);"
 run_row M26 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "status bits 383:256 dropped" "    variable v : std_logic_vector(JC_STATUS_BITS-1 downto 0) := st;" "    variable v : std_logic_vector(JC_STATUS_BITS-1 downto 0) := (JC_STATUS_BITS-1 downto 256 => '0') & st(255 downto 0);"
 run_row M27 VALUE rtl/jc_frame_core.vhd tb_jc_frame_core KILLED "ones shifted in behind the status" "        st_sr <= '0' & st_sr(JC_STATUS_BITS-1 downto 1);" "        st_sr <= '1' & st_sr(JC_STATUS_BITS-1 downto 1);"
+run_row M28 VALUE rtl/jc_loader_core.vhd tb_jc_loader_core KILLED "dna_valid tied to 1 in the status" "  live(352)            <= dna_valid;" "  live(352)            <= '1';"
+run_row M29 VALUE rtl/jc_dna_reader.vhd tb_jc_dna_reader KILLED "dna shows the partial shift register before valid" "  dna       <= val;" "  dna       <= sr;"
 run_row A5 ATTR rtl/jc_loader_core.vhd tb_jc_dna_reader SURVIVED "M23 against a bench without the core" "  live(351 downto 256) <= dna;" "  live(351 downto 256) <= (others => '0');"
 run_row A6 ATTR rtl/jc_dna_reader.vhd tb_jc_loader_core KILLED "M20 seen end to end" "nxt := dna_dout & sr(95 downto 1);" "nxt := sr(94 downto 0) & dna_dout;"
 
