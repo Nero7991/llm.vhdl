@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:23 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_clock_interaction -file /home/labuser/jcl_ooc/r4/clock_interaction.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                            WNS                            TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
+From Clock    To Clock      Clock Edges  WNS(ns)  TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
+------------  ------------  -----------  -------  -------  -----------  -----------  ---------------  -------------------  -----------------------  
+aclk          aclk          rise - rise     1.21     0.00            0         3900             5.00  Clean                Partial False Path       
+aclk          tck           rise - rise     2.97     0.00            0          303             5.00  Ignored              Max Delay Datapath Only  
+dna_clk       aclk          rise - rise     4.62     0.00            0            1             5.00  Clean                Timed                    
+tck           aclk          rise - rise     4.28     0.00            0            9             5.00  Ignored              Max Delay Datapath Only  
+tck           tck           rise - rise    32.68     0.00            0         2380            37.04  Clean                Timed                    
+
+

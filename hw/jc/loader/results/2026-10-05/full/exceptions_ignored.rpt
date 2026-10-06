@@ -1,0 +1,20 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 20:16:44 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_exceptions -ignored -file /mnt/storage/fk33_builds/jc_loader/full4/proj/reports/exceptions_ignored.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Exceptions Report
+
+Position  From            Through         To                           Setup           Hold            Status           
+--------  --------------  --------------  ---------------------------  --------------  --------------  -----------------
+18        *               *               [get_pins -hier *cdc_to*/D]  false           false           Invalid endpoint 
+19        *               *               [get_pins -hier *cdc_to*/D]  false           false           Invalid endpoint 
+

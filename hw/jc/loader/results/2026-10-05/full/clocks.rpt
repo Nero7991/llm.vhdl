@@ -1,0 +1,79 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 20:16:43 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_clocks -file /mnt/storage/fk33_builds/jc_loader/full4/proj/reports/clocks.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Report
+
+
+Attributes
+  P: Propagated
+  G: Generated
+  A: Auto-derived
+  R: Renamed
+  V: Virtual
+  I: Inverted
+  S: Pin phase-shifted with Latency mode
+
+Clock                                                                                                Period(ns)  Waveform(ns)    Attributes  Sources
+dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  50.000      {0.000 25.000}  P           {dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK}
+jcl_i/hbm/inst/HBM_REF_CLK_0                                                                         5.000       {0.000 2.500}   P           {jcl_i/hbm/inst/HBM_REF_CLK_0}
+jcl_i/hbm/inst/HBM_REF_CLK_1                                                                         5.000       {0.000 2.500}   P           {jcl_i/hbm/inst/HBM_REF_CLK_1}
+sysclk                                                                                               5.000       {0.000 2.500}   P           {sysclk_clk_p[0]}
+tck_user4                                                                                            37.037      {0.000 18.518}  P           {jcl_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK}
+dna_clk                                                                                              100.000     {0.000 50.000}  P,G         {jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q}
+clk_out1_jcl_clk_wiz_0_0                                                                             10.000      {0.000 5.000}   P,G,A       {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT0}
+clk_out2_jcl_clk_wiz_0_0                                                                             5.000       {0.000 2.500}   P,G,A       {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1}
+clk_out3_jcl_clk_wiz_0_0                                                                             5.000       {0.000 2.500}   P,G,A       {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2}
+
+
+====================================================
+Generated Clocks
+====================================================
+
+Generated Clock     : dna_clk
+Master Source       : jcl_i/loader/inst/u_jc_core/dnar/ck_reg/C
+Master Clock        : clk_out3_jcl_clk_wiz_0_0
+Divide By           : 20
+Generated Sources   : {jcl_i/loader/inst/u_jc_core/dnar/ck_reg/Q}
+
+Generated Clock     : clk_out1_jcl_clk_wiz_0_0
+Master Source       : jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKIN1
+Master Clock        : sysclk
+Edges               : {1 2 3}
+Edge Shifts(ns)     : {0.000 2.500 5.000}
+Generated Sources   : {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT0}
+
+Generated Clock     : clk_out2_jcl_clk_wiz_0_0
+Master Source       : jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKIN1
+Master Clock        : sysclk
+Multiply By         : 1
+Generated Sources   : {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1}
+
+Generated Clock     : clk_out3_jcl_clk_wiz_0_0
+Master Source       : jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKIN1
+Master Clock        : sysclk
+Multiply By         : 1
+Generated Sources   : {jcl_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2}
+
+
+
+====================================================
+User Uncertainty
+====================================================
+
+
+
+====================================================
+User Jitter
+====================================================
+
+

@@ -1,0 +1,94 @@
+JCLOADER_PART xcvu35p-fsvh2104-1-e
+JCLOADER_CFG clk_wiz_0.PRIM_SOURCE = No_buffer
+JCLOADER_CFG clk_wiz_0.USE_RESET = false
+JCLOADER_CFG clk_wiz_0.CLKOUT1_REQUESTED_OUT_FREQ = 100.000
+JCLOADER_CFG clk_wiz_0.CLKOUT2_REQUESTED_OUT_FREQ = 200.000
+JCLOADER_CFG clk_wiz_0.CLKOUT3_REQUESTED_OUT_FREQ = 200.000
+JCLOADER_CFG hbm.USER_HBM_DENSITY = 8GB
+JCLOADER_CFG hbm.USER_HBM_STACK = 2
+JCLOADER_CFG hbm.USER_HBM_REF_CLK_0 = 200
+JCLOADER_CFG hbm.USER_HBM_REF_CLK_1 = 200
+JCLOADER_CFG hbm.USER_AXI_INPUT_CLK_FREQ = 200
+JCLOADER_CFG hbm.USER_AXI_INPUT_CLK1_FREQ = 200
+JCLOADER_CFG hbm.USER_SWITCH_ENABLE_00 = TRUE
+JCLOADER_CFG hbm.USER_SWITCH_ENABLE_01 = TRUE
+JCLOADER_CFG hbm.USER_SAXI_00 = true
+JCLOADER_CFG hbm.USER_SAXI_16 = true
+JCLOADER_CFG hbm.USER_SAXI_01 = false
+JCLOADER_CFG hbm.USER_SAXI_31 = false
+JCLOADER_CFG hbm.USER_APB_EN = false
+JCLOADER_CFG loader.DNA_DIV = 10
+JCLOADER_BD loader/aclk ASSOCIATED_BUSIF m_axi
+JCLOADER_BD loader/arst TYPE undef
+JCLOADER_BD loader/m_axi PROTOCOL AXI3
+JCLOADER_BD loader/m_axi ADDR_WIDTH 33 DATA_WIDTH 256
+JCLOADER_CFG jtag_hbm.M_AXI_ADDR_WIDTH = 64
+JCLOADER_ADDR loader 0x000000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM00
+JCLOADER_ADDR loader 0x010000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM01
+JCLOADER_ADDR loader 0x020000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM02
+JCLOADER_ADDR loader 0x030000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM03
+JCLOADER_ADDR loader 0x040000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM04
+JCLOADER_ADDR loader 0x050000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM05
+JCLOADER_ADDR loader 0x060000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM06
+JCLOADER_ADDR loader 0x070000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM07
+JCLOADER_ADDR loader 0x080000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM08
+JCLOADER_ADDR loader 0x090000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM09
+JCLOADER_ADDR loader 0x0A0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM10
+JCLOADER_ADDR loader 0x0B0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM11
+JCLOADER_ADDR loader 0x0C0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM12
+JCLOADER_ADDR loader 0x0D0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM13
+JCLOADER_ADDR loader 0x0E0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM14
+JCLOADER_ADDR loader 0x0F0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM15
+JCLOADER_ADDR loader 0x100000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM16
+JCLOADER_ADDR loader 0x110000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM17
+JCLOADER_ADDR loader 0x120000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM18
+JCLOADER_ADDR loader 0x130000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM19
+JCLOADER_ADDR loader 0x140000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM20
+JCLOADER_ADDR loader 0x150000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM21
+JCLOADER_ADDR loader 0x160000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM22
+JCLOADER_ADDR loader 0x170000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM23
+JCLOADER_ADDR loader 0x180000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM24
+JCLOADER_ADDR loader 0x190000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM25
+JCLOADER_ADDR loader 0x1A0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM26
+JCLOADER_ADDR loader 0x1B0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM27
+JCLOADER_ADDR loader 0x1C0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM28
+JCLOADER_ADDR loader 0x1D0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM29
+JCLOADER_ADDR loader 0x1E0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM30
+JCLOADER_ADDR loader 0x1F0000000 0x010000000 /loader/m_axi/SEG_hbm_HBM_MEM31
+JCLOADER_UNCONNECTED module_ref_cells=1 count=0
+JCLOADER_BD_DONE
+JCLOADER_SYNTH_DONE
+JCLOADER_NETLIST_INPUTS checked=284 constant_or_open=0
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_frx/u_jc_bscan/INTERNAL_TCK
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_core/dnar/ck_reg/C
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_core/dnar/ck_reg/Q
+JCLOADER_DNA_CLOCK divide_by 20 period 100.000
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_core/sync/pub_reg/C
+JCLOADER_ACLK clk_out3_jcl_clk_wiz_0_0 period 5.000
+JCLOADER_CONSTRAINT_MATCH cells 293 *u_jc_core/sync/st_r_reg*
+JCLOADER_CONSTRAINT_MATCH cells 1 *u_jc_core/sync/tgl_s1_reg
+JCLOADER_CONSTRAINT_MATCH cells 1 *u_jc_core/sync/ack_s1_reg
+JCLOADER_CONSTRAINT_MATCH cells 8 *u_jc_core/fifo/wp_g_s1_reg*
+JCLOADER_CONSTRAINT_MATCH cells 8 *u_jc_core/fifo/rp_g_s1_reg*
+JCLOADER_CONSTRAINT_MATCH cells 1 *u_jc_core/trst_s1_reg
+JCLOADER_CONSTRAINT_MATCH startpoints 8 -> 8 cells on tck_user4
+JCLOADER_CONSTRAINT_MATCH startpoints 8 -> 8 cells on clk_out3_jcl_clk_wiz_0_0
+JCLOADER_CONSTRAINT_MATCH pins 1 *u_jc_core/trip_s1_reg/D
+JCLOADER_DNA_CELLS 1 jcl_i/loader/inst/u_jc_dna
+JCLOADER_CROSS snap_to_st_r slack 35.018 requirement 37.037 exception {MaxDelay Path 37.037ns -datapath_only}
+JCLOADER_CROSS pub_to_tgl slack 4.695 requirement 5.000 exception {MaxDelay Path 5.000ns -datapath_only}
+JCLOADER_CROSS ack_to_ack_s1 slack 4.647 requirement 5.000 exception {MaxDelay Path 5.000ns -datapath_only}
+JCLOADER_CROSS wp_gray slack 4.433 requirement 5.000 exception {MaxDelay Path 5.000ns -datapath_only}
+JCLOADER_CROSS rp_gray slack 4.308 requirement 5.000 exception {MaxDelay Path 5.000ns -datapath_only}
+JCLOADER_CROSS arst_to_trst slack 3.143 requirement 5.000 exception {MaxDelay Path 5.000ns -datapath_only}
+JCLOADER_BSCAN dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst JTAG_CHAIN=1
+JCLOADER_BSCAN jcl_i/loader/inst/u_jc_frx/u_jc_bscan JTAG_CHAIN=4
+JCLOADER_DEBUGCORE dbg_hub C_USER_SCAN_CHAIN=1
+JCLOADER_DEBUGCORE jcl_i/jtag_axi_0
+JCLOADER_DEBUGCORE jcl_i/jtag_hbm
+JCLOADER_BSCAN_SUMMARY total=2 chain4=1 chain4_loader=1
+JCLOADER_WNS 0.521
+JCLOADER_WHS 0.010
+JCLOADER_BIT /mnt/storage/fk33_builds/jc_loader/full4/proj/jc_loader.bit
+JCLOADER_LTX /mnt/storage/fk33_builds/jc_loader/full4/proj/jc_loader.ltx
+JCLOADER_DONE

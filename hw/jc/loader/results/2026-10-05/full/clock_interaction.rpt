@@ -1,0 +1,34 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 20:16:42 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_clock_interaction -file /mnt/storage/fk33_builds/jc_loader/full4/proj/reports/clock_interaction.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                                                                                                                                                                                                          WNS                            TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
+From Clock                                                                                           To Clock                                                                                             Clock Edges  WNS(ns)  TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
+---------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------  -----------  -------  -------  -----------  -----------  ---------------  -------------------  -----------------------  
+clk_out1_jcl_clk_wiz_0_0                                                                             clk_out1_jcl_clk_wiz_0_0                                                                             rise - rise     6.28     0.00            0         2648            10.00  Clean                Timed                    
+clk_out1_jcl_clk_wiz_0_0                                                                             clk_out3_jcl_clk_wiz_0_0                                                                             rise - rise     2.00     0.00            0            2             5.00  Clean                Partial False Path       
+clk_out3_jcl_clk_wiz_0_0                                                                             clk_out3_jcl_clk_wiz_0_0                                                                             rise - rise     0.70     0.00            0        31008             5.00  Clean                Partial False Path       
+clk_out3_jcl_clk_wiz_0_0                                                                             dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  rise - rise     4.55     0.00            0          103             5.00  Ignored              Max Delay Datapath Only  
+clk_out3_jcl_clk_wiz_0_0                                                                             dna_clk                                                                                              rise - rise     1.03     0.00            0            2             5.00  Clean                Timed                    
+clk_out3_jcl_clk_wiz_0_0                                                                             tck_user4                                                                                            rise - rise     3.14     0.00            0          303             5.00  Ignored              Max Delay Datapath Only  
+dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  clk_out3_jcl_clk_wiz_0_0                                                                             rise - rise    49.69     0.00            0           87            50.00  Ignored              Max Delay Datapath Only  
+dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  rise - fall    12.90     0.00            0         1097            25.00  Clean                Timed                    
+dna_clk                                                                                              clk_out3_jcl_clk_wiz_0_0                                                                             rise - rise     0.52     0.00            0            3             5.00  Clean                Timed                    
+tck_user4                                                                                            clk_out3_jcl_clk_wiz_0_0                                                                             rise - rise     4.43     0.00            0            9             5.00  Ignored              Max Delay Datapath Only  
+tck_user4                                                                                            tck_user4                                                                                            rise - fall     2.39     0.00            0         3017            18.52  Clean                Timed                    
+
+

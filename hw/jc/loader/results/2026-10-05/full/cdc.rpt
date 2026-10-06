@@ -1,0 +1,365 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 20:16:43 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_cdc -details -file /mnt/storage/fk33_builds/jc_loader/full4/proj/reports/cdc.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+ID      Severity  Count  Description
+------  --------  -----  -------------------------------------------------------
+CDC-3   Info         14  1-bit synchronized with ASYNC_REG property
+CDC-6   Warning       2  Multi-bit synchronized with ASYNC_REG property
+CDC-9   Info          2  Asynchronous reset synchronized with ASYNC_REG property
+CDC-15  Warning     297  Clock enable controlled CDC structure detected
+
+Source Clock: dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK
+Destination Clock: clk_out3_jcl_clk_wiz_0_0
+CDC Type: No Common Primary Clock
+
+Row  ID      Severity  Description                                              Depth  Exception   Source (From)                                                                                                                                                                                                                       Destination (To)
+---  ------  --------  -------------------------------------------------------  -----  ----------  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  1  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/ctl_reg_en_1_reg[0]/D
+  2  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD2/stat_reg_ld_reg[0]/D
+  3  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD3/stat_reg_ld_reg[0]/D
+  4  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD4/ctl_reg_en_1_reg[0]/D
+  5  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/icn_cmd_en_temp_reg/C                                                                                                                                  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD5/ctl_reg_en_1_reg[0]/D
+  6  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15/DP/CLK     dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[14]/D
+  7  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15__0/DP/CLK  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[15]/D
+  8  CDC-9   Info      Asynchronous reset synchronized with ASYNC_REG property      2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/wrdata_rst_reg/C                                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_WR/U_WR_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_wrfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/rstblk/ngwrdrst.grst.g7serrst.rst_rd_reg1_reg/PRE
+  9  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/icn_cmd_en_temp_reg/C                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_CTL/ctl_reg_en_1_reg[0]/D
+ 10  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/icn_cmd_en_temp_reg/C                                                                                                                             dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD7_STAT/stat_reg_ld_reg[0]/D
+ 11  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/icn_cmd_en_reg[5]/C                                                                                                                                           dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/icn_cmd_en_5_temp_reg/D
+
+Source Clock: tck_user4
+Destination Clock: clk_out3_jcl_clk_wiz_0_0
+CDC Type: No Common Primary Clock
+
+Row  ID     Severity  Description                                     Depth  Exception                Source (From)                                     Destination (To)
+---  -----  --------  ----------------------------------------------  -----  -----------------------  ------------------------------------------------  ---------------------------------------------------
+  1  CDC-6  Warning   Multi-bit synchronized with ASYNC_REG property      2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/fifo/wp_g_reg[6:0]/C  jcl_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[6:0]/D
+  2  CDC-3  Info      1-bit synchronized with ASYNC_REG property          2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/fifo/wp_reg[7]/C      jcl_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]/D
+  3  CDC-3  Info      1-bit synchronized with ASYNC_REG property          2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/ack_reg/C        jcl_i/loader/inst/u_jc_core/sync/ack_s1_reg/D
+
+Source Clock: clk_out3_jcl_clk_wiz_0_0
+Destination Clock: dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK
+CDC Type: No Common Primary Clock
+
+Row  ID      Severity  Description                                              Depth  Exception   Source (From)                                                                                                                                                                                                                       Destination (To)
+---  ------  --------  -------------------------------------------------------  -----  ----------  ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+  1  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15/DP/CLK     dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[14]/D
+  2  CDC-15  Warning   Clock enable controlled CDC structure detected               0  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/RAM_reg_0_15_14_15__0/DP/CLK  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.mem/gdm.dm_gen.dm/gpr1.dout_i_reg[15]/D
+  3  CDC-9   Info      Asynchronous reset synchronized with ASYNC_REG property      2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/rddata_rst_reg/C                                                                                                                                              dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_RD/U_RD_FIFO/SUBCORE_FIFO.xsdbm_v3_0_0_rdfifo_inst/inst_fifo_gen/gconvfifo.rf/grf.rf/rstblk/ngwrdrst.grst.g7serrst.rst_rd_reg1_reg/PRE
+  4  CDC-3   Info      1-bit synchronized with ASYNC_REG property                   2  False Path  dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/U_CMD1/ctl_reg_reg[0]/C                                                                                                                                       dbg_hub/inst/BSCANID.u_xsdbm_id/CORE_XSDB.UUT_MASTER/U_ICON_INTERFACE/ma_rst_1_reg/D
+
+Source Clock: clk_out3_jcl_clk_wiz_0_0
+Destination Clock: tck_user4
+CDC Type: No Common Primary Clock
+
+Row  ID      Severity  Description                                     Depth  Exception                Source (From)                                     Destination (To)
+---  ------  --------  ----------------------------------------------  -----  -----------------------  ------------------------------------------------  ---------------------------------------------------
+  1  CDC-6   Warning   Multi-bit synchronized with ASYNC_REG property      2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/fifo/rp_g_reg[6:0]/C  jcl_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[6:0]/D
+  2  CDC-3   Info      1-bit synchronized with ASYNC_REG property          2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/fifo/rp_reg[7]/C      jcl_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]/D
+  3  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[32]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[32]/D
+  4  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[33]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[33]/D
+  5  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[34]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[34]/D
+  6  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[35]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[35]/D
+  7  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[36]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[36]/D
+  8  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[37]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[37]/D
+  9  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[38]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[38]/D
+ 10  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[39]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[39]/D
+ 11  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[40]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[40]/D
+ 12  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[41]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[41]/D
+ 13  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[42]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[42]/D
+ 14  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[43]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[43]/D
+ 15  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[44]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[44]/D
+ 16  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[45]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[45]/D
+ 17  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[46]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[46]/D
+ 18  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[47]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[47]/D
+ 19  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[48]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[48]/D
+ 20  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[49]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[49]/D
+ 21  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[50]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[50]/D
+ 22  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[51]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[51]/D
+ 23  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[52]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[52]/D
+ 24  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[53]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[53]/D
+ 25  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[54]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[54]/D
+ 26  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[55]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[55]/D
+ 27  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[56]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[56]/D
+ 28  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[57]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[57]/D
+ 29  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[58]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[58]/D
+ 30  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[59]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[59]/D
+ 31  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[60]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[60]/D
+ 32  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[61]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[61]/D
+ 33  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[62]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[62]/D
+ 34  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[63]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[63]/D
+ 35  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[64]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[64]/D
+ 36  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[65]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[65]/D
+ 37  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[66]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[66]/D
+ 38  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[67]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[67]/D
+ 39  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[68]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[68]/D
+ 40  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[69]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[69]/D
+ 41  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[70]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[70]/D
+ 42  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[71]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[71]/D
+ 43  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[72]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[72]/D
+ 44  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[73]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[73]/D
+ 45  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[74]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[74]/D
+ 46  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[75]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[75]/D
+ 47  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[76]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[76]/D
+ 48  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[77]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[77]/D
+ 49  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[78]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[78]/D
+ 50  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[79]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[79]/D
+ 51  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[80]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[80]/D
+ 52  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[81]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[81]/D
+ 53  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[82]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[82]/D
+ 54  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[83]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[83]/D
+ 55  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[84]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[84]/D
+ 56  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[85]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[85]/D
+ 57  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[86]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[86]/D
+ 58  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[87]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[87]/D
+ 59  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[88]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[88]/D
+ 60  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[89]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[89]/D
+ 61  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[90]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[90]/D
+ 62  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[91]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[91]/D
+ 63  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[92]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[92]/D
+ 64  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[93]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[93]/D
+ 65  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[94]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[94]/D
+ 66  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[95]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[95]/D
+ 67  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[96]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[96]/D
+ 68  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[97]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[97]/D
+ 69  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[98]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[98]/D
+ 70  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[99]/C   jcl_i/loader/inst/u_jc_core/sync/st_r_reg[99]/D
+ 71  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[100]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[100]/D
+ 72  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[101]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[101]/D
+ 73  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[102]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[102]/D
+ 74  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[103]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[103]/D
+ 75  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[104]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[104]/D
+ 76  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[105]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[105]/D
+ 77  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[106]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[106]/D
+ 78  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[107]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[107]/D
+ 79  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[108]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[108]/D
+ 80  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[109]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[109]/D
+ 81  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[110]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[110]/D
+ 82  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[111]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[111]/D
+ 83  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[112]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[112]/D
+ 84  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[113]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[113]/D
+ 85  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[114]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[114]/D
+ 86  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[115]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[115]/D
+ 87  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[116]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[116]/D
+ 88  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[117]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[117]/D
+ 89  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[118]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[118]/D
+ 90  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[119]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[119]/D
+ 91  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[120]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[120]/D
+ 92  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[121]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[121]/D
+ 93  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[122]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[122]/D
+ 94  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[123]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[123]/D
+ 95  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[124]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[124]/D
+ 96  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[125]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[125]/D
+ 97  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[126]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[126]/D
+ 98  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[127]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[127]/D
+ 99  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[144]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[144]/D
+100  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[145]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[145]/D
+101  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[146]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[146]/D
+102  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[147]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[147]/D
+103  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[148]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[148]/D
+104  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[149]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[149]/D
+105  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[150]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[150]/D
+106  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[151]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[151]/D
+107  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[152]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[152]/D
+108  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[153]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[153]/D
+109  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[154]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[154]/D
+110  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[155]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[155]/D
+111  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[156]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[156]/D
+112  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[157]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[157]/D
+113  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[158]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[158]/D
+114  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[159]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[159]/D
+115  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[160]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[160]/D
+116  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[161]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[161]/D
+117  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[162]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[162]/D
+118  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[163]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[163]/D
+119  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[164]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[164]/D
+120  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[165]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[165]/D
+121  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[166]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[166]/D
+122  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[167]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[167]/D
+123  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[168]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[168]/D
+124  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[169]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[169]/D
+125  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[170]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[170]/D
+126  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[171]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[171]/D
+127  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[172]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[172]/D
+128  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[173]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[173]/D
+129  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[174]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[174]/D
+130  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[175]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[175]/D
+131  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[176]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[176]/D
+132  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[177]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[177]/D
+133  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[178]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[178]/D
+134  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[180]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[180]/D
+135  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[192]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[192]/D
+136  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[193]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[193]/D
+137  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[194]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[194]/D
+138  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[195]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[195]/D
+139  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[196]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[196]/D
+140  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[197]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[197]/D
+141  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[198]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[198]/D
+142  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[199]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[199]/D
+143  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[200]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[200]/D
+144  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[201]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[201]/D
+145  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[202]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[202]/D
+146  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[203]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[203]/D
+147  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[204]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[204]/D
+148  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[205]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[205]/D
+149  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[206]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[206]/D
+150  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[207]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[207]/D
+151  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[208]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[208]/D
+152  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[209]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[209]/D
+153  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[210]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[210]/D
+154  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[211]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[211]/D
+155  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[212]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[212]/D
+156  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[213]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[213]/D
+157  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[214]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[214]/D
+158  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[215]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[215]/D
+159  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[216]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[216]/D
+160  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[217]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[217]/D
+161  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[218]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[218]/D
+162  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[219]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[219]/D
+163  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[220]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[220]/D
+164  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[221]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[221]/D
+165  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[222]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[222]/D
+166  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[223]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[223]/D
+167  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[224]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[224]/D
+168  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[225]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[225]/D
+169  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[226]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[226]/D
+170  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[227]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[227]/D
+171  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[228]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[228]/D
+172  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[229]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[229]/D
+173  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[230]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[230]/D
+174  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[231]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[231]/D
+175  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[232]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[232]/D
+176  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[233]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[233]/D
+177  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[234]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[234]/D
+178  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[235]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[235]/D
+179  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[236]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[236]/D
+180  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[237]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[237]/D
+181  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[238]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[238]/D
+182  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[239]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[239]/D
+183  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[240]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[240]/D
+184  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[241]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[241]/D
+185  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[242]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[242]/D
+186  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[243]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[243]/D
+187  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[244]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[244]/D
+188  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[245]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[245]/D
+189  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[246]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[246]/D
+190  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[247]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[247]/D
+191  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[248]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[248]/D
+192  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[249]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[249]/D
+193  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[250]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[250]/D
+194  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[251]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[251]/D
+195  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[252]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[252]/D
+196  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[253]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[253]/D
+197  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[254]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[254]/D
+198  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[255]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[255]/D
+199  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[256]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[256]/D
+200  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[257]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[257]/D
+201  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[258]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[258]/D
+202  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[259]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[259]/D
+203  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[260]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[260]/D
+204  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[261]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[261]/D
+205  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[262]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[262]/D
+206  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[263]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[263]/D
+207  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[264]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[264]/D
+208  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[265]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[265]/D
+209  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[266]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[266]/D
+210  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[267]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[267]/D
+211  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[268]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[268]/D
+212  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[269]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[269]/D
+213  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[270]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[270]/D
+214  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[271]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[271]/D
+215  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[272]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[272]/D
+216  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[273]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[273]/D
+217  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[274]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[274]/D
+218  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[275]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[275]/D
+219  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[276]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[276]/D
+220  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[277]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[277]/D
+221  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[278]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[278]/D
+222  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[279]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[279]/D
+223  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[280]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[280]/D
+224  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[281]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[281]/D
+225  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[282]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[282]/D
+226  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[283]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[283]/D
+227  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[284]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[284]/D
+228  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[285]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[285]/D
+229  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[286]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[286]/D
+230  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[287]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[287]/D
+231  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[288]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[288]/D
+232  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[289]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[289]/D
+233  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[290]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[290]/D
+234  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[291]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[291]/D
+235  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[292]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[292]/D
+236  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[293]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[293]/D
+237  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[294]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[294]/D
+238  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[295]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[295]/D
+239  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[296]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[296]/D
+240  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[297]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[297]/D
+241  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[298]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[298]/D
+242  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[299]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[299]/D
+243  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[300]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[300]/D
+244  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[301]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[301]/D
+245  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[302]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[302]/D
+246  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[303]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[303]/D
+247  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[304]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[304]/D
+248  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[305]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[305]/D
+249  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[306]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[306]/D
+250  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[307]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[307]/D
+251  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[308]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[308]/D
+252  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[309]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[309]/D
+253  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[310]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[310]/D
+254  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[311]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[311]/D
+255  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[312]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[312]/D
+256  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[313]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[313]/D
+257  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[314]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[314]/D
+258  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[315]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[315]/D
+259  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[316]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[316]/D
+260  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[317]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[317]/D
+261  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[318]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[318]/D
+262  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[319]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[319]/D
+263  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[320]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[320]/D
+264  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[321]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[321]/D
+265  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[322]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[322]/D
+266  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[323]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[323]/D
+267  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[324]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[324]/D
+268  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[325]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[325]/D
+269  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[326]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[326]/D
+270  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[327]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[327]/D
+271  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[328]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[328]/D
+272  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[329]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[329]/D
+273  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[330]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[330]/D
+274  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[331]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[331]/D
+275  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[332]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[332]/D
+276  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[333]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[333]/D
+277  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[334]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[334]/D
+278  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[335]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[335]/D
+279  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[336]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[336]/D
+280  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[337]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[337]/D
+281  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[338]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[338]/D
+282  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[339]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[339]/D
+283  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[340]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[340]/D
+284  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[341]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[341]/D
+285  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[342]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[342]/D
+286  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[343]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[343]/D
+287  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[344]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[344]/D
+288  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[345]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[345]/D
+289  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[346]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[346]/D
+290  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[347]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[347]/D
+291  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[348]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[348]/D
+292  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[349]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[349]/D
+293  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[350]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[350]/D
+294  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[351]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[351]/D
+295  CDC-15  Warning   Clock enable controlled CDC structure detected      0  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/snap_reg[352]/C  jcl_i/loader/inst/u_jc_core/sync/st_r_reg[352]/D
+296  CDC-3   Info      1-bit synchronized with ASYNC_REG property          2  Max Delay Datapath Only  jcl_i/loader/inst/u_jc_core/sync/pub_reg/C        jcl_i/loader/inst/u_jc_core/sync/tgl_s1_reg/D
+297  CDC-3   Info      1-bit synchronized with ASYNC_REG property          2  Max Delay Datapath Only  jcl_i/loader/inst/core_rst_reg/C                  jcl_i/loader/inst/u_jc_core/trst_s1_reg/D
+

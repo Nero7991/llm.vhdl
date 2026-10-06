@@ -1,0 +1,21 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:24 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_cdc -file /home/labuser/jcl_ooc/r4/cdc_summary.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+Severity  Source Clock  Destination Clock  CDC Type                 Exceptions               Endpoints  Safe  Unsafe  Unknown  No ASYNC_REG  
+--------  ------------  -----------------  -----------------------  -----------------------  ---------  ----  ------  -------  ------------  
+Warning   tck           aclk               No Common Primary Clock  Max Delay Datapath Only          9     9       0        0             0  
+Warning   aclk          tck                No Common Primary Clock  Max Delay Datapath Only        303   303       0        0             0  
+Info      dna_clk       aclk               Safely Timed             None                             1     1       0        0             0  
+

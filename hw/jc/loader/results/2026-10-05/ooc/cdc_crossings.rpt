@@ -1,0 +1,288 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:27 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks aclk] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "sync/st_r_reg*"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             36.481ns  (required time - arrival time)
+  Source:                 sync/snap_reg[209]/C
+                            (rising edge-triggered cell FDRE clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            sync/st_r_reg[209]/D
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            37.037ns  (MaxDelay Path 37.037ns)
+  Data Path Delay:        0.583ns  (logic 0.095ns (16.295%)  route 0.488ns (83.705%))
+  Logic Levels:           0  
+  Timing Exception:       MaxDelay Path 37.037ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    SLICE_X72Y400                                     0.000     0.000 r  sync/snap_reg[209]/C
+    SLICE_X72Y400        FDRE (Prop_GFF_SLICEM_C_Q)
+                                                      0.095     0.095 r  sync/snap_reg[209]/Q
+                         net (fo=1, routed)           0.488     0.583    sync/snap[209]
+    SLICE_X72Y400        FDRE                                         r  sync/st_r_reg[209]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                   37.037    37.037    
+    SLICE_X72Y400        FDRE (Setup_BFF_SLICEM_C_D)
+                                                      0.027    37.064    sync/st_r_reg[209]
+  -------------------------------------------------------------------
+                         required time                         37.064    
+                         arrival time                          -0.583    
+  -------------------------------------------------------------------
+                         slack                                 36.481    
+
+
+
+
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:28 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks aclk] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "sync/tgl_s1_reg"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             4.622ns  (required time - arrival time)
+  Source:                 sync/pub_reg/C
+                            (rising edge-triggered cell FDRE clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            sync/tgl_s1_reg/D
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (MaxDelay Path 5.000ns)
+  Data Path Delay:        0.405ns  (logic 0.096ns (23.719%)  route 0.309ns (76.281%))
+  Logic Levels:           0  
+  Timing Exception:       MaxDelay Path 5.000ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    SLICE_X71Y419                                     0.000     0.000 r  sync/pub_reg/C
+    SLICE_X71Y419        FDRE (Prop_DFF_SLICEM_C_Q)
+                                                      0.096     0.096 r  sync/pub_reg/Q
+                         net (fo=3, routed)           0.309     0.405    sync/pub
+    SLICE_X71Y419        FDRE                                         r  sync/tgl_s1_reg/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                    5.000     5.000    
+    SLICE_X71Y419        FDRE (Setup_HFF2_SLICEM_C_D)
+                                                      0.027     5.027    sync/tgl_s1_reg
+  -------------------------------------------------------------------
+                         required time                          5.027    
+                         arrival time                          -0.405    
+  -------------------------------------------------------------------
+                         slack                                  4.622    
+
+
+
+
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:28 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks tck] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "sync/ack_s1_reg"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             4.559ns  (required time - arrival time)
+  Source:                 sync/ack_reg/C
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Destination:            sync/ack_s1_reg/D
+                            (rising edge-triggered cell FDRE clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             aclk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (MaxDelay Path 5.000ns)
+  Data Path Delay:        0.468ns  (logic 0.096ns (20.496%)  route 0.372ns (79.504%))
+  Logic Levels:           0  
+  Timing Exception:       MaxDelay Path 5.000ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    SLICE_X71Y419                                     0.000     0.000 r  sync/ack_reg/C
+    SLICE_X71Y419        FDRE (Prop_HFF_SLICEM_C_Q)
+                                                      0.096     0.096 r  sync/ack_reg/Q
+                         net (fo=2, routed)           0.372     0.468    sync/ack
+    SLICE_X71Y419        FDRE                                         r  sync/ack_s1_reg/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                    5.000     5.000    
+    SLICE_X71Y419        FDRE (Setup_DFF2_SLICEM_C_D)
+                                                      0.027     5.027    sync/ack_s1_reg
+  -------------------------------------------------------------------
+                         required time                          5.027    
+                         arrival time                          -0.468    
+  -------------------------------------------------------------------
+                         slack                                  4.559    
+
+
+
+
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:28 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks tck] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "fifo/wp_g_s1_reg*"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             4.284ns  (required time - arrival time)
+  Source:                 fifo/wp_g_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Destination:            fifo/wp_g_s1_reg[1]/D
+                            (rising edge-triggered cell FDRE clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Path Group:             aclk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (MaxDelay Path 5.000ns)
+  Data Path Delay:        0.743ns  (logic 0.095ns (12.786%)  route 0.648ns (87.214%))
+  Logic Levels:           0  
+  Timing Exception:       MaxDelay Path 5.000ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    SLICE_X56Y419                                     0.000     0.000 r  fifo/wp_g_reg[1]/C
+    SLICE_X56Y419        FDRE (Prop_BFF_SLICEM_C_Q)
+                                                      0.095     0.095 r  fifo/wp_g_reg[1]/Q
+                         net (fo=1, routed)           0.648     0.743    fifo/wp_g_reg_n_0_[1]
+    SLICE_X56Y419        FDRE                                         r  fifo/wp_g_s1_reg[1]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                    5.000     5.000    
+    SLICE_X56Y419        FDRE (Setup_HFF2_SLICEM_C_D)
+                                                      0.027     5.027    fifo/wp_g_s1_reg[1]
+  -------------------------------------------------------------------
+                         required time                          5.027    
+                         arrival time                          -0.743    
+  -------------------------------------------------------------------
+                         slack                                  4.284    
+
+
+
+
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:28 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks aclk] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "fifo/rp_g_s1_reg*"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             4.342ns  (required time - arrival time)
+  Source:                 fifo/rp_g_reg[2]/C
+                            (rising edge-triggered cell FDRE clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            fifo/rp_g_s1_reg[2]/D
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (MaxDelay Path 5.000ns)
+  Data Path Delay:        0.685ns  (logic 0.096ns (14.015%)  route 0.589ns (85.985%))
+  Logic Levels:           0  
+  Timing Exception:       MaxDelay Path 5.000ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+    SLICE_X57Y418                                     0.000     0.000 r  fifo/rp_g_reg[2]/C
+    SLICE_X57Y418        FDRE (Prop_HFF_SLICEM_C_Q)
+                                                      0.096     0.096 r  fifo/rp_g_reg[2]/Q
+                         net (fo=1, routed)           0.589     0.685    fifo/rp_g[2]
+    SLICE_X57Y418        FDRE                                         r  fifo/rp_g_s1_reg[2]/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                    5.000     5.000    
+    SLICE_X57Y418        FDRE (Setup_DFF2_SLICEM_C_D)
+                                                      0.027     5.027    fifo/rp_g_s1_reg[2]
+  -------------------------------------------------------------------
+                         required time                          5.027    
+                         arrival time                          -0.685    
+  -------------------------------------------------------------------
+                         slack                                  4.342    
+
+
+
+
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:28 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_timing -from [get_clocks aclk] -to [get_pins -of_objects [get_cells -hier -filter {NAME =~ "trst_s1_reg"}] -filter {REF_PIN_NAME == D}] -max_paths 1 -append -file /home/labuser/jcl_ooc/r4/cdc_crossings.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             2.970ns  (required time - arrival time)
+  Source:                 arst
+                            (input port clocked by aclk  {rise@0.000ns fall@2.500ns period=5.000ns})
+  Destination:            trst_s1_reg/D
+                            (rising edge-triggered cell FDRE clocked by tck  {rise@0.000ns fall@18.518ns period=37.037ns})
+  Path Group:             tck
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            5.000ns  (MaxDelay Path 5.000ns)
+  Data Path Delay:        0.057ns  (logic 0.000ns (0.000%)  route 0.057ns (100.000%))
+  Logic Levels:           0  
+  Input Delay:            2.000ns
+  Timing Exception:       MaxDelay Path 5.000ns -datapath_only
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         input delay                  2.000     2.000    
+                                                      0.000     2.000 r  arst (IN)
+                         net (fo=383, unset)          0.057     2.057    arst
+    SLICE_X58Y420        FDRE                                         r  trst_s1_reg/D
+  -------------------------------------------------------------------    -------------------
+
+                         max delay                    5.000     5.000    
+    SLICE_X58Y420        FDRE (Setup_DFF2_SLICEL_C_D)
+                                                      0.027     5.027    trst_s1_reg
+  -------------------------------------------------------------------
+                         required time                          5.027    
+                         arrival time                          -2.057    
+  -------------------------------------------------------------------
+                         slack                                  2.970    
+
+
+
+

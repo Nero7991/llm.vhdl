@@ -1,0 +1,25 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 20:16:43 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_cdc -file /mnt/storage/fk33_builds/jc_loader/full4/proj/reports/cdc_summary.rpt
+| Design            : jcl_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+Severity  Source Clock                                                                                         Destination Clock                                                                                    CDC Type                 Exceptions               Endpoints  Safe  Unsafe  Unknown  No ASYNC_REG  
+--------  ---------------------------------------------------------------------------------------------------  ---------------------------------------------------------------------------------------------------  -----------------------  -----------------------  ---------  ----  ------  -------  ------------  
+Warning   dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  clk_out3_jcl_clk_wiz_0_0                                                                             No Common Primary Clock  Max Delay Datapath Only         11    11       0        0             0  
+Warning   tck_user4                                                                                            clk_out3_jcl_clk_wiz_0_0                                                                             No Common Primary Clock  Max Delay Datapath Only          9     9       0        0             0  
+Warning   clk_out3_jcl_clk_wiz_0_0                                                                             dbg_hub/inst/BSCANID.u_xsdbm_id/SWITCH_N_EXT_BSCAN.bscan_inst/SERIES7_BSCAN.bscan_inst/INTERNAL_TCK  No Common Primary Clock  Max Delay Datapath Only          4     4       0        0             0  
+Warning   clk_out3_jcl_clk_wiz_0_0                                                                             tck_user4                                                                                            No Common Primary Clock  Max Delay Datapath Only        303   303       0        0             0  
+Info      clk_out1_jcl_clk_wiz_0_0                                                                             clk_out3_jcl_clk_wiz_0_0                                                                             Safely Timed             None                             2     2       0        0             0  
+Info      dna_clk                                                                                              clk_out3_jcl_clk_wiz_0_0                                                                             Safely Timed             None                             3     3       0        0             0  
+Info      clk_out3_jcl_clk_wiz_0_0                                                                             dna_clk                                                                                              Safely Timed             None                             2     2       0        0             0  
+

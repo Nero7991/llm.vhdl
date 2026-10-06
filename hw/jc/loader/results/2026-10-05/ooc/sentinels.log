@@ -1,0 +1,23 @@
+JCL_OOC_PART xcvu35p-fsvh2104-1-e
+JCLOADER_CONSTRAINT_MATCH pins 1 dnar/ck_reg/C
+JCLOADER_CONSTRAINT_MATCH pins 1 dnar/ck_reg/Q
+JCLOADER_DNA_CLOCK divide_by 20 period 100.000
+JCLOADER_CONSTRAINT_MATCH cells 293 sync/st_r_reg*
+JCLOADER_CONSTRAINT_MATCH cells 1 sync/tgl_s1_reg
+JCLOADER_CONSTRAINT_MATCH cells 1 sync/ack_s1_reg
+JCLOADER_CONSTRAINT_MATCH cells 8 fifo/wp_g_s1_reg*
+JCLOADER_CONSTRAINT_MATCH cells 8 fifo/rp_g_s1_reg*
+JCLOADER_CONSTRAINT_MATCH cells 1 trst_s1_reg
+JCLOADER_CONSTRAINT_MATCH startpoints 8 -> 8 cells on tck
+JCLOADER_CONSTRAINT_MATCH startpoints 8 -> 8 cells on aclk
+JCLOADER_CONSTRAINT_MATCH pins 1 trip_s1_reg/D
+JCL_OOC_CROSS snap_to_st_r slack 36.481 requirement 37.037
+JCL_OOC_CROSS pub_to_tgl slack 4.622 requirement 5.000
+JCL_OOC_CROSS ack_to_ack_s1 slack 4.559 requirement 5.000
+JCL_OOC_CROSS wp_gray slack 4.284 requirement 5.000
+JCL_OOC_CROSS rp_gray slack 4.342 requirement 5.000
+JCL_OOC_CROSS arst_to_trst slack 2.970 requirement 5.000
+JCL_OOC_ROUTE routing_errors 0
+JCL_OOC_WNS 1.205
+JCL_OOC_WHS 0.030
+JCL_OOC_DONE

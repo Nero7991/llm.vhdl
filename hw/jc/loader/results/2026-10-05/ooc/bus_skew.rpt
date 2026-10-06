@@ -1,0 +1,200 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Mon Oct  5 22:14:25 2026
+| Host              : cachyos-bc250 running 64-bit CachyOS
+| Command           : report_bus_skew -file /home/labuser/jcl_ooc/r4/bus_skew.rpt
+| Design            : jc_loader_core
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -1  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Bus Skew Report
+
+Table of Contents
+-----------------
+1. Bus Skew Report Summary
+2. Bus Skew Report Per Constraint
+
+1. Bus Skew Report Summary
+--------------------------
+
+Id  Position  From                            To                              Corner  Requirement(ns)  Actual(ns)  Slack(ns)
+--  --------  ------------------------------  ------------------------------  ------  ---------------  ----------  ---------
+1   10        [get_pins [list {fifo/wp_g_reg[0]/C} {fifo/wp_g_reg[1]/C} {fifo/wp_g_reg[2]/C} {fifo/wp_g_reg[3]/C} {fifo/wp_g_reg[4]/C} {fifo/wp_g_reg[5]/C} {fifo/wp_g_reg[6]/C} {fifo/wp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "fifo/wp_g_s1_reg*"}]
+                                                                              Slow              5.000       0.577      4.423
+2   12        [get_pins [list {fifo/rp_g_reg[0]/C} {fifo/rp_g_reg[1]/C} {fifo/rp_g_reg[2]/C} {fifo/rp_g_reg[3]/C} {fifo/rp_g_reg[4]/C} {fifo/rp_g_reg[5]/C} {fifo/rp_g_reg[6]/C} {fifo/rp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "fifo/rp_g_s1_reg*"}]
+                                                                              Slow              5.000       0.562      4.438
+
+
+2. Bus Skew Report Per Constraint
+---------------------------------
+
+Id: 1
+set_bus_skew -from [get_pins [list {fifo/wp_g_reg[0]/C} {fifo/wp_g_reg[1]/C} {fifo/wp_g_reg[2]/C} {fifo/wp_g_reg[3]/C} {fifo/wp_g_reg[4]/C} {fifo/wp_g_reg[5]/C} {fifo/wp_g_reg[6]/C} {fifo/wp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "fifo/wp_g_s1_reg*"}] 5.000
+Requirement: 5.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+tck                   aclk                  fifo/wp_g_s1_reg[1]/D           fifo/wp_g_s1_reg[3]/D           Slow         0.577      4.423
+
+
+Slack (MET) :             4.423ns  (requirement - actual skew)
+  Endpoint Source:        fifo/wp_g_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by tck)
+  Endpoint Destination:   fifo/wp_g_s1_reg[1]/D
+                            (rising edge-triggered cell FDRE clocked by aclk)
+  Reference Source:       fifo/wp_g_reg[3]/C
+                            (rising edge-triggered cell FDRE clocked by tck)
+  Reference Destination:  fifo/wp_g_s1_reg[3]/D
+                            (rising edge-triggered cell FDRE clocked by aclk)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            5.000ns
+  Endpoint Relative Delay:    0.727ns
+  Reference Relative Delay:   0.150ns
+  Relative CRPR:              0.000ns
+  Actual Bus Skew:            0.577ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  tck (IN)
+                         net (fo=1343, unset)         0.037     0.037    fifo/tck
+    SLICE_X56Y419        FDRE                                         r  fifo/wp_g_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X56Y419        FDRE (Prop_BFF_SLICEM_C_Q)
+                                                      0.095     0.132 r  fifo/wp_g_reg[1]/Q
+                         net (fo=1, routed)           0.648     0.780    fifo/wp_g_reg_n_0_[1]
+    SLICE_X56Y419        FDRE                                         r  fifo/wp_g_s1_reg[1]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock aclk rise edge)       0.000     0.000 r  
+                                                      0.000     0.000 r  aclk (IN)
+                         net (fo=1602, unset)         0.026     0.026    fifo/aclk
+    SLICE_X56Y419        FDRE                                         r  fifo/wp_g_s1_reg[1]/C
+                         clock pessimism              0.000     0.026    
+    SLICE_X56Y419        FDRE (Setup_HFF2_SLICEM_C_D)
+                                                      0.027     0.053    fifo/wp_g_s1_reg[1]
+  -------------------------------------------------------------------
+                         data arrival                           0.780    
+                         clock arrival                          0.053    
+  -------------------------------------------------------------------
+                         relative delay                         0.727    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  tck (IN)
+                         net (fo=1343, unset)         0.026     0.026    fifo/tck
+    SLICE_X57Y420        FDRE                                         r  fifo/wp_g_reg[3]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X57Y420        FDRE (Prop_EFF_SLICEM_C_Q)
+                                                      0.069     0.095 r  fifo/wp_g_reg[3]/Q
+                         net (fo=1, routed)           0.146     0.241    fifo/wp_g_reg_n_0_[3]
+    SLICE_X57Y421        FDRE                                         r  fifo/wp_g_s1_reg[3]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock aclk rise edge)       0.000     0.000 r  
+                                                      0.000     0.000 r  aclk (IN)
+                         net (fo=1602, unset)         0.037     0.037    fifo/aclk
+    SLICE_X57Y421        FDRE                                         r  fifo/wp_g_s1_reg[3]/C
+                         clock pessimism              0.000     0.037    
+    SLICE_X57Y421        FDRE (Hold_DFF2_SLICEM_C_D)
+                                                      0.054     0.091    fifo/wp_g_s1_reg[3]
+  -------------------------------------------------------------------
+                         data arrival                           0.241    
+                         clock arrival                          0.091    
+  -------------------------------------------------------------------
+                         relative delay                         0.150    
+
+
+
+Id: 2
+set_bus_skew -from [get_pins [list {fifo/rp_g_reg[0]/C} {fifo/rp_g_reg[1]/C} {fifo/rp_g_reg[2]/C} {fifo/rp_g_reg[3]/C} {fifo/rp_g_reg[4]/C} {fifo/rp_g_reg[5]/C} {fifo/rp_g_reg[6]/C} {fifo/rp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "fifo/rp_g_s1_reg*"}] 5.000
+Requirement: 5.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+aclk                  tck                   fifo/rp_g_s1_reg[2]/D           fifo/rp_g_s1_reg[4]/D           Slow         0.562      4.438
+
+
+Slack (MET) :             4.438ns  (requirement - actual skew)
+  Endpoint Source:        fifo/rp_g_reg[2]/C
+                            (rising edge-triggered cell FDRE clocked by aclk)
+  Endpoint Destination:   fifo/rp_g_s1_reg[2]/D
+                            (rising edge-triggered cell FDRE clocked by tck)
+  Reference Source:       fifo/rp_g_reg[4]/C
+                            (rising edge-triggered cell FDRE clocked by aclk)
+  Reference Destination:  fifo/rp_g_s1_reg[4]/D
+                            (rising edge-triggered cell FDRE clocked by tck)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            5.000ns
+  Endpoint Relative Delay:    0.669ns
+  Reference Relative Delay:   0.107ns
+  Relative CRPR:              0.000ns
+  Actual Bus Skew:            0.562ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock aclk rise edge)       0.000     0.000 r  
+                                                      0.000     0.000 r  aclk (IN)
+                         net (fo=1602, unset)         0.037     0.037    fifo/aclk
+    SLICE_X57Y418        FDRE                                         r  fifo/rp_g_reg[2]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X57Y418        FDRE (Prop_HFF_SLICEM_C_Q)
+                                                      0.096     0.133 r  fifo/rp_g_reg[2]/Q
+                         net (fo=1, routed)           0.589     0.722    fifo/rp_g[2]
+    SLICE_X57Y418        FDRE                                         r  fifo/rp_g_s1_reg[2]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  tck (IN)
+                         net (fo=1343, unset)         0.026     0.026    fifo/tck
+    SLICE_X57Y418        FDRE                                         r  fifo/rp_g_s1_reg[2]/C
+                         clock pessimism              0.000     0.026    
+    SLICE_X57Y418        FDRE (Setup_DFF2_SLICEM_C_D)
+                                                      0.027     0.053    fifo/rp_g_s1_reg[2]
+  -------------------------------------------------------------------
+                         data arrival                           0.722    
+                         clock arrival                          0.053    
+  -------------------------------------------------------------------
+                         relative delay                         0.669    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock aclk rise edge)       0.000     0.000 r  
+                                                      0.000     0.000 r  aclk (IN)
+                         net (fo=1602, unset)         0.025     0.025    fifo/aclk
+    SLICE_X58Y418        FDRE                                         r  fifo/rp_g_reg[4]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X58Y418        FDRE (Prop_EFF_SLICEL_C_Q)
+                                                      0.070     0.095 r  fifo/rp_g_reg[4]/Q
+                         net (fo=1, routed)           0.102     0.197    fifo/rp_g[4]
+    SLICE_X58Y418        FDRE                                         r  fifo/rp_g_s1_reg[4]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck rise edge)        0.000     0.000 r  
+                                                      0.000     0.000 r  tck (IN)
+                         net (fo=1343, unset)         0.035     0.035    fifo/tck
+    SLICE_X58Y418        FDRE                                         r  fifo/rp_g_s1_reg[4]/C
+                         clock pessimism              0.000     0.035    
+    SLICE_X58Y418        FDRE (Hold_CFF2_SLICEL_C_D)
+                                                      0.055     0.090    fifo/rp_g_s1_reg[4]
+  -------------------------------------------------------------------
+                         data arrival                           0.197    
+                         clock arrival                          0.090    
+  -------------------------------------------------------------------
+                         relative delay                         0.107    
+
+
+
