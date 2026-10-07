@@ -167,6 +167,17 @@ def test_sh_post_run_lever_check_is_fatal_on_on_or_mixed():
     assert "jcooc27_fail \"levers (post-run" in text
 
 
+def test_sh_runs_the_generator_itself_from_the_archived_src_not_here():
+    """Fix round 3, item 4: the GENERATOR ITSELF (gen_ooc27_top.py) must be
+    read from the archived $SRC, never from $HERE (the live checkout) --
+    otherwise a run against an older/different commit's $SRC would still
+    execute THIS session's live generator, silently breaking the
+    provenance step 1's own `git archive HEAD` copy exists to establish."""
+    text = _sh_text()
+    assert '"$HERE/gen_ooc27_top.py"' not in text
+    assert '"$SRC/hw/jc/card/gen_ooc27_top.py"' in text
+
+
 def test_refuses_root_outside_fk33_builds_without_the_escape_hatch(tmp_path):
     r = subprocess.run(["bash", RUN_OOC27, "--dry-run", str(tmp_path / "root")],
                         cwd=REPO, capture_output=True, text=True)

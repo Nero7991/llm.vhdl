@@ -109,8 +109,18 @@ fi
 
 PATCH="$REPO/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch"
 # fix round 2: a stub run_capped.sh for tests, honoured by this env override;
-# the default is unchanged (the real script).
-RUN_CAPPED="${RUN_CAPPED:-$REPO/hw/jc/loader/run_capped.sh}"
+# the default is unchanged (the real script). fix round 3, IMPORTANT: a BARE
+# `RUN_CAPPED` (e.g. a stray `export RUN_CAPPED=...` left over in a shell)
+# must not silently launch the real card build without the 24G cap and the
+# 30 GiB swap guard -- that guard exists because of the 2026-08-30 hard hang
+# (CLAUDE.md: "THE MEMORY BUDGET IS GLOBAL"). A non-default value is refused
+# unless JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is ALSO set, which only this
+# script's own tests set.
+RUN_CAPPED_DEFAULT="$REPO/hw/jc/loader/run_capped.sh"
+RUN_CAPPED="${RUN_CAPPED:-$RUN_CAPPED_DEFAULT}"
+if [ "$RUN_CAPPED" != "$RUN_CAPPED_DEFAULT" ] && [ "${JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE:-}" != 1 ]; then
+  jccard_fail "RUN_CAPPED=$RUN_CAPPED overrides the real $RUN_CAPPED_DEFAULT; this is refused unless JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is also set (test-only: a bare override would launch Vivado with no memory cap and no swap guard)"
+fi
 CLK_CORE_MHZ=200
 MEM_HIGH=24G
 SWAP_KILL_BYTES=32212254720   # 30 GiB, the project's standing card-build swap guard
@@ -128,7 +138,7 @@ MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || ec
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 
 echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES allow_neg=${ALLOW_NEG:-no} nonce=$NONCE"
-echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES"
+echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED"
 
 # ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
 # executed "$@" here AND the caller then executed the same command AGAIN in

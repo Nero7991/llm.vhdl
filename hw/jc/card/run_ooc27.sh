@@ -134,8 +134,18 @@ fi
 
 PATCH="$REPO/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch"
 # fix round 2: a stub run_capped.sh for tests, honoured by this env override;
-# the default is unchanged (the real script).
-RUN_CAPPED="${RUN_CAPPED:-$REPO/hw/jc/loader/run_capped.sh}"
+# the default is unchanged (the real script). fix round 3, IMPORTANT: a BARE
+# `RUN_CAPPED` (e.g. a stray `export RUN_CAPPED=...` left over in a shell)
+# must not silently launch the real build without the 24G cap and the swap
+# guard -- that guard exists because of the 2026-08-30 hard hang (CLAUDE.md:
+# "THE MEMORY BUDGET IS GLOBAL"). A non-default value is refused unless
+# JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is ALSO set, which only this script's
+# own tests set.
+RUN_CAPPED_DEFAULT="$REPO/hw/jc/loader/run_capped.sh"
+RUN_CAPPED="${RUN_CAPPED:-$RUN_CAPPED_DEFAULT}"
+if [ "$RUN_CAPPED" != "$RUN_CAPPED_DEFAULT" ] && [ "${JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE:-}" != 1 ]; then
+  jcooc27_fail "RUN_CAPPED=$RUN_CAPPED overrides the real $RUN_CAPPED_DEFAULT; this is refused unless JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is also set (test-only: a bare override would launch Vivado with no memory cap and no swap guard)"
+fi
 UNIT="jcooc27_$(date +%s)_$$"
 NONCE="$UNIT"
 SRC="$ROOT/src"
@@ -145,7 +155,7 @@ BUILD_LOG="$ROOT/build.log"
 MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 echo "JCOOC27_RUN root=$ROOT part=$PART mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES nonce=$NONCE"
-echo "JCOOC27_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES"
+echo "JCOOC27_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED"
 
 # ---- fix round 1, I3: refuse if MemAvailable is below cap+2G. Not enforced
 #      under --dry-run (same reasoning as the Vivado-presence refusal below:
@@ -222,8 +232,15 @@ fi
 #      CONFIG.REGMAX 17408, CONFIG.HADDR_W 15) -------------------------------
 # gen_ooc27_top.py itself takes <repo_root> as an explicit argument (it does
 # not rely on cwd to find anything), but the exactly-once rule still applies:
-# this must run no more than once per invocation of this script.
-GEN_OOC27_TOP_CMD=(python3 "$HERE/gen_ooc27_top.py" "$SRC" --haddr-w 15 --regmax 17408)
+# this must run no more than once per invocation of this script. fix round
+# 3: the GENERATOR ITSELF must be read from the archived $SRC, never from
+# $HERE (the live checkout) -- otherwise a run against an older/different
+# commit's $SRC would still execute THIS session's live gen_ooc27_top.py,
+# silently breaking the provenance this whole tracked-tree-copy step exists
+# to establish (step 1's own comment: "copies the TRACKED tree into
+# <root>/src via `git archive HEAD`" is pointless if a later step reads the
+# generator from outside that tree anyway).
+GEN_OOC27_TOP_CMD=(python3 "$SRC/hw/jc/card/gen_ooc27_top.py" "$SRC" --haddr-w 15 --regmax 17408)
 if [ "$DRY_RUN" = 1 ]; then
   run "${GEN_OOC27_TOP_CMD[@]}"
 else
