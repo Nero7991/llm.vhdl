@@ -567,3 +567,14 @@ lost; scan both dies after each load.
 - Does A survive a B load with the original fan position but B loaded first (separates the two
   changes)?
 - Does it ever happen during A's own load (not observed so far; the die A load running at the time of writing is the next data point)?
+
+**Addendum 2026-10-07 18:05.** Die A's load after B's (same session, fan moved) completed with
+both dies on the chain:
+
+```
+JCLOAD_DONE last=3593948 committed=3593949 crc_fail=7 resyncs=0 pieces=7170 matched, wall 2819 s (planning 24 s), connections=9 reconnects=8, this run sent 7106673088 data bytes in 2795 s at 2.54 MB/s
+JCVERIFY_PASS 7170 pieces, 0 bad
+```
+
+Scan after A's load: 2 FPGAs; die A 49.5 / 49.0 C, die B 58.5 / 59.0 C. With
+`--reconnect-secs 0`, A needed 9 connections, against 17 with proactive reconnect (16a).
