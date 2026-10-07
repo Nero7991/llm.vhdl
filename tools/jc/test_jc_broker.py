@@ -70,6 +70,10 @@ class FakeCtlDie:
         s.bp = dict(bp or {})
         s.flip_st, s.flip_st_bit, s.fake_done, s.fake_seq = 0, 40, 0, None
         s.bad_count = 0
+        s.reject_reads = 0          # force that many reads to be refused ("01")
+        s.rejects = 0               # reads the executor refused, forced or by its rule
+        s.clobber_tail = False      # re-presentations of a response lose words 492-495
+        s.presented = collections.Counter()
         s.regs = {}
         s.fifos = {k: list(v) for k, v in (fifos or {}).items()}
         s.wlog = collections.defaultdict(list)       # off -> every value written there
@@ -82,6 +86,7 @@ class FakeCtlDie:
         s.stall = False
         s.acks = s.reads_over_unacked = 0
         s.flip_rsp = s.ghost = s.ghost_left = 0
+        s.ghost_seq = 0x0BADBEEF
 
     def hbm(s, addr):
         return hashlib.blake2b(b"%d:%d" % (s.seed, addr), digest_size=32).digest()
@@ -90,7 +95,11 @@ class FakeCtlDie:
         valid, seq, cnt, words = s.rsp_valid, s.rsp_seq, s.rsp_count, s.rsp
         if s.ghost_left:
             s.ghost_left -= 1
-            valid, seq, cnt, words = 1, 0x0BADBEEF, s.rsp_count or 1, [0xBAD0BAD0] * C.MAX_ITEMS
+            valid, seq, cnt, words = 1, s.ghost_seq, s.rsp_count or 1, [0xBAD0BAD0] * C.MAX_ITEMS
+        clobber = False
+        if valid and not s.ghost_left_used(seq):
+            s.presented[seq] += 1
+            clobber = s.clobber_tail and s.presented[seq] > 1 and cnt > 492
         if valid and s.bad_count:
             s.bad_count -= 1
             cnt += 1                     # an executor glitch: self-consistent, wrong count
@@ -102,14 +111,17 @@ class FakeCtlDie:
             cnt, crc, rsp = 0, 0, bytes(C.RSP_BUF_BYTES)      # the STALE mask
         v = (C.STAT_MAGIC | s.last_done << 32 | seq << 64 | cnt << 96
              | valid << 112 | s.axi_err << 113 | s.axi_resp << 114
-             | s.err_seq << 116 | s.desync << 148 | s.ovf << 164 | s.crc_fail << 165
-             | crc << 181)
+             | s.err_seq << 116 | (s.desync & 0xFFFF) << 148 | s.ovf << 164
+             | (s.crc_fail & 0xFFFF) << 165 | crc << 181)
         v |= (zlib.crc32(v.to_bytes(44, "little")) & 0xFFFFFFFF) << 352     # st_crc
         if s.fake_done and s.fake_seq is not None:
             s.fake_done -= 1
             v = (v & ~(0xFFFFFFFF << 32)) | s.fake_seq << 32  # st_crc no longer covers it
         st = v.to_bytes(C.STATUS_BYTES, "little")
         tdo = int.from_bytes((st + rsp).ljust(C.SLOT_BYTES, b"\0"), "little")
+        if clobber:                       # the ack slot's tail overwritten by a MEM_RD
+            for w in range(492, 496):
+                tdo ^= 0xA5A5A5A5 << (C.STATUS_BITS + 32 * w)
         if valid and s.flip_rsp:
             s.flip_rsp -= 1
             tdo ^= 1 << (C.STATUS_BITS + 5)               # one bit of response word 0
@@ -118,10 +130,16 @@ class FakeCtlDie:
             tdo ^= 1 << s.flip_st_bit
         return tdo
 
-    def end_slot(s, slot):
+    def ghost_left_used(s, seq):
+        return s.ghost_left > 0 or seq == s.ghost_seq
+
+    def end_slot(s, slot, counted=False):
+        """`counted`: the frame core already counted this slot as a desync at header
+        bit 255 (bad magic or bounds); it is discarded."""
         s.nslot += 1
         s._exec()
-        s._rx(slot)
+        if not counted:
+            s._rx(slot)
         s._exec()                                         # lag 0: runs at once
 
     def _rx(s, slot):
@@ -156,15 +174,24 @@ class FakeCtlDie:
             s.q.pop(0)
             if op == C.OP_NOP:
                 continue
+            # Task 3 (rtl/jc_ctl_exec.vhd): every completed non-NOP frame sets
+            # last_done_seq, errored or refused included; axi_err/axi_resp/err_seq
+            # describe that frame (cleared to 0 / 0 / NONE when it did not error).
+            s.axi_err, s.axi_resp, s.err_seq = 0, 0, NONE
+            s.last_done = seq
+            if op in READ_OPS and (seq == NONE or seq == s.rsp_seq or s.reject_reads):
+                s.reject_reads = max(0, s.reject_reads - 1)
+                s.rejects += 1
+                s.axi_err, s.axi_resp, s.err_seq = 1, 1, seq      # "01": nothing ran
+                continue
             s.frames.append((seq, op))
-            s.axi_err = 0
             if op in C.WRITE_OPS:
                 items = [int.from_bytes(slot[32 + 4 * i:36 + 4 * i], "little") for i in range(n)]
                 for i, val in enumerate(items):
                     off = addr if op == C.OP_WR_FIX else addr + 4 * i
                     if off in s.slverr:
                         s._err(seq)
-                        continue
+                        break                             # the op stops at its first error
                     s.regs[off] = val
                     s.wlog[off].append(val)
             else:
@@ -178,18 +205,18 @@ class FakeCtlDie:
                         off = addr if op == C.OP_RD_FIX else addr + 4 * i
                         if off in s.slverr:
                             s._err(seq)
-                            out.append(0)
+                            break                         # stops; publishes nothing
                         elif off in s.fifos:
                             out.append(s.fifos[off].pop(0))
                         else:
                             out.append(s.regs.get(off, 0))
+                if s.axi_err:
+                    continue
                 s.rsp = out + [0] * (C.MAX_ITEMS - len(out))
                 s.rsp_seq, s.rsp_count, s.rsp_valid = seq, n, 1
-            s.last_done = seq
 
     def _err(s, seq):
-        if not s.axi_err:
-            s.axi_err, s.axi_resp, s.err_seq = 1, 2, seq
+        s.axi_err, s.axi_resp, s.err_seq = 1, 2, seq
 
 
 class CtlChainSock(ChainSock):
@@ -203,11 +230,12 @@ class CtlChainSock(ChainSock):
         s.board = board
         s.ctl = board.ctl
         s.cbit, s.cacc, s.csr = [0, 0], [0, 0], [0, 0]
+        s.counted = [False, False]
         s.ntdi_conn = 0
         s.eof = False
 
     def _ctl_capture(s, d):
-        s.cbit[d], s.cacc[d] = 0, 0
+        s.cbit[d], s.cacc[d], s.counted[d] = 0, 0, False
         s.csr[d] = s.ctl[d].latch()
 
     def _clock(s, tms, tdi):
@@ -230,8 +258,22 @@ class CtlChainSock(ChainSock):
             out |= (s.csr[d] & ((1 << take) - 1)) << i
             s.csr[d] >>= take
             s.cacc[d] |= ((x >> i) & ((1 << take) - 1)) << s.cbit[d]
+            before = s.cbit[d]
             s.cbit[d] += take
             i += take
+            if before < 256 <= s.cbit[d]:
+                # rtl/jc_ctl_frame_core.vhd: magic and bounds are judged at header bit
+                # 255; a bad header counts desync THEN, even if the slot is abandoned
+                h = C.parse_header((s.cacc[d] & ((1 << 256) - 1)).to_bytes(32, "little"))
+                bad = (h["magic"] != C.MAGIC or not 1 <= h["count"] <= C.MAX_ITEMS
+                       or h["nwords"] > C.MAX_PAYLOAD_WORDS)
+                if not bad and h["op"] != C.OP_NOP:
+                    k = s.board.nhdr
+                    s.board.nhdr += 1
+                    bad = k in s.board.flip_magic
+                if bad:
+                    s.ctl[d].desync += 1
+                    s.counted[d] = True
             if s.cbit[d] == C.SLOT_BITS:
                 slot = s.cacc[d].to_bytes(C.SLOT_BYTES, "little")
                 h = C.parse_header(slot)
@@ -251,7 +293,8 @@ class CtlChainSock(ChainSock):
                         s.board.nacknops += 1
                         if k in s.board.flip_acknops:
                             b = bytearray(slot); b[100] ^= 1; slot = bytes(b)
-                s.ctl[d].end_slot(slot)
+                s.ctl[d].end_slot(slot, s.counted[d])
+                s.counted[d] = False
                 s.csr[d] = s.ctl[d].latch()
                 s.cbit[d], s.cacc[d] = 0, 0
         return out
@@ -293,6 +336,7 @@ class Board:
         s.tap = coe.TEST_LOGIC_RESET
         s.flip, s.drop, s.drop_reply, s.flip_acknops = set(), {}, {}, set()
         s.flip_nops = set()
+        s.flip_magic, s.nhdr = set(), 0     # op frames (by header order) with a bad magic
         s.drop_after_op, s.drop_next = None, False   # reset the command after that op's frame
         s.nframes, s.nconn, s.nacknops, s.nnops = 0, 0, 0, 0
         s.wire_ops = []
@@ -1070,3 +1114,224 @@ def test_a_window_write_whose_next_command_is_reset(die_name):
         assert r == {"ok": True} and w == [4, 5]
     else:
         assert r["err"].startswith("WindowUnknown:") and w == []
+
+
+# ---------------------------------------------------------------- fix round 2 (re-review)
+# Ported from the reviewer's probes (scratchpad rr6/test_rr6.py), assertions added.
+
+def _wstate(b, die="A"):
+    return b.status()["dies"][die]["window_state"]
+
+def test_rr6_counter_wrap_does_not_spill():
+    board = Board()
+    board.ctl[0].crc_fail = 0xFFFF; board.ctl[0].desync = 0xFFFE
+    b, board, _ = make(board)
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0x10, "val": 1}))
+    board.flip = {1}
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [7, 8]})
+    assert r["ok"] and board.ctl[0].wlog[0xE008] == [7, 8], r
+    assert b.crc_retries == 1
+
+def test_rr6_two_faults_never_double_and_never_leave_ok_after_a_write():
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0x10, "val": 1}))
+    board.flip = {1}; board.ctl[0].flip_st = 2
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [7, 8]})
+    w = board.ctl[0].wlog[0xE008]
+    assert w in ([], [7, 8])
+    if r["ok"]:
+        assert w == [7, 8] and _wstate(b) == "ok"
+    elif w:
+        assert _wstate(b).startswith("UNKNOWN")
+
+def test_rr6_partial_wrn_frame_lost_reports_done_items_and_unknown():
+    b, board, _ = make()
+    board.flip = {1, 2}
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": list(range(600))})
+    assert r["ok"] is False and r.get("done_items") == 496, r
+    assert board.ctl[0].wlog[0xE008] == list(range(496))
+    assert _wstate(b).startswith("UNKNOWN") and "UNKNOWN" in r["err"]
+
+def test_rr6_partial_rdn_frame_lost_reports_done_items_and_unknown():
+    src = list(range(2000))
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    board.flip = {1, 2}
+    r = b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 600})
+    assert r["ok"] is False and r.get("done_items") == 496, r
+    assert len(board.ctl[0].fifos[0xE00C]) == 2000 - 496
+    assert _wstate(b).startswith("UNKNOWN")
+
+def test_rr6_settle_failure_with_a_frame_in_flight_marks_unknown():
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0x10, "val": 1}))
+    board.drop_after_op = C.OP_WR_FIX
+    def oc(bd, n):
+        if n == 2:
+            bd.ctl[0].flip_st = 1000
+    board.on_connect = oc
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [7, 8]})
+    assert r["ok"] is False and "UNKNOWN" in r["err"], r
+    assert _wstate(b).startswith("UNKNOWN")
+
+def test_rr6_partial_inc_ops_report_done_items_without_unknown():
+    b, board, _ = make()
+    board.flip = {1, 2}
+    r = b.handle({"die": "A", "op": "wrn", "off": 0x1000, "fix": False, "vals": list(range(600))})
+    assert r["ok"] is False and r.get("done_items") == 496, r
+    assert _wstate(b) == "ok"
+
+
+def test_a_part_shifted_slot_with_a_bad_magic_counts_desync_and_never_doubles():
+    """The frame core counts desync at header bit 255. Die B's WR_FIX goes out with a
+    garbled magic and the link dies on the next command, so the slot is abandoned
+    part-shifted AFTER its desync was counted. The ledger's [0, 1] for that uncertain
+    slot must absorb it: no double write, and nothing is resent unless proven lost."""
+    b, board, _ = make()
+    ok(b.handle({"die": "B", "op": "wr32", "off": 0, "val": 0}))
+    d0 = board.ctl[1].desync
+    board.flip_magic = {board.nhdr}
+    board.drop_after_op = C.OP_WR_FIX
+    r = b.handle({"die": "B", "op": "wrn", "off": 0xE008, "fix": True, "vals": [1, 2]})
+    w = board.ctl[1].wlog[0xE008]
+    assert board.ctl[1].desync >= d0 + 2                  # the garbled header + the filler
+    assert w in ([], [1, 2])
+    if r["ok"]:
+        assert w == [1, 2]
+    else:
+        assert r["err"].startswith("WindowUnknown:")
+
+def test_a_garbled_magic_on_die_a_is_lost_and_resent_once():
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 0}))
+    board.flip_magic = {board.nhdr}
+    ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [1, 2]}))
+    assert board.ctl[0].wlog[0xE008] == [1, 2] and b.crc_retries == 1
+
+def test_a_rejected_read_fails_and_is_never_resent():
+    """axi_resp 01: the executor refused the frame, nothing ran. Not resent (no frame
+    that reported axi_err ever is), the window is untouched, done_items is exact."""
+    b, board, _ = make()
+    die = board.ctl[0]
+    die.regs[0x40] = 9
+    die.reject_reads = 1
+    n0 = board.nframes
+    r = b.handle({"die": "A", "op": "rd32", "off": 0x40})
+    assert r["ok"] is False and "rejected" in r["err"] and "nothing executed" in r["err"], r
+    assert die.rejects == 1 and board.nframes == n0 + 1 and b.rejected == 1
+    assert _wstate(b) == "ok"
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 0x40}))["val"] == 9
+
+def test_alloc_never_reuses_the_published_rsp_seq():
+    """Force the broker's next seq onto the response seq the die last published: the
+    executor would refuse it ("01"); _alloc must step past it."""
+    b, board, _ = make()
+    die = board.ctl[0]
+    die.regs.update({0: 1, 4: 2})
+    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
+    ok(b.handle({"die": "A", "op": "wr32", "off": 8, "val": 0}))   # last_done moves on
+    assert die.last_done != die.rsp_seq
+    b.seq["A"] = die.rsp_seq
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 4}))["val"] == 2
+    b.seq["A"] = NONE
+    ok(b.handle({"die": "A", "op": "rd32", "off": 4}))
+    assert die.rejects == 0
+
+def test_an_axi_error_stops_the_op_inc_is_reported_fix_is_unknown():
+    b, board, _ = make(Board(slverr={0x108, 0xE0F0}))
+    die = board.ctl[0]
+    r = b.handle({"die": "A", "op": "wrn", "off": 0x100, "fix": False, "vals": [1, 2, 3, 4]})
+    assert r["err"].startswith("AxiError:") and die.regs == {0x100: 1, 0x104: 2}
+    assert _wstate(b) == "ok"
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE0F0, "fix": True, "vals": [5, 6]})
+    assert r["err"].startswith("AxiError:") and "UNKNOWN" in r["err"]
+    assert _wstate(b).startswith("UNKNOWN")
+
+def test_a_re_presented_accepted_response_with_a_clobbered_tail_is_ignored():
+    """Task 3: the ack slot still shifts the tail of the response after the ack, and a
+    following MEM_RD can overwrite words 492-495 in that slot. A re-presentation of a
+    seq already accepted must be ignored: not counted as a CRC mismatch, not taken, not
+    discarded."""
+    src = [(0x2545F491 * i) & 0xFFFFFFFF for i in range(992)]
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    die = board.ctl[0]
+    die.clobber_tail = True
+    r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 992}))
+    assert r["vals"] == src
+    assert max(die.presented.values()) >= 2                # it was re-presented
+    assert b.rsp_crc_mismatches == 0 and b.discarded == 0
+
+
+def test_an_older_accepted_seq_re_presented_is_ignored_not_discarded():
+    b, board, _ = make()
+    die = board.ctl[0]
+    die.regs.update({0: 1, 4: 2, 8: 3})
+    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
+    x1 = b.ack["A"]
+    die.rsp_valid, die.rsp_seq, die.rsp_count = 1, 0x7777, 1       # a foreign response
+    die.rsp = [0] * C.MAX_ITEMS
+    ok(b.handle({"die": "A", "op": "rd32", "off": 4}))              # discards it, takes X2
+    assert b.discarded == 1 and b.ack["A"] != x1
+    die.ghost, die.ghost_seq = 3, x1                                 # X1 shows up again
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 8}))["val"] == 3
+    assert b.discarded == 1
+
+
+@pytest.mark.parametrize("resp", [2, 3])
+@pytest.mark.parametrize("fix", [True, False])
+def test_an_axi_error_is_never_resent_and_a_fixed_window_goes_unknown(fix, resp):
+    """Task 3 ruling: the op stops at its first error with earlier items done, and the
+    status has no count. Any axi_resp (SLVERR, DECERR, the coming timeout code) is
+    never resent; on WR_FIX/RD_FIX the window goes UNKNOWN; done_items is a lower bound."""
+    b, board, _ = make(Board(slverr={0xE0F0, 0x2000 + 4 * 500}))
+    die = board.ctl[0]
+    die_err = die._err
+    die._err = lambda seq: (die_err(seq), setattr(die, "axi_resp", resp))
+    off = 0xE0F0 if fix else 0x2000
+    vals = list(range(700))
+    n0 = board.nframes
+    r = b.handle({"die": "A", "op": "wrn", "off": off, "fix": fix, "vals": vals})
+    assert r["ok"] is False and r["err"].startswith("AxiError:"), r
+    assert "partly executed" in r["err"]
+    sent = board.nframes - n0
+    if fix:
+        assert sent == 1 and r["done_items"] == 0
+        assert _wstate(b).startswith("UNKNOWN") and "UNKNOWN" in r["err"]
+    else:
+        assert sent == 2 and r["done_items"] == 496         # frame 2 stopped at item 4
+        assert [die.regs.get(0x2000 + 4 * i) for i in range(500)] == vals[:500]
+        assert _wstate(b) == "ok"
+    assert r["done_items_exact"] is False
+    assert b.crc_retries == 0
+
+def test_an_axi_error_on_a_fifo_read_goes_unknown_and_is_not_resent():
+    src = list(range(50))
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    die = board.ctl[0]
+    real = die._exec
+    def exec_with_err():
+        q = die.q
+        if q and q[0][1]["op"] == C.OP_RD_FIX and die.nslot >= q[0][0]:
+            h = q.pop(0)[1]
+            die.fifos[0xE00C].pop(0); die.fifos[0xE00C].pop(0)   # two items ran
+            die.frames.append((h["seq"], C.OP_RD_FIX))
+            die.last_done = h["seq"]
+            die.axi_err, die.axi_resp, die.err_seq = 1, 2, h["seq"]
+        real()
+    die._exec = exec_with_err
+    n0 = board.nframes
+    r = b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 5})
+    assert r["ok"] is False and "UNKNOWN" in r["err"] and r["done_items_exact"] is False, r
+    assert board.nframes == n0 + 1 and len(die.fifos[0xE00C]) == 48
+    assert _wstate(b).startswith("UNKNOWN")
+
+def test_a_rejected_fixed_window_read_leaves_the_window_known():
+    """A RD_FIX refused with 01 consumed nothing: window_state stays ok and done_items
+    (0) is exact."""
+    src = list(range(20))
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    die = board.ctl[0]
+    die.reject_reads = 1
+    r = b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 4})
+    assert r["ok"] is False and "rejected" in r["err"], r
+    assert r["done_items"] == 0 and r["done_items_exact"] is True
+    assert _wstate(b) == "ok" and die.fifos[0xE00C] == src

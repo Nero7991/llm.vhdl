@@ -77,7 +77,20 @@ How it drives the board:
     most CTL_POLLS polls; failing that the request fails with WindowUnknown and the
     die's window state is reported UNKNOWN in `status`. Only MEM_RD (a side-effect-free
     HBM read) may be resent when its fate is unknown.
-  - axi_err with err_seq == one of the frame's seqs is AxiError.
+  - axi_err with err_seq == one of the frame's seqs is AxiError, and that frame is NEVER
+    resent (Task 3 ruling): the executor stops at the first error with the items before
+    it executed, and reports no count. On WR_FIX/RD_FIX the die's window state becomes
+    UNKNOWN. axi_resp "01" is the executor refusing the frame outright (a read reusing
+    the last published rsp_seq or 0xFFFFFFFF, which _alloc never produces): nothing ran,
+    the window stays known. Any other code, a future timeout code included, is partial.
+  - Any other failure while a frame that may have executed is in flight (not proven
+    LOST, not MEM_RD) marks the window UNKNOWN too. A wrn/rdn that fails reports
+    "done_items" (items of the frames confirmed done) and "done_items_exact" (false
+    when the failing frame may have partly run); on a fixed window, any done items
+    mark it UNKNOWN.
+  - A presented response the broker has already accepted is ignored whatever its words:
+    the ack slot still shifts its tail after the ack, and a following MEM_RD may
+    overwrite words 492-495 in that slot (Task 3).
   - Link loss (coe_load.LinkLost: RST, silence, a poisoned client) closes the
     connection and reconnects (coe_load.RECONNECT_SETTLE_SECS, then up to
     RECONNECT_TRIES dials with RECONNECT_BACKOFF), re-identifies the die and keeps
@@ -107,7 +120,7 @@ that touches any of its pieces is Refused unless --allow-image-read; the image r
 allowed, because pl_open reads it there. A die with no --manifest has no known image,
 so every memrd on it is Refused unless --allow-image-read.
 """
-import argparse, json, os, selectors, socket, stat, struct, sys, time, zlib
+import argparse, collections, json, os, selectors, socket, stat, struct, sys, time, zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -118,6 +131,8 @@ from jc import coe_load as L
 M32 = 0xFFFFFFFF
 NOP_SEQ = C.RSP_SEQ_NONE
 READ_OPS = (C.OP_RD_INC, C.OP_RD_FIX, C.OP_MEM_RD)
+FIX_OPS = (C.OP_WR_FIX, C.OP_RD_FIX)
+AXI_RESP_REJECTED = 1     # "01": the executor refused the frame, nothing executed (Task 3)
 ACK_SEQ_LSB, ACK_VALID_BIT = 184, 216     # header word (Ruling 2026-10-07)
 RSP_CRC_LSB = 181                          # status word (Ruling 2026-10-07)
 
@@ -127,6 +142,7 @@ CRC_RETRIES = 1           # a frame proven LOST is resent this many times
 LINK_RETRIES = 3          # link losses or bad replies survived inside one request
 SETTLE_EQUAL = 1          # good statuses after a scan open (see Broker._settle)
 IDENTIFY_TRIES = 3        # USER4 settles tried before a timeout halts the broker
+ACCEPTED_KEEP = 64        # accepted response seqs remembered per die (never re-acted on)
 SEQ_JUMP = 0x10000        # first seq of a process: this far past the die's last_done_seq
 ST_CRC_LSB = 352          # status word (Ruling 2026-10-07, after the Task 6 review)
 ST_CRC_BYTES = 352 // 8   # st_crc covers status bits [351:0]
@@ -141,7 +157,11 @@ class BrokerError(Exception):
     pass
 
 class AxiError(BrokerError):
-    pass
+    """axi_err on one of the frame's seqs. `partial`: the op may have executed some
+    items before the error (every code except the "01" rejection)."""
+    def __init__(s, msg, resp=None, partial=True):
+        BrokerError.__init__(s, msg)
+        s.resp, s.partial = resp, partial
 
 class FrameLost(BrokerError):
     pass
@@ -163,7 +183,11 @@ BAD_ST = object()      # ctl_status: a status word whose st_crc does not check
 
 
 def err_reply(e):
-    return {"ok": False, "err": "%s: %s" % (type(e).__name__, e)}
+    r = {"ok": False, "err": "%s: %s" % (type(e).__name__, e)}
+    if getattr(e, "done_items", None) is not None:
+        r["done_items"] = e.done_items
+        r["done_items_exact"] = e.done_items_exact
+    return r
 
 
 def build_frame(seq, op, addr, items, count, ack=None):
@@ -344,6 +368,9 @@ class Broker:
         s.gen = {d: 0 for d in chain}       # count of USER3 scan opens per die
         s.verdict = {}                      # frame seq -> PASSED / NOTFAILED / LOST / AMBIGUOUS
         s.ack = {d: None for d in chain}    # last response accepted (or released) per die
+        s.accepted = {d: collections.deque(maxlen=ACCEPTED_KEEP) for d in chain}
+        s.inflight = {d: None for d in chain}
+        s.rejected = 0
         s.unknown = {d: None for d in chain}
 
     def _say(s, msg):
@@ -547,7 +574,10 @@ class Broker:
             # first frame of this process: jump well past anything an earlier process
             # might still have queued at the die
             n = (st["last_done_seq"] + SEQ_JUMP) & M32
+        # The executor REJECTS ("01") a read whose seq is 0xFFFFFFFF or the last published
+        # rsp_seq; the broker's seqs only ever move forward, and these are skipped too.
         avoid = {NOP_SEQ, st["last_done_seq"], st["rsp_seq"], st["err_seq"], s.ack[die]}
+        avoid.update(s.accepted[die])
         while n in avoid:
             n = (n + 1) & M32
         s.seq[die] = (n + 1) & M32
@@ -571,6 +601,7 @@ class Broker:
                    % (die, st["rsp_seq"]))
             return False
         s.ack[die] = st["rsp_seq"]
+        s.accepted[die].append(st["rsp_seq"])
         return st["rsp"][:count]
 
     def _discard(s, die, x):
@@ -582,7 +613,42 @@ class Broker:
                "to release the buffer" % (die, x))
         s.ack[die] = x
 
+    def _seen(s, die, x):
+        """A presented response seq the broker has already accepted (or released): it is
+        ignored, whatever its words. The ack slot still shifts the tail of the response
+        after the ack, and a following MEM_RD may overwrite words 492-495 in that very
+        slot (Task 3), so such a presentation can fail rsp_crc: it is never acted on."""
+        return x == s.ack[die] or x in s.accepted[die]
+
     def _frame(s, die, op, addr, items, count):
+        """_frame_once, plus: ANY failure while a frame that may have executed is in
+        flight (not proven LOST, not MEM_RD) marks the die's window state UNKNOWN, and an
+        AXI error on a fixed-window op (other than a "01" rejection, which executed
+        nothing) does too: the op stops at the first error, part-done."""
+        s.inflight[die] = None
+        try:
+            return s._frame_once(die, op, addr, items, count)
+        except WindowUnknown:
+            raise
+        except AxiError as e:
+            if op in FIX_OPS and e.partial:
+                s._mark_unknown(die, str(e))
+                e.args = ("%s; die %s window state is UNKNOWN (the op stops at its first "
+                          "error, part-done)" % (e, die),)
+            raise
+        except Exception as e:
+            cur = s.inflight[die]
+            if cur is None or op == C.OP_MEM_RD or s.verdict.get(cur) == "LOST":
+                raise
+            w = s._mark_unknown(die, "seq %d in flight when %s: %s" % (cur, type(e).__name__, e))
+            if isinstance(e, (coe.IRNotAllowed, coe.TapProtocolError, L.LoadAborted)):
+                e.args = ("%s; %s" % (e, w),)
+                raise                                  # still halts the broker
+            raise w from e
+        finally:
+            s.inflight[die] = None
+
+    def _frame_once(s, die, op, addr, items, count):
         """One frame on `die`, confirmed exactly once. Returns the read items, or None.
 
         The frame is (re)sent only when it has never gone out or the ledger proved it
@@ -605,6 +671,7 @@ class Broker:
                         if got is not None:
                             return got
                     cur = s._alloc(die)
+                    s.inflight[die] = cur
                     mine.append(cur)
                     polls = 0
                     s.verdict[cur] = None
@@ -615,8 +682,22 @@ class Broker:
                 while True:
                     if st is not None:
                         if st["axi_err"] and st["err_seq"] in mine:
-                            raise AxiError("die %s seq %d (op %d at %#x): AXI error, resp %d"
-                                           % (die, st["err_seq"], op, addr, st["axi_resp"]))
+                            # Never resent, whatever the op or code (Task 3 ruling): the
+                            # executor stops at the first error with the items before it
+                            # done, and reports no count. "01" is the executor refusing
+                            # the frame outright (nothing ran); a timeout code is
+                            # treated like any other error.
+                            resp = st["axi_resp"]
+                            if resp == AXI_RESP_REJECTED:
+                                s.rejected += 1
+                                raise AxiError("die %s seq %d (op %d at %#x): rejected by the "
+                                               "executor (axi_resp 01), nothing executed"
+                                               % (die, st["err_seq"], op, addr), resp=resp,
+                                               partial=False)
+                            raise AxiError("die %s seq %d (op %d at %#x): AXI error, resp %d; "
+                                           "items may have partly executed (done_items is "
+                                           "a lower bound)" % (die, st["err_seq"], op, addr,
+                                                               resp), resp=resp, partial=True)
                         if read:
                             got = s._take(die, st, mine, count)
                             if got is False:
@@ -628,7 +709,7 @@ class Broker:
                             elif got is not None:
                                 return got
                             elif (st["rsp_valid"] and st["rsp_seq"] not in mine
-                                    and st["rsp_seq"] != s.ack[die]):
+                                    and not s._seen(die, st["rsp_seq"])):
                                 s._discard(die, st["rsp_seq"])
                         elif st["last_done_seq"] in mine:
                             return None
@@ -642,13 +723,13 @@ class Broker:
                         s.crc_retries += 1
                         s._say("JCBROKER_RETRY die %s seq %d lost (own slot failed)"
                                % (die, cur))
-                        cur = None
+                        cur = s.inflight[die] = None
                         break
                     if polls >= CTL_POLLS:
                         if op == C.OP_MEM_RD and vd != "PASSED" and lost_left > 0:
                             lost_left -= 1
                             s.crc_retries += 1
-                            cur = None
+                            cur = s.inflight[die] = None
                             break
                         why = ("die %s seq %d (op %d at %#x): not done after %d polls, "
                                "verdict %s" % (die, cur, op, addr, CTL_POLLS, vd))
@@ -693,7 +774,7 @@ class Broker:
                 if bad > RSP_CRC_RETRIES:
                     raise s._mark_unknown(die, "seq %d: its response failed rsp_crc/"
                                           "rsp_count %d times" % (x, bad))
-            elif x != s.ack[die]:
+            elif not s._seen(die, x):
                 s._discard(die, x)
             s._poll(v, die)
         raise CtlTimeout("die %s: response seq %d still presented after %d acked polls"
@@ -719,18 +800,45 @@ class Broker:
     def wr32(s, die, off, val):
         s._frame(die, C.OP_WR_INC, off, [val], 1)
 
+    def _partial(s, die, fix, done, total, e):
+        """A wrn/rdn failed after `done` of `total` items completed (frames confirmed).
+        The reply carries done_items. On a fixed window anything done means the window
+        moved and the request did not finish: UNKNOWN, if the failure itself has not
+        already said so."""
+        if fix and done and not isinstance(e, WindowUnknown) and \
+                "window state is UNKNOWN" not in str(e):
+            w = s._mark_unknown(die, "%d of %d items done when %s: %s"
+                                % (done, total, type(e).__name__, e))
+            if isinstance(e, (coe.IRNotAllowed, coe.TapProtocolError, L.LoadAborted)):
+                e.args = ("%s; %s" % (e, w),)
+            else:
+                e = w
+        e.done_items = done
+        # exact only if the failing frame provably ran nothing
+        e.done_items_exact = (isinstance(e, AxiError) and not e.partial) or \
+            (not isinstance(e, (AxiError, WindowUnknown)) and "window state is UNKNOWN" not in str(e))
+        return e
+
     def wrn(s, die, off, fix, vals):
         op = C.OP_WR_FIX if fix else C.OP_WR_INC
-        for i in range(0, len(vals), C.MAX_ITEMS):
-            chunk = vals[i:i + C.MAX_ITEMS]
-            s._frame(die, op, off if fix else off + 4 * i, chunk, len(chunk))
+        done = 0
+        try:
+            for i in range(0, len(vals), C.MAX_ITEMS):
+                chunk = vals[i:i + C.MAX_ITEMS]
+                s._frame(die, op, off if fix else off + 4 * i, chunk, len(chunk))
+                done += len(chunk)
+        except Exception as e:
+            raise s._partial(die, fix, done, len(vals), e)
 
     def rdn(s, die, off, fix, n):
         op = C.OP_RD_FIX if fix else C.OP_RD_INC
         out = []
-        for i in range(0, n, C.MAX_ITEMS):
-            k = min(C.MAX_ITEMS, n - i)
-            out += s._frame(die, op, off if fix else off + 4 * i, None, k)
+        try:
+            for i in range(0, n, C.MAX_ITEMS):
+                k = min(C.MAX_ITEMS, n - i)
+                out += s._frame(die, op, off if fix else off + 4 * i, None, k)
+        except Exception as e:
+            raise s._partial(die, fix, len(out), n, e)
         return out
 
     def memrd(s, die, addr, n):
@@ -769,6 +877,7 @@ class Broker:
                 "rsp_crc_mismatches": s.rsp_crc_mismatches,
                 "rsp_count_mismatches": s.rsp_count_mismatches,
                 "st_crc_fails": s.st_crc_fails, "identify_retries": s.identify_retries,
+                "rejected": s.rejected,
                 "responses_discarded": s.discarded, "halted": s.halted}
 
     # ---- requests
