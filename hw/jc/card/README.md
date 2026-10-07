@@ -152,3 +152,73 @@ refuses the build if the aclk it finds does not read back 5.000 ns.
    bcgrant`) are read from `gen_jc_card.py`'s own text and the task-8 report, not
    from a synthesised netlist; a BD change that renames one silently breaks the
    netlist-input check with a clear `cell $cname not found` message, not silently.
+
+## Task 10: OOC route of the 27B composition at 200 MHz
+
+Written and dry-run tested only: no Vivado has run this either. The controller
+runs it next (plan Task 10, step 2).
+
+| File | What |
+|---|---|
+| `gen_ooc27_top.py` | Emits `jc_ooc27_top.vhd`: a co-residency + real-dataflow OOC top carrying `fk33_engine` + `fk33_seam` + `fk33_card` (the 27B wrapper) together, in the SAME placement/routing context |
+| `ooc_card_200.tcl` | OOC `synth_design -mode out_of_context` + `opt`/`place`/`phys_opt`/`route_design` + reports on `jc_ooc27_top`, 200 MHz (`clk`, 5.000 ns), `xcvu35p-fsvh2104-2L-e` |
+| `run_ooc27.sh` | Orchestration: location/root/Vivado-presence refusals, tracked-tree copy, the levers patch, the 27B `fk33_card.vhd` regeneration (not the BD), `gen_ooc27_top.py`, the capped Vivado run, report harvest, the nonce-gated sentinel |
+| `test_ooc27.py` | Dry-run assertions on `run_ooc27.sh`, static assertions on `ooc_card_200.tcl` (route_design present, the `-2L` part, the 5.000 ns clock, the levers-patched tree, anchored sentinels, no source-list drift against `build_card.tcl`) |
+| `test_gen_ooc27_top.py` | Runs `gen_ooc27_top.py` for real against this repo's own committed (9B) RTL as a smoke test, and two mutation tests proving its width/direction/double-wire checks actually abort |
+
+**Why `jc_ooc27_top`, not `fk33_card` alone or `jc_card_top`'s BD wrapper.**
+`docs/debugging/2026-09-30_27b-fits-vu35p-ooc-timing-artifact.md` measured
+`fk33_card` ALONE (no engine, no block design, no floorplan) at 69.9 MHz OOC on
+this exact part -- a standalone-OOC ARTIFACT (the identical path on the 9B
+control gives 69.0 MHz OOC while the shipped 9B build runs that compute at
+>=120 MHz in-context), not a real limiter. Re-running `fk33_card` alone here
+would reproduce that known artifact under a new name. `jc_card_top`'s own BD
+wrapper needs the full block design (HBM IP, clk_wiz, PCIe-less BD) and no
+mechanism in this tree excludes the HBM IP from an OOC run of it.
+`gen_ooc27_top.py` instead restores two of that note's three missing-context
+items -- the engine, and the real dataflow between it and the card -- using
+only the entities' own committed RTL: every wired net (the 41-pair "host seam,
+`fk33_seam` <-> `card`" list and the 12-pair "A seam, `card` <-> `eng`" list) is
+transcribed verbatim from `hw/jc/card/jc_card_bd.tcl`'s own `connect_bd_net`
+calls and checked, pair by pair, against the entities' own parsed port widths
+and directions before being emitted -- a mismatch aborts the generator
+(`GENOOC27 ABORT`) rather than producing a file that fails first in Vivado,
+hours in. The one exception is `card/a` onto `eng/s_axi`'s AW/W/B channels,
+which the real BD arbitrates through a 2:1 smartconnect against the host's own
+master; with no host here, this generator connects them directly (documented,
+checked the same way) and ties off `eng/s_axi`'s AR/R channel, which only the
+host ever drove. Every other port of all three instances -- the HBM AXI
+masters, both host AXI4-Lite control slaves, `card`'s `bst_*`/`kv_*_*` ports
+(`bcgrant`, the real BD's grant arbiter, is outside this task's three-instance
+scope) -- is exported to the top level, uniquely prefixed, so nothing can be
+optimised away as dead logic (the same reason `hw/fk33/gen_compose4_top.py`
+exports rather than stimulates its own nine co-resident instances).
+
+**What this does and does not establish.** A routed WNS from `jc_ooc27_top`
+restores the engine and the real card<->engine dataflow the artifact run
+lacked, with real area and real nets. It still has no floorplan, so a result
+from it is OOC evidence towards the open "does the real composed design meet
+200 MHz in-context" question (`docs/debugging/2026-09-30_...`'s own "Open, not
+yet answered"), not an in-context answer to it -- that still needs the actual
+Jungle Cat block design.
+
+**The levers.** `build12_levers_off.patch` edits `FAST_POP`'s generic DEFAULT
+in `fk33_engine.vhd` and the `NWIDE`/`SWEEP_PIPE`/`SCORE_EARLY` generic MAP
+VALUES directly in `fk33_llama_top.vhd`'s/`llama_top.vhd`'s own text, so
+applying it to the prepared tree (`run_ooc27.sh` step 2) is the entire lever
+story for this flat, non-BD OOC flow -- `gen_ooc27_top.py` sets no lever
+generic itself. `CB_STYLE` (lever C) is a true module-boundary generic on
+`fk33_engine`, separate from the levers-off patch, and is set explicitly to
+`"distributed"` to match `jc_card_bd.tcl`'s own `CONFIG.CB_STYLE` for build
+27B-1. `run_ooc27.sh` also greps its own Vivado log for the
+`Parameter <NAME> bound to:` trace line (via `jccard_levers.tcl`'s already-
+tested parser) and prints `JCOOC27_LEVER` lines, but does not fail the run on
+them: whether that trace line reaches a plain (non-project) `synth_design`'s
+`-log` file at all is UNVERIFIED (`build_card.tcl`'s own finding was that a
+PROJECT-MODE run writes it only to `<top>.vds`, never `runme.log`), so the
+`git apply --check` in step 2 is the load-bearing guarantee, not this.
+
+**Memory.** `task-10-brief.md`'s own ESTIMATE is 4-8 GB, from the recorded
+2.58 GiB for the 9B `fk33_card` OOC on the VU35P; `run_ooc27.sh` defaults
+`MemoryHigh` to 12G with a 2x swap guard, well under the 24G/30GiB card-build
+shape, and prints `MemAvailable`/`SwapFree` before dispatch either way.
