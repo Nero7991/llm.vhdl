@@ -49,6 +49,9 @@
 --   G  reset: arst pulsed while the executor waits on a read with a write queued in the
 --      FIFO: the waiting read is dropped, the queued write executes exactly once after the
 --      reset, the status shows the reset values; a read afterwards works.
+--   H  reset in the middle of a frame: TCK stops after the HDR push, arst pulses, then the
+--      slot finishes with DATA and a good PASS. The frame must not execute (the executor
+--      opened it before the reset); the next good frame must.
 --   S  status-sync stress: a SECOND jc_status_sync on the same TCK and aclk, whose live word
 --      changes on every aclk (twelve 32-bit lanes, each a different function of one
 --      counter). At every TCK-side update: all lanes from the same counter value
@@ -470,6 +473,34 @@ begin
       wait for GAP;
     end procedure;
 
+    procedure reset_pulse is
+    begin
+      wait until rising_edge(aclk);
+      arst <= '1';
+      for k in 1 to 10 loop wait until rising_edge(aclk); end loop;
+      arst <= '0';
+      wait for 1 us;
+    end procedure;
+
+    -- one slot, with TCK stopped after bit pbit-1 while arst pulses (the host paused
+    -- mid-Shift-DR, e.g. a CoE gap), then the rest of the slot
+    procedure xfer_reset_at(s : slot_t; pbit : natural; tag : string) is
+      variable b : std_logic;
+    begin
+      qedge('0'); qedge('0'); qedge('1');
+      for i in 0 to SB - 1 loop
+        if i = pbit then
+          wait for 2 us;                   -- HDR crosses and is popped
+          reset_pulse;
+        end if;
+        edge('0', '1', s(i), b);
+        rx(0)(i) := b;
+      end loop;
+      qedge('0'); qedge('0');
+      wait for GAP;
+      status_check(rx(0), false, tag);
+    end procedure;
+
     procedure xfer(s : slot_t; allow_tear : boolean; tag : string) is
     begin
       tx(0) := s;
@@ -788,11 +819,7 @@ begin
     send(16#41#, 3, a64(16#1004#), 1, 0, 0, 0, "G rd41 (waits)");
     send(16#42#, 1, a64(16#6000#), 2, 0, 0, 8, "G wr42 (queued)");
     log_total("G before reset");
-    wait until rising_edge(aclk);
-    arst <= '1';
-    for k in 1 to 10 loop wait until rising_edge(aclk); end loop;
-    arst <= '0';
-    wait for 1 us;
+    reset_pulse;
     poll_done(16#42#, "G after reset");
     chk(rx(0)(112) = '0' and rx(0)(95 downto 64) = NONE and rx(0)(147 downto 116) = NONE
         and rx(0)(113) = '0', "G: status after the reset is not the reset value");
@@ -804,6 +831,26 @@ begin
     chk_log(2, 1, x"00006000", 4, "G rd43");
     nop(16#43#, 1, "G ack 43");
     nop(0, 0, "G final");
+    log_total("G");
+
+    -- ======== H: reset in the middle of a frame ========
+    -- WR_INC 9 items (HDR + 2 DATA + PASS). TCK stops at bit 300, after the HDR push
+    -- (bit 255) and before the first DATA push (bit 511); arst pulses; the slot finishes
+    -- (DATA, DATA, PASS with a good CRC). The executor saw the HDR before the reset and the
+    -- rest after it: it must not execute. The next good frame must.
+    xfer_reset_at(frame(16#50#, 1, a64(16#7000#), 9, 0, 0, 9), 300, "H cut by reset");
+    for k in 1 to 2 loop
+      nop(0, 0, "H after reset");
+      chk(rx(0)(63 downto 32) /= s32(16#50#), "H: the frame cut by the reset executed");
+    end loop;
+    chk(rx(0)(63 downto 32) = NONE and rx(0)(113) = '0',
+        "H: status after the reset is not the reset value (last_done " &
+        to_hstring(rx(0)(63 downto 32)) & ")");
+    log_total("H after reset (nothing may run)");
+    send(16#51#, 1, a64(16#7100#), 3, 0, 0, 10, "H wr51");
+    poll_done(16#51#, "H wr51");
+    exp_items(10, 3);
+    chk_log(3, 0, x"00007100", 4, "H wr51");
     log_total("end");
 
     -- ======== end ========

@@ -16,8 +16,12 @@
 #   ^JCCTL_OOC_ASYNC_REG <cell> <value>    the core's own synchroniser flops
 #   ^JCCTL_OOC_CROSS <name> slack <s> requirement <r>
 #   ^JCCTL_OOC_DONE
-# A Tcl error anywhere (a constraint matching nothing, a non-block response RAM) ends the
-# run WITHOUT ^JCCTL_OOC_DONE.
+#   ^JCCTL_SYNC_OK / ^JCCTL_SYNC_DRIVER     synchroniser structure (fix round 1)
+# A Tcl error anywhere ends the run WITHOUT ^JCCTL_OOC_DONE: a constraint matching nothing
+# (JCCTL_CONSTRAINT_EMPTY), a response RAM that is not a block RAM or whose ports are not
+# write-on-aclk / read-on-TCK (JCCTL_RRAM), a synchroniser without ASYNC_REG, with a first
+# stage feeding anything but its second stage, or a consumer not on the second stage
+# (JCCTL_SYNC).
 set repo [file normalize [lindex $argv 0]]
 set out  [file normalize [lindex $argv 1]]
 set part [expr {[llength $argv] > 2 ? [lindex $argv 2] : "xcvu35p-fsvh2104-2L-e"}]
@@ -37,6 +41,9 @@ report_utilization -file $out/util_synth.rpt
 report_utilization -hierarchical -file $out/util_synth_hier.rpt
 
 source $repo/hw/jc/ctl/jc_ctl_timing.tcl
+# synchroniser structure on the synthesized netlist (fix round 1): ASYNC_REG on both stages,
+# first stage feeds only the second, the executor's ack and reset come from the second
+jctl_syncs ""
 create_clock -name aclk -period $ACLK_P [get_ports aclk]
 create_clock -name tck  -period $TCK_P  [get_ports tck]
 set A [get_clocks aclk]
@@ -80,7 +87,9 @@ report_ram_utilization -file $out/ram_util.rpt
 
 puts "JCCTL_OOC_RRAM [jctl_rram {} $A $T]"
 foreach c [get_cells -quiet {rak_s1_reg rak_s2_reg rst_s1_reg rst_s2_reg}] {
-  puts "JCCTL_OOC_ASYNC_REG [get_property NAME $c] [get_property ASYNC_REG $c]"
+  set v [get_property ASYNC_REG $c]
+  puts "JCCTL_OOC_ASYNC_REG [get_property NAME $c] $v"
+  if {![string is true -strict $v]} { error "JCCTL_OOC_ASYNC_REG [get_property NAME $c] lost ASYNC_REG after route" }
 }
 puts "JCCTL_OOC_CDC unexpected [jctl_cdc_audit {} $A $T]"
 

@@ -117,6 +117,31 @@ at 2.48 us or later. The frame core reads word 495 63 TCK after the ack:
 The host must never accept a response from the slot that carried its ack. It has already
 accepted that response from an earlier slot.
 
+## OOC result (MEASURED by the controller, 2026-10-07, /mnt/storage/fk33_builds/jcctl_ooc2)
+
+This is the first version of the script, before fix round 1 added the synchroniser and
+RAM-clock refusals:
+- xcvu35p-fsvh2104-2L-e, 200 MHz aclk and 27 MHz TCK;
+- routed WNS +1.487 ns, WHS +0.039 ns, routing_errors 0;
+- `JCCTL_OOC_CDC unexpected 0`. The audit saw 157 aclk-to-TCK paths and 10 TCK-to-aclk
+  paths, all ending at named synchronisers;
+- `JCCTL_OOC_RRAM 1`;
+- peak memory 5.56 GB.
+
+The response RAM is one RAMB18E2 with WRITE_MODE NO_CHANGE on both ports. CLKARDCLK is
+tck (port A, read) and CLKBWRCLK is aclk (port B, write).
+
+Every named crossing is within its bound (slack / requirement, ns):
+
+| crossing | slack | requirement |
+|---|---|---|
+| snap_to_st_r | 36.308 | 37.037 |
+| pub_to_tgl | 4.698 | 5.000 |
+| ack_to_ack_s1 | 4.592 | 5.000 |
+| rsp_ack_tgl | 4.661 | 5.000 |
+| wp_gray | 4.515 | 5.000 |
+| rp_gray | 4.537 | 5.000 |
+
 ## OOC (not run by the implementer)
 
 ```
@@ -127,9 +152,15 @@ Gate on these lines:
 - `^JCCTL_OOC_DONE`
 - `^JCCTL_OOC_ROUTE routing_errors 0`
 - `^JCCTL_OOC_CDC unexpected 0`: every aclk/TCK endpoint is a named synchroniser
-- `^JCCTL_OOC_RRAM`: the response RAM must be a RAMB18E2 or RAMB36E2. Otherwise the
-  script stops before DONE.
+- `^JCCTL_OOC_RRAM`: the response RAM must be a RAMB18E2 or RAMB36E2. Its written port
+  must be on aclk and its other port on TCK. Otherwise the script stops before DONE (fix
+  round 1).
+- `^JCCTL_SYNC_OK` for each synchroniser, and `^JCCTL_SYNC_DRIVER` for the executor's
+  `rsp_ack_tgl` and `rst` (fix round 1). The script refuses, with no DONE, when:
+  - a stage lacks ASYNC_REG;
+  - a first stage feeds anything other than its second stage;
+  - the executor's ack or reset is not driven by the second stage's Q.
 - `JCCTL_OOC_WNS` and `JCCTL_OOC_WHS` must not be negative.
 
-Budget: about 4.4 GB, the loader core's measured figure. Run one Vivado per box, under
+Budget: 5.56 GB peak, MEASURED on this core. Run one Vivado per box, under
 `run_capped.sh`.

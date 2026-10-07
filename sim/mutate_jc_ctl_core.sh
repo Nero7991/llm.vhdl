@@ -10,9 +10,14 @@
 #
 # K rows mutate the composition. EQUIV rows are CDC defects a zero-delay RTL simulation
 # cannot see (a missing synchroniser or a wrong-clock read is functionally identical when
-# every flop settles instantly); their check is structural, in hw/jc/ctl/ooc_ctl_core.tcl
-# (^JCCTL_OOC_CDC unexpected 0, the ASYNC_REG census, the RAMB check), which the controller
-# runs. S rows mutate jc_status_sync (scratch copy) to show the stress check (case S) has
+# every flop settles instantly). Their check is structural, in hw/jc/ctl/ooc_ctl_core.tcl,
+# which the controller runs; each ends the run before ^JCCTL_OOC_DONE:
+#   K6  no ack synchroniser: rak_s1/rak_s2 unloaded and removed -> JCCTL_CONSTRAINT_EMPTY
+#   K7  status sync bypassed: the sync unloaded and removed -> JCCTL_CONSTRAINT_EMPTY
+#   K10 RAM read on aclk: both RAM ports on aclk -> JCCTL_RRAM (fix round 1)
+#   K11 reset synchroniser removed: rst_s1 removed -> JCCTL_SYNC (fix round 1)
+#   S2  one-stage capture: tgl_s1 feeds more than tgl_s2 -> JCCTL_SYNC (fix round 1)
+# These are DERIVED from the netlist rules, not yet measured by a Vivado run of each mutant. S rows mutate jc_status_sync (scratch copy) to show the stress check (case S) has
 # teeth. F and X rows are frame-core and executor mutants re-run end to end (attribution:
 # the end-to-end bench sees them through the real crossings).
 set -u
@@ -168,6 +173,8 @@ run_row F4  PROTO $FC KILLED "frame core: ack without the seq compare" \
 run_row F5  EQUIV $FC SURVIVED "frame core: stale-status guard off (unreachable with whole slots)" "if stale then" "if false then"
 run_row X4  PROTO $EX KILLED "executor: no wait for the ack before a read" \
   "            if s_rvalid = '0' then" "            if true then"
+run_row X9  PROTO $EX KILLED "executor: reset keeps an open frame (a frame cut by a reset executes)" \
+  "        have     <= '0';" "        null;"
 run_row X8  EQUIV $EX SURVIVED "executor: a write does not wait for its frame's ack (not observable)" \
   "elsif not (h_ackv = '1' and h_ackseq = s_rseq and s_rvalid = '1') then" "elsif true then"
 

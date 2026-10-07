@@ -106,22 +106,105 @@ proc jctl_cdc_audit {core clk_a clk_t} {
   return $bad
 }
 
-# The response RAM must be a block RAM with its write port on aclk and its read port on
-# TCK. Prints each RAM cell with the clock on each of its clock pins.
+# The response RAM must be a block RAM whose WRITTEN port is on aclk and whose other (read)
+# port is on TCK. A port is "written" if any of its write-enable pins (WEA[*] for port A,
+# WEBWE[*] for port B) is on a net that is not a constant. Refuses (Tcl error, so no
+# ^JCCTL_OOC_DONE) on: no RAM; a primitive that is not RAMB18E2/RAMB36E2; both ports on
+# the same clock (e.g. the read port moved to aclk); not exactly one written port; the
+# written port not on clk_a or the read port not on clk_t.
+# MEASURED (controller's OOC run /mnt/storage/fk33_builds/jcctl_ooc2): one RAMB18E2,
+# CLKARDCLK = tck (port A, read), CLKBWRCLK = aclk (port B, write), WRITE_MODE NO_CHANGE.
+proc jctl_we_live {c pfx} {
+  set live 0
+  foreach p [get_pins -quiet -of_objects $c -filter "REF_PIN_NAME =~ ${pfx}*"] {
+    set n [get_nets -quiet -of_objects $p]
+    if {[llength $n] && [lsearch -exact {GROUND POWER} [get_property TYPE $n]] < 0} { set live 1 }
+  }
+  return $live
+}
+proc jctl_pin_clock {c pn} {
+  set p [get_pins -quiet -of_objects $c -filter "REF_PIN_NAME == $pn"]
+  if {[llength $p] != 1} { error "JCCTL_RRAM $c has no single $pn pin" }
+  set k [get_clocks -quiet -of_objects $p]
+  if {[llength $k] != 1} { error "JCCTL_RRAM $c/$pn is on [llength $k] clocks" }
+  return [get_property NAME $k]
+}
 proc jctl_rram {core clk_a clk_t} {
+  set an [get_property NAME $clk_a]
+  set tn [get_property NAME $clk_t]
   set r [get_cells -quiet -hierarchical -filter "NAME =~ \"${core}rram_reg*\" && IS_PRIMITIVE"]
   if {[llength $r] == 0} { error "JCCTL_RRAM none found (${core}rram_reg*)" }
   foreach c $r {
     set g [get_property REF_NAME $c]
-    set clks {}
-    foreach pn {CLKARDCLK CLKBWRCLK} {
-      set p [get_pins -quiet $c/$pn]
-      if {[llength $p]} { lappend clks "$pn=[get_property NAME [get_clocks -quiet -of_objects $p]]" }
-    }
-    puts "JCCTL_RRAM $g $clks $c"
     if {![regexp {^RAMB(18|36)E2$} $g]} { error "JCCTL_RRAM $c is $g, not a RAMB18E2/RAMB36E2" }
+    set ca [jctl_pin_clock $c CLKARDCLK]
+    set cb [jctl_pin_clock $c CLKBWRCLK]
+    set wa [jctl_we_live $c WEA]
+    set wb [jctl_we_live $c WEBWE]
+    puts "JCCTL_RRAM $g CLKARDCLK=$ca CLKBWRCLK=$cb written_A=$wa written_B=$wb $c"
+    if {$ca eq $cb} { error "JCCTL_RRAM $c has both ports on $ca" }
+    if {$wa + $wb != 1} { error "JCCTL_RRAM $c has $wa + $wb written ports, expected 1" }
+    if {$wa} { set wclk $ca; set rclk $cb } else { set wclk $cb; set rclk $ca }
+    if {$wclk ne $an} { error "JCCTL_RRAM $c write port on $wclk, expected $an" }
+    if {$rclk ne $tn} { error "JCCTL_RRAM $c read port on $rclk, expected $tn" }
   }
   return [llength $r]
+}
+
+# SYNCHRONISER STRUCTURE (fix round 1). A one-flop synchroniser (the consumer taking the
+# first stage instead of the second) is invisible to a zero-delay bench, to the endpoint
+# audit and to an ASYNC_REG print. jctl_sync_chain refuses unless: both stages exist, every
+# cell of both stages has ASYNC_REG true, and every timing endpoint of every first-stage Q
+# is a D pin of a second-stage cell (the first stage feeds the second stage and nothing
+# else). Run it on the synthesized netlist, before opt_design can replicate a flop.
+proc jctl_sync_chain {s1 s2} {
+  set c1 [jctl_cells $s1]
+  set c2 [jctl_cells $s2]
+  set n2 [get_property NAME $c2]
+  foreach c [concat $c1 $c2] {
+    set v [get_property ASYNC_REG $c]
+    if {![string is true -strict $v]} { error "JCCTL_SYNC [get_property NAME $c] ASYNC_REG is '$v'" }
+    puts "JCCTL_ASYNC_REG [get_property NAME $c] $v"
+  }
+  foreach c $c1 {
+    set q [get_pins -of_objects $c -filter {REF_PIN_NAME == Q}]
+    set ep [all_fanout -endpoints_only -flat $q]
+    if {[llength $ep] == 0} { error "JCCTL_SYNC [get_property NAME $c]/Q reaches nothing" }
+    foreach e $ep {
+      set ec [get_property NAME [get_cells -of_objects $e]]
+      if {[lsearch -exact $n2 $ec] < 0 || [get_property REF_PIN_NAME $e] ne "D"} {
+        error "JCCTL_SYNC [get_property NAME $c]/Q reaches $e, not only the second stage $s2"
+      }
+    }
+  }
+  puts "JCCTL_SYNC_OK [llength $c1] $s1 -> $s2"
+}
+
+# The hierarchical input pin hpin (e.g. ex/rsp_ack_tgl) must be driven by exactly one leaf
+# pin, the Q of cell qcell (e.g. rak_s2_reg): the consumer takes the SECOND stage.
+proc jctl_driven_by {hpin qcell} {
+  set p [get_pins -quiet $hpin]
+  if {[llength $p] != 1} { error "JCCTL_SYNC no single pin $hpin" }
+  set n [get_nets -quiet -of_objects $p]
+  # a hierarchical pin can return both net segments; they resolve to one leaf driver
+  set drv [get_pins -quiet [lsort -unique [get_pins -quiet -leaf -of_objects $n -filter {DIRECTION == OUT}]]]
+  if {[llength $drv] != 1 || [get_property NAME [get_cells -of_objects $drv]] ne $qcell
+      || [get_property REF_PIN_NAME $drv] ne "Q"} {
+    error "JCCTL_SYNC $hpin is driven by {$drv}, expected $qcell/Q"
+  }
+  puts "JCCTL_SYNC_DRIVER $hpin <- $drv"
+}
+
+# Every synchroniser of the core, structurally (call after synth_design).
+proc jctl_syncs {core} {
+  jctl_sync_chain "${core}rak_s1_reg"        "${core}rak_s2_reg"
+  jctl_sync_chain "${core}rst_s1_reg"        "${core}rst_s2_reg"
+  jctl_sync_chain "${core}sync/tgl_s1_reg"   "${core}sync/tgl_s2_reg"
+  jctl_sync_chain "${core}sync/ack_s1_reg"   "${core}sync/ack_s2_reg"
+  jctl_sync_chain "${core}fifo/wp_g_s1_reg*" "${core}fifo/wp_g_s2_reg*"
+  jctl_sync_chain "${core}fifo/rp_g_s1_reg*" "${core}fifo/rp_g_s2_reg*"
+  jctl_driven_by "${core}ex/rsp_ack_tgl" "${core}rak_s2_reg"
+  jctl_driven_by "${core}ex/rst"         "${core}rst_s2_reg"
 }
 
 # BSCANE2 TDI into the TCK-domain receiver (card build only; the loader's jcl_tdi). The
