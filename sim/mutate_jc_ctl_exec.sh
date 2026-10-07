@@ -19,6 +19,7 @@ TB=tb_jc_ctl_exec
 F=rtl/jc_ctl_exec.vhd
 NT=0; NMISMATCH=0; Z0SEEN=0; Z0OK=0
 NCTRL=0; NCTRL_OK=0
+NEQ=0;   NEQ_OK=0
 NMUT=0;  NMUT_OK=0
 
 run_row() {   # run_row <tag> <class> <rtlfile> <expected> <desc> <old> <new>
@@ -61,6 +62,7 @@ PY
   fi
   case "$cls" in
     CTRL) NCTRL=$((NCTRL+1));;
+    EQUIV) NEQ=$((NEQ+1));;
     VALUE|PROTO) NMUT=$((NMUT+1));;
   esac
   if [ "$res" = "DID NOT ANALYZE" ] || [ "$res" != "$exp" ]; then mismatch=1; fi
@@ -71,6 +73,7 @@ PY
     verdict=OK
     case "$cls" in
       CTRL)  NCTRL_OK=$((NCTRL_OK+1));;
+      EQUIV) NEQ_OK=$((NEQ_OK+1));;
       VALUE|PROTO) NMUT_OK=$((NMUT_OK+1));;
       AUDIT) Z0OK=1;;
     esac
@@ -108,7 +111,7 @@ run_row M6  PROTO $F KILLED "NOP clears axi_err" \
   "          if h_op = JC_OP_NOP then
             st <= S_RX; s_err <= '0'; s_resp <= \"00\"; s_eseq <= NONE;"
 run_row M7  PROTO $F KILLED "same rsp_seq republished (repeated read seq not rejected)" \
-  " or h_seq = s_rseq)" ")"
+  " or (is_rd(h_op) and h_seq = s_rseq) then" " then"
 run_row M8  PROTO $F KILLED "ack applied after the op (a write does not wait for its frame's ack)" \
   "elsif not (h_ackv = '1' and h_ackseq = s_rseq and s_rvalid = '1') then" "elsif true then"
 # --- the rest of what the bench claims ---
@@ -187,10 +190,89 @@ run_row M28 VALUE $F KILLED "[383:213] not zero (rsp_crc copied into the st_crc 
   "    s(JC_S_RSPCRC_HI downto JC_S_RSPCRC_LO)   := s_rcrc;" \
   "    s(JC_S_RSPCRC_HI downto JC_S_RSPCRC_LO)   := s_rcrc; s(383 downto 352) := s_rcrc;"
 
-printf 'mutants killed %d/%d; controls passed %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
-  "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$([ $Z0OK = 1 ] && echo ok || echo FAILED)" "$NT" "$NMISMATCH"
+# --- review fix round 1: the reviewer's mutants, under the reviewer's ids ---
+run_row R2  PROTO $F KILLED "WVALID held after its handshake until AW completes" \
+  "if m_axil_wready = '1' then l_wv <= '0'; end if;" "if awd and wdn then l_wv <= '0'; end if;"
+run_row R3  VALUE $F KILLED "INC wrap bound strict (addr + 4*count = 2^32 rejected)" \
+  "ok := ok and bytes <= shift_left(to_unsigned(1, 65), 32);" \
+  "ok := ok and bytes < shift_left(to_unsigned(1, 65), 32);"
+run_row R4  VALUE $F KILLED "MEM_RD top bound strict (addr + 4*count = 2^ADDR_W rejected)" \
+  "and bytes <= shift_left(to_unsigned(1, 65), ADDR_W);" \
+  "and bytes < shift_left(to_unsigned(1, 65), ADDR_W);"
+run_row R6  VALUE $F KILLED "a later RRESP overwrites the first error's code" \
+  "if m_axi_rresp /= \"00\" and e_f = '0' then" "if m_axi_rresp /= \"00\" then"
+run_row R15 VALUE $F KILLED "rsp_count not updated on publish" \
+  "s_rcnt   <= h_cnt;" "s_rcnt   <= s_rcnt;"
+run_row R18 PROTO $F KILLED "write ack-wait ignores ack_seq" \
+  "elsif not (h_ackv = '1' and h_ackseq = s_rseq and s_rvalid = '1') then" \
+  "elsif not (h_ackv = '1' and s_rvalid = '1') then"
+run_row R20 PROTO $F KILLED "HBM error burst not drained (stop at the first bad beat)" \
+  "            inb <= inb - 1;
+            k   <= (others => '0');
+            tmo <= 0;
+            st  <= S_HW;" \
+  "            inb <= inb - 1;
+            k   <= (others => '0');
+            tmo <= 0;
+            st  <= S_HW;
+            if m_axi_rresp /= \"00\" then st <= S_DONE; end if;"
+run_row R21 PROTO $F KILLED "DATA count not saturated (65 extra words wrap to nwords)" \
+  "if have = '1' and nrx /= 63 then" "if have = '1' then"
+run_row R22 VALUE $F KILLED "write DECERR treated as OK" \
+  "if m_axil_bresp /= \"00\" then" "if m_axil_bresp = \"10\" then"
+run_row R23 VALUE $F KILLED "read DECERR treated as OK" \
+  "if m_axil_rresp /= \"00\" then" "if m_axil_rresp = \"10\" then"
+run_row R24 VALUE $F KILLED "AXI-Lite addr[63:32] not checked" \
+  "ok := ok and a(63 downto 32) = 0 and a(1 downto 0) = \"00\";" "ok := ok and a(1 downto 0) = \"00\";"
+run_row R25 VALUE $F KILLED "wrap check applied to FIX ops" \
+  "      if is_inc(op) then
+        ok := ok and bytes" \
+  "      if true then
+        ok := ok and bytes"
+run_row R5  EQUIV $F SURVIVED "ack_prev reset to 0, not to the input (equivalent: see report)" \
+  "ack_prev <= rsp_ack_tgl;
+      end if;
+    end if;
+  end process;" \
+  "ack_prev <= '0';
+      end if;
+    end if;
+  end process;"
+
+# --- review fix round 1, items 5 and 6 ---
+run_row M29 PROTO $F KILLED "AXI-Lite B timeout never fires" \
+  "if m_axil_bvalid = '0' and tmo = TMO_CYC - 1 then" "if false then"
+run_row M29b PROTO $F KILLED "AXI-Lite R timeout never fires" \
+  "if m_axil_rvalid = '0' and tmo = TMO_CYC - 1 then" "if false then"
+run_row M29c PROTO $F KILLED "HBM beat timeout never fires" \
+  "if m_axi_rvalid = '0' and tmo = TMO_CYC - 1 then" "if false then"
+run_row M30 PROTO $F KILLED "owed HBM beats not recorded (late beats not drained)" \
+  "            h_owe <= inb;" "            null;"
+run_row M31 PROTO $F KILLED "MEM_RD not refused while beats are owed" \
+  "                or (h_op = JC_OP_MEM_RD and h_owe /= 0) then" "                or false then"
+run_row M32 PROTO $F KILLED "late B not drained after a timeout" \
+  "            l_bowe <= '1';" "            null;"
+run_row M32b PROTO $F KILLED "AXI-Lite op not refused while a late response is owed" \
+  "          elsif (h_op /= JC_OP_MEM_RD and (l_bowe = '1' or l_rowe = '1'))" \
+  "          elsif (false)"
+run_row M33 PROTO $F KILLED "a write with seq 0xFFFFFFFF accepted" \
+  "elsif h_seq = NONE or (is_rd(h_op) and h_seq = s_rseq) then" \
+  "elsif is_rd(h_op) and (h_seq = NONE or h_seq = s_rseq) then"
+run_row M34 PROTO $F KILLED "last_done_seq set to 0xFFFFFFFF by a seq-none frame" \
+  "          if h_seq /= NONE then
+            s_lastd <= h_seq;" \
+  "          if true then
+            s_lastd <= h_seq;"
+run_row M35 VALUE $F KILLED "timeout code not OKAY (reported as SLVERR)" \
+  "            l_bowe <= '1';
+            e_f <= '1'; e_r <= \"00\";" \
+  "            l_bowe <= '1';
+            e_f <= '1'; e_r <= \"10\";"
+
+printf 'mutants killed %d/%d; controls passed %d/%d; equivalents survived %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
+  "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$NEQ_OK" "$NEQ" "$([ $Z0OK = 1 ] && echo ok || echo FAILED)" "$NT" "$NMISMATCH"
 printf 'scratch: %s\n' "$RUNROOT"
-if [ $((NCTRL + NMUT + 1)) -ne "$NT" ]; then
+if [ $((NCTRL + NMUT + NEQ + 1)) -ne "$NT" ]; then
   echo "HARNESS FAILURE: row classes do not add up to the row count"; exit 1
 fi
 [ $Z0SEEN = 1 ] && [ $Z0OK = 1 ] || { echo "HARNESS FAILURE: Z0 did not report BADMUT"; exit 1; }

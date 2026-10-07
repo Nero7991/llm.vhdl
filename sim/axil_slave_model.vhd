@@ -11,7 +11,8 @@
 --     independently in either order;
 --   * protocol checks counted on `errors`: a VALID dropped or its payload changed before its
 --     handshake, and a partial WSTRB. AxPROT is not an input (the bench checks it).
--- Peek ports read the log and the register array combinationally.
+-- Peek ports read the log and the register array combinationally. mute_b / mute_r hold a
+-- pending B / R back (a slave that stops answering) and deliver it late when released.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -49,7 +50,11 @@ entity axil_slave_model is
     log_resp  : out std_logic_vector(1 downto 0);
     reg_addr  : in  std_logic_vector(31 downto 0);
     reg_data  : out std_logic_vector(31 downto 0);
-    errors    : out natural
+    errors    : out natural;
+    -- a slave that stops answering: while high, a pending B (R) is held back; it is delivered
+    -- once the input drops (a LATE response)
+    mute_b    : in  std_logic := '0';
+    mute_r    : in  std_logic := '0'
   );
 end entity;
 
@@ -163,10 +168,10 @@ begin
         bresp <= resp;
       end if;
       -- responses, possibly delayed
-      if b_pend and bvalid = '0' and rnd = '0' then
+      if b_pend and bvalid = '0' and mute_b = '0' and rnd = '0' then
         bvalid <= '1';
       end if;
-      if r_pend and rvalid = '0' and rnd = '0' then
+      if r_pend and rvalid = '0' and mute_r = '0' and rnd = '0' then
         rvalid <= '1';
       end if;
       -- readies for the next edge: one outstanding transaction per channel

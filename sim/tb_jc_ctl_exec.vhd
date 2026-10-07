@@ -34,6 +34,7 @@ architecture sim of tb_jc_ctl_exec is
   constant CNT_A     : std_logic_vector(31 downto 0) := x"0000F100";
   constant BAD_HBM   : std_logic_vector(39 downto 0) := x"0180003000";
   constant NONE      : std_logic_vector(31 downto 0) := x"FFFFFFFF";
+  constant TMO       : positive := 2000;   -- the DUT's response timeout, cycles
 
   signal clk     : std_logic := '0';
   signal running : boolean := true;
@@ -76,6 +77,12 @@ architecture sim of tb_jc_ctl_exec is
   signal poke_addr : std_logic_vector(39 downto 0) := (others => '0');
   signal poke_data : std_logic_vector(255 downto 0) := (others => '0');
   signal hbm_err   : natural;
+  signal h_rvalid_m : std_logic;                     -- the model's RVALID, before the mute gate
+  signal h_rresp_m  : std_logic_vector(1 downto 0);  -- the model's RRESP, before the override
+  signal hmute      : std_logic := '0';               -- HBM stops delivering R beats
+  signal mute_b, mute_r : std_logic := '0';           -- AXI-Lite stops answering B / R
+  signal bad_b      : boolean := false;               -- the current burst is the RRESP-error one
+  signal bad_n      : natural := 0;                   -- R beats received in it
 
   -- monitors
   type ram_t is array (0 to 511) of std_logic_vector(31 downto 0);
@@ -127,7 +134,7 @@ begin
   clk <= not clk after TCLK / 2 when running else '0';
 
   dut : entity work.jc_ctl_exec
-    generic map(ADDR_W => 33)
+    generic map(ADDR_W => 33, TMO_CYC => TMO)
     port map(clk => clk, rst => rst,
              q_valid => q_valid, q_data => q_data, q_ready => q_ready,
              rsp_ack_tgl => ack_tgl,
@@ -154,7 +161,8 @@ begin
              rdata => l_rdata, rresp => l_rresp, rvalid => l_rvalid, rready => l_rready,
              log_count => log_count, log_idx => log_idx, log_kind => log_kind,
              log_addr => log_addr, log_data => log_data, log_resp => log_resp,
-             reg_addr => reg_addr, reg_data => reg_data, errors => axil_err);
+             reg_addr => reg_addr, reg_data => reg_data, errors => axil_err,
+             mute_b => mute_b, mute_r => mute_r);
 
   hbm : entity work.jc_axi3_mem
     generic map(ADDR_W => 33, IDX_W => 11, STALL => true, BAD_RRESP_ADDR => BAD_HBM)
@@ -165,10 +173,16 @@ begin
              bresp => open, bvalid => open, bready => '1',
              araddr => h_araddr, arlen => h_arlen(3 downto 0), arsize => h_arsize,
              arburst => h_arburst, arvalid => h_arvalid, arready => h_arready,
-             rdata => h_rdata, rresp => h_rresp, rlast => h_rlast, rvalid => h_rvalid,
-             rready => h_rready, poke_en => poke_en, poke_addr => poke_addr,
+             rdata => h_rdata, rresp => h_rresp_m, rlast => h_rlast, rvalid => h_rvalid_m,
+             rready => h_rready and not hmute, poke_en => poke_en, poke_addr => poke_addr,
              poke_data => poke_data, peek_addr => (others => '0'), peek_data => open,
              peek_hit => open, errors => hbm_err);
+
+  -- HBM R gate (a memory that stops delivering beats) and an RRESP override: in the burst
+  -- that starts at BAD_HBM the memory answers SLVERR on every beat; the second beat is turned
+  -- into DECERR so the executor must keep the FIRST error's code
+  h_rvalid <= h_rvalid_m and not hmute;
+  h_rresp  <= "11" when bad_b and bad_n = 1 and h_rresp_m = "10" else h_rresp_m;
 
   -- the bench FIFO's read side: presents queued words to the DUT with random gaps
   feed : process(clk)
@@ -231,7 +245,12 @@ begin
         end if;
         prev_done := st(JC_S_DONE_HI downto JC_S_DONE_LO);
       end if;
+      if h_rvalid = '1' and h_rready = '1' then
+        bad_n <= bad_n + 1;
+      end if;
       if h_arvalid = '1' and h_arready = '1' then
+        bad_b <= h_araddr = BAD_HBM(32 downto 0);
+        bad_n <= 0;
         a  := unsigned(h_araddr);
         nb := to_integer(unsigned(h_arlen)) + 1;
         if n_burst < 256 then
@@ -525,6 +544,7 @@ begin
     seed_hbm(x"0180000F80", 8);       -- (e) 64 items across 0x1_8000_1000
     seed_hbm(x"0180001F40", 62);      -- (e) 496 items: 6 + 16 + 16 + 16 + 8 beats
     seed_hbm(x"0180003000", 2);       -- (e) RRESP error region
+    seed_hbm(x"01FFFFFFE0", 1);       -- the last 32 bytes below 2^33 (R4 boundary)
     tick(5);
     rst <= '0';
     tick(5);
@@ -611,6 +631,11 @@ begin
     chk_log(lc0 + 1, 0, x"0000EFFC", its(1), "00", "(d)");
     chk_log(lc0 + 2, 0, x"0000F000", its(2), "10", "(d)");
     chk_err('1', "10", s32(16), "(d) SLVERR");
+    -- fix round 1, I3: a mid-frame error leaves the earlier items written (no rollback)
+    reg_addr <= x"0000EFF8"; tick;
+    chk(reg_data = its(0), "(d) item 0 before the error not written");
+    reg_addr <= x"0000EFFC"; tick;
+    chk(reg_data = its(1), "(d) item 1 before the error not written");
     -- ruling (c): NOPs (with and without an ack of nothing) change no status field
     st0 := st;
     frame(NONE, JC_OP_NOP, 1, 0, x"0000000000000000");
@@ -642,6 +667,61 @@ begin
     frame(s32(23), JC_OP_WR_FIX, 1, 1, x"0000000000000404");
     wait_done(s32(23), "(d) clear");
     chk_err('0', "00", NONE, "(d) cleared again");
+    -- fix round 1 (R22): a write answered DECERR is an error, axi_resp "11"
+    fill(2);
+    lc0 := log_count;
+    frame(s32(101), JC_OP_WR_FIX, 1, 1, x"0000000000010000");
+    wait_done(s32(101), "(d) write DECERR");
+    chk(log_count = lc0 + 1, "(d) write DECERR: one transaction");
+    chk_log(lc0, 0, x"00010000", its(0), "11", "(d) write DECERR");
+    chk_err('1', "11", s32(101), "(d) write DECERR");
+    -- (R25) FIX ops are not wrap-checked: 2 items at 0xFFFFFFFC are legal and run (the slave
+    -- answers DECERR, so each stops after one transaction with "11", not a "10" rejection)
+    lc0 := log_count;
+    frame(s32(102), JC_OP_WR_FIX, 2, 1, x"00000000FFFFFFFC");
+    wait_done(s32(102), "(d) WR_FIX at the top");
+    chk(log_count = lc0 + 1, "(d) WR_FIX at the top ran");
+    chk_log(lc0, 0, x"FFFFFFFC", its(0), "11", "(d) WR_FIX at the top");
+    chk_err('1', "11", s32(102), "(d) WR_FIX at the top");
+    lc0 := log_count;
+    frame(s32(103), JC_OP_RD_FIX, 2, 0, x"00000000FFFFFFFC");
+    wait_done(s32(103), "(d) RD_FIX at the top");
+    chk(log_count = lc0 + 1, "(d) RD_FIX at the top ran");
+    chk_log(lc0, 1, x"FFFFFFFC", x"00000000", "11", "(d) RD_FIX at the top");
+    chk_err('1', "11", s32(103), "(d) RD_FIX at the top");
+    -- (R3) the INC bound is inclusive: addr + 4*count = 2^32 runs, one item more is rejected
+    lc0 := log_count;
+    frame(s32(104), JC_OP_WR_INC, 1, 1, x"00000000FFFFFFFC");
+    wait_done(s32(104), "(d) WR_INC ending at 2^32");
+    chk(log_count = lc0 + 1, "(d) WR_INC ending exactly at 2^32 ran");
+    chk_err('1', "11", s32(104), "(d) WR_INC ending at 2^32 (DECERR, not rejected)");
+    lc0 := log_count;
+    frame(s32(105), JC_OP_WR_INC, 2, 1, x"00000000FFFFFFFC");
+    wait_done(s32(105), "(d) WR_INC past 2^32");
+    chk(log_count = lc0, "(d) WR_INC past 2^32 ran");
+    chk_err('1', "10", s32(105), "(d) WR_INC past 2^32 rejected");
+    -- (I2, R24) FIX ops above 32 bits: rejected (the wrap check cannot catch these)
+    lc0 := log_count; rw0 := n_ramwr;
+    frame(s32(106), JC_OP_WR_FIX, 1, 1, x"0000000100000200");
+    wait_done(s32(106), "(d) WR_FIX above 32 bits");
+    chk_err('1', "10", s32(106), "(d) WR_FIX above 32 bits");
+    frame(s32(107), JC_OP_RD_FIX, 1, 0, x"0000000100000200");
+    wait_done(s32(107), "(d) RD_FIX above 32 bits");
+    chk_err('1', "10", s32(107), "(d) RD_FIX above 32 bits");
+    chk_nothing(lc0, rw0, "(d) FIX ops above 32 bits");
+    reg_addr <= x"00000200"; tick;
+    chk(reg_data /= its(0), "(d) WR_FIX above 32 bits landed at 0x200");
+    -- fix round 1, item 5: a write with seq 0xFFFFFFFF is rejected "01" and last_done_seq
+    -- does not become "none"
+    lc0 := log_count;
+    frame(NONE, JC_OP_WR_INC, 1, 1, x"0000000000000404");
+    wait_idle;
+    chk(log_count = lc0, "(d) a write with seq none ran");
+    chk_err('1', "01", NONE, "(d) a write with seq none");
+    chk(f_done = s32(107), "(d) last_done_seq changed by a seq-none frame");
+    frame(s32(100), JC_OP_WR_FIX, 1, 1, x"0000000000000404");
+    wait_done(s32(100), "(d) clear again");
+    chk_err('0', "00", NONE, "(d) cleared");
 
     ------------------------------------------------------------------ (e)
     nb0 := n_burst; lc0 := log_count;
@@ -671,6 +751,25 @@ begin
     wait_done(s32(22), "(e) MEM_RD RRESP error");
     chk_err('1', "10", s32(22), "(e) RRESP SLVERR");
     chk(st(JC_S_RSPVALID) = '0', "(e) no response after an HBM read error");
+    -- fix round 1 (I1, R20): the error burst was drained, so the next MEM_RD gets its own data
+    nb0 := n_burst;
+    frame(s32(24), JC_OP_MEM_RD, 64, 0, x"0000000180000F80");
+    wait_done(s32(24), "(e) MEM_RD after the error");
+    chk_err('0', "00", NONE, "(e) MEM_RD after the error");
+    chk(n_burst = nb0 + 2, "(e) MEM_RD after the error: 2 bursts");
+    expect_hbm(x"0180000F80", 8);
+    chk_rsp(s32(24), 64, "(e) MEM_RD after the error");
+    ack_nop(s32(24), "(e) ack");
+    -- (R4) the MEM_RD bound is inclusive: the last 32 bytes below 2^33 are readable
+    nb0 := n_burst;
+    frame(s32(25), JC_OP_MEM_RD, 8, 0, x"00000001FFFFFFE0");
+    wait_done(s32(25), "(e) MEM_RD ending at 2^33");
+    chk_err('0', "00", NONE, "(e) MEM_RD ending exactly at 2^33 accepted");
+    chk(n_burst = nb0 + 1, "(e) MEM_RD ending at 2^33: 1 burst");
+    chk_burst(nb0, '1' & x"FFFFFFE0", 1, "(e) MEM_RD ending at 2^33");
+    expect_hbm(x"01FFFFFFE0", 1);
+    chk_rsp(s32(25), 8, "(e) MEM_RD ending at 2^33");
+    ack_nop(s32(25), "(e) ack");
 
     ------------------------------------------------------------------ (f)
     lc0 := log_count;
@@ -735,7 +834,7 @@ begin
     chk(log_count = lc0 + 1, "(b-ruling) stale-ack write ran");
 
     ------------------------------------------------- ruling (e): header validation
-    lc0 := log_count; rw0 := n_ramwr;
+    lc0 := log_count; rw0 := n_ramwr; nb0 := n_burst;
     frame(s32(50), 6, 1, 0, x"0000000000000100");
     wait_done(s32(50), "(e-ruling) op 6");
     chk_err('1', "10", s32(50), "(e-ruling) op 6");
@@ -783,7 +882,7 @@ begin
     wait_done(s32(66), "(e-ruling) MEM_RD past the top of HBM");
     chk_err('1', "10", s32(66), "(e-ruling) MEM_RD past the top of HBM");
     chk_nothing(lc0, rw0, "(e-ruling) invalid headers");
-    chk(n_burst = nb0 + 5 + 1, "(e-ruling) an invalid MEM_RD issued a burst");
+    chk(n_burst = nb0, "(e-ruling) an invalid MEM_RD issued a burst");
     -- the same rsp_seq never twice in a row: a read reusing the presented/acked seq is
     -- rejected with axi_resp "01"
     frame(s32(64), JC_OP_WR_INC, 1, 1, x"0000000000000508", '1', s32(34));
@@ -793,6 +892,15 @@ begin
     frame(s32(65), JC_OP_RD_INC, 1, 0, x"0000000000000100");
     wait_done(s32(65), "(a-ruling) read 65");
     chk_rsp(s32(65), 1, "(a-ruling) read 65");
+    -- fix round 1 (R18): a write acking a seq other than the presented one does not wait
+    lc0 := log_count;
+    fill(1);
+    frame(s32(108), JC_OP_WR_INC, 1, 1, x"000000000000050C", '1', s32(64));
+    wait_done(s32(108), "(b-ruling) write acking another seq");
+    chk(log_count = lc0 + 1, "(b-ruling) write acking another seq ran");
+    chk(st(JC_S_RSPVALID) = '1' and f_rseq = s32(65),
+        "(b-ruling) response 65 no longer presented after a write acking another seq");
+    reg_addr <= x"00000100"; tick; its(0) := reg_data;
     ack_nop(s32(65), "(a-ruling) ack 65");
     lc0 := log_count; rw0 := n_ramwr;
     frame(s32(65), JC_OP_RD_INC, 1, 0, x"0000000000000100");
@@ -801,8 +909,9 @@ begin
     chk_err('1', "01", s32(65), "(a-ruling) repeated rsp_seq rejected");
     chk(st(JC_S_RSPVALID) = '0', "(a-ruling) repeated rsp_seq published");
     frame(NONE, JC_OP_RD_INC, 1, 0, x"0000000000000100");
-    wait_done(NONE, "(a-ruling) read with seq none");
+    wait_idle;
     chk_err('1', "01", NONE, "(a-ruling) read with seq none rejected");
+    chk(f_done = s32(65), "(a-ruling) last_done_seq changed by a seq-none read");
     chk(st(JC_S_RSPVALID) = '0', "(a-ruling) seq none published");
     chk_nothing(lc0, rw0, "(a-ruling) rejected reads");
 
@@ -840,6 +949,12 @@ begin
     push(TAG_DATA, dword(0, 8));
     push(TAG_DATA, dword(0, 8));
     push(TAG_PASS, std_logic_vector(resize(unsigned(s32(75)), 256)));
+    -- fix round 1 (R21): 65 DATA words for nwords 1 (a count that wraps 6 bits back to 1)
+    push(TAG_HDR, hdr(s32(109), JC_OP_WR_INC, 1, 1, x"0000000000000800", '0', NONE));
+    for j in 0 to 64 loop
+      push(TAG_DATA, dword(0, 8));
+    end loop;
+    push(TAG_PASS, std_logic_vector(resize(unsigned(s32(109)), 256)));
     -- a header with a read, then a FAIL of another seq: still nothing
     push(TAG_HDR, hdr(s32(76), JC_OP_RD_FIX, 1, 0, x"000000000000F100", '0', NONE));
     push(TAG_FAIL, std_logic_vector(resize(unsigned(s32(76)), 256)));
@@ -861,6 +976,69 @@ begin
     chk_rsp(s32(77), 1, "(f-ruling) the counter was read exactly 9 times before");
     ack_nop(s32(77), "(f-ruling) ack");
 
+    ------------------------------------------------- fix round 1, item 6: timeouts
+    -- AXI-Lite B never arrives: the frame ends after TMO cycles with axi_err = 1 and
+    -- axi_resp = "00" (the timeout code), busy clears; AXI-Lite ops are refused the same way
+    -- until the late B has been drained
+    fill(1);
+    mute_b <= '1';
+    lc0 := log_count;
+    frame(s32(110), JC_OP_WR_FIX, 1, 1, x"0000000000000900");
+    wait_done(s32(110), "(tmo) B never arrives");
+    chk_err('1', "00", s32(110), "(tmo) B timeout");
+    chk(log_count = lc0 + 1, "(tmo) the timed-out write reached the slave");
+    frame(s32(111), JC_OP_WR_FIX, 1, 1, x"0000000000000904");
+    wait_done(s32(111), "(tmo) write while B is owed");
+    chk_err('1', "00", s32(111), "(tmo) write refused while B is owed");
+    chk(log_count = lc0 + 1, "(tmo) a write was issued while B is owed");
+    mute_b <= '0';
+    tick(50);
+    lc0 := log_count;
+    frame(s32(112), JC_OP_WR_FIX, 1, 1, x"0000000000000904");
+    wait_done(s32(112), "(tmo) write after the late B");
+    chk_err('0', "00", NONE, "(tmo) write after the late B");
+    chk(log_count = lc0 + 1, "(tmo) write after the late B: one transaction");
+    chk_log(lc0, 0, x"00000904", its(0), "00", "(tmo) write after the late B");
+    -- AXI-Lite R never arrives (the counter register: 11 is owed, the next read must see 12)
+    mute_r <= '1';
+    lc0 := log_count; rw0 := n_ramwr;
+    frame(s32(113), JC_OP_RD_FIX, 1, 0, x"000000000000F100");
+    wait_done(s32(113), "(tmo) R never arrives");
+    chk_err('1', "00", s32(113), "(tmo) R timeout");
+    chk(st(JC_S_RSPVALID) = '0' and f_rseq = s32(77), "(tmo) a timed-out read published");
+    frame(s32(114), JC_OP_RD_FIX, 1, 0, x"000000000000F100");
+    wait_done(s32(114), "(tmo) read while R is owed");
+    chk_err('1', "00", s32(114), "(tmo) read refused while R is owed");
+    chk_nothing(lc0 + 1, rw0, "(tmo) reads while R is owed");
+    mute_r <= '0';
+    tick(50);
+    frame(s32(115), JC_OP_RD_FIX, 1, 0, x"000000000000F100");
+    wait_done(s32(115), "(tmo) read after the late R");
+    its(0) := s32(12);
+    chk_rsp(s32(115), 1, "(tmo) read after the late R gets its own data, not the late R");
+    ack_nop(s32(115), "(tmo) ack");
+    -- HBM R beats never arrive: the 2 owed beats are drained when they come, never taken by
+    -- the next MEM_RD (which reads a different address, so stale data would show)
+    hmute <= '1';
+    nb0 := n_burst; rw0 := n_ramwr;
+    frame(s32(116), JC_OP_MEM_RD, 16, 0, x"0000000180001F40");
+    wait_done(s32(116), "(tmo) HBM beats never arrive");
+    chk_err('1', "00", s32(116), "(tmo) HBM R timeout");
+    chk(n_burst = nb0 + 1, "(tmo) HBM burst issued");
+    frame(s32(117), JC_OP_MEM_RD, 8, 0, x"0000000180000F80");
+    wait_done(s32(117), "(tmo) MEM_RD while beats are owed");
+    chk_err('1', "00", s32(117), "(tmo) MEM_RD refused while beats are owed");
+    chk(n_burst = nb0 + 1, "(tmo) a burst was issued while beats are owed");
+    chk(n_ramwr = rw0, "(tmo) response RAM written by a timed-out MEM_RD");
+    hmute <= '0';
+    tick(50);
+    frame(s32(118), JC_OP_MEM_RD, 64, 0, x"0000000180000F80");
+    wait_done(s32(118), "(tmo) MEM_RD after the late beats");
+    chk_err('0', "00", NONE, "(tmo) MEM_RD after the late beats");
+    expect_hbm(x"0180000F80", 8);
+    chk_rsp(s32(118), 64, "(tmo) MEM_RD after the late beats gets its own data");
+    ack_nop(s32(118), "(tmo) ack");
+
     ------------------------------------------------- global monitors
     tick(50);
     chk(n_ovw = 0, "response RAM written while presented: " & integer'image(n_ovw));
@@ -870,7 +1048,7 @@ begin
     chk(hbm_err = 0, "jc_axi3_mem rule violations: " & integer'image(hbm_err));
     chk(axil_err = 0, "AXI-Lite protocol violations: " & integer'image(axil_err));
     chk(l_awprot = "000" and l_arprot = "000", "AxPROT");
-    chk(n_pub = 11, "publications: " & integer'image(n_pub));
+    chk(n_pub = 15, "publications: " & integer'image(n_pub));
     chk_top("end");
 
     assert checks > 500 report "too few checks: " & integer'image(checks) severity failure;

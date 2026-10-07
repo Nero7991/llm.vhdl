@@ -21,10 +21,12 @@
 -- past 2^32 (addr + 4*count <= 2^32); for MEM_RD addr[4:0] = 0, count a multiple of 8,
 -- addr[63:ADDR_W] = 0 and addr + 4*count <= 2^ADDR_W. A header failing any of these
 -- executes nothing and completes with axi_err = 1, axi_resp = "10", err_seq = its seq.
--- A READ (ops 3-5) whose seq is x"FFFFFFFF" (the "none" value) or equals the rsp_seq
--- last published executes nothing and completes with axi_err = 1, axi_resp = "01"
--- (EXOKAY, which an AXI-Lite slave never returns, so the code is unambiguous): publishing
--- the same rsp_seq twice in a row would deadlock the frame core's stale rule.
+-- A READ (ops 3-5) whose seq equals the rsp_seq last published, and ANY non-NOP frame whose
+-- seq is x"FFFFFFFF" (the "none" value; fix round 1, item 5), executes nothing and completes
+-- with axi_err = 1, axi_resp = "01" (EXOKAY, which an AXI-Lite slave never returns, so the
+-- code is unambiguous): publishing the same rsp_seq twice in a row would deadlock the frame
+-- core's stale rule. A seq-none frame does NOT update last_done_seq (err_seq shows x"FFFFFFFF"),
+-- so last_done_seq never reads "none" once any frame has completed.
 -- A NOP (op 0) frame is never validated and never changes any status field; its only
 -- effect is its ack, which the frame core applies (Ruling (c)).
 --
@@ -46,6 +48,20 @@
 -- cross 4 KB, one burst outstanding, each 256-bit beat written to the response RAM as 8
 -- words, low word first. The first non-OKAY BRESP/RRESP stops the op: no further items
 -- are issued (an HBM burst in flight is drained), axi_resp keeps that first response.
+-- TIMEOUT (fix round 1, item 6). Waiting for an AXI-Lite B, an AXI-Lite R, or each HBM R
+-- beat is bounded by TMO_CYC cycles (default 65536 = 328 us at 200 MHz). On expiry the frame
+-- completes with axi_err = 1 and axi_resp = "00": OKAY with axi_err set never occurs otherwise,
+-- so "00" is the timeout code. busy clears. The response is still OWED by the slave:
+--   * AXI-Lite: BREADY (or RREADY) stays high in the background and the late B (or R) is
+--     consumed and discarded when it arrives; until then every AXI-Lite op (ops 1-4) is
+--     refused with the same timeout code, issuing nothing;
+--   * HBM: the beats of the current burst not yet received are counted; RREADY stays high
+--     and they are consumed and discarded as they arrive; until the count reaches zero every
+--     MEM_RD is refused with the timeout code, issuing nothing. So a late beat can never be
+--     taken by the next MEM_RD. Beats of the op not yet requested are never requested.
+-- If the owed response never arrives, the refusal is permanent until rst. The address
+-- handshakes (AW/W/AR) are NOT timed out: AXI forbids withdrawing VALID, so a slave that never
+-- accepts an address keeps the executor busy (busy stays 1).
 -- Read data goes to the response RAM (rsp_we/rsp_waddr/rsp_wdata, word k of the response at
 -- address k) and into the running rsp_crc: crc32_word (bit 0 first) over the words in
 -- address order with init all ones and a final xor x"FFFFFFFF", which is the order the frame
@@ -53,8 +69,8 @@
 --
 -- STATUS (st_out; fields per jc_ctl_pkg, all updated in ONE cycle when a frame completes,
 -- so jc_status_sync's snapshot is always coherent):
---   last_done_seq  the seq of the last PASS non-NOP frame completed, including a frame
---                  that errored or was rejected by validation (so a host waiting on
+--   last_done_seq  the seq of the last PASS non-NOP frame completed (except seq x"FFFFFFFF"),
+--                  including a frame that errored, timed out or was rejected by validation (so a host waiting on
 --                  last_done_seq always sees its frame finish); x"FFFFFFFF" after reset;
 --   rsp_seq/rsp_count/rsp_crc/rsp_valid  set together on a read that completed without an
 --                  error (the RAM is fully written by then); rsp_valid cleared by the ack;
@@ -69,7 +85,7 @@ use work.jc_loader_pkg.all;
 use work.jc_ctl_pkg.all;
 
 entity jc_ctl_exec is
-  generic(ADDR_W : positive := 33);
+  generic(ADDR_W : positive := 33; TMO_CYC : positive := 65536);
   port(
     clk            : in  std_logic;
     rst            : in  std_logic;                                   -- synchronous, high
@@ -179,6 +195,11 @@ architecture rtl of jc_ctl_exec is
   signal s_resp   : std_logic_vector(1 downto 0) := "00";
   signal s_eseq   : std_logic_vector(31 downto 0) := NONE;
   signal ack_prev : std_logic := '0';
+  -- timeouts (fix round 1, item 6)
+  signal tmo    : natural range 0 to TMO_CYC := 0;
+  signal l_bowe : std_logic := '0';                            -- a late B is owed
+  signal l_rowe : std_logic := '0';                            -- a late R is owed
+  signal h_owe  : unsigned(4 downto 0) := (others => '0');     -- late HBM beats owed
 
   function is_wr(op : unsigned(7 downto 0)) return boolean is
   begin
@@ -243,17 +264,17 @@ begin
   m_axil_wdata   <= l_wd;
   m_axil_wstrb   <= "1111";
   m_axil_wvalid  <= l_wv;
-  m_axil_bready  <= l_bre;
+  m_axil_bready  <= l_bre or l_bowe;
   m_axil_araddr  <= std_logic_vector(la);
   m_axil_arprot  <= "000";
   m_axil_arvalid <= l_arv;
-  m_axil_rready  <= l_rre;
+  m_axil_rready  <= l_rre or l_rowe;
   m_axi_araddr   <= h_ara;
   m_axi_arlen    <= "0000" & std_logic_vector(h_len);
   m_axi_arsize   <= "101";
   m_axi_arburst  <= "01";
   m_axi_arvalid  <= h_arv;
-  m_axi_rready   <= h_rre;
+  m_axi_rready   <= '1' when h_rre = '1' or h_owe /= 0 else '0';
   rsp_we         <= r_we;
   rsp_waddr      <= r_wa;
   rsp_wdata      <= r_wd;
@@ -299,6 +320,25 @@ begin
         ack_prev <= rsp_ack_tgl;
         s_rvalid <= '0';
       end if;
+      -- owed responses after a timeout: consumed and discarded in the background (the FSM
+      -- never waits on these channels while they are owed, see S_CHK)
+      if l_bowe = '1' and m_axil_bvalid = '1' then
+        l_bowe <= '0';
+      end if;
+      if l_rowe = '1' and m_axil_rvalid = '1' then
+        l_rowe <= '0';
+      end if;
+      if h_owe /= 0 and m_axi_rvalid = '1' then
+        h_owe <= h_owe - 1;
+      end if;
+      -- the response timer: counts while waiting for B, R or an HBM beat
+      if st = S_LB or st = S_LR or st = S_HR then
+        if tmo /= TMO_CYC then
+          tmo <= tmo + 1;
+        end if;
+      else
+        tmo <= 0;
+      end if;
 
       case st is
         when S_RX =>
@@ -342,8 +382,12 @@ begin
           elsif not hdr_ok(h_op, h_cnt, h_nw, h_addr) then
             e_f <= '1'; e_r <= "10";
             st  <= S_DONE;
-          elsif is_rd(h_op) and (h_seq = NONE or h_seq = s_rseq) then
+          elsif h_seq = NONE or (is_rd(h_op) and h_seq = s_rseq) then
             e_f <= '1'; e_r <= "01";
+            st  <= S_DONE;
+          elsif (h_op /= JC_OP_MEM_RD and (l_bowe = '1' or l_rowe = '1'))
+                or (h_op = JC_OP_MEM_RD and h_owe /= 0) then
+            e_f <= '1'; e_r <= "00";             -- refused: a timed-out response is owed
             st  <= S_DONE;
           else
             st <= S_WAIT;
@@ -393,7 +437,12 @@ begin
             st    <= S_LB;
           end if;
         when S_LB =>
-          if m_axil_bvalid = '1' then
+          if m_axil_bvalid = '0' and tmo = TMO_CYC - 1 then
+            l_bre  <= '0';
+            l_bowe <= '1';
+            e_f <= '1'; e_r <= "00";
+            st  <= S_DONE;
+          elsif m_axil_bvalid = '1' then
             l_bre <= '0';
             last  := it + 1 = h_cnt;
             if m_axil_bresp /= "00" then
@@ -419,7 +468,12 @@ begin
             st    <= S_LR;
           end if;
         when S_LR =>
-          if m_axil_rvalid = '1' then
+          if m_axil_rvalid = '0' and tmo = TMO_CYC - 1 then
+            l_rre  <= '0';
+            l_rowe <= '1';
+            e_f <= '1'; e_r <= "00";
+            st  <= S_DONE;
+          elsif m_axil_rvalid = '1' then
             l_rre <= '0';
             last  := it + 1 = h_cnt;
             if m_axil_rresp /= "00" then
@@ -459,7 +513,14 @@ begin
             st    <= S_HR;
           end if;
         when S_HR =>
-          if m_axi_rvalid = '1' then
+          if m_axi_rvalid = '0' and tmo = TMO_CYC - 1 then
+            h_rre <= '0';
+            h_owe <= inb;
+            if e_f = '0' then
+              e_f <= '1'; e_r <= "00";             -- an earlier RRESP error keeps its code
+            end if;
+            st <= S_DONE;
+          elsif m_axi_rvalid = '1' then
             h_rre <= '0';
             hold  <= m_axi_rdata;
             if m_axi_rresp /= "00" and e_f = '0' then
@@ -467,6 +528,7 @@ begin
             end if;
             inb <= inb - 1;
             k   <= (others => '0');
+            tmo <= 0;
             st  <= S_HW;
           end if;
         when S_HW =>
@@ -489,7 +551,9 @@ begin
 
         -- ---------------- completion: every status field in one cycle ----------------
         when S_DONE =>
-          s_lastd <= h_seq;
+          if h_seq /= NONE then
+            s_lastd <= h_seq;
+          end if;
           if e_f = '1' then
             s_err  <= '1';
             s_resp <= e_r;
@@ -524,6 +588,9 @@ begin
         s_err    <= '0';
         s_resp   <= "00";
         s_eseq   <= NONE;
+        l_bowe   <= '0';
+        l_rowe   <= '0';
+        h_owe    <= (others => '0');
         ack_prev <= rsp_ack_tgl;
       end if;
     end if;
