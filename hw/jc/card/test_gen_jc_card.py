@@ -363,3 +363,122 @@ def test_genstamp_present_and_clean(path, comment):
     assert not re.search(r"(?<![\w$])/(home|tmp|mnt|usr|opt|tools)/", text), \
         "absolute path in %s" % os.path.basename(path)
     assert user not in text and host not in text
+
+
+# ==== fix round 1 (2026-10-07 review) ===================================================
+SYSCLK_INTF_PORTS = {"sysclk_clk_p": "in", "sysclk_clk_n": "in"}   # make_bd_intf_pins_external
+
+
+def _bd_ports(tcl_text):
+    """{name: 'in'|'out'} for every BD external port the tcl creates."""
+    ports = dict(SYSCLK_INTF_PORTS)
+    assert "make_bd_intf_pins_external [get_bd_intf_pins sysclk_buf/CLK_IN_D]" in tcl_text
+    for d, n in re.findall(r"^create_bd_port -dir ([IO]) (\w+)\s*$", tcl_text, re.M):
+        assert n not in ports, "BD port %s created twice" % n
+        ports[n] = "in" if d == "I" else "out"
+    return ports
+
+
+def _component_ports(top_text, comp):
+    m = re.search(r"component\s+%s\s+is\s+port\s*\((.*?)\)\s*;\s*end\s+component"
+                  % comp, top_text, re.I | re.S)
+    assert m, "component %s not declared" % comp
+    return {n: d.lower() for n, d in re.findall(r"(\w+)\s*:\s*(in|out)\b", m.group(1), re.I)}
+
+
+def test_bd_port_directions_match_top_component(tcl):
+    """CRITICAL 1: every BD port, ctl_* included, has the wrapper component's direction."""
+    top = _strip_vhdl_comments(_read(TOP))
+    assert _component_ports(top, "%s_wrapper" % G.BD_NAME) == _bd_ports(tcl)
+
+
+def test_ctl_rx_outputs_drive_bd_inputs(tcl):
+    """jc_ctl_rx's *_o pins drive exactly the BD's ctl inputs; its tdo_i reads the BD's
+    ctl output.  One driver per signal."""
+    bd = _bd_ports(tcl)
+    for _, d, port, rx in G.CTL_JTAG:
+        assert bd[port] == d, (port, bd[port], d)
+        assert rx.endswith("_o") == (d == "in"), (port, rx)
+
+
+def test_27b_package_sourced_and_card_readback(tcl):
+    """IMPORTANT 2: the BD adds the committed 27B package, refuses the 9B one, and reads
+    back a width only the 27B card wrapper has."""
+    rel = "hw/fk33/gen/model_cfg_pkg_QWEN38_27B.vhd"
+    pkg = os.path.join(REPO, rel)
+    assert os.path.isfile(pkg), rel
+    ptxt = _read(pkg)
+    assert "GENSTAMP" in ptxt and "QWEN38_27B" in ptxt
+    assert re.search(r"constant\s+MODEL\s*:\s*model_cfg_t\s*:=\s*QWEN38_27B\s*;", ptxt), \
+        "the package does not bind QWEN38_27B"
+    code = "\n".join(_code_lines(tcl))
+    assert rel in code and "add_files" in code
+    assert re.search(r"model_cfg_pkg\.vhd.*\n.*error", code), "the 9B package is not refused"
+    # the 27B wrapper's host address ports are 15 bits (HADDR_W 15); the 9B's are 14
+    for pin in ("hr_addr", "hw_addr"):
+        assert re.search(r"card/%s.*\n.*!= 15" % pin, code) or \
+            re.search(r"card/%s\b.*15" % pin, code), pin
+    assert re.search(r"JCCARD_27B FAIL", code)
+    assert re.search(r"CONFIG\.HADDR_W.*fk33_seam_0", code)
+
+
+def test_compute_halt_is_hbm_cattrip_or(tcl):
+    """IMPORTANT 3: eng/compute_halt = DRAM_0_STAT_CATTRIP or DRAM_1_STAT_CATTRIP."""
+    nets = _nets(tcl)
+    halt = _net_of(nets, "%s/compute_halt" % P.ENG_CELL)
+    res = [e for e in halt if e.endswith("/Res")]
+    assert len(res) == 1, halt
+    cell = res[0].split("/")[0]
+    assert "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 %s" % cell in tcl
+    assert re.search(r"CONFIG\.C_SIZE \{1\} CONFIG\.C_OPERATION \{or\}\] \[get_bd_cells %s\]"
+                     % cell, tcl)
+    ops = {_net_of(nets, "%s/Op1" % cell).__contains__("hbm/DRAM_0_STAT_CATTRIP"),
+           _net_of(nets, "%s/Op2" % cell).__contains__("hbm/DRAM_1_STAT_CATTRIP")}
+    assert ops == {True}
+    # the loader's own CATTRIP inputs are unchanged
+    assert "%s/hbm_cattrip0" % G.LOADER_CELL in _net_of(nets, "hbm/DRAM_0_STAT_CATTRIP")
+    assert "%s/hbm_cattrip1" % G.LOADER_CELL in _net_of(nets, "hbm/DRAM_1_STAT_CATTRIP")
+    assert "halt_z" not in tcl
+
+
+def test_fast_pop_read_back_not_set(tcl):
+    """Minor 6: build 20's patch sets eng's FAST_POP false; the BD reads it back and
+    refuses otherwise, and does NOT set it (setting it would hide an unpatched tree)."""
+    code = "\n".join(_code_lines(tcl))
+    assert re.search(r"get_property CONFIG\.FAST_POP \[get_bd_cells %s\]" % P.ENG_CELL, code)
+    assert re.search(r"CONFIG\.FAST_POP[^\n]*\n[^\n]*string is false[^\n]*\n[^\n]*error", code)
+    assert not re.search(r"set_property[^\n]*CONFIG\.FAST_POP", code)
+
+
+def test_grant_masters_read_back_as_axi3(tcl):
+    """Minor 9: bcgrant m0/m1 PROTOCOL read back as AXI3 before they reach SAXI_30/31."""
+    for k, port in enumerate(P.CARD_SAXI):
+        chk = tcl.find("get_property CONFIG.PROTOCOL [get_bd_intf_pins %s/m%d]" % (P.GRANT_CELL, k))
+        con = tcl.find("connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins hbm/SAXI_%02d]"
+                       % (P.GRANT_CELL, k, port))
+        assert 0 <= chk < con, (k, chk, con)
+
+
+def test_no_stale_fk33_clock_comments(tcl):
+    """Minor 7: no comment claims the FK33's two-domain axil2eng on this board."""
+    for l in tcl.splitlines():
+        if l.lstrip().startswith("#"):
+            assert "xdma/axi_aclk" not in l, l
+            assert "NUM_CLKS 2" not in l, l
+            assert "xdma's domain" not in l, l
+
+
+def test_populate_reads_git_not_working_tree():
+    """Minor 5: the scratch copy comes from `git archive <rev>`, so an old revision's
+    generator text appears there, not the working tree's."""
+    import subprocess
+    rev = "68439b0"
+    scratch = os.path.join(os.path.expanduser("~"), "regress_scratch", "t8_populate_test")
+    G._populate(scratch, rev=rev)
+    want = subprocess.run(["git", "show", "%s:hw/jc/card/gen_jc_card.py" % rev], cwd=REPO,
+                          stdout=subprocess.PIPE, check=True).stdout.decode()
+    got = _read(os.path.join(scratch, "hw", "jc", "card", "gen_jc_card.py"))
+    assert got == want
+    assert got != _read(os.path.join(HERE, "gen_jc_card.py"))
+    assert os.path.isfile(os.path.join(scratch, "sim", "check_bd_ports.py"))
+    assert not os.path.exists(os.path.join(scratch, "hw", "fk33", "results"))

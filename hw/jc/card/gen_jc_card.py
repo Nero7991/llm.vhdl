@@ -62,8 +62,14 @@ ARE NOT WIRED TO EACH OTHER", its header).  It is not the FK33 card's compositio
 and reusing it would be less faithful, not more.
 
 THERMAL.  The FK33's fk33_thermal guard drives eng/compute_halt from SYSMON and the
-HBM temperature outputs.  The Jungle Cat has no such guard yet (the loader has none
-either), so compute_halt is tied LOW here and says so.  That is a gap, not a choice.
+HBM temperature outputs.  The Jungle Cat has no fabric thermal guard, so compute_halt
+is the OR of the two HBM stacks' DRAM_x_STAT_CATTRIP (ruling, review round 1): an
+HBM over-temperature trip stops new A jobs.  There is no die-temperature halt.
+
+THE 27B MODEL PACKAGE.  hw/fk33/gen/model_cfg_pkg_QWEN38_27B.vhd is written by
+gen_pcieep.model_pkg_text() (gen_pcieep.py's own writer for it) and committed; the BD
+Tcl adds it to the project, refuses rtl/model_cfg_pkg.vhd, and reads back the card's
+hr_addr/hw_addr width (HADDR_W 15, the 27B wrapper's) and the seam's REGMAX/HADDR_W.
 
 INPUTS.  One: JC_CLK_CORE_MHZ (integer MHz, 50..250, default 200), stamped.  The
 FK33_* values are pinned in this file, not read; a caller environment that sets one
@@ -416,6 +422,8 @@ def ctl_lines():
         for pin, d, port, _ in CTL_JTAG:
             L.append("create_bd_port -dir %s %s" % ("I" if d == "in" else "O", port))
             L.append("connect_bd_net [get_bd_pins %s/%s] [get_bd_ports %s]" % (CTL_CELL, pin, port))
+        # The BD port's direction is the ctl pin's (an input of the ctl core is an
+        # input of the BD); jc_card_top's component must declare the same.
         L.append("puts \"JCCARD_BD %s/tck TYPE [get_property TYPE [get_bd_pins %s/tck]]\""
                  % (CTL_CELL, CTL_CELL))
     L += [
@@ -424,8 +432,8 @@ def ctl_lines():
         "",
         "# axil2eng: the control interconnect, named as on the FK33 because gen_pcieep.py's",
         "# seam section appends its master to it (NUM_MI + 1) and its card section replaces",
-        "# M00's net with engctl.  On the FK33 it crosses from xdma's domain into the core",
-        "# domain; here its one slave is the ctl core, on the same clock.",
+        "# M00's net with engctl.  On this board it is a one-clock smartconnect whose only",
+        "# slave port is the ctl core, in the core domain.",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 axil2eng",
         "set_property -dict [list CONFIG.NUM_SI {1} CONFIG.NUM_MI {2} CONFIG.NUM_CLKS {1}] [get_bd_cells axil2eng]",
         "connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins axil2eng/S00_AXI]"
@@ -440,6 +448,19 @@ def ctl_lines():
 def eng_lines(P):
     L = P._eng_cell_lines()
     L += [
+        "# BUILD 20's LEVERS, READ BACK, NOT SET.  build12_levers_off.patch sets",
+        "# fk33_engine's FAST_POP default to false; it is the only lever the patch moves",
+        "# that is a generic of a BD cell.  Reading the default back proves the project",
+        "# compiled the PATCHED engine; setting it here would hide an unpatched tree.  NWIDE,",
+        "# SWEEP_PIPE and SCORE_EARLY are generic maps deep inside fk33_llama_top and are",
+        "# not visible at BD time: the build checks their `Parameter ... bound to` lines.",
+        "set _fp [get_property CONFIG.FAST_POP [get_bd_cells %s]]" % P.ENG_CELL,
+        "if {![string is false -strict $_fp]} {",
+        "    error \"JCCARD_LEVER FAIL: %s FAST_POP is \\\"$_fp\\\", not false: the levers patch is not applied to fk33_engine.vhd\"" % P.ENG_CELL,
+        "}",
+        "puts \"JCCARD_LEVER %s FAST_POP $_fp\"" % P.ENG_CELL,
+        "",
+
         "# ON THIS BOARD core_clk AND hbm_aclk ARE THE SAME NET, clk_core.  The engine's",
         "# internal crossing (axi_rd_port's async FIFO) is still present and is crossed",
         "# between equal clocks; no AXI clock converter sits between the engine and HBM.",
@@ -447,12 +468,17 @@ def eng_lines(P):
         _c(CORE_RSTN, "%s/core_aresetn" % P.ENG_CELL),
         _c(CORE_CLK, "%s/hbm_aclk" % P.ENG_CELL),
         "",
-        "# THE THERMAL HALT IS TIED LOW.  The FK33 drives it from fk33_thermal (SYSMON and",
-        "# the HBM temperature outputs); the Jungle Cat has no thermal guard in the fabric",
-        "# yet.  A gap, recorded in gen_jc_card.py's docstring, not a design choice.",
-        "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 halt_z",
-        "set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0}] [get_bd_cells halt_z]",
-        _c("halt_z/dout", "%s/compute_halt" % P.ENG_CELL),
+        "# THE THERMAL HALT: either HBM stack's catastrophic-temperature trip.  The FK33",
+        "# drives compute_halt from fk33_thermal (SYSMON plus the HBM trips); the Jungle Cat",
+        "# has no fabric thermal guard, so the HBM trips alone halt new A jobs (the engine",
+        "# masks GO; a running job is not interrupted).  The loader's own hbm_cattrip0/1",
+        "# inputs are unchanged.  CATTRIP is a sticky level from the HBM IP and is not",
+        "# synchronised here: the build's timing Tcl must treat it as asynchronous.",
+        "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 halt_or",
+        "set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {or}] [get_bd_cells halt_or]",
+        _c("hbm/DRAM_0_STAT_CATTRIP", "halt_or/Op1"),
+        _c("hbm/DRAM_1_STAT_CATTRIP", "halt_or/Op2"),
+        _c("halt_or/Res", "%s/compute_halt" % P.ENG_CELL),
         "",
         "connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins %s/s_axi]" % P.ENG_CELL,
         "connect_bd_intf_net [get_bd_intf_pins axil2eng/M01_AXI] [get_bd_intf_pins %s/s_axix]" % P.ENG_CELL,
@@ -466,6 +492,7 @@ def eng_lines(P):
 def card_lines(P):
     one = (CORE_CLK, CORE_RSTN)
     L = P._card_cells_lines()
+    L += card_27b_lines(P)
     L += [
         "# CLOCKS.  Both cells sit wholly in the core domain, %s, which on this" % CORE_CLK,
         "# board also clocks every HBM AXI port, so the grant's masters reach the HBM",
@@ -484,6 +511,61 @@ def card_lines(P):
     L += P._card_a_addr_lines()
     L += ["# ---- end subsystems B, C, D -----------------------------------------------", ""]
     return L
+
+
+PKG_REL = "hw/fk33/gen/model_cfg_pkg_QWEN38_27B.vhd"
+
+
+def pkg_lines():
+    """Before the BD: the committed 27B package into the project, the 9B one refused."""
+    return [
+        "",
+        "# ---- THE 27B MODEL PACKAGE -------------------------------------------------------",
+        "# rtl/model_cfg_pkg.vhd binds the 9B; the 27B card compiles the rebound copy",
+        "# %s (GENERATED by gen_pcieep.py's model_pkg_text, committed)." % PKG_REL,
+        "# Both declare package model_cfg_pkg, so the 9B file in the project is refused.",
+        "# jcc_repo may be set by the caller (a build that copies this script elsewhere);",
+        "# otherwise it is this script's repository.",
+        "if {![info exists jcc_repo]} {",
+        "  set jcc_repo [file normalize [file join [file dirname [info script]] .. .. ..]]",
+        "}",
+        "set jcc_pkg [file join $jcc_repo %s]" % PKG_REL,
+        "if {![file exists $jcc_pkg]} { error \"JCCARD_27B FAIL: $jcc_pkg does not exist\" }",
+        "foreach f [get_files -quiet -of_objects [get_filesets sources_1] *model_cfg_pkg.vhd] {",
+        "  error \"JCCARD_27B FAIL: $f (the 9B model package) is in the project\"",
+        "}",
+        "if {[llength [get_files -quiet $jcc_pkg]] == 0} { add_files -norecurse $jcc_pkg }",
+        "set_property FILE_TYPE {VHDL 2008} [get_files $jcc_pkg]",
+        "update_compile_order -fileset sources_1",
+        "puts \"JCCARD_27B package [file tail $jcc_pkg]\"",
+    ]
+
+
+def card_27b_lines(P):
+    """The 27B card wrapper, proved from the inferred cell: its host address ports are
+    HADDR_W bits wide (15 for QWEN38_27B, 14 for the 9B wrapper that is committed)."""
+    w = P.MODEL_HADDR_W
+    L = ["# THE CARD IS THE 27B ONE, read from the inferred cell: hr_addr and hw_addr are",
+         "# HADDR_W = %d bits on the QWEN38_27B wrapper and 14 on the committed 9B one." % w]
+    for pin in ("hr_addr", "hw_addr"):
+        L += ["set _p [get_bd_pins %s/%s]" % (P.CARD_CELL, pin),
+              "set _w [expr {[get_property LEFT $_p] - [get_property RIGHT $_p] + 1}]",
+              "if {$_w != %d} {" % w,
+              "    error \"JCCARD_27B FAIL: %s/%s is $_w bits, not %d: this is not the QWEN38_27B card wrapper\""
+              % (P.CARD_CELL, pin, w),
+              "}",
+              "puts \"JCCARD_27B %s/%s $_w bits\"" % (P.CARD_CELL, pin)]
+    return L + [""]
+
+
+def seam_27b_lines(P):
+    return [
+        "foreach {g want} {REGMAX %d HADDR_W %d} {" % (P.MODEL_REGMAX, P.MODEL_HADDR_W),
+        "  set v [get_property CONFIG.$g [get_bd_cells %s]]" % P.SEAM_CELL,
+        "  if {$v != $want} { error \"JCCARD_27B FAIL: CONFIG.$g of %s is $v, not $want\" }" % P.SEAM_CELL,
+        "  puts \"JCCARD_27B CONFIG.HADDR_W/REGMAX readback $g = $v on %s\"" % P.SEAM_CELL,
+        "}",
+    ]
 
 
 def addr_lines(P):
@@ -555,6 +637,10 @@ def render_tcl(P, mhz, env=None):
         "#",
         "# Every set_property on an IP CONFIG is READ BACK (JCCARD_CFG lines): Vivado",
         "# silently ignores a CONFIG name an IP does not have.",
+    ]
+    body += pkg_lines()
+    body += [
+        "",
         "create_bd_design %s" % BD_NAME,
         "",
         "proc jcc_want {cell key want} {",
@@ -572,7 +658,8 @@ def render_tcl(P, mhz, env=None):
     body += jtag_hbm_lines()
     body += ctl_lines()
     body += eng_lines(P)
-    body += P._seam_block().split("\n")
+    body += P._seam_block(one_clock=True).split("\n")
+    body += seam_27b_lines(P)
     body += card_lines(P)
     body += addr_lines(P)
     body += check_lines(P)
@@ -620,8 +707,7 @@ def render_top(env=None):
     L2 += ["  );", "end entity;", "", "architecture rtl of jc_card_top is",
            "  component %s_wrapper is" % BD_NAME, "    port("]
     cports = (["      %-*s : %-3s std_logic" % (w, n, d) for n, d in TOP_PORTS]
-              + ["      %-*s : %-3s std_logic" % (w, p, "out" if d == "in" else "in")
-                 for _, d, p, _ in CTL_JTAG])
+              + ["      %-*s : %-3s std_logic" % (w, p, d) for _, d, p, _ in CTL_JTAG])
     L2 += [p + (";" if i < len(cports) - 1 else "") for i, p in enumerate(cports)]
     L2 += ["    );", "  end component;"]
     if CTL_JTAG:
@@ -672,7 +758,7 @@ def load_pcieep(mhz):
     return P
 
 
-def generate_in_place(outdir):
+def generate_in_place(outdir, pkg_outdir):
     mhz = clk_core_mhz()
     ok, got = card_is_jc()
     if not ok:
@@ -680,6 +766,12 @@ def generate_in_place(outdir):
                  "Regenerate it with gen_fk33_card.py under that environment, or run "
                  "without --in-place." % (os.path.relpath(CARD_RTL, REPO), got, JC_CARD_ENV))
     P = load_pcieep(mhz)
+    if P.MODEL_NAME != "QWEN38_27B" or P.MODEL_HADDR_W != 15:
+        sys.exit("ABORT: gen_pcieep.py resolved model %s HADDR_W %d, not QWEN38_27B / 15"
+                 % (P.MODEL_NAME, P.MODEL_HADDR_W))
+    if os.path.relpath(P.MODEL_PKG_OUT, REPO) != PKG_REL:
+        sys.exit("ABORT: gen_pcieep.py's 27B package is %s, the BD sources %s"
+                 % (os.path.relpath(P.MODEL_PKG_OUT, REPO), PKG_REL))
     tcl = render_tcl(P, mhz)
     # gen_pcieep.py's own refusals, on THIS text.
     P.check_reset_topology(tcl)
@@ -689,6 +781,11 @@ def generate_in_place(outdir):
         with open(os.path.join(outdir, name), "w") as f:
             f.write(text)
         print("wrote %s (%d bytes)" % (os.path.join(outdir, name), len(text)))
+    pkg = P.model_pkg_text()
+    dst = os.path.join(pkg_outdir, os.path.basename(PKG_REL))
+    with open(dst, "w") as f:
+        f.write(pkg)
+    print("wrote %s (%d bytes)" % (dst, len(pkg)))
 
 
 def _scratch_dir(argv):
@@ -700,9 +797,16 @@ def _scratch_dir(argv):
     return os.path.join(os.path.expanduser("~"), "regress_scratch", "gen_jc_card")
 
 
-def _populate(scratch):
-    """Copy the tracked tree's working-tree files that the generators read into
-    `scratch`, plus this generator.  Refuses to reuse a directory it did not make."""
+ARCHIVE_PATHS = ["rtl", "tools", "hw/fk33", "hw/jc", "server", ":(glob)sim/*.py",
+                 ":!hw/fk33/results", ":!hw/fk33/bit", ":!hw/jc/loader/results",
+                 ":!hw/jc/pinfinder/results"]
+
+
+def _populate(scratch, rev="HEAD"):
+    """`git archive <rev>` of the paths the generators read, into `scratch`: the
+    COMMITTED tree, never the working tree (another track's half-edited file must not
+    reach a committed output).  sim/*.py because tools/gen_bd_wrapper.py (gen_fk33_card's
+    library) imports sim/check_bd_ports.py.  Refuses to reuse a directory it did not make."""
     if os.path.exists(scratch):
         if not os.path.exists(os.path.join(scratch, SCRATCH_MARK)):
             sys.exit("ABORT: %s exists and is not a gen_jc_card scratch directory "
@@ -710,29 +814,15 @@ def _populate(scratch):
         shutil.rmtree(scratch)
     os.makedirs(scratch)
     open(os.path.join(scratch, SCRATCH_MARK), "w").write("gen_jc_card.py scratch\n")
-    r = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, stdout=subprocess.PIPE, check=True)
-    keep = ("rtl/", "tools/", "hw/fk33/", "hw/jc/", "server/")
-    skip = ("hw/fk33/results/", "hw/fk33/bit/", "hw/jc/loader/results/",
-            "hw/jc/pinfinder/results/")
-    # sim/*.py: tools/gen_bd_wrapper.py (gen_fk33_card.py's library) imports
-    # sim/check_bd_ports.py.
-    files = [f for f in r.stdout.decode().split("\0")
-             if (f.startswith(keep) and not f.startswith(skip))
-             or (f.startswith("sim/") and f.endswith(".py"))]
-    files.append(os.path.relpath(os.path.abspath(__file__), REPO))
-    n = 0
-    for f in sorted(set(files)):
-        src = os.path.join(REPO, f)
-        if not os.path.isfile(src):
-            continue
-        dst = os.path.join(scratch, f)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copy2(src, dst)
-        n += 1
-    print("gen_jc_card: %d tracked files copied into %s" % (n, scratch))
+    arc = subprocess.run(["git", "archive", "--format=tar", rev, "--"] + ARCHIVE_PATHS,
+                         cwd=REPO, stdout=subprocess.PIPE, check=True)
+    subprocess.run(["tar", "-x", "-C", scratch], input=arc.stdout, check=True)
+    sha = subprocess.run(["git", "rev-parse", rev], cwd=REPO, stdout=subprocess.PIPE,
+                         check=True).stdout.decode().strip()
+    print("gen_jc_card: git archive %s (%s) extracted into %s" % (rev, sha[:12], scratch))
 
 
-def generate_via_scratch(outdir, scratch):
+def generate_via_scratch(outdir, pkg_outdir, scratch):
     _populate(scratch)
     env = {k: v for k, v in os.environ.items() if not k.startswith("FK33_")}
     cenv = dict(env)
@@ -741,7 +831,8 @@ def generate_via_scratch(outdir, scratch):
     if r.returncode != 0:
         sys.exit("ABORT: gen_fk33_card.py failed in %s (rc=%d)" % (scratch, r.returncode))
     me = os.path.join(scratch, os.path.relpath(os.path.abspath(__file__), REPO))
-    r = subprocess.run([sys.executable, me, "--in-place", "--emit-to", outdir],
+    r = subprocess.run([sys.executable, me, "--in-place", "--emit-to", outdir,
+                        "--emit-pkg-to", pkg_outdir],
                        cwd=scratch, env=env)
     if r.returncode != 0:
         sys.exit("ABORT: gen_jc_card.py failed in %s (rc=%d)" % (scratch, r.returncode))
@@ -749,12 +840,17 @@ def generate_via_scratch(outdir, scratch):
 
 def main(argv):
     _refuse_conflicting_env(clk_core_mhz())
-    outdir = HERE
-    if "--emit-to" in argv:
-        i = argv.index("--emit-to")
+    def _dir_arg(flag, default):
+        if flag not in argv:
+            return default
+        i = argv.index(flag)
         if i + 1 >= len(argv) or not os.path.isdir(argv[i + 1]):
-            sys.exit("gen_jc_card.py: --emit-to needs an existing directory")
-        outdir = os.path.abspath(argv[i + 1])
+            sys.exit("gen_jc_card.py: %s needs an existing directory" % flag)
+        return os.path.abspath(argv[i + 1])
+    outdir = _dir_arg("--emit-to", HERE)
+    # The 27B package goes beside the emitted files under --emit-to, else to hw/fk33/gen.
+    pkg_outdir = _dir_arg("--emit-pkg-to", outdir if "--emit-to" in argv
+                          else os.path.join(REPO, os.path.dirname(PKG_REL)))
     if "--check" in argv:
         scratch = _scratch_dir(argv)
         chk = scratch + "_check_out"
@@ -764,10 +860,13 @@ def main(argv):
             shutil.rmtree(chk)
         os.makedirs(chk)
         open(os.path.join(chk, SCRATCH_MARK), "w").write("gen_jc_card.py check\n")
-        generate_via_scratch(chk, scratch)
+        generate_via_scratch(chk, chk, scratch)
         stale = []
-        for name in (OUT_TCL, OUT_XDC, OUT_TOP):
-            a = open(os.path.join(HERE, name)).read() if os.path.exists(os.path.join(HERE, name)) else None
+        for name, real in ((OUT_TCL, os.path.join(HERE, OUT_TCL)),
+                           (OUT_XDC, os.path.join(HERE, OUT_XDC)),
+                           (OUT_TOP, os.path.join(HERE, OUT_TOP)),
+                           (os.path.basename(PKG_REL), os.path.join(REPO, PKG_REL))):
+            a = open(real).read() if os.path.exists(real) else None
             b = open(os.path.join(chk, name)).read()
             print("JCCARD_CHECK: %s %s" % ("OK" if a == b else "STALE", name))
             if a != b:
@@ -777,9 +876,9 @@ def main(argv):
         print("JCCARD_CHECK: PASS")
         return
     if "--in-place" in argv or card_is_jc()[0]:
-        generate_in_place(outdir)
+        generate_in_place(outdir, pkg_outdir)
     else:
-        generate_via_scratch(outdir, _scratch_dir(argv))
+        generate_via_scratch(outdir, pkg_outdir, _scratch_dir(argv))
 
 
 if __name__ == "__main__":

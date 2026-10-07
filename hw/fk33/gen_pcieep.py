@@ -2261,8 +2261,15 @@ def _card_pool_lines(one_clock=None):
         a("# cross.  Both ends are AXI3 (the grant's 4-bit lengths and the HBM")
         a("# slave), so there is no protocol to convert either.  Every ENABLED")
         a("# port exposes its own ACLK and ARESET_N, and leaving them dangling")
-        a("# fails HDL generation with 41-758.")
+        a("# fails HDL generation with 41-758.  Each grant master's inferred PROTOCOL")
+        a("# is read back as AXI3 BEFORE it connects: with no converter in between, an")
+        a("# AXI4 inference would reach the HBM's AXI3 slave unconverted.")
         for i, port in enumerate(CARD_SAXI):
+            a("set _gp [get_property CONFIG.PROTOCOL [get_bd_intf_pins %s/m%d]]" % (GRANT_CELL, i))
+            a("if {$_gp ne \"AXI3\"} {")
+            a("    error \"FK33_CARD FAIL: %s/m%d PROTOCOL is \\\"$_gp\\\", not AXI3; it would reach hbm/SAXI_%02d unconverted.\"" % (GRANT_CELL, i, port))
+            a("}")
+            a("puts \"FK33_CARD %s/m%d PROTOCOL $_gp -> SAXI_%02d\"" % (GRANT_CELL, i, port))
             a("set_property CONFIG.USER_SAXI_%02d {true} [get_bd_cells hbm]" % port)
             a("connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins hbm/SAXI_%02d]"
               % (GRANT_CELL, i, port))
@@ -2692,7 +2699,9 @@ def _model_caps():
 MODEL_CAPS = _model_caps()
 
 
-def _seam_block():
+def _seam_block(one_clock=False):
+    """`one_clock` True is a board whose control interconnect (axil2eng) is
+    already in the core domain (the Jungle Cat): only THE CLOCK comment differs."""
     L = []
     a = L.append
     a("")
@@ -2736,13 +2745,18 @@ def _seam_block():
       "HADDR_W=[get_property CONFIG.HADDR_W [get_bd_cells %s]]\""
       % (SEAM_CELL, SEAM_CELL))
     a("")
-    a("# THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,")
-    a("# and it does so through the smartconnect ENGINE_BLOCK already built.  Two")
-    a("# reasons, in order: subsystem D will be in the core domain, so putting the")
-    a("# seam anywhere else now buys a move later; and axil2eng is already")
-    a("# NUM_CLKS 2 with the incoming side on xdma/axi_aclk and the outgoing side")
-    a("# on clk_wiz_0/clk_out3, so this is one more MI on an interconnect that")
-    a("# exists rather than a new one.")
+    if one_clock:
+        a("# THE CLOCK.  The seam rides the core clock, as the card does, and hangs")
+        a("# off axil2eng as one more MI; on this board axil2eng is a one-clock")
+        a("# smartconnect already in the core domain.")
+    else:
+        a("# THE CLOCK.  The seam rides the engine's CORE clock, not xdma/axi_aclk,")
+        a("# and it does so through the smartconnect ENGINE_BLOCK already built.  Two")
+        a("# reasons, in order: subsystem D will be in the core domain, so putting the")
+        a("# seam anywhere else now buys a move later; and axil2eng is already")
+        a("# NUM_CLKS 2 with the incoming side on xdma/axi_aclk and the outgoing side")
+        a("# on clk_wiz_0/clk_out3, so this is one more MI on an interconnect that")
+        a("# exists rather than a new one.")
     if ENG_ON:
         a("set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]")
     else:

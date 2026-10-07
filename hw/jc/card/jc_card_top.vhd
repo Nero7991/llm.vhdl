@@ -39,12 +39,12 @@ architecture rtl of jc_card_top is
       LED_B        : out std_logic;
       LED_C        : out std_logic;
       LED_D        : out std_logic;
-      ctl_tck      : out std_logic;
-      ctl_sel      : out std_logic;
-      ctl_capture  : out std_logic;
-      ctl_shift    : out std_logic;
-      ctl_tdi      : out std_logic;
-      ctl_tdo      : in  std_logic
+      ctl_tck      : in  std_logic;
+      ctl_sel      : in  std_logic;
+      ctl_capture  : in  std_logic;
+      ctl_shift    : in  std_logic;
+      ctl_tdi      : in  std_logic;
+      ctl_tdo      : out std_logic
     );
   end component;
   signal ctl_tck, ctl_sel, ctl_capture, ctl_shift, ctl_tdi, ctl_tdo : std_logic;
