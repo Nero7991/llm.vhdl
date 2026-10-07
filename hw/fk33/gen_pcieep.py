@@ -1345,7 +1345,17 @@ def _noeng_core_block():
     return "\n".join(L)
 
 
-def _eng_block():
+# THE ENGINE BLOCK IS FACTORED INTO PIECES THAT ANOTHER BOARD CAN REUSE
+# (hw/jc/card/gen_jc_card.py, the Jungle Cat card, 2026-10-07).  The pieces
+# that carry no board net -- the cell, its CONFIG levers and its clock-interface
+# association -- are _eng_cell_lines(); the 28 master connections take the HBM
+# AXI clock and reset as arguments in _eng_hbm_lines(), defaulting to this
+# board's xdma/axi_aclk and xdma/axi_aresetn.  _eng_block() composes them for
+# the FK33 exactly as before: the emitted text is byte-identical (regenerated
+# in a scratch copy under the committed GENSTAMP environment and compared).
+def _eng_cell_lines():
+    """The `eng` cell, its CB_STYLE / USE_XEXP_PORT levers with read-backs, and
+    the ASSOCIATED_BUSIF of both clock pins.  No board net is named here."""
     L = []
     a = L.append
     a("")
@@ -1439,6 +1449,12 @@ def _eng_block():
     a("    puts \"FK33_ENG ASSOCIATED_BUSIF $pin = $got\"")
     a("}")
     a("")
+    return L
+
+
+def _eng_block():
+    L = _eng_cell_lines()
+    a = L.append
     L.extend(_core_reset_lines())
     a("")
     if ENG_SPLIT:
@@ -1473,18 +1489,31 @@ def _eng_block():
     a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M00_AXI] [get_bd_intf_pins %s/s_axi]" % ENG_CELL)
     a("connect_bd_intf_net [get_bd_intf_pins axil2eng/M01_AXI] [get_bd_intf_pins %s/s_axix]" % ENG_CELL)
     a("")
+    L.extend(_eng_hbm_lines())
+    a("# ---- end subsystem A ------------------------------------------------------")
+    a("")
+    return "\n".join(L)
+
+
+def _eng_hbm_lines(hbm_clk="xdma/axi_aclk", hbm_rstn="xdma/axi_aresetn"):
+    """The 28 engine masters onto hbm/SAXI_nn (ENG_PORT_MAP), each port's ACLK
+    and ARESET_N on `hbm_clk` / `hbm_rstn`.  The defaults are the FK33's, and the
+    column alignment of the default pair is the FK33 text's own."""
+    L = []
+    a = L.append
     a("# THE 28 HBM MASTERS.  Every ENABLED SAXI port exposes its own ACLK and")
     a("# ARESET_N pin and leaving them dangling fails HDL generation with 41-758;")
     a("# build_fk33_hbmbw.tcl:373-376 records that, and it is why enabling the")
     a("# ports was never a change that could be made ahead of having an engine.")
+    w = max(len(hbm_clk), len(hbm_rstn))
     for i, port in enumerate(ENG_PORT_MAP):
         a("connect_bd_intf_net [get_bd_intf_pins %s/m%02d_axi] [get_bd_intf_pins hbm/SAXI_%02d]"
           % (ENG_CELL, i, port))
-        a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_%02d_ACLK]" % port)
-        a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_%02d_ARESET_N]" % port)
-    a("# ---- end subsystem A ------------------------------------------------------")
-    a("")
-    return "\n".join(L)
+        a("connect_bd_net [get_bd_pins %s]%s [get_bd_pins hbm/AXI_%02d_ACLK]"
+          % (hbm_clk, " " * (w - len(hbm_clk)), port))
+        a("connect_bd_net [get_bd_pins %s]%s [get_bd_pins hbm/AXI_%02d_ARESET_N]"
+          % (hbm_rstn, " " * (w - len(hbm_rstn)), port))
+    return L
 
 
 def _core_clk_sentinel():
@@ -1967,7 +1996,15 @@ GRANT_CWR = ["awvalid", "awready", "awaddr", "awlen",
              "wvalid", "wready", "wdata", "wlast", "bvalid", "bready"]
 
 
-def _card_block():
+# THE CARD BLOCK IS A SEQUENCE OF SECTIONS, factored 2026-10-07 so that the
+# Jungle Cat card (hw/jc/card/gen_jc_card.py) emits the SAME card, seam and
+# grant wiring by calling these, and differs only where the board does: the
+# clock comment (_card_clock_lines), the engctl clocks (_card_engctl_lines'
+# one_clock) and the grant pool's clock converters (_card_pool_lines'
+# one_clock).  With no arguments every section emits exactly what the single
+# function did; _card_block() below is their concatenation.
+def _card_cells_lines():
+    """`card` and `bcgrant` cells and the print of what Vivado inferred."""
     L = []
     a = L.append
     a("")
@@ -1987,6 +2024,13 @@ def _card_block():
     a("    }")
     a("}")
     a("")
+    return L
+
+
+def _card_clock_lines():
+    """The FK33's clock comment and the two cells' clk nets."""
+    L = []
+    a = L.append
     a("# CLOCKS.  Both cells sit wholly in the CORE domain -- clk_wiz_0/clk_out3 --")
     a("# including the HBM-facing side of the grant, which is why the grant's")
     a("# m0/m1 need a clock converter at the HBM end if the two ever differ.  They")
@@ -1996,6 +2040,13 @@ def _card_block():
     a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/clk]" % CARD_CELL)
     a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/clk]" % GRANT_CELL)
     a("")
+    return L
+
+
+def _card_reset_lines():
+    """card/rst (active high) and bcgrant/rstn (active low) from core_reset."""
+    L = []
+    a = L.append
     a("# RESET POLARITY, read back rather than assumed.  The card takes an ACTIVE")
     a("# HIGH `rst` and the grant an ACTIVE LOW `rstn`, so one of them gets the")
     a("# inverted form.  Getting this backwards holds a subsystem in reset")
@@ -2005,6 +2056,13 @@ def _card_block():
     a("connect_bd_net [get_bd_pins core_reset/peripheral_reset]   [get_bd_pins %s/rst]" % CARD_CELL)
     a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/rstn]" % GRANT_CELL)
     a("")
+    return L
+
+
+def _card_aseam_lines():
+    """The signal-level A seam, card <-> eng (or via eng_cdc)."""
+    L = []
+    a = L.append
     if ENG_ON and ENG_SPLIT:
         a("# ---- the A seam, card <-> eng_cdc <-> eng (FK33_ENG_SPLIT_CLK) ------------")
         a("# rtl/fk33_eng_cdc.vhd: card-side pins carry the CARD's names, engine-side")
@@ -2055,6 +2113,16 @@ def _card_block():
         a("# so unit A never reports done and any A job issued by D hangs.  That is")
         a("# expected and is the whole cost of this configuration; see ENG_ON.")
     a("")
+    return L
+
+
+def _card_engctl_lines(one_clock=None):
+    """The 2:1 engctl smartconnect onto eng/s_axi.
+
+    `one_clock` = (clk, rstn) for a board whose host master and core are ONE
+    clock domain: NUM_CLKS 1 and no aclk1.  None is the FK33 (two domains)."""
+    L = []
+    a = L.append
     if ENG_ON:
         a("# THE CARD'S AXI-LITE MASTER ONTO THE ENGINE'S CONTROL SLAVE.  Two masters")
         a("# now want eng/s_axi: the host, to place DESC_PTR and the arena base before")
@@ -2064,11 +2132,20 @@ def _card_block():
         a("# engine-only build already proved.")
         a("delete_bd_objs [get_bd_intf_nets -of_objects [get_bd_intf_pins %s/s_axi]]" % ENG_CELL)
         a("create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 engctl")
-        a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {%d}] [get_bd_cells engctl]"
-          % (3 if ENG_SPLIT else 2))
-        a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]")
-        a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]")
-        a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]")
+        if one_clock is not None:
+            if ENG_SPLIT:
+                raise SystemExit("_card_engctl_lines: one_clock with FK33_ENG_SPLIT_CLK")
+            a("# ONE clock domain on this board: the host-side master and the engine")
+            a("# share the core clock, so engctl needs no second aclk.")
+            a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells engctl]")
+            a("connect_bd_net [get_bd_pins %s] [get_bd_pins engctl/aclk]" % one_clock[0])
+            a("connect_bd_net [get_bd_pins %s] [get_bd_pins engctl/aresetn]" % one_clock[1])
+        else:
+            a("set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {%d}] [get_bd_cells engctl]"
+              % (3 if ENG_SPLIT else 2))
+            a("connect_bd_net [get_bd_pins xdma/axi_aclk]      [get_bd_pins engctl/aclk]")
+            a("connect_bd_net [get_bd_pins xdma/axi_aresetn]   [get_bd_pins engctl/aresetn]")
+            a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins engctl/aclk1]")
         if ENG_SPLIT:
             a("# FK33_ENG_SPLIT_CLK: M00 lands in the engine's domain, and S01 now comes")
             a("# from the CDC cell's engine-side master rather than from the card.")
@@ -2084,6 +2161,13 @@ def _card_block():
         a("# The card's AXI-Lite master `card/a` has no engine to drive and is left")
         a("# unconnected; `axil2eng` likewise terminates nowhere.  Vivado prunes both.")
     a("")
+    return L
+
+
+def _card_hostseam_lines():
+    """fk33_seam <-> card, every pin checked on both live cells first."""
+    L = []
+    a = L.append
     a("# ---- the host seam, fk33_seam <-> card ------------------------------------")
     a("# Subsystem D is PRESENT now, so _seam_block skipped every _SEAM_TIES")
     a("# constant that stood in for it -- the tie-off is not emitted rather than")
@@ -2118,6 +2202,13 @@ def _card_block():
         a("connect_bd_net [get_bd_pins %s/%s] [get_bd_pins %s/%s]"
           % (SEAM_CELL, sp, CARD_CELL, cp))
     a("")
+    return L
+
+
+def _card_grant_lines():
+    """B's and C's masters onto bcgrant, and the two request ORs."""
+    L = []
+    a = L.append
     a("# ---- B and C onto the grant -----------------------------------------------")
     for sig in GRANT_B:
         a("connect_bd_net [get_bd_pins %s/b_%s] [get_bd_pins %s/bst_%s]"
@@ -2152,47 +2243,73 @@ def _card_block():
     a("connect_bd_net [get_bd_pins %s/kv_awvalid]  [get_bd_pins c_req_or1/Op2]" % CARD_CELL)
     a("connect_bd_net [get_bd_pins c_req_or1/Res]  [get_bd_pins %s/c_req]" % GRANT_CELL)
     a("")
+    return L
+
+
+def _card_pool_lines(one_clock=None):
+    """bcgrant/m0, m1 onto hbm/SAXI_30, SAXI_31 (CARD_SAXI).
+
+    `one_clock` = (clk, rstn) for a board whose HBM AXI side IS the core
+    clock: the grant connects directly, with no axi_clock_converter.  None is
+    the FK33, whose HBM AXI side is xdma/axi_aclk."""
+    L = []
+    a = L.append
     a("# ---- the grant's pool onto the two SAXI the budget leaves -----------------")
-    a("# These two are CONFIG.USER_SAXI_nn {false} in the engine-only build and")
-    a("# have to be turned on here.  Every ENABLED port exposes its own ACLK and")
-    a("# ARESET_N and leaving them dangling fails HDL generation with 41-758.")
-    a("# A CLOCK CONVERTER PER PORT, and the engine is why it is needed HERE and")
-    a("# not there.  fk33_engine has TWO clock ports -- core_clk and hbm_aclk --")
-    a("# because matvec_int4_desc_axi carries its own async_fifo and crosses the")
-    a("# domain INSIDE the unit.  The grant does not: it is one clock domain, and")
-    a("# its requesters (the card's B and C) are in the core domain, so its")
-    a("# masters come out at clk_out3 while every HBM SAXI is on xdma/axi_aclk.")
-    a("# Connecting them directly fails with four BD 41-237 errors -- FREQ_HZ")
-    a("# 200000000 against 250000000 and CLK_DOMAIN clk_out1 against axi_aclk --")
-    a("# which name the symptom and not the cause.")
-    a("#")
-    a("# axi_clock_converter rather than a smartconnect: SmartConnect speaks")
-    a("# AXI4/AXI4-Lite, and BOTH ends here are AXI3 (the grant's 4-bit length")
-    a("# above, and the HBM slave itself), so a smartconnect would have to")
-    a("# protocol-convert twice to do a job that is purely a domain crossing.")
-    for i, port in enumerate(CARD_SAXI):
-        cc = "bc_cdc%d" % i
-        a("set_property CONFIG.USER_SAXI_%02d {true} [get_bd_cells hbm]" % port)
-        a("create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 %s" % cc)
-        a("set_property -dict [list CONFIG.PROTOCOL {AXI3}] [get_bd_cells %s]" % cc)
-        a("connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins %s/S_AXI]"
-          % (GRANT_CELL, i, cc))
-        a("connect_bd_intf_net [get_bd_intf_pins %s/M_AXI] [get_bd_intf_pins hbm/SAXI_%02d]"
-          % (cc, port))
-        a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/s_axi_aclk]" % cc)
-        a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/s_axi_aresetn]" % cc)
-        a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins %s/m_axi_aclk]" % cc)
-        a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins %s/m_axi_aresetn]" % cc)
-        a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_%02d_ACLK]" % port)
-        a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_%02d_ARESET_N]" % port)
-        a("# READ BACK.  Vivado silently ignores set_property on a CONFIG name an")
-        a("# object does not have, so an IP that quietly stayed AXI4 would fail")
-        a("# again at the far end with the same unhelpful 41-237.")
-        a("set _p [get_property CONFIG.PROTOCOL [get_bd_cells %s]]" % cc)
-        a("if {$_p ne \"AXI3\"} {")
-        a("    error \"FK33_CARD FAIL: %s PROTOCOL is \\\"$_p\\\", not AXI3.\"" % cc)
-        a("}")
-        a("puts \"FK33_CARD %s PROTOCOL $_p -> SAXI_%02d\"" % (cc, port))
+    if one_clock is not None:
+        a("# DIRECT, with NO clock converter: on this board every HBM AXI port is on")
+        a("# the core clock that also clocks the grant, so there is no domain to")
+        a("# cross.  Both ends are AXI3 (the grant's 4-bit lengths and the HBM")
+        a("# slave), so there is no protocol to convert either.  Every ENABLED")
+        a("# port exposes its own ACLK and ARESET_N, and leaving them dangling")
+        a("# fails HDL generation with 41-758.")
+        for i, port in enumerate(CARD_SAXI):
+            a("set_property CONFIG.USER_SAXI_%02d {true} [get_bd_cells hbm]" % port)
+            a("connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins hbm/SAXI_%02d]"
+              % (GRANT_CELL, i, port))
+            a("connect_bd_net [get_bd_pins %s] [get_bd_pins hbm/AXI_%02d_ACLK]" % (one_clock[0], port))
+            a("connect_bd_net [get_bd_pins %s] [get_bd_pins hbm/AXI_%02d_ARESET_N]" % (one_clock[1], port))
+    _pool_cdc = CARD_SAXI if one_clock is None else []
+    if _pool_cdc:
+        a("# These two are CONFIG.USER_SAXI_nn {false} in the engine-only build and")
+        a("# have to be turned on here.  Every ENABLED port exposes its own ACLK and")
+        a("# ARESET_N and leaving them dangling fails HDL generation with 41-758.")
+        a("# A CLOCK CONVERTER PER PORT, and the engine is why it is needed HERE and")
+        a("# not there.  fk33_engine has TWO clock ports -- core_clk and hbm_aclk --")
+        a("# because matvec_int4_desc_axi carries its own async_fifo and crosses the")
+        a("# domain INSIDE the unit.  The grant does not: it is one clock domain, and")
+        a("# its requesters (the card's B and C) are in the core domain, so its")
+        a("# masters come out at clk_out3 while every HBM SAXI is on xdma/axi_aclk.")
+        a("# Connecting them directly fails with four BD 41-237 errors -- FREQ_HZ")
+        a("# 200000000 against 250000000 and CLK_DOMAIN clk_out1 against axi_aclk --")
+        a("# which name the symptom and not the cause.")
+        a("#")
+        a("# axi_clock_converter rather than a smartconnect: SmartConnect speaks")
+        a("# AXI4/AXI4-Lite, and BOTH ends here are AXI3 (the grant's 4-bit length")
+        a("# above, and the HBM slave itself), so a smartconnect would have to")
+        a("# protocol-convert twice to do a job that is purely a domain crossing.")
+        for i, port in enumerate(_pool_cdc):
+            cc = "bc_cdc%d" % i
+            a("set_property CONFIG.USER_SAXI_%02d {true} [get_bd_cells hbm]" % port)
+            a("create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 %s" % cc)
+            a("set_property -dict [list CONFIG.PROTOCOL {AXI3}] [get_bd_cells %s]" % cc)
+            a("connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins %s/S_AXI]"
+              % (GRANT_CELL, i, cc))
+            a("connect_bd_intf_net [get_bd_intf_pins %s/M_AXI] [get_bd_intf_pins hbm/SAXI_%02d]"
+              % (cc, port))
+            a("connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins %s/s_axi_aclk]" % cc)
+            a("connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins %s/s_axi_aresetn]" % cc)
+            a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins %s/m_axi_aclk]" % cc)
+            a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins %s/m_axi_aresetn]" % cc)
+            a("connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_%02d_ACLK]" % port)
+            a("connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_%02d_ARESET_N]" % port)
+            a("# READ BACK.  Vivado silently ignores set_property on a CONFIG name an")
+            a("# object does not have, so an IP that quietly stayed AXI4 would fail")
+            a("# again at the far end with the same unhelpful 41-237.")
+            a("set _p [get_property CONFIG.PROTOCOL [get_bd_cells %s]]" % cc)
+            a("if {$_p ne \"AXI3\"} {")
+            a("    error \"FK33_CARD FAIL: %s PROTOCOL is \\\"$_p\\\", not AXI3.\"" % cc)
+            a("}")
+            a("puts \"FK33_CARD %s PROTOCOL $_p -> SAXI_%02d\"" % (cc, port))
     a("foreach i {%s} {" % " ".join("%02d" % p for p in CARD_SAXI))
     a("    set v [get_property CONFIG.USER_SAXI_$i [get_bd_cells hbm]]")
     a("    if {$v ne \"true\"} {")
@@ -2201,6 +2318,13 @@ def _card_block():
     a("    puts \"FK33_CARD SAXI_$i ENABLED\"")
     a("}")
     a("")
+    return L
+
+
+def _card_grant_addr_lines():
+    """All 32 HBM segments for bcgrant/m0 and m1, counted after."""
+    L = []
+    a = L.append
     a("# THE GRANT MASTERS' ADDRESS MAP: ALL 32 SEGMENTS, EXACTLY AS THE ENGINE'S.")
     a("# MEASURED 2026-09-18: every FK33_CARD=1 build so far carried 128")
     a("# `CRITICAL WARNING: [BD 41-1356] Slave segment </hbm/SAXI_3x/HBM_MEMnn>")
@@ -2231,6 +2355,13 @@ def _card_block():
     a("    puts \"FK33_GRANT_ADDR %s/$m maps $_n segments of SAXI_$sx\"" % GRANT_CELL)
     a("}")
     a("")
+    return L
+
+
+def _card_a_addr_lines():
+    """card/a's 256-byte window onto eng/s_axi/reg0."""
+    L = []
+    a = L.append
     if ENG_ON:
         a("# THE CARD'S OWN VIEW OF THE ENGINE, assigned HERE and not in ENGINE_ADDR.")
         a("# `a_awaddr` is 8 bits, so this master can reach 256 bytes; ENGINE_ADDR")
@@ -2281,8 +2412,16 @@ def _card_block():
         a("}")
         a("puts \"FK33_CARD %s/a maps nothing: unit A is absent and every A job hangs\"" % CARD_CELL)
     a("")
-    a("# ---- end subsystems B, C, D -----------------------------------------------")
-    a("")
+    return L
+
+
+def _card_block():
+    L = (_card_cells_lines() + _card_clock_lines() + _card_reset_lines()
+         + _card_aseam_lines() + _card_engctl_lines() + _card_hostseam_lines()
+         + _card_grant_lines() + _card_pool_lines() + _card_grant_addr_lines()
+         + _card_a_addr_lines())
+    L.append("# ---- end subsystems B, C, D -----------------------------------------------")
+    L.append("")
     return "\n".join(L)
 
 
@@ -2364,7 +2503,12 @@ else:
                     % (ENG_CTL_BASE, ENG_CELL))
 _ENG_ADDR_PART += ("assign_bd_address -offset 0x%08X -range 4K [get_bd_addr_segs {%s/s_axix/reg0}]\n"
                 % (ENG_XW_BASE, ENG_CELL))
-_ENG_ADDR_PART += """
+# The engine-master half of the map is a function so the Jungle Cat card
+# (hw/jc/card/gen_jc_card.py) emits the same text; ENGINE_ADDR below is
+# byte-identical to the inline form it replaced.
+def _eng_hbm_addr_text():
+    """Every engine master m00..m27 onto all 32 HBM segments of its SAXI port."""
+    t = """
 # EVERY engine master sees ALL 32 pseudo-channel segments, i.e. the whole 8 GiB.
 #
 # That is not laziness and it is not a bandwidth claim.  Under the flat packed
@@ -2384,15 +2528,15 @@ _ENG_ADDR_PART += """
 # the 32 SAXI ports already exposes all 32 HBM_MEM segments.  The stack rule in
 # the residency map is a build discipline, not a property of the silicon.
 """
-# NOT "%02d" for the port index.  Tcl reads a leading-zero literal as OCTAL, so
-# {m07 08} makes `format ... $sx` fail with `expected integer but got "08"` --
-# MEASURED, it killed the --bd-only gate after 7 of 28 masters had been mapped.
-# The zero padding belongs in the format string on the Tcl side, where it is
-# applied to an integer, and nowhere else.
-_ENG_ADDR_PART += ("foreach pair {"
-                + " ".join("{m%02d %d}" % (i, p) for i, p in enumerate(ENG_PORT_MAP))
-                + "} {\n")
-_ENG_ADDR_PART += """    set m  [lindex $pair 0]
+    # NOT "%02d" for the port index.  Tcl reads a leading-zero literal as OCTAL, so
+    # {m07 08} makes `format ... $sx` fail with `expected integer but got "08"` --
+    # MEASURED, it killed the --bd-only gate after 7 of 28 masters had been mapped.
+    # The zero padding belongs in the format string on the Tcl side, where it is
+    # applied to an integer, and nowhere else.
+    t += ("foreach pair {"
+          + " ".join("{m%02d %d}" % (i, p) for i, p in enumerate(ENG_PORT_MAP))
+          + "} {\n")
+    t += """    set m  [lindex $pair 0]
     set sx [lindex $pair 1]
     for {set s 0} {$s < 32} {incr s} {
         assign_bd_address \\
@@ -2402,6 +2546,10 @@ _ENG_ADDR_PART += """    set m  [lindex $pair 0]
     }
 }
 """.replace("ENGCELL", ENG_CELL)
+    return t
+
+
+_ENG_ADDR_PART += _eng_hbm_addr_text()
 
 if ENG_ON:
     ENGINE_ADDR += _ENG_ADDR_PART
