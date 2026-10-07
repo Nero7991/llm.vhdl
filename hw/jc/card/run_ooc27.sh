@@ -133,6 +133,9 @@ if [ -e "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
 fi
 
 PATCH="$REPO/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch"
+# fix round 2: a stub run_capped.sh for tests, honoured by this env override;
+# the default is unchanged (the real script).
+RUN_CAPPED="${RUN_CAPPED:-$REPO/hw/jc/loader/run_capped.sh}"
 UNIT="jcooc27_$(date +%s)_$$"
 NONCE="$UNIT"
 SRC="$ROOT/src"
@@ -157,13 +160,20 @@ if [ "$DRY_RUN" != 1 ] && [ -n "$MEMAVAIL" ]; then
   fi
 fi
 
+# ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
+# executed "$@" here AND the caller then executed the same command AGAIN in
+# its own `if [ "$DRY_RUN" != 1 ]` block -- so every real (non-dry) run
+# double-executed every step that used `run`: `git apply` twice (the second
+# fails outright), the two generators once in THIS SCRIPT'S OWN CALLER'S
+# CWD (via run()'s unguarded "$@", with no `cd "$SRC"` at all -- a real
+# invocation from the repo root would have overwritten the LIVE repo's
+# hw/fk33/rtl/fk33_card.vhd with the 27B regeneration) and once more,
+# correctly, in the companion block, and Vivado launched twice under one
+# unit name. Every command below now has EXACTLY ONE execution site, inside
+# the single `if/else` that both prints (via `run`, for an accurate --dry-run
+# transcript) and, in the real branch only, executes.
 run() {
-  if [ "$DRY_RUN" = 1 ]; then
-    printf '+'; printf ' %q' "$@"; printf '\n'
-  else
-    printf '+'; printf ' %q' "$@"; printf '\n'
-    "$@"
-  fi
+  printf '+'; printf ' %q' "$@"; printf '\n'
 }
 
 # ---- 1. the tracked tree ----------------------------------------------------
@@ -177,28 +187,32 @@ else
 fi
 
 # ---- 2. the levers patch -----------------------------------------------------
-run git -C "$SRC" apply --check "$PATCH"
-if [ "$DRY_RUN" != 1 ]; then
+if [ "$DRY_RUN" = 1 ]; then
+  run git -C "$SRC" apply --check "$PATCH"
+  run git -C "$SRC" apply "$PATCH"
+else
+  run git -C "$SRC" apply --check "$PATCH"
   git -C "$SRC" apply --check "$PATCH" \
     || jcooc27_fail "build12_levers_off.patch does not apply cleanly to $SRC"
-fi
-run git -C "$SRC" apply "$PATCH"
-if [ "$DRY_RUN" != 1 ]; then
-  git -C "$SRC" apply "$PATCH" || jcooc27_fail "build12_levers_off.patch apply (after a clean --check) at $SRC"
+  run git -C "$SRC" apply "$PATCH"
+  git -C "$SRC" apply "$PATCH" \
+    || jcooc27_fail "build12_levers_off.patch apply (after a clean --check) at $SRC"
 fi
 
 # ---- 3. the 27B fk33_card.vhd only (no BD, no jc_card_top) ------------------
-run env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
+# Runs with cwd=$SRC (never the caller's cwd: gen_fk33_card.py writes its
+# output relative to its OWN cwd, not an argument, so the wrong cwd here is
+# exactly what would regenerate the LIVE repo's committed file instead).
+GEN_FK33_CARD_CMD=(env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
   -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_JOBS \
   -u FK33_SYNTH_THREADS -u FK33_A_ROWS_IF \
   FK33_C_KV_BLOCK=16 FK33_C_MAXPOS=16384 FK33_MODEL=QWEN38_27B \
-  python3 hw/fk33/gen_fk33_card.py
-if [ "$DRY_RUN" != 1 ]; then
-  ( cd "$SRC" && env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
-      -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_JOBS \
-      -u FK33_SYNTH_THREADS -u FK33_A_ROWS_IF \
-      FK33_C_KV_BLOCK=16 FK33_C_MAXPOS=16384 FK33_MODEL=QWEN38_27B \
-      python3 hw/fk33/gen_fk33_card.py ) > "$ROOT/gen_fk33_card.log" 2>&1 \
+  python3 hw/fk33/gen_fk33_card.py)
+if [ "$DRY_RUN" = 1 ]; then
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_FK33_CARD_CMD[@]}")) > $ROOT/gen_fk33_card.log 2>&1"
+else
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_FK33_CARD_CMD[@]}")) > $ROOT/gen_fk33_card.log 2>&1"
+  ( cd "$SRC" && "${GEN_FK33_CARD_CMD[@]}" ) > "$ROOT/gen_fk33_card.log" 2>&1 \
     || jcooc27_fail "gen_fk33_card.py (see $ROOT/gen_fk33_card.log)"
   [ -s "$SRC/hw/fk33/rtl/fk33_card.vhd" ] \
     || jcooc27_fail "gen_fk33_card.py did not (re)write hw/fk33/rtl/fk33_card.vhd in $SRC"
@@ -206,10 +220,15 @@ fi
 
 # ---- 4. jc_ooc27_top.vhd, build 27B-1's own fk33_seam CONFIG (jc_card_bd.tcl:
 #      CONFIG.REGMAX 17408, CONFIG.HADDR_W 15) -------------------------------
-run python3 hw/jc/card/gen_ooc27_top.py "$SRC" --haddr-w 15 --regmax 17408
-if [ "$DRY_RUN" != 1 ]; then
-  python3 "$HERE/gen_ooc27_top.py" "$SRC" --haddr-w 15 --regmax 17408 \
-    > "$ROOT/gen_ooc27_top.log" 2>&1 \
+# gen_ooc27_top.py itself takes <repo_root> as an explicit argument (it does
+# not rely on cwd to find anything), but the exactly-once rule still applies:
+# this must run no more than once per invocation of this script.
+GEN_OOC27_TOP_CMD=(python3 "$HERE/gen_ooc27_top.py" "$SRC" --haddr-w 15 --regmax 17408)
+if [ "$DRY_RUN" = 1 ]; then
+  run "${GEN_OOC27_TOP_CMD[@]}"
+else
+  run "${GEN_OOC27_TOP_CMD[@]}"
+  "${GEN_OOC27_TOP_CMD[@]}" > "$ROOT/gen_ooc27_top.log" 2>&1 \
     || jcooc27_fail "gen_ooc27_top.py (see $ROOT/gen_ooc27_top.log)"
   grep -q "^GENOOC27_WROTE " "$ROOT/gen_ooc27_top.log" \
     || jcooc27_fail "gen_ooc27_top.py printed no GENOOC27_WROTE line (see $ROOT/gen_ooc27_top.log)"
@@ -265,20 +284,22 @@ fi
 # ---- 5. Vivado, capped -------------------------------------------------------
 OOC_TCL="$SRC/hw/jc/card/ooc_card_200.tcl"
 PROJDIR="$ROOT/ooc"
-run rm -f "$BUILD_LOG"
 # fix round 1, I2: the nonce goes on -tclargs, and ooc_card_200.tcl prints it
 # FIRST, before anything else -- build_card.tcl's own pattern. The original
 # version instead appended "JCOOC27_NONCE $NONCE" to $BUILD_LOG before
 # launching Vivado, but Vivado's own -log truncates/rewrites the file it is
 # given from scratch, so that line never survived for the gate below to find,
 # and every run therefore read as JCOOC27_FAIL regardless of what Vivado did.
-run bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
+VIVADO_CMD=(bash "$RUN_CAPPED" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
   vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
-  -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE"
-if [ "$DRY_RUN" != 1 ]; then
-  bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
-    vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
-    -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE"
+  -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE")
+if [ "$DRY_RUN" = 1 ]; then
+  run rm -f "$BUILD_LOG"
+  run "${VIVADO_CMD[@]}"
+else
+  rm -f "$BUILD_LOG"
+  run "${VIVADO_CMD[@]}"
+  "${VIVADO_CMD[@]}"
   RC=$?
   # the sentinel is read from Vivado's OWN log, anchored, never from $RC
   # alone, and DONE must come STRICTLY AFTER the nonce by LINE NUMBER (a

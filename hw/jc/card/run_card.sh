@@ -108,6 +108,9 @@ if [ -e "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
 fi
 
 PATCH="$REPO/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch"
+# fix round 2: a stub run_capped.sh for tests, honoured by this env override;
+# the default is unchanged (the real script).
+RUN_CAPPED="${RUN_CAPPED:-$REPO/hw/jc/loader/run_capped.sh}"
 CLK_CORE_MHZ=200
 MEM_HIGH=24G
 SWAP_KILL_BYTES=32212254720   # 30 GiB, the project's standing card-build swap guard
@@ -127,17 +130,21 @@ SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "
 echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES allow_neg=${ALLOW_NEG:-no} nonce=$NONCE"
 echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES"
 
+# ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
+# executed "$@" here AND the caller then executed the same command AGAIN in
+# its own `if [ "$DRY_RUN" != 1 ]` block -- so every real (non-dry) run
+# double-executed every step that used `run`: `git apply` twice (the second
+# fails outright), both generators once in THIS SCRIPT'S OWN CALLER'S CWD
+# (via run()'s unguarded "$@", with no `cd "$SRC"` at all -- a real
+# invocation from the repo root would have overwritten the LIVE repo's
+# hw/fk33/rtl/fk33_card.vhd, hw/jc/card/jc_card_bd.tcl/.xdc/jc_card_top.vhd
+# with the 27B regeneration) and once more, correctly, in the companion
+# block, and Vivado launched twice under one unit name. Every command below
+# now has EXACTLY ONE execution site, inside the single `if/else` that both
+# prints (via `run`, for an accurate --dry-run transcript) and, in the real
+# branch only, executes.
 run() {
-  if [ "$DRY_RUN" = 1 ]; then
-    printf '+'
-    printf ' %q' "$@"
-    printf '\n'
-  else
-    printf '+'
-    printf ' %q' "$@"
-    printf '\n'
-    "$@"
-  fi
+  printf '+'; printf ' %q' "$@"; printf '\n'
 }
 
 # ---- 1. the tracked tree -----------------------------------------------------------
@@ -151,22 +158,27 @@ else
 fi
 
 # ---- 2. the levers patch, refusing on anything but a clean apply -------------------
-run git -C "$SRC" apply --check "$PATCH"
-if [ "$DRY_RUN" != 1 ]; then
+if [ "$DRY_RUN" = 1 ]; then
+  run git -C "$SRC" apply --check "$PATCH"
+  run git -C "$SRC" apply "$PATCH"
+else
+  run git -C "$SRC" apply --check "$PATCH"
   git -C "$SRC" apply --check "$PATCH" \
     || jccard_fail "build12_levers_off.patch does not apply cleanly to $SRC"
-fi
-run git -C "$SRC" apply "$PATCH"
-if [ "$DRY_RUN" != 1 ]; then
-  git -C "$SRC" apply "$PATCH" || jccard_fail "build12_levers_off.patch apply (after a clean --check) at $SRC"
+  run git -C "$SRC" apply "$PATCH"
+  git -C "$SRC" apply "$PATCH" \
+    || jccard_fail "build12_levers_off.patch apply (after a clean --check) at $SRC"
 fi
 
 # ---- 3. provenance: HEAD and the patch's sha256 (the four regenerated files' own
 #      sha256 are appended after step 4, once they exist -- minor 8) ---------------
-run git -C "$REPO" rev-parse HEAD
-run sha256sum "$PATCH"
-if [ "$DRY_RUN" != 1 ]; then
+if [ "$DRY_RUN" = 1 ]; then
+  run git -C "$REPO" rev-parse HEAD
+  run sha256sum "$PATCH"
+else
+  run git -C "$REPO" rev-parse HEAD
   HEAD_SHA=$(git -C "$REPO" rev-parse HEAD) || jccard_fail "git rev-parse HEAD"
+  run sha256sum "$PATCH"
   PATCH_SHA=$(sha256sum "$PATCH" | awk '{print $1}')
   {
     echo "head=$HEAD_SHA"
@@ -183,29 +195,27 @@ fi
 # unset, FK33_C_KV_BLOCK=16, FK33_C_MAXPOS=16384, FK33_MODEL=QWEN38_27B. This makes
 # hw/fk33/rtl/fk33_card.vhd's GENSTAMP equal JC_CARD_ENV, which gen_jc_card.py then
 # runs IN PLACE (card_is_jc() becomes true) instead of its scratch-copy path.
-run env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
+# Both generators run with cwd=$SRC (never the caller's cwd: each writes its
+# output relative to its OWN cwd, not an argument, so the wrong cwd here is
+# exactly what would regenerate the LIVE repo's committed files instead).
+GEN_FK33_CARD_CMD=(env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
   -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_JOBS \
   -u FK33_SYNTH_THREADS -u FK33_A_ROWS_IF \
   FK33_C_KV_BLOCK=16 FK33_C_MAXPOS=16384 FK33_MODEL=QWEN38_27B \
-  python3 hw/fk33/gen_fk33_card.py
-if [ "$DRY_RUN" != 1 ]; then
-  ( cd "$SRC" && env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
-      -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_JOBS \
-      -u FK33_SYNTH_THREADS -u FK33_A_ROWS_IF \
-      FK33_C_KV_BLOCK=16 FK33_C_MAXPOS=16384 FK33_MODEL=QWEN38_27B \
-      python3 hw/fk33/gen_fk33_card.py ) > "$ROOT/gen_fk33_card.log" 2>&1 \
-    || jccard_fail "gen_fk33_card.py (see $ROOT/gen_fk33_card.log)"
-fi
-run env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
+  python3 hw/fk33/gen_fk33_card.py)
+GEN_JC_CARD_CMD=(env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
   -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_THREADS \
   -u FK33_A_ROWS_IF -u FK33_C_KV_BLOCK -u FK33_C_MAXPOS -u FK33_MODEL \
-  JC_CLK_CORE_MHZ="$CLK_CORE_MHZ" python3 hw/jc/card/gen_jc_card.py
-if [ "$DRY_RUN" != 1 ]; then
-  ( cd "$SRC" && env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ \
-      -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_THREADS \
-      -u FK33_A_ROWS_IF -u FK33_C_KV_BLOCK -u FK33_C_MAXPOS -u FK33_MODEL \
-      JC_CLK_CORE_MHZ="$CLK_CORE_MHZ" python3 hw/jc/card/gen_jc_card.py ) \
-    > "$ROOT/gen_jc_card.log" 2>&1 \
+  JC_CLK_CORE_MHZ="$CLK_CORE_MHZ" python3 hw/jc/card/gen_jc_card.py)
+if [ "$DRY_RUN" = 1 ]; then
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_FK33_CARD_CMD[@]}")) > $ROOT/gen_fk33_card.log 2>&1"
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_JC_CARD_CMD[@]}")) > $ROOT/gen_jc_card.log 2>&1"
+else
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_FK33_CARD_CMD[@]}")) > $ROOT/gen_fk33_card.log 2>&1"
+  ( cd "$SRC" && "${GEN_FK33_CARD_CMD[@]}" ) > "$ROOT/gen_fk33_card.log" 2>&1 \
+    || jccard_fail "gen_fk33_card.py (see $ROOT/gen_fk33_card.log)"
+  echo "+ ( cd $SRC && $(printf '%q ' "${GEN_JC_CARD_CMD[@]}")) > $ROOT/gen_jc_card.log 2>&1"
+  ( cd "$SRC" && "${GEN_JC_CARD_CMD[@]}" ) > "$ROOT/gen_jc_card.log" 2>&1 \
     || jccard_fail "gen_jc_card.py (see $ROOT/gen_jc_card.log)"
   GENERATED_FILES="hw/jc/card/jc_card_bd.tcl hw/jc/card/jc_card.xdc hw/jc/card/jc_card_top.vhd hw/fk33/rtl/fk33_card.vhd"
   for f in $GENERATED_FILES; do
@@ -263,14 +273,16 @@ VIVADO_ARGS+=(-nonce "$NONCE")
 # The non-empty-root refusal above already makes this unreachable in the normal
 # case; this is the second, independent layer, and it is unconditional because a
 # log Vivado is about to overwrite with -log is not one worth preserving anyway.
-run rm -f "$BUILD_LOG"
-run bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
+VIVADO_CMD=(bash "$RUN_CAPPED" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
   vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$BUILD_CARD_TCL" \
-  -tclargs "${VIVADO_ARGS[@]}"
-if [ "$DRY_RUN" != 1 ]; then
-  bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
-    vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$BUILD_CARD_TCL" \
-    -tclargs "${VIVADO_ARGS[@]}"
+  -tclargs "${VIVADO_ARGS[@]}")
+if [ "$DRY_RUN" = 1 ]; then
+  run rm -f "$BUILD_LOG"
+  run "${VIVADO_CMD[@]}"
+else
+  rm -f "$BUILD_LOG"
+  run "${VIVADO_CMD[@]}"
+  "${VIVADO_CMD[@]}"
   RC=$?
   # The sentinel is read from Vivado's OWN log, anchored, never from $RC alone: a
   # killed unit (the swap guard) and a timed-out waiter both exit non-zero with no

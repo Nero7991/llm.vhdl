@@ -155,17 +155,20 @@ def test_aborts_on_a_direction_mismatched_pair(tmp_path):
 
 # ---- fix round 1, CRITICAL C1: jc_card_bd.tcl never connects card's debug/
 # observability outputs (obs_wsum and its siblings), the dead "m_*" HBM read
-# bus, several AXI SIZE/BURST/WSTRB/RESP/ID fields, bst_busy/done/err, or
-# a_jobs_issued -- 2026-09-30's own "70 MHz" OOC number on fk33_card ALONE
-# was obs_wsum's 60-level debug hash (fk33_llama_top.vhd:8243), which drives
-# NOTHING in the real card and is dead-code-eliminated there, kept alive only
-# because this generator used to export EVERY unwired port, including it.
+# bus, several of card's own AXI SIZE/BURST/WSTRB/RESP fields, bst_busy/
+# done/err, or a_jobs_issued -- 2026-09-30's own "70 MHz" OOC number on
+# fk33_card ALONE was obs_wsum's 60-level debug hash (fk33_llama_top.vhd:
+# 8243), which drives NOTHING in the real card and is dead-code-eliminated
+# there, kept alive only because this generator used to export EVERY
+# unwired port, including it.
 # A port the BD never connects to anything (inside OR outside the three
 # cells) must be tied to `open` (an output) or a quiescent constant (an
 # input), never exported, so synthesis can eliminate it exactly as the real
 # build does. Only a port the BD connects to something OUTSIDE the three
 # cells (HBM AXI, a host AXI4-Lite slave, clocks, reset, CATTRIP) may be
-# exported.
+# exported. eng's own AXI ID fields (below) are a SEPARATE case, tied off
+# for a different, narrower reason even though the BD DOES connect them --
+# see test_bd_unconnected_eng_axi_id_fields_are_not_exported's own docstring.
 
 BD_UNCONNECTED_CARD_OUTPUTS = [
     "obs_wsum", "obs_unit", "obs_opcode", "obs_step", "obs_dst", "obs_cmp",
@@ -216,8 +219,19 @@ def test_bd_unconnected_card_outputs_are_tied_open(tmp_path):
 
 
 def test_bd_unconnected_eng_axi_id_fields_are_not_exported(tmp_path):
-    """The engine's own AXI ID fields (HBM is AXI3: no AWID/ARID/BID/RID) are
-    just as unconnected by the BD as card's debug ports, by the same rule."""
+    """fix round 2 correction: HBM's SAXI interfaces DO carry
+    AXI_xx_ARID/AWID/BID/RID, and jc_card_bd.tcl's interface-level
+    `connect_bd_intf_net [get_bd_intf_pins eng/m00_axi] [get_bd_intf_pins
+    hbm/SAXI_01]` (and its 27 siblings) DOES wire eng's own
+    m*_axi_awid/arid/bid/rid to them, same as every other channel signal --
+    these are NOT left unconnected by the BD the way card's debug ports are.
+    They are excluded from gen_ooc27_top.py's AXI_SUFFIXES (and so land
+    here, tied off rather than exported) for a narrower, eng-specific
+    reason: eng drives its own m*_axi_awid/arid to a constant '0' internally
+    (fk33_engine.vhd:1422/1432) and never reads bid/rid at all, so the real
+    BD connection changes nothing eng actually does, and tying it off at
+    this OOC top is harmless. See gen_ooc27_top.py's own AXI_SUFFIXES
+    comment for the full reasoning."""
     out = str(tmp_path / "jc_ooc27_top.vhd")
     r = _run(REPO, out, extra=["--haddr-w", "14", "--regmax", "16384"])
     assert r.returncode == 0, r.stdout + r.stderr

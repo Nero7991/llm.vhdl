@@ -225,10 +225,8 @@ REG_RSTN = {"eng": "rstn_r2"}
 
 
 # ---- fix round 1, C1: the BD-connectivity audit. A port the BD leaves
-# unconnected (either because nothing in this tree drives/reads it, like
-# card/obs_wsum, or because the AXI channel field simply does not exist on
-# the far side, like eng's AXI-3 HBM masters' AWID/ARID/BID/RID) must never
-# be exported: exporting it makes it an OOC top-level port, which can never
+# unconnected (nothing in this tree drives/reads it, like card/obs_wsum)
+# must never be exported: exporting it makes it an OOC top-level port, which can never
 # be optimised away, so any logic feeding a debug tap like obs_wsum (a
 # 60-level, 8-step multiply-by-31-add hash, fk33_llama_top.vhd:8243) stays
 # alive and dominates the routed critical path -- exactly the artifact
@@ -249,17 +247,28 @@ REG_RSTN = {"eng": "rstn_r2"}
 # which would conflate card's `a` AXI4-Lite master (a_awvalid, a_wdata, ...)
 # with its UNRELATED `a_job_index`/`a_x_we`/`a_arena_base`-style "A seam"
 # ports, all of which also happen to start with `a_`.
-# DELIBERATELY NO *id FIELDS (awid/bid/arid/rid): HBM's own AXI3 SAXI
-# interface has none, so Vivado's intf-to-intf connection leaves eng's own
-# AXI-ID fields genuinely unconnected -- MEASURED directly (a standalone
-# scan of jc_card_bd.tcl against fk33_engine.vhd's own parsed ports, with no
-# *id suffix in this set, finds exactly 56 unconnected AWID+ARID outputs and
-# 56 unconnected BID+RID inputs, all on eng's 28 m*_axi buses, nothing else).
-# Adding them back in would silently re-export dead eng ports, the same
-# class of mistake C1 is about, just with a far less costly consequence
-# (eng's own AWID/ARID are driven to a constant '0' internally, not a
-# 60-level hash) -- which is exactly why test_gen_ooc27_top.py checks for
-# them by name rather than trusting this set to stay right by inspection.
+# DELIBERATELY NO *id FIELDS (awid/bid/arid/rid) in this set. Fix round 2
+# correction: the ORIGINAL comment here claimed "HBM's own AXI3 SAXI
+# interface has none" -- that is FALSE. HBM's SAXI_xx interfaces DO carry
+# AXI_xx_ARID/AWID/BID/RID (MEASURED: jc_card_bd.tcl's own interface-level
+# `connect_bd_intf_net [get_bd_intf_pins eng/m00_axi] [get_bd_intf_pins
+# hbm/SAXI_01]` and its 27 siblings wire ALL of eng's m*_axi sub-signals,
+# ID fields included, to the matching HBM SAXI port -- there is no separate,
+# narrower connection that could omit them). So bd_connected_ports() would
+# mark eng's awid/arid/bid/rid CONNECTED too, if *id were in AXI_SUFFIXES.
+# The exclusion is deliberate anyway, and is harmless for a different
+# reason: eng drives its own m*_axi_awid/arid to a constant '0' internally
+# (fk33_engine.vhd:1422 `m00_axi_arid <= (others => '0')`, :1432 the
+# matching `m00_axi_awid` line, each repeated per master) and never reads
+# back bid/rid at all. Tying these ports off at this OOC top (rather than
+# exporting them as live, BD-connected ports) therefore changes nothing
+# about what eng actually does: it already ignores the real connection on
+# both the read side (bid/rid, never consumed) and effectively on the write
+# side (awid/arid, overridden by the constant driver before it ever leaves
+# eng). This is also why test_gen_ooc27_top.py checks for the *id suffixes
+# by name rather than trusting this set to stay right by inspection: the
+# reasoning above is specific to eng's own RTL, not a general BD fact, and
+# would need re-checking if eng's own id-driving ever changed.
 AXI_SUFFIXES = {
     "awvalid", "awready", "awaddr", "awlen", "awsize", "awburst", "awprot",
     "awcache", "awlock", "awqos", "awregion",
