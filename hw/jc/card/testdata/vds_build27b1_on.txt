@@ -1,0 +1,32 @@
+# verbatim excerpt, build27b_1/.../synth_1/bd_wrapper.vds lines 1219-1230 and 1356-1363
+# (build 27b_1: every lever on, including FAST_POP).
+	Parameter CONST_STRIDE bound to: 82432 - type: integer 
+	Parameter CONST_BYTES bound to: 82432 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter NWIDE bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'gdn_state_mem' [/mnt/storage/fk33_builds/wt27/rtl/gdn_state_mem.vhd:103]
+	Parameter VAL_HEADS bound to: 48 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+	Parameter STYLE bound to: ultra - type: string 
+---
+	Parameter CM_W bound to: 8 - type: integer 
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter NORM_LANES bound to: 1 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+	Parameter SWEEP_PIPE bound to: 1 - type: bool 
+	Parameter SCORE_EARLY bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_rs' [/mnt/storage/fk33_builds/wt27/rtl/rmsnorm_rs.vhd:81]
+	Parameter N bound to: 256 - type: integer 
+---
+# verbatim excerpt, same file, lines 1552-1558 (FAST_POP)
+	Parameter CB_STYLE bound to: distributed - type: string 
+	Parameter CHECK_JOB_INDEX bound to: 0 - type: bool 
+	Parameter USE_XEXP_PORT bound to: 1 - type: bool 
+	Parameter FAST_POP bound to: 1 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'matvec_int4_desc_axi' [/mnt/storage/fk33_builds/wt27/rtl/matvec_int4_desc_axi.vhd:285]
+	Parameter BLK bound to: 32 - type: integer 
+	Parameter ROWS_IF bound to: 48 - type: integer 

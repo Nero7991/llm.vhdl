@@ -1,0 +1,22 @@
+# verbatim excerpt, build20/.../synth_1/bd_wrapper.vds lines 1220-1230 and 1358-1364
+# (build 20: every lever off). Copied for hw/jc/card/test_jccard_levers.py; not a
+# generated or hand-edited log -- these two blocks are real Vivado output.
+	Parameter CONST_STRIDE bound to: 66048 - type: integer 
+	Parameter CONST_BYTES bound to: 66048 - type: integer 
+	Parameter MAXB bound to: 16 - type: integer 
+	Parameter MAXOUT bound to: 8 - type: integer 
+	Parameter PIPE bound to: 1 - type: bool 
+	Parameter WIDE bound to: 1 - type: bool 
+	Parameter NWIDE bound to: 0 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'gdn_state_mem' [/mnt/storage/fk33_builds/wt20/rtl/gdn_state_mem.vhd:103]
+	Parameter VAL_HEADS bound to: 32 - type: integer 
+	Parameter DIM bound to: 128 - type: integer 
+	Parameter RECUR_LANES bound to: 4 - type: integer 
+---
+	Parameter EXP_W bound to: 8 - type: integer 
+	Parameter NORM_LANES bound to: 1 - type: integer 
+	Parameter STRICT_PRODUCER bound to: 1 - type: bool 
+	Parameter SWEEP_PIPE bound to: 0 - type: bool 
+	Parameter SCORE_EARLY bound to: 0 - type: bool 
+INFO: [Synth 8-638] synthesizing module 'rmsnorm_rs' [/mnt/storage/fk33_builds/wt20/rtl/rmsnorm_rs.vhd:81]
+	Parameter N bound to: 256 - type: integer 

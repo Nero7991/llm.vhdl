@@ -1,7 +1,7 @@
 # hw/jc/card/build_card.tcl -- Jungle Cat (VU35P, no PCIe) Qwen3.8-27B inference card.
 # Synthesis, implementation and reports only: nothing here opens a hardware target.
 #
-#   vivado -mode batch -source build_card.tcl -tclargs <build_dir> [part] [bd_only] [allow_neg]
+#   vivado -mode batch -source build_card.tcl -tclargs <build_dir> [part] [bd_only] [allow_neg] -nonce <value>
 #
 # Called by run_card.sh, never directly: run_card.sh has already copied the TRACKED
 # tree into <build_dir>/../src (git archive HEAD), applied build12_levers_off.patch
@@ -34,13 +34,74 @@ set bd    [file normalize [lindex $argv 0]]
 set part  [expr {[llength $argv] > 1 ? [lindex $argv 1] : "xcvu35p-fsvh2104-2L-e"}]
 set bdonly    [expr {[lsearch -exact $argv bd_only]   >= 0}]
 set allow_neg [expr {[lsearch -exact $argv allow_neg] >= 0}]
+set nonce_idx [lsearch -exact $argv -nonce]
+set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : ""}]
 set TCK_P 37.037
 set DNA_DIV 10
 set CORE_LOADER "*u_jc_core/"
 set CORE_CTL    "*ctl/inst/"
 proc jcc_fail {msg} { puts "JCCARD_FAIL $msg"; exit 1 }
+# Task 9 fix round 1, IMPORTANT I3: the VERY FIRST thing this script prints (ahead
+# of JCCARD_PART, ahead of create_project) is this run's own nonce, so run_card.sh
+# can gate JCCARD_DONE on a log that actually carries THIS run's identity, not a
+# stale file left by an earlier run in a reused root (Vivado's own startup banner
+# still precedes it in the raw -log file, which is why run_card.sh gates on the
+# first JCCARD_* line carrying the nonce, not literally byte 0 of the file).
+# run_card.sh always passes -nonce; a direct invocation without one is refused.
+if {$nonce eq ""} { jcc_fail "no -nonce given on -tclargs (run_card.sh always passes one)" }
+puts "JCCARD_NONCE $nonce"
 puts "JCCARD_PART $part"
 puts "JCCARD_CLK_CORE_MHZ 200"
+
+# BSCAN census, as a proc so it can be run twice (Task 9 fix round 1, CRITICAL C2):
+# once right after opt_design (cheap: the design is not yet placed or routed) and
+# again right before write_bitstream, rather than once after route_design. Running
+# it early means a wrong census is caught before paying for placement and routing,
+# not after hours of routing; running it again before the bitstream catches anything
+# place/route itself might have changed.
+#
+# C2: jtag_hbm (an IP-packaged jtag_axi core, the card's own JTAG-over-HBM debug
+# master) makes Vivado insert exactly one debug hub on JTAG chain 1, exactly as
+# hw/jc/loader/README.md's own measured BSCAN census records for the loader's
+# jtag_axi_0 and jtag_hbm cores ("Debug cores (ltx): ... both on user chain 1"). The
+# original "no debug hub" refusal (`$nhub != 0`) would have refused every correct
+# build, including a bitstream that is otherwise exactly right, for the same reason
+# the loader's own bitstream has one. One debug hub, and only on chain 1, is allowed;
+# more than one, or one anywhere else, is still refused.
+proc jccard_bscan_census {} {
+  set n3 0; set n3ours 0; set n4 0; set n4ours 0; set nall 0
+  foreach c [get_cells -hierarchical -filter {REF_NAME == BSCANE2}] {
+    set ch [get_property JTAG_CHAIN $c]
+    puts "JCCARD_BSCAN $c JTAG_CHAIN=$ch"
+    incr nall
+    if {$ch == 3} { incr n3; if {[string match "*u_jc_ctl_rx/u_jc_ctl_bscan" $c]} { incr n3ours } }
+    if {$ch == 4} { incr n4; if {[string match "*u_jc_frx/u_jc_bscan" $c]} { incr n4ours } }
+  }
+  set nhub 0; set nhub_chain1 0
+  foreach d [get_debug_cores -quiet] {
+    incr nhub
+    if {[llength [list_property $d C_USER_SCAN_CHAIN]]} {
+      set chv [get_property C_USER_SCAN_CHAIN $d]
+      puts "JCCARD_DEBUGCORE $d C_USER_SCAN_CHAIN=$chv"
+      if {$chv == 1} { incr nhub_chain1 }
+    } else {
+      puts "JCCARD_DEBUGCORE $d"
+    }
+  }
+  puts "JCCARD_BSCAN_SUMMARY total=$nall chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub debug_hub_chain1=$nhub_chain1"
+  return [list $n3 $n3ours $n4 $n4ours $nhub $nhub_chain1]
+}
+
+proc jccard_bscan_check {stage} {
+  lassign [jccard_bscan_census] n3 n3ours n4 n4ours nhub nhub_chain1
+  # exactly one chain-3 (ctl, ours) and one chain-4 (loader, ours); AT MOST one
+  # debug hub, and if it exists it must be the chain-1 one jtag_hbm causes.
+  if {$n3 != 1 || $n3ours != 1 || $n4 != 1 || $n4ours != 1
+      || $nhub > 1 || ($nhub == 1 && $nhub_chain1 != 1)} {
+    jcc_fail "bscan census ($stage): chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub debug_hub_chain1=$nhub_chain1"
+  }
+  puts "JCCARD_BSCAN_OK $stage"
+}
 
 create_project -force jc_card $bd -part $part
 set_param general.maxThreads 8
@@ -197,32 +258,47 @@ if {[llength $total_bad] > 0} { jcc_fail "netlist: [llength $total_bad] module-r
 # already reads its CONFIG property back at BD-generation time (m6, task-8 fix round
 # 1). NWIDE, SWEEP_PIPE and SCORE_EARLY are generic maps deep inside fk33_llama_top
 # and reach no module-reference boundary, so the only place they can be read is
-# synthesis's own `Parameter <NAME> bound to: <value>` log line (hw/fk33/CLAUDE.md:
+# synthesis's own `Parameter <NAME> bound to: <value>` trace line (hw/fk33/CLAUDE.md:
 # "Diff `Parameter <NAME> bound to` out of both builds' logs before attributing
 # anything"; "Bind lines can be missing from a log... so a lever's absence from the
 # log proves nothing" -- which is why a MISSING line is refused here exactly as a
 # WRONG value is, not treated as silent pass).
-set synthlog [get_property DIRECTORY [get_runs synth_1]]/runme.log
-if {![file exists $synthlog]} { jcc_fail "levers: no synth_1 log at $synthlog" }
+#
+# Task 9 fix round 1, CRITICAL C1 (MEASURED against three real builds; evidence and
+# the parsing proc are in hw/jc/card/jccard_levers.tcl, tested stand-alone by
+# test_jccard_levers.py against real log excerpts):
+#  1. Vivado spells a boolean generic's bound value as the NUMBER 0/1 ("Parameter
+#     NWIDE bound to: 0 - type: bool"), never the word "false"/"true". The original
+#     check here compared against the literal word "false" and so refused build20
+#     itself -- the one build its own levers patch is supposed to reproduce.
+#  2. The line is not in synth_1's `runme.log` at all for a project-mode run:
+#     runme.log is the project launcher's own log. The synthesis ENGINE's full
+#     elaboration trace -- every module's own `Parameter ... bound to` line -- goes
+#     only to `<top>.vds` in the same run directory (MEASURED: build20's runme.log
+#     has 782 unrelated `bound to` lines and zero for NWIDE; its bd_wrapper.vds has
+#     exactly one). The original check read runme.log and so found NOTHING, which
+#     its own "no bind line" refusal then (correctly, but for the wrong reason)
+#     turned into a hard failure on every build, correct or not.
+source $here/jccard_levers.tcl
+set top [get_property top [current_fileset]]
+set synthlog [get_property DIRECTORY [get_runs synth_1]]/${top}.vds
+if {![file exists $synthlog]} { jcc_fail "levers: no synth_1 trace at $synthlog" }
 set logtxt [read [open $synthlog]]
 set LEVERS_OFF {NWIDE SWEEP_PIPE SCORE_EARLY}
 set lever_bad {}
 foreach lv $LEVERS_OFF {
-  set hits {}
-  foreach {- v} [regexp -all -inline "Parameter $lv bound to: (\\S+)" $logtxt] { lappend hits $v }
-  if {[llength $hits] == 0} {
-    lappend lever_bad "$lv: no bind line found (build12_levers_off.patch not applied, or the log moved)"
-    continue
-  }
-  set uniq [lsort -unique [string tolower $hits]]
-  if {[llength $uniq] != 1 || [lindex $uniq 0] ne "false"} {
-    lappend lever_bad "$lv: bound to {$hits}, expected false ([llength $hits] occurrence(s))"
-  } else {
-    puts "JCCARD_LEVER $lv false ([llength $hits] occurrence(s))"
+  set res [jccard_lever_status $lv $logtxt]
+  set status [lindex $res 0]
+  set detail [lindex $res 1]
+  switch -- $status {
+    off     { puts "JCCARD_LEVER $lv off ($detail)" }
+    on      { lappend lever_bad "$lv: bound ON ($detail), expected off" }
+    missing { lappend lever_bad "$lv: $detail (build12_levers_off.patch not applied, or the log moved)" }
+    mixed   { lappend lever_bad "$lv: $detail" }
   }
 }
 if {[llength $lever_bad] > 0} { jcc_fail "levers: [join $lever_bad {; }]" }
-puts "JCCARD_LEVERS_OK NWIDE=false SWEEP_PIPE=false SCORE_EARLY=false"
+puts "JCCARD_LEVERS_OK NWIDE=off SWEEP_PIPE=off SCORE_EARLY=off"
 
 # ---- clocks and CDC -----------------------------------------------------------------
 source $repo/hw/jc/loader/jc_loader_timing.tcl
@@ -278,6 +354,7 @@ puts "JCCARD_CDC_UNEXPECTED $cdc_bad"
 if {$cdc_bad != 0} { jcc_fail "cdc audit: $cdc_bad unexpected ctl crossing(s)" }
 
 opt_design
+jccard_bscan_check post_opt_design
 place_design
 phys_opt_design
 route_design
@@ -319,29 +396,6 @@ foreach line [split $cdc_txt "\n"] {
 puts "JCCARD_CDC_REPORT_CRITICAL_UNKNOWN $crit_bad"
 if {$crit_bad > 0} { jcc_fail "report_cdc: $crit_bad critical crossing(s) outside the named synchronisers" }
 
-# ---- BSCAN census: exactly one chain-3 (ctl), one chain-4 (loader), no debug hub ---
-set n3 0; set n3ours 0; set n4 0; set n4ours 0; set nall 0
-foreach c [get_cells -hierarchical -filter {REF_NAME == BSCANE2}] {
-  set ch [get_property JTAG_CHAIN $c]
-  puts "JCCARD_BSCAN $c JTAG_CHAIN=$ch"
-  incr nall
-  if {$ch == 3} { incr n3; if {[string match "*u_jc_ctl_rx/u_jc_ctl_bscan" $c]} { incr n3ours } }
-  if {$ch == 4} { incr n4; if {[string match "*u_jc_frx/u_jc_bscan" $c]} { incr n4ours } }
-}
-set nhub 0
-foreach d [get_debug_cores -quiet] {
-  incr nhub
-  if {[llength [list_property $d C_USER_SCAN_CHAIN]]} {
-    puts "JCCARD_DEBUGCORE $d C_USER_SCAN_CHAIN=[get_property C_USER_SCAN_CHAIN $d]"
-  } else {
-    puts "JCCARD_DEBUGCORE $d"
-  }
-}
-puts "JCCARD_BSCAN_SUMMARY total=$nall chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub"
-if {$n3 != 1 || $n3ours != 1 || $n4 != 1 || $n4ours != 1 || $nhub != 0} {
-  jcc_fail "bscan census: chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub"
-}
-
 set rs [report_route_status -return_string]
 if {![regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcc_fail "route status" }
 set wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
@@ -355,6 +409,7 @@ if {$wns < 0} {
   puts "JCCARD_WNS_NEGATIVE_ALLOWED $wns"
 }
 
+jccard_bscan_check pre_write_bitstream
 write_bitstream -force $bd/jc_card.bit
 write_debug_probes -force $bd/jc_card.ltx
 if {![file exists $bd/jc_card.bit]} { jcc_fail "no bitstream" }
