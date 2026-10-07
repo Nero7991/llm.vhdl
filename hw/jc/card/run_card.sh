@@ -121,6 +121,18 @@ RUN_CAPPED="${RUN_CAPPED:-$RUN_CAPPED_DEFAULT}"
 if [ "$RUN_CAPPED" != "$RUN_CAPPED_DEFAULT" ] && [ "${JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE:-}" != 1 ]; then
   jccard_fail "RUN_CAPPED=$RUN_CAPPED overrides the real $RUN_CAPPED_DEFAULT; this is refused unless JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is also set (test-only: a bare override would launch Vivado with no memory cap and no swap guard)"
 fi
+# systemd-run resolves a bare executable name against the USER MANAGER's PATH,
+# not this shell's, so a bare `vivado` fails under run_capped.sh ("Failed to
+# find executable vivado", jcooc27_1, 2026-10-07). Resolve it here, from the
+# caller's PATH, before anything is mutated, and pass the absolute path.
+VIVADO_BIN=$(command -v vivado 2>/dev/null || true)
+if [ -z "$VIVADO_BIN" ]; then
+  if [ "$DRY_RUN" = 1 ]; then
+    VIVADO_BIN=vivado
+  else
+    jccard_fail "vivado is not on PATH; source /tools/Xilinx/2023.2/Vivado/2023.2/settings64.sh first"
+  fi
+fi
 CLK_CORE_MHZ=200
 MEM_HIGH=24G
 SWAP_KILL_BYTES=32212254720   # 30 GiB, the project's standing card-build swap guard
@@ -138,7 +150,7 @@ MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || ec
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 
 echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES allow_neg=${ALLOW_NEG:-no} nonce=$NONCE"
-echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED"
+echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 
 # ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
 # executed "$@" here AND the caller then executed the same command AGAIN in
@@ -284,7 +296,7 @@ VIVADO_ARGS+=(-nonce "$NONCE")
 # case; this is the second, independent layer, and it is unconditional because a
 # log Vivado is about to overwrite with -log is not one worth preserving anyway.
 VIVADO_CMD=(bash "$RUN_CAPPED" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
-  vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$BUILD_CARD_TCL" \
+  "$VIVADO_BIN" -mode batch -nojournal -log "$BUILD_LOG" -source "$BUILD_CARD_TCL" \
   -tclargs "${VIVADO_ARGS[@]}")
 if [ "$DRY_RUN" = 1 ]; then
   run rm -f "$BUILD_LOG"

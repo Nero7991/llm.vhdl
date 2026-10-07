@@ -146,6 +146,18 @@ RUN_CAPPED="${RUN_CAPPED:-$RUN_CAPPED_DEFAULT}"
 if [ "$RUN_CAPPED" != "$RUN_CAPPED_DEFAULT" ] && [ "${JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE:-}" != 1 ]; then
   jcooc27_fail "RUN_CAPPED=$RUN_CAPPED overrides the real $RUN_CAPPED_DEFAULT; this is refused unless JC_TEST_ALLOW_RUN_CAPPED_OVERRIDE=1 is also set (test-only: a bare override would launch Vivado with no memory cap and no swap guard)"
 fi
+# systemd-run resolves a bare executable name against the USER MANAGER's PATH,
+# not this shell's, so a bare `vivado` fails under run_capped.sh ("Failed to
+# find executable vivado", jcooc27_1, 2026-10-07). Resolve it here, from the
+# caller's PATH, before anything is mutated, and pass the absolute path.
+VIVADO_BIN=$(command -v vivado 2>/dev/null || true)
+if [ -z "$VIVADO_BIN" ]; then
+  if [ "$DRY_RUN" = 1 ]; then
+    VIVADO_BIN=vivado
+  else
+    jcooc27_fail "vivado is not on PATH; source /tools/Xilinx/2023.2/Vivado/2023.2/settings64.sh first"
+  fi
+fi
 UNIT="jcooc27_$(date +%s)_$$"
 NONCE="$UNIT"
 SRC="$ROOT/src"
@@ -155,7 +167,7 @@ BUILD_LOG="$ROOT/build.log"
 MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 echo "JCOOC27_RUN root=$ROOT part=$PART mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES nonce=$NONCE"
-echo "JCOOC27_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED"
+echo "JCOOC27_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 
 # ---- fix round 1, I3: refuse if MemAvailable is below cap+2G. Not enforced
 #      under --dry-run (same reasoning as the Vivado-presence refusal below:
@@ -308,7 +320,7 @@ PROJDIR="$ROOT/ooc"
 # given from scratch, so that line never survived for the gate below to find,
 # and every run therefore read as JCOOC27_FAIL regardless of what Vivado did.
 VIVADO_CMD=(bash "$RUN_CAPPED" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
-  vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
+  "$VIVADO_BIN" -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
   -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE")
 if [ "$DRY_RUN" = 1 ]; then
   run rm -f "$BUILD_LOG"

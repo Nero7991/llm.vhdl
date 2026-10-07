@@ -537,3 +537,70 @@ def test_card_real_run_executes_every_command_exactly_once(tmp_path):
         ("vivado", lambda a: _has(a, "-mode"), "-mode"),
     ])
     _assert_generator_cwds_under_src(rows, root, ("gen_fk33_card.py", "gen_jc_card.py"))
+
+
+# ---- controller fix 2026-10-07: vivado resolved to an absolute path --------
+# systemd-run resolves a bare executable name against the USER MANAGER's PATH,
+# not the caller's, so a bare `vivado` failed the first real run_ooc27.sh
+# ("Failed to find executable vivado"). Both scripts must resolve it from the
+# caller's PATH before mutating anything, refuse if it is absent, and hand
+# run_capped.sh the absolute path.
+
+def _run_real_without_vivado(script_path, root, extra_args=(), allow_flags=()):
+    side = root + "_side"
+    stub_dir = os.path.join(side, "stub_bin")
+    log_path = os.path.join(side, "stub_calls.log")
+    env = _build_stub_env(root, stub_dir, log_path)
+    os.remove(os.path.join(stub_dir, "vivado"))
+    env["PATH"] = stub_dir + os.pathsep + "/usr/bin:/bin"
+    args = ["bash", script_path, "--allow-scratch-root", *allow_flags, root, *extra_args]
+    result = subprocess.run(args, cwd=REPO, env=env, capture_output=True, text=True,
+                             timeout=120)
+    return result, _parse_log(log_path)
+
+
+def _assert_refused_without_vivado(result, rows, root, tag):
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert tag + "_FAIL" in result.stdout, result.stdout + result.stderr
+    assert "vivado" in result.stdout and "PATH" in result.stdout, result.stdout
+    assert not os.path.exists(root), "a refused run must not create <root>"
+    assert [r for r in rows if r[0] in ("git", "python3", "run_capped")] == [], rows
+
+
+def test_ooc27_refuses_when_vivado_is_not_on_path(tmp_path):
+    root = str(tmp_path / "root")
+    result, rows = _run_real_without_vivado(RUN_OOC27, root,
+                                            extra_args=["xcvu35p-fsvh2104-2L-e", "1G"])
+    _assert_refused_without_vivado(result, rows, root, "JCOOC27")
+
+
+def test_card_refuses_when_vivado_is_not_on_path(tmp_path):
+    root = str(tmp_path / "root")
+    result, rows = _run_real_without_vivado(RUN_CARD, root,
+                                            extra_args=["xcvu35p-fsvh2104-2L-e"],
+                                            allow_flags=["--allow-llama-server"])
+    _assert_refused_without_vivado(result, rows, root, "JCCARD")
+
+
+def _run_capped_vivado_argv(rows):
+    rc = [r for r in rows if r[0] == "run_capped"]
+    assert len(rc) == 1, rows
+    argv = rc[0][1]
+    return argv[4]  # unit, mem_high, swap_kill, logdir, then the command
+
+
+def test_ooc27_passes_an_absolute_vivado_to_run_capped(tmp_path):
+    root = str(tmp_path / "root")
+    result, rows = _run_real(RUN_OOC27, root, extra_args=["xcvu35p-fsvh2104-2L-e", "1G"])
+    assert "JCOOC27_DONE" in result.stdout, result.stdout + result.stderr
+    exe = _run_capped_vivado_argv(rows)
+    assert os.path.isabs(exe) and exe.endswith("/vivado"), exe
+
+
+def test_card_passes_an_absolute_vivado_to_run_capped(tmp_path):
+    root = str(tmp_path / "root")
+    result, rows = _run_real(RUN_CARD, root, extra_args=["xcvu35p-fsvh2104-2L-e"],
+                             allow_flags=["--allow-llama-server"])
+    assert "JCCARD_DONE" in result.stdout, result.stdout + result.stderr
+    exe = _run_capped_vivado_argv(rows)
+    assert os.path.isabs(exe) and exe.endswith("/vivado"), exe
