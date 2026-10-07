@@ -13,7 +13,11 @@
 --                      masked to 0 when the latched status is STALE (below), [163:148]
 --                      desync, [164] ovf, [180:165] crc-fail count (the counts as they
 --                      stood at slot start), [212:181] rsp_crc passed through from the
---                      executor, and [383:213] forced to zero;
+--                      executor, [351:213] forced to zero, and [383:352] st_crc (fix
+--                      round 2): CRC-32 (crc32_bit, init ones, final xor ones) over bits
+--                      0..351 exactly as shifted, accumulated SERIALLY from the TDO bit
+--                      on the edges that shift bits 0..351 and loaded into the bottom of
+--                      the (by then empty) shift register on the edge that shifts bit 351;
 --   bits 384..         n response words, word k = response RAM address k, LSB first, where
 --                      n = min(rsp_count, 496) if the shown rsp_valid is 1, else 0;
 --   the rest           zero.
@@ -89,6 +93,7 @@ architecture rtl of jc_ctl_frame_core is
   signal ack_t    : std_logic := '0';
   signal ack_pend : std_logic := '0';
   signal ack_seq  : std_logic_vector(31 downto 0) := (others => '0');
+  signal scrc     : std_logic_vector(31 downto 0) := (others => '1');   -- st_crc running
   signal h_ack_v  : std_logic := '0';                                -- this frame's ack
   signal h_ack_seq : std_logic_vector(31 downto 0) := (others => '0');
 
@@ -103,7 +108,8 @@ architecture rtl of jc_ctl_frame_core is
     r(JC_S_DESYNC_HI downto JC_S_DESYNC_LO) := std_logic_vector(d);
     r(JC_S_OVF)                            := o;
     r(JC_S_CRCF_HI downto JC_S_CRCF_LO)     := std_logic_vector(c);
-    r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');
+    r(JC_S_ZERO_HI downto JC_S_ZERO_LO)     := (others => '0');
+    r(JC_S_STCRC_HI downto JC_S_STCRC_LO)   := (others => '0');  -- filled in while shifting
     return r;
   end function;
 begin
@@ -127,6 +133,8 @@ begin
     variable cnt    : unsigned(15 downto 0);
     variable n      : natural range 0 to JC_CTL_MAX_ITEMS;
     variable pass   : boolean;
+    variable sb     : std_logic;
+    variable nc     : std_logic_vector(31 downto 0);
   begin
     if rising_edge(tck) then
       start := false;
@@ -186,6 +194,15 @@ begin
         end if;
         -- ---------------- transmit ----------------
         st_sr <= '0' & st_sr(JC_CTL_STATUS_BITS-1 downto 1);
+        if bitcnt < JC_S_STCRC_LO then
+          sb := st_sr(0);                  -- the bit on TDO for this edge
+          nc := crc32_bit(scrc, sb);
+          scrc <= nc;
+          if bitcnt = JC_S_STCRC_LO - 1 then
+            -- bits 352..383 are next: positions 31..0 of the register after this shift
+            st_sr(31 downto 0) <= nc xor x"FFFFFFFF";
+          end if;
+        end if;
         if bitcnt = ST_LAST then
           in_st <= '0';
         end if;
@@ -233,6 +250,7 @@ begin
         lat_seq <= st_in(JC_S_RSPSEQ_HI downto JC_S_RSPSEQ_LO);
         lat_n   <= n;
         in_st  <= '1';
+        scrc   <= (others => '1');
         rsp_sr <= (others => '0');
         rsp_a  <= (others => '0');
       end if;

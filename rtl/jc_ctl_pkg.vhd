@@ -52,5 +52,10 @@ package jc_ctl_pkg is
   -- fix round 1: CRC-32 (crc32_bit, init all ones, final xor ones) over the rsp_count response
   -- words in shift order, computed by the executor; the core passes it through
   constant JC_S_RSPCRC_LO   : natural := 181; constant JC_S_RSPCRC_HI  : natural := 212; -- EXEC
-  constant JC_S_ZERO_LO     : natural := 213; -- [383:213] forced to zero by the core
+  constant JC_S_ZERO_LO     : natural := 213; -- [351:213] forced to zero by the core
+  constant JC_S_ZERO_HI     : natural := 351;
+  -- fix round 2: st_crc, CRC-32 (crc32_bit, init ones, final xor ones) over status bits
+  -- [351:0] AS SHIFTED (latched, merged, masked), computed serially by the core while it
+  -- shifts them and shifted out LSB first at bits 352..383
+  constant JC_S_STCRC_LO    : natural := 352; constant JC_S_STCRC_HI   : natural := 383; -- CORE
 end package;

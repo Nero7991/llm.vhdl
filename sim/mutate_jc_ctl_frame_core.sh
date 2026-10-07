@@ -10,6 +10,8 @@
 # M1-M3 and M4/M4b/M4c are the required mutants (fix round 1 moved the ack to the host:
 # the old "ack before the last bit" row became the three host-ack rows plus M4d); the rest
 # are the other behaviours the bench claims to check (each named in its desc string).
+# S1-S4 (fix round 2) attack the serial status CRC; D1-D5 (fix round 2 addendum) the
+# desync / crc_fail counting the broker's never-execute-twice logic relies on.
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 GHDL=${GHDL:-ghdl}
@@ -125,11 +127,40 @@ run_row M13 VALUE $F KILLED "rsp_valid shown unmasked on a stale slot" \
 run_row M14 VALUE $F KILLED "rsp_count on TDO not the shifted count (passed through)" \
   "r(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO) := std_logic_vector(to_unsigned(n, 16));" \
   "r(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO) := st(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO);"
-run_row M15 VALUE $F KILLED "[383:213] passed through instead of forced to zero" \
-  "r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');" "null;"
+run_row M15 VALUE $F KILLED "[351:213] passed through instead of forced to zero" \
+  "r(JC_S_ZERO_HI downto JC_S_ZERO_LO)     := (others => '0');" "null;"
 run_row M16 VALUE $F KILLED "rsp_crc not passed through (zeroed with the top)" \
-  "r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');" \
-  "r(JC_CTL_STATUS_BITS-1 downto JC_S_RSPCRC_LO) := (others => '0');"
+  "r(JC_S_ZERO_HI downto JC_S_ZERO_LO)     := (others => '0');" \
+  "r(JC_S_ZERO_HI downto JC_S_RSPCRC_LO)   := (others => '0');"
+# --- st_crc (fix round 2) ---
+run_row S1  VALUE $F KILLED "st_crc over the unmerged live st_in, not the bits shifted" \
+  "sb := st_sr(0);" "sb := st_in(bitcnt);"
+run_row S2  VALUE $F KILLED "st_crc skips one bit (bit 100)" \
+  "nc := crc32_bit(scrc, sb);" \
+  "if bitcnt = 100 then nc := scrc; else nc := crc32_bit(scrc, sb); end if;"
+run_row S3  VALUE $F KILLED "st_crc emitted MSB first" \
+  "st_sr(31 downto 0) <= nc xor x\"FFFFFFFF\";" \
+  "for q in 0 to 31 loop st_sr(q) <= not nc(31 - q); end loop;"
+run_row S4  VALUE $F KILLED "st_crc not re-initialised at slot start" \
+  "scrc   <= (others => '1');" "null;"
+
+# --- counter properties the broker depends on (fix round 2 addendum) ---
+run_row D1  VALUE $F KILLED "desync counts +2 per failed slot" "desync <= desync + 1;" "desync <= desync + 2;"
+run_row D2  VALUE $F KILLED "crc_fail counts +2 per failed slot" "crcf <= crcf + 1;" "crcf <= crcf + 2;"
+run_row D3  VALUE $F KILLED "a bad slot counts a desync per word, not once" \
+  "          if widx = 0 then" "          if widx = 0 or good = '0' then"
+run_row D4  VALUE $F KILLED "an abandoned frame (Capture mid-slot) counts as a CRC fail" \
+  "        good   <= '0';
+        stale" \
+  "        if good = '1' and bitcnt /= JC_SLOT_BITS - 1 then crcf <= crcf + 1; end if;
+        good   <= '0';
+        stale"
+run_row D5  PROTO $F KILLED "an abandoned frame (Capture mid-slot) pushes a FAIL verdict" \
+  "        good   <= '0';
+        stale" \
+  "        if good = '1' and bitcnt /= JC_SLOT_BITS - 1 then wv <= '1'; wd <= TAG_FAIL & std_logic_vector(resize(unsigned(seq), 256)); end if;
+        good   <= '0';
+        stale"
 
 printf 'mutants killed %d/%d; controls passed %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
   "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$([ $Z0OK = 1 ] && echo ok || echo FAILED)" "$NT" "$NMISMATCH"

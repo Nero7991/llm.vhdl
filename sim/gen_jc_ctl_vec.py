@@ -52,8 +52,10 @@ FORMAT = """\
 #
 # TDO in every slot: bits 0..383 are st_in with [31:0] = 4A435354, [111:96] = nrsp,
 # [112] = rspv, [163:148] = desync, [164] = ovf, [180:165] = crcf, [212:181] passed through,
-# [383:213] = 0; then nrsp words of the response RAM, word k = RAM address k, LSB first;
-# then zero to the end of the slot.
+# [351:213] = 0, [383:352] = st_crc, the CRC-32 (zlib: init ones, reflected, final xor
+# ones) over TDO bits 0..351 in shift order; then nrsp words of the response RAM, word k =
+# RAM address k, LSB first; then zero to the end of the slot. The bench computes st_crc
+# itself from the bits it captured, so it is not in this file.
 """
 
 
@@ -190,6 +192,28 @@ def main():
     # the boundary: count 496 accepted (a full 62-word WR_FIX)
     m.slot(build_slot(4, OP_WR_FIX, 0xE004, 496, items(496)), idle())
 
+    # ---- fix round 2 addendum: the counter properties the broker depends on ----
+    # (4) two consecutive CRC fails show +1 then +2; a desync right after a fail
+    for k in range(2):
+        s = bytearray(build_slot(40 + k, OP_WR_INC, 0xE000, 9, items(9))); s[50 + k] ^= 0x20
+        m.slot(bytes(s), idle())
+    m.slot(bytes(SLOT_BITS // 8), idle())
+    # (2) part-shifted, abandoned slots (Capture mid-slot): a good 62-word write cut after
+    # 30 data words, then a corrupted frame cut just before its verdict: no verdict, no
+    # count change; then a good frame proceeds normally
+    m.slot(build_slot(42, OP_WR_INC, 0xE000, 496, items(496)), idle(), nbits=8000, endscan=2)
+    s = bytearray(build_slot(43, OP_WR_INC, 0xE000, 496, items(496))); s[900] ^= 0x01
+    m.slot(bytes(s), idle(), nbits=16100, endscan=2)
+    m.slot(build_slot(43, OP_WR_INC, 0xE000, 40, items(40)), idle())
+    # (3) zero filler: cut before its header completes counts nothing; cut after bit 255 it
+    # counts one desync (OBSERVED behaviour, reported to the coordinator: the header verdict
+    # is taken at bit 255 whether or not the slot is later abandoned); a full filler counts
+    # exactly one
+    m.slot(bytes(SLOT_BITS // 8), idle(), nbits=200, endscan=2)
+    m.slot(bytes(SLOT_BITS // 8), idle(), nbits=300, endscan=2)
+    m.slot(bytes(SLOT_BITS // 8), idle())
+    m.slot(build_slot(44, OP_RD_INC, 0xE000, 4), idle())
+
     # ---- (d) responses, host-driven ack ----
     st3 = status(rng, 1, 3, 5)
     m.slot(nop(6), st3)                                           # presented, no ack frame
@@ -209,6 +233,8 @@ def main():
     st9 = status(rng, 1, 9, 2)
     m.slot(ack(13, 9), st9, nbits=200, endscan=2)
     m.slot(ack(13, 9), st9, nbits=257, endscan=2)
+    # cut just after the status (st_crc complete, part of the first response word)
+    m.slot(ack(13, 9), st9, nbits=400, endscan=2)
     m.slot(build_slot(13, OP_WR_INC, 0xE000, 17, items(17), ack_seq=9, ack_valid=1), st9,
            endscan=1)                                             # full slot: acked
     m.slot(build_slot(14, OP_RD_INC, 0xE000, 1), st9, wready=0)   # stale; pushes overflow

@@ -9,6 +9,8 @@
 --   * TDO bits 0..383 against st_in with the core's own fields merged in;
 --   * TDO bits 384.. against the stub response RAM (word k = address k, LSB first) for the
 --     expected number of words, and zero for every bit after that;
+--   * st_crc [383:352] (fix round 2) against a CRC-32 the bench computes over TDO bits
+--     0..351 as it captured them, on every slot that shifted bit 383 (stale and cut too);
 --   * the presented rsp_crc [212:181] against a CRC-32 the bench computes over the response
 --     bits that actually came out on TDO (and against the CRC its stub status supplied);
 --   * rsp_ack_tgl (fix round 1, host-driven ack): exactly one toggle at the edge that shifts
@@ -112,6 +114,12 @@ begin
     variable lfsr : unsigned(31 downto 0) := x"1234ABCD";
     variable crcv : std_logic_vector(31 downto 0);
     variable nw_st : natural;
+    variable nstcrc : natural := 0;
+    -- counter-property chain (fix round 2 addendum): counts shown on TDO must advance by
+    -- exactly one per failed slot since the last slot whose status was readable
+    variable have_last : boolean := false;
+    variable last_des, last_crcf, acc_des, acc_fail, sh_des, sh_crcf, nchain : natural := 0;
+    variable has_hdr : boolean;
 
     procedure chk(cond : boolean; msg : string) is
     begin
@@ -245,7 +253,12 @@ begin
       exp_st(163 downto 148) := std_logic_vector(to_unsigned(v_des(j), 16));
       exp_st(164)            := '1' when v_ovf(j) = 1 else '0';
       exp_st(180 downto 165) := std_logic_vector(to_unsigned(v_crcf(j), 16));
-      exp_st(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');
+      exp_st(JC_S_ZERO_HI downto JC_S_ZERO_LO) := (others => '0');
+      crcv := (others => '1');
+      for i in 0 to JC_S_STCRC_LO - 1 loop
+        crcv := crc32_bit(crcv, exp_st(i));
+      end loop;
+      exp_st(JC_S_STCRC_HI downto JC_S_STCRC_LO) := crcv xor x"FFFFFFFF";
       first_bad := -1;
       for i in 0 to JC_CTL_STATUS_BITS - 1 loop
         if i < v_nbits(j) and tdo_bits(i) /= exp_st(i) and first_bad < 0 then
@@ -253,6 +266,38 @@ begin
         end if;
       end loop;
       chk(first_bad < 0, "status on TDO wrong from bit " & integer'image(first_bad));
+      -- desync / crc_fail: exactly +1 per failed slot, visible in the very next slot.
+      -- The deltas come from the vector's expected pushes (FAIL tags; a slot that shifted
+      -- its header bit 255 without an HDR push is a desync), the counts from TDO.
+      if v_nbits(j) > JC_S_CRCF_HI then
+        sh_des  := to_integer(unsigned(tdo_bits(JC_S_DESYNC_HI downto JC_S_DESYNC_LO)));
+        sh_crcf := to_integer(unsigned(tdo_bits(JC_S_CRCF_HI downto JC_S_CRCF_LO)));
+        if have_last then
+          chk(sh_des = last_des + acc_des and sh_crcf = last_crcf + acc_fail,
+              "counts on TDO: desync " & integer'image(sh_des) & " crc_fail "
+              & integer'image(sh_crcf) & ", expected " & integer'image(last_des + acc_des)
+              & " and " & integer'image(last_crcf + acc_fail) & " (exactly +1 per failed slot)");
+          nchain := nchain + 1;
+        end if;
+        have_last := true;
+        last_des := sh_des; last_crcf := sh_crcf; acc_des := 0; acc_fail := 0;
+      end if;
+      has_hdr := false;
+      for k in 0 to v_np(j) - 1 loop
+        if v_push(j, k).tag = TAG_FAIL then acc_fail := acc_fail + 1; end if;
+        if v_push(j, k).tag = TAG_HDR then has_hdr := true; end if;
+      end loop;
+      if v_nbits(j) >= 256 and not has_hdr then acc_des := acc_des + 1; end if;
+      -- st_crc, recomputed from the bits that came out on TDO
+      if v_nbits(j) >= JC_CTL_STATUS_BITS then
+        crcv := (others => '1');
+        for i in 0 to JC_S_STCRC_LO - 1 loop
+          crcv := crc32_bit(crcv, tdo_bits(i));
+        end loop;
+        chk((crcv xor x"FFFFFFFF") = tdo_bits(JC_S_STCRC_HI downto JC_S_STCRC_LO),
+            "st_crc on TDO does not match the CRC of TDO bits 0..351");
+        nstcrc := nstcrc + 1;
+      end if;
       -- TDO: response words, then zero
       rsp_end := JC_CTL_STATUS_BITS + 32 * v_nrsp(j);
       first_bad := -1;
@@ -319,6 +364,17 @@ begin
     chk(to_integer(desync) = e_des, "final desync " & integer'image(to_integer(desync)));
     chk(to_integer(crcf) = e_crcf, "final crcf " & integer'image(to_integer(crcf)));
     chk((ovf = '1') = (e_ovf = 1), "final ovf_seen");
+    -- every slot that shifted bit 383 had its st_crc checked; every readable slot after
+    -- the first was chained; and the vectors must contain enough of both to mean anything
+    n := 0; t := 0;
+    for j in 0 to nslots - 1 loop
+      if v_nbits(j) >= JC_CTL_STATUS_BITS then n := n + 1; end if;
+      if v_nbits(j) > JC_S_CRCF_HI then t := t + 1; end if;
+    end loop;
+    assert nstcrc = n and n >= 40 report "st_crc checked on " & integer'image(nstcrc)
+      & " of " & integer'image(n) & " full-status slots" severity failure;
+    assert nchain = t - 1 and t >= 40 report "count chain checked on " & integer'image(nchain)
+      & " of " & integer'image(t - 1) & " slots" severity failure;
     assert checks > 200 report "too few checks: " & integer'image(checks) severity failure;
     if errors = 0 then
       report "PASS: tb_jc_ctl_frame_core checks=" & integer'image(checks)
