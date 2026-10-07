@@ -248,3 +248,13 @@ What this changes:
 - **Sub-project 2's B figures** (double buffer ~156,000, small memories ~85,000 cycles per
   job) were derived against the 660k job and must be re-derived against 324k before they
   are quoted again.
+
+## CORRECTION 2026-10-07 (second): the control core needs a read-only HBM master
+
+Withdrawn: section 3's "The core has no HBM master". `pl_open` reads the resident image
+record from HBM through `mem_read` (`server/pl_backend.c:603`), and refuses to run without it
+when the image lock is required. The USER3 core therefore gets a READ-ONLY AXI master
+(op `MEM_RD`), sharing SAXI_16 with `jtag_hbm` through the existing smartconnect. HBM
+writes stay with the USER4 loader alone; the C transport's `mem_write` returns `-EPERM`.
+Activation in and residual out still go through the seam windows (the v2 card publishes
+no logits row, `server/pl_backend.c:1268-1286, 1430`).
