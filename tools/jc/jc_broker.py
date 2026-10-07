@@ -108,11 +108,11 @@ changes no status field except through its ack; axi_err is sticky until the next
 non-NOP frame; crc_fail and desync are the frame core's own counters, latched at each
 slot start with no lag. Polls use seq 0xFFFFFFFF (jc_ctl.RSP_SEQ_NONE), a value no op frame is ever given.
 
-TEMPORARY SHIM: when this was written tools/jc/jc_ctl.py (Task 5) did not yet carry the
-2026-10-07 rulings' header fields ([215:184] ack_seq, [216] ack_valid) or the status's
-[212:181] rsp_crc and [383:352] st_crc. build_frame() sets the two header fields on
-jc_ctl.build_slot's slot and recomputes the slot CRC; ctl_status() checks st_crc and
-reads rsp_crc from the raw status bits. Replace both with jc_ctl's own once it has them.
+build_frame()/ctl_status()/rsp_ok() used to carry a temporary shim for the 2026-10-07
+rulings' header ack fields ([215:184] ack_seq, [216] ack_valid) and the status's two
+CRCs ([212:181] rsp_crc, [383:352] st_crc), from before tools/jc/jc_ctl.py (Task 5)
+carried them. jc_ctl.build_slot and jc_ctl.parse_tdo now carry all of it; the three
+functions here are thin wrappers kept for the rest of this file's call sites.
 
 memrd and the weight image: --manifest DIE=PATH names the image on each die. A memrd
 that touches any of its pieces is Refused unless --allow-image-read; the image record
@@ -120,7 +120,7 @@ that touches any of its pieces is Refused unless --allow-image-read; the image r
 allowed, because pl_open reads it there. A die with no --manifest has no known image,
 so every memrd on it is Refused unless --allow-image-read.
 """
-import argparse, collections, json, os, selectors, socket, stat, struct, sys, time, zlib
+import argparse, collections, json, os, selectors, socket, stat, struct, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -133,8 +133,6 @@ NOP_SEQ = C.RSP_SEQ_NONE
 READ_OPS = (C.OP_RD_INC, C.OP_RD_FIX, C.OP_MEM_RD)
 FIX_OPS = (C.OP_WR_FIX, C.OP_RD_FIX)
 AXI_RESP_REJECTED = 1     # "01": the executor refused the frame, nothing executed (Task 3)
-ACK_SEQ_LSB, ACK_VALID_BIT = 184, 216     # header word (Ruling 2026-10-07)
-RSP_CRC_LSB = 181                          # status word (Ruling 2026-10-07)
 
 CTL_POLLS = 64            # NOP polls waiting for one frame's result
 RSP_CRC_RETRIES = 8       # re-polls of one response whose rsp_crc/rsp_count does not check
@@ -144,8 +142,6 @@ SETTLE_EQUAL = 1          # good statuses after a scan open (see Broker._settle)
 IDENTIFY_TRIES = 3        # USER4 settles tried before a timeout halts the broker
 ACCEPTED_KEEP = 64        # accepted response seqs remembered per die (never re-acted on)
 SEQ_JUMP = 0x10000        # first seq of a process: this far past the die's last_done_seq
-ST_CRC_LSB = 352          # status word (Ruling 2026-10-07, after the Task 6 review)
-ST_CRC_BYTES = 352 // 8   # st_crc covers status bits [351:0]
 SETTLE_POLLS = L.MAX_POLLS
 MAX_N = 1 << 16           # items per rdn/wrn request (a residual is 5,120)
 MAX_MEMRD = 1 << 20       # bytes per memrd request
@@ -179,7 +175,7 @@ class WindowUnknown(BrokerError):
     """A frame may or may not have executed and the broker cannot tell: the die's window
     state is UNKNOWN (reported in status) and the request fails."""
 
-BAD_ST = object()      # ctl_status: a status word whose st_crc does not check
+BAD_ST = C.BAD_ST      # ctl_status: a status word whose st_crc does not check
 
 
 def err_reply(e):
@@ -191,49 +187,35 @@ def err_reply(e):
 
 
 def build_frame(seq, op, addr, items, count, ack=None):
-    """jc_ctl.build_slot, plus the header's ack fields when `ack` is a seq (see the
-    TEMPORARY SHIM note above): ack_seq at [215:184], ack_valid at [216], slot CRC
-    recomputed over the first 16,128 bits exactly as build_slot computes it."""
-    slot = C.build_slot(seq, op, addr, items, count)
+    """jc_ctl.build_slot, with the header's ack fields ([215:184] ack_seq, [216]
+    ack_valid) set by build_slot itself when `ack` is a seq. Replaces the former
+    shim, which patched those bits into an already-built slot and recomputed its
+    CRC by hand; build_slot now does both in one pass."""
     if ack is None:
-        return slot
-    if not 0 <= ack <= M32:
-        raise ValueError("ack seq out of range: %r" % (ack,))
-    v = int.from_bytes(slot[:C.WORD_BYTES], "little")
-    if (v >> ACK_SEQ_LSB) & ((1 << 33) - 1):
-        raise ValueError("jc_ctl.build_slot already set header bits [216:184]; retire the shim")
-    v |= ack << ACK_SEQ_LSB | 1 << ACK_VALID_BIT
-    body = v.to_bytes(C.WORD_BYTES, "little") + slot[C.WORD_BYTES:C.CRC_OFFSET]
-    return body + struct.pack("<I", zlib.crc32(body) & M32) + slot[C.CRC_OFFSET + 4:]
+        return C.build_slot(seq, op, addr, items, count)
+    return C.build_slot(seq, op, addr, items, count, ack_seq=ack, ack_valid=1)
 
 
 def ctl_status(tdo, offset):
     """The control status of one TDO, `offset` bits in (CoeTransport.status_offset):
     None if it carries none (no JCST magic), BAD_ST if its st_crc ([383:352], CRC-32
     over bits [351:0] as shifted) does not check, else the fields with rsp_crc
-    ([212:181]). No field of a BAD_ST status is ever used."""
+    ([212:181]). No field of a BAD_ST status is ever used. jc_ctl.parse_tdo now does
+    the st_crc check itself (returning C.BAD_ST, aliased here as BAD_ST) and already
+    carries rsp_crc, so this is a thin wrapper over it, replacing the former shim."""
     v = int.from_bytes(tdo, "little") >> offset
     b = (v & ((1 << C.SLOT_BITS) - 1)).to_bytes(C.SLOT_BYTES, "little")
     try:
-        st = C.parse_tdo(b)
+        return C.parse_tdo(b)
     except ValueError:
         return None
-    raw = int.from_bytes(b[:C.STATUS_BYTES], "little")
-    if (raw >> ST_CRC_LSB) & M32 != zlib.crc32(b[:ST_CRC_BYTES]) & M32:
-        return BAD_ST
-    if "rsp_crc" not in st:
-        st["rsp_crc"] = (int.from_bytes(b[:C.STATUS_BYTES], "little") >> RSP_CRC_LSB) & M32
-    return st
 
 
 def rsp_ok(st):
-    """rsp_crc checks: CRC-32 (zlib's: reflected, init and final xor all ones, the loader
-    frame CRC's convention) over the rsp_count words as shifted (little endian)."""
-    n = st["rsp_count"]
-    if not 1 <= n <= C.MAX_ITEMS:
-        return False
-    data = b"".join(struct.pack("<I", w) for w in st["rsp"][:n])
-    return zlib.crc32(data) & M32 == st["rsp_crc"]
+    """rsp_crc checks: jc_ctl.parse_tdo already computed and exposed this as
+    st["rsp_crc_ok"] (same CRC-32 convention, same gate on a legal rsp_count); this
+    is now a one-line reader, replacing the former shim's own recomputation."""
+    return st["rsp_crc_ok"]
 
 
 # ---------------------------------------------------------------- the weight-image fence

@@ -10,7 +10,8 @@ def _decode_header(hdr32):
     v = int.from_bytes(hdr32, "little")
     return dict(magic=v & 0xFFFFFFFF, seq=(v >> 32) & 0xFFFFFFFF, op=(v >> 64) & 0xFF,
                 count=(v >> 72) & 0xFFFF, nwords=(v >> 104) & 0xFFFF,
-                addr=(v >> 120) & ((1 << 64) - 1))
+                addr=(v >> 120) & ((1 << 64) - 1),
+                ack_seq=(v >> 184) & 0xFFFFFFFF, ack_valid=(v >> 216) & 1)
 
 
 def _decode_items(payload, n):
@@ -82,7 +83,13 @@ def test_flipped_payload_bit_fails_crc():
 # ---------------------------------------------------------------------------
 
 def _pack_tdo(magic, last_done_seq, rsp_seq, rsp_count, rsp_valid, axi_err, axi_resp,
-              err_seq, desync, ovf, crc_fail, rsp_words):
+              err_seq, desync, ovf, crc_fail, rsp_words, rsp_crc=None, bad_st_crc=False):
+    """Independent encoder, the counterpart of _decode_header: does not call
+    C.header/C.parse_header/C.parse_tdo. rsp_crc defaults to the CRC-32 (zlib, the
+    loader's own convention) of rsp_words[:rsp_count], the plan's "as shifted"; pass
+    an explicit value to build a deliberate mismatch. st_crc is always computed
+    correctly over status bits [351:0] unless bad_st_crc flips one of its bits, so
+    every existing caller gets a self-consistent status for free."""
     v = magic & 0xFFFFFFFF
     v |= (last_done_seq & 0xFFFFFFFF) << 32
     v |= (rsp_seq & 0xFFFFFFFF) << 64
@@ -94,6 +101,14 @@ def _pack_tdo(magic, last_done_seq, rsp_seq, rsp_count, rsp_valid, axi_err, axi_
     v |= (desync & 0xFFFF) << 148
     v |= (ovf & 1) << 164
     v |= (crc_fail & 0xFFFF) << 165
+    if rsp_crc is None:
+        data = b"".join(struct.pack("<I", w & 0xFFFFFFFF) for w in rsp_words[:rsp_count])
+        rsp_crc = zlib.crc32(data) & 0xFFFFFFFF
+    v |= (rsp_crc & 0xFFFFFFFF) << 181
+    st_crc = zlib.crc32((v & ((1 << 352) - 1)).to_bytes(44, "little")) & 0xFFFFFFFF
+    if bad_st_crc:
+        st_crc ^= 1
+    v |= (st_crc & 0xFFFFFFFF) << 352
     status = v.to_bytes(C.STATUS_BYTES, "little")
     payload = b"".join(struct.pack("<I", w & 0xFFFFFFFF) for w in rsp_words)
     payload = payload.ljust(C.RSP_BUF_BYTES, b"\0")
@@ -119,6 +134,79 @@ def test_parse_tdo_decodes_status_and_response():
     assert len(d["rsp"]) == C.MAX_ITEMS
     assert d["rsp"][:3] == rsp_words
     assert d["rsp"][3:] == [0] * (C.MAX_ITEMS - 3)
+    data = b"".join(struct.pack("<I", w) for w in rsp_words)
+    assert d["rsp_crc"] == zlib.crc32(data) & 0xFFFFFFFF
+    assert d["rsp_crc_ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-07 realignment: host-driven ack (header [215:184]/[216]) and the two
+# CRCs (status rsp_crc [212:181], st_crc [383:352]).
+# ---------------------------------------------------------------------------
+
+def test_build_slot_ack_defaults_to_no_ack():
+    s = C.build_slot(0, C.OP_NOP, 0, None, 1)
+    h = _decode_header(s[:32])
+    assert h["ack_seq"] == 0 and h["ack_valid"] == 0
+
+
+def test_build_slot_ack_fields_round_trip():
+    s = C.build_slot(5, C.OP_RD_INC, 0x40, None, 4, ack_seq=0x1234, ack_valid=1)
+    h = _decode_header(s[:32])
+    assert h["ack_seq"] == 0x1234 and h["ack_valid"] == 1
+    # reserved bits [255:217] stay zero
+    v = int.from_bytes(s[:32], "little")
+    assert v >> 217 == 0
+
+
+def test_header_rejects_bad_ack_fields():
+    with pytest.raises(ValueError):
+        C.build_slot(0, C.OP_NOP, 0, None, 1, ack_seq=1 << 32, ack_valid=1)
+    with pytest.raises(ValueError):
+        C.build_slot(0, C.OP_NOP, 0, None, 1, ack_seq=0, ack_valid=2)
+
+
+def test_parse_tdo_detects_rsp_crc_mismatch_without_raising():
+    rsp_words = [1, 2, 3]
+    slot = _pack_tdo(C.STAT_MAGIC, 0, 7, 3, 1, 0, 0, 0, 0, 0, 0, rsp_words,
+                      rsp_crc=0xDEADBEEF)
+    d = C.parse_tdo(slot)
+    assert d["rsp_crc"] == 0xDEADBEEF
+    assert d["rsp_crc_ok"] is False
+
+
+def test_parse_tdo_returns_bad_st_sentinel_on_st_crc_mismatch():
+    slot = _pack_tdo(C.STAT_MAGIC, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, [], bad_st_crc=True)
+    result = C.parse_tdo(slot)
+    assert result is C.BAD_ST
+
+
+def test_st_crc_checked_before_magic_is_ever_used():
+    """A bad st_crc must short-circuit before the magic field (or any other field) is
+    even looked at: a slot with BOTH a wrong magic and a wrong st_crc must come back
+    BAD_ST, never the ValueError that a wrong magic alone raises."""
+    slot = _pack_tdo(0xDEADBEEF, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, [], bad_st_crc=True)
+    assert C.parse_tdo(slot) is C.BAD_ST
+
+
+def test_rsp_crc_ok_helper_matches_parse_tdo():
+    rsp_words = [9, 8, 7, 6]
+    slot = _pack_tdo(C.STAT_MAGIC, 0, 3, 4, 1, 0, 0, 0, 0, 0, 0, rsp_words)
+    d = C.parse_tdo(slot)
+    assert C.rsp_crc_ok(d) == d["rsp_crc_ok"] == True
+
+
+def test_gen_reproduces_committed_vector_file_byte_identically(tmp_path):
+    """tools/jc/jc_ctl.py gen must reproduce sim/jc_ctl_frame_vec.txt exactly: it
+    delegates to the committed sim/gen_jc_ctl_vec.py (Task 2's own generator) rather
+    than a second, drift-prone implementation of the same vectors."""
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    committed = os.path.join(repo, "sim", "jc_ctl_frame_vec.txt")
+    out = tmp_path / "jc_ctl_frame_vec.txt"
+    C.gen(str(out))
+    with open(committed, "rb") as f:
+        want = f.read()
+    assert out.read_bytes() == want
 
 
 def test_parse_tdo_rsp_seq_none_sentinel():
