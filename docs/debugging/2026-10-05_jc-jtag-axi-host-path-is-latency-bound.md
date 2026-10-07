@@ -452,3 +452,30 @@ arriving, before any command (commit 32618d2; a test reproduces the exact error 
   connection.
 - Why the connection ends alternately by RST and by silence (strictly alternating, both dies).
 - Why die B's first connection of a session twice lasted only ~1 minute.
+
+## 15. UPDATE 2026-10-07: the BMC's connection limit is a TIMER of about five minutes
+
+**Question (open in S14).** Is the ~290 s CoE connection life a timer, a byte count or a
+command count?
+
+**Answer.** A timer, about 310-320 s per connection, independent of the TCK rate and of the
+data moved. MEASURED with `tools/jc/coe_soak.py` (status polls only, nothing written to HBM,
+4 commands in flight, loader bitstream on die A, freshly configured after a power cycle):
+
+```
+JCSOAK_END hz=27000000 secs=317.8 slots=420670 bytes=861532160 commands=420674 bad_magic=0 reason=ConnectionResetError: [Errno 104] Connection reset by peer
+JCSOAK_END hz=13500000 secs=310.7 slots=228851 bytes=468686848 commands=228855 bad_magic=0 reason=ConnectionResetError: [Errno 104] Connection reset by peer
+```
+
+Halving TCK halved the bytes and commands; the life did not move. The loads in S14 agree:
+each attempt's `secs` was ~320 including ~30 s of planning before the connection opened.
+
+**Measured and REJECTED, do not retry:** a byte limit and a command limit (the 13.5 MHz run
+moved 54% of the 27 MHz run's data in 98% of its time).
+
+**Consequence.** The client can close its own connection cleanly before ~300 s and reconnect,
+which avoids the 10 s socket timeout on every other drop and the ~30 s re-plan per resume.
+
+**Not determined:** whether the timer counts from TCP connect, from HELLO, or from the first
+JTAG command (the soak's clock starts after `start()` and `open_scan`), and why connections
+alternate between RST and silence at the limit.
