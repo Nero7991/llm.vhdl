@@ -213,14 +213,15 @@ Status word fields:
 | [95:64] | `rsp_seq`, the seq whose read data fills this slot's response region; `x"FFFFFFFF"` if none |
 | [111:96] | `rsp_count` |
 | [112] | `rsp_valid` |
-| [113] | `axi_err` (sticky until the next PASS frame) |
+| [113] | `axi_err` (sticky until the next PASS non-NOP frame; a NOP changes no status field except through its ack) |
 | [115:114] | `axi_resp` of the first error |
 | [147:116] | `err_seq` |
 | [163:148] | desync count |
 | [164] | FIFO overflow seen |
 | [180:165] | CRC-fail count |
 | [212:181] | rsp_crc: CRC-32 (loader conventions) over the rsp_count response words as shifted, computed by the executor |
-| [383:213] | zero (forced by the frame core) |
+| [351:213] | zero (forced by the frame core) |
+| [383:352] | st_crc: CRC-32 (loader conventions) over status bits [351:0] AS SHIFTED, computed serially by the frame core while it shifts them (Ruling 2026-10-07, after the Task 6 review) |
 
 - [ ] **Step 1: Write the failing bench.** The bench drives TCK, CAPTURE and SHIFT with
   real BSCAN timing (TCK only while shifting). It reads frames from
