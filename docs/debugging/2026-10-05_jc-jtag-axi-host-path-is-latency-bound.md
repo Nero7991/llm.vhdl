@@ -21,8 +21,8 @@ a no-go; the extrapolation in `hw/jc/axiprobe/README.md` ("~KB/s") is confirmed.
 ## 3. The procedure
 
 1. Restored the BC-250's JC network after a reboot had cleared it: `enp4s0` unmanaged,
-   static 198.51.100.1/24, `ufw allow in on enp4s0`, dnsmasq on `enp4s0`, link bounce.
-   BMC re-leased .58 within 4 s.
+   static <host-ip>/24, `ufw allow in on enp4s0`, dnsmasq on `enp4s0`, link bounce.
+   BMC re-leased <bmc-ip> within 4 s.
 2. `sqrl_bridge C<bmc> jc_axiprobe.bit,jc_axiprobe.bit skip 2542`: both dies
    `Bitstream Loaded`, XVC listening.
 3. `hw_server` on the BC-250, then `vivado -mode batch -source
