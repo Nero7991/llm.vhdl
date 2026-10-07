@@ -578,3 +578,6 @@ JCVERIFY_PASS 7170 pieces, 0 bad
 
 Scan after A's load: 2 FPGAs; die A 49.5 / 49.0 C, die B 58.5 / 59.0 C. With
 `--reconnect-secs 0`, A needed 9 connections, against 17 with proactive reconnect (16a).
+
+Die B re-verified after A's load (range CRC over the whole image): `JCVERIFY_PASS 6750 pieces, 0 bad`.
+Both 27B images are resident and verified as of 18:10.
