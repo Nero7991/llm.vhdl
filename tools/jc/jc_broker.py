@@ -88,6 +88,13 @@ How it drives the board:
     "done_items" (items of the frames confirmed done) and "done_items_exact" (false
     when the failing frame may have partly run); on a fixed window, any done items
     mark it UNKNOWN.
+  - Seqs and executor resets (fix round 3): a process's first seq is a uniform random
+    32-bit draw (secrets), skipping NONE and the die's current last_done_seq, rsp_seq,
+    err_seq; it is never derived from last_done_seq, which an executor reset (MMCM
+    unlock) returns to NONE while FIFO-queued frames survive and run afterwards. A NONE
+    at this process's first status is a warning (reset or fresh bitstream). A
+    last_done_seq that goes BACK to NONE after this process sent frames marks the die's
+    window UNKNOWN ("executor reset observed") and fails a frame in flight.
   - A presented response the broker has already accepted is ignored whatever its words:
     the ack slot still shifts its tail after the ack, and a following MEM_RD may
     overwrite words 492-495 in that slot (Task 3).
@@ -120,7 +127,7 @@ that touches any of its pieces is Refused unless --allow-image-read; the image r
 allowed, because pl_open reads it there. A die with no --manifest has no known image,
 so every memrd on it is Refused unless --allow-image-read.
 """
-import argparse, collections, json, os, selectors, socket, stat, struct, sys, time
+import argparse, collections, json, os, secrets, selectors, socket, stat, struct, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -141,7 +148,7 @@ LINK_RETRIES = 3          # link losses or bad replies survived inside one reque
 SETTLE_EQUAL = 1          # good statuses after a scan open (see Broker._settle)
 IDENTIFY_TRIES = 3        # USER4 settles tried before a timeout halts the broker
 ACCEPTED_KEEP = 64        # accepted response seqs remembered per die (never re-acted on)
-SEQ_JUMP = 0x10000        # first seq of a process: this far past the die's last_done_seq
+SEQ_DRAWS = 64            # random draws allowed to find a first seq clear of the avoid set
 SETTLE_POLLS = L.MAX_POLLS
 MAX_N = 1 << 16           # items per rdn/wrn request (a residual is 5,120)
 MAX_MEMRD = 1 << 20       # bytes per memrd request
@@ -326,7 +333,7 @@ class Broker:
     the --dies record; `fences` {name: ImageFence}."""
     def __init__(s, connect, chain, dies, *, hz=27_000_000, reconnect_secs=L.RECONNECT_SECS,
                  fences=None, allow_image_read=False, dies_label="the die record",
-                 now=time.monotonic, sleep=time.sleep, log=None):
+                 now=time.monotonic, sleep=time.sleep, log=None, seq_rng=None):
         if len(chain) != coe.CHAIN_DEVICES or sorted(chain) != sorted(L.DIE_NAMES):
             raise ValueError("chain must be AB or BA")
         for d in chain:
@@ -337,6 +344,13 @@ class Broker:
         s.reconnect_secs, s.fences = reconnect_secs, dict(fences or {})
         s.allow_image_read, s.dies_label = allow_image_read, dies_label
         s.now, s.sleep, s.log = now, sleep, log
+        # The first seq of a process is drawn uniformly from the 32-bit space (fix round
+        # 3, Task 4 review): an executor reset shows last_done_seq = NONE and keeps
+        # FIFO-queued frames, so anything derived from last_done_seq would start every
+        # post-reset process on the same seqs as a dead one's queued frames.
+        s.seq_rng = seq_rng if seq_rng is not None else (lambda: secrets.randbits(32))
+        s.saw_done = {d: False for d in chain}   # a status showed last_done_seq != NONE
+        s.issued = {d: False for d in chain}     # this process sent an op frame to the die
         s.conn, s.halted = None, None
         s.connections = s.reconnects = s.crc_retries = 0
         s.rsp_crc_mismatches = s.rsp_count_mismatches = s.st_crc_fails = s.discarded = 0
@@ -505,8 +519,31 @@ class Broker:
             return None
         s._resolve(die, st, s.ledger[die][:-1])
         s.ledger[die] = [e]
+        first = s.st[die] is None
         s.st[die] = st
+        s._reset_check(die, st, first)
         return st
+
+    def _reset_check(s, die, st, first):
+        """rtl/jc_ctl_core.vhd: after an executor reset last_done_seq reads NONE again and
+        frames still queued execute afterwards. At this process's first status a NONE is
+        only a warning (a fresh bitstream looks the same). Later, last_done_seq going
+        BACK to NONE after this process sent frames is a reset: every frame it had in
+        flight or completed is suspect, so the die's window state is UNKNOWN and a frame
+        in flight fails."""
+        if st["last_done_seq"] != NOP_SEQ:
+            s.saw_done[die] = True
+            return
+        if first:
+            s._say("JCBROKER_WARN die %s: last_done_seq is none: executor reset or fresh "
+                   "bitstream; queued frames from a previous host may still execute" % die)
+            return
+        if s.saw_done[die] and s.issued[die]:
+            s.saw_done[die] = False
+            w = s._mark_unknown(die, "executor reset observed (last_done_seq went back to "
+                                     "none)")
+            if s.inflight[die] is not None:
+                raise w
 
     def _poll(s, v, die):
         return s._xfer(v, die, s._nop(die))
@@ -552,14 +589,18 @@ class Broker:
     def _alloc(s, die):
         st = s.st[die]
         n = s.seq[die]
-        if n is None:
-            # first frame of this process: jump well past anything an earlier process
-            # might still have queued at the die
-            n = (st["last_done_seq"] + SEQ_JUMP) & M32
         # The executor REJECTS ("01") a read whose seq is 0xFFFFFFFF or the last published
         # rsp_seq; the broker's seqs only ever move forward, and these are skipped too.
         avoid = {NOP_SEQ, st["last_done_seq"], st["rsp_seq"], st["err_seq"], s.ack[die]}
         avoid.update(s.accepted[die])
+        if n is None:
+            # first frame of this process: a uniform random draw, never a function of
+            # last_done_seq (see __init__)
+            for _ in range(SEQ_DRAWS):
+                n = s.seq_rng() & M32
+                if n not in avoid:
+                    break
+        s.issued[die] = True
         while n in avoid:
             n = (n + 1) & M32
         s.seq[die] = (n + 1) & M32

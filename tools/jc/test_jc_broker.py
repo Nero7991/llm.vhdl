@@ -71,6 +71,7 @@ class FakeCtlDie:
         s.flip_st, s.flip_st_bit, s.fake_done, s.fake_seq = 0, 40, 0, None
         s.bad_count = 0
         s.reject_reads = 0          # force that many reads to be refused ("01")
+        s.unstall_on_op = False     # the executor leaves reset when the next op frame arrives
         s.rejects = 0               # reads the executor refused, forced or by its rule
         s.clobber_tail = False      # re-presentations of a response lose words 492-495
         s.presented = collections.Counter()
@@ -153,6 +154,8 @@ class FakeCtlDie:
             return
         if h["op"] != C.OP_NOP:
             s.fake_seq = h["seq"]
+            if s.unstall_on_op:
+                s.unstall_on_op = s.stall = False
         if h["op"] in READ_OPS:
             # judged BEFORE this frame's own ack: read B riding on the frame that acks
             # read A still went out before A was acked
@@ -1335,3 +1338,98 @@ def test_a_rejected_fixed_window_read_leaves_the_window_known():
     assert r["ok"] is False and "rejected" in r["err"], r
     assert r["done_items"] == 0 and r["done_items_exact"] is True
     assert _wstate(b) == "ok" and die.fifos[0xE00C] == src
+
+
+# ---------------------------------------------------------------- fix round 3 (Task 4 review)
+# rtl/jc_ctl_core.vhd: an executor reset (MMCM unlock) shows last_done_seq = rsp_seq =
+# NONE, and frames still queued in the FIFO execute AFTER it. A new process that derives
+# its first seq from last_done_seq therefore always starts at the same value after a
+# reset, and can take a dead process's queued frame for its own.
+
+def _seq_rng(*vals):
+    it = iter(vals)
+    return lambda: next(it)
+
+def _exec_reset(die):
+    """The executor's reset: status EXEC fields back to none; the FIFO queue survives."""
+    die.last_done = die.rsp_seq = die.err_seq = NONE
+    die.rsp_valid = die.axi_err = die.axi_resp = 0
+
+def test_ab_after_an_executor_reset_b_never_takes_as_queued_read():
+    """Process A's read is queued while the executor is held (reset); A exits. B starts
+    on the same die and reads another register. When the executor runs, A's queued read
+    executes first; B must return its own value, never A's."""
+    board = Board()
+    die = board.ctl[0]
+    die.regs.update({0x100: 111, 0x200: 222})
+    a, board, _ = make(board, seq_rng=_seq_rng(0x1234_0000))
+    die.stall = True
+    r = a.handle({"die": "A", "op": "rd32", "off": 0x100})      # A's FIRST frame: queued
+    assert r["ok"] is False
+    _exec_reset(die)
+    die.unstall_on_op = True        # still in reset while B starts and allocates
+    b, board, _ = make(board, seq_rng=_seq_rng(0x5678_0000))
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 0x200}))["val"] == 222
+    assert [op for _, op in die.frames] == [C.OP_RD_INC, C.OP_RD_INC]   # A's ran too
+
+def test_ab_after_an_executor_reset_a_stale_write_never_completes_bs():
+    board = Board(lag=2)
+    die = board.ctl[0]
+    a, board, _ = make(board, seq_rng=_seq_rng(0x1234_0000))
+    die.stall = True
+    assert a.handle({"die": "A", "op": "wr32", "off": 0x20, "val": 7})["ok"] is False
+    _exec_reset(die)
+    die.unstall_on_op = True        # still in reset while B starts and allocates
+    b, board, _ = make(board, seq_rng=_seq_rng(0x5678_0000))
+    ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [5, 6]}))
+    assert die.wlog[0xE008] == [5, 6]                          # B's own write had run
+    assert die.regs[0x20] == 7
+
+def test_the_first_seq_is_random_not_derived_from_last_done():
+    """Two processes on dies with the SAME last_done_seq start at whatever the injected
+    randomness says, never at a function of last_done_seq."""
+    for start in (0x0000_0042, 0x7000_0000, 0xDEAD_0000):
+        board = Board()
+        b, board, _ = make(board, seq_rng=_seq_rng(start))
+        ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 0}))
+        assert board.ctl[0].frames[0][0] == start
+
+def test_the_random_start_skips_reserved_and_current_values():
+    board = Board()
+    die = board.ctl[0]
+    ok_vals = 0x0000_0777
+    b, board, _ = make(board, seq_rng=_seq_rng(NONE, NONE, ok_vals))
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 0}))
+    assert die.frames[0][0] == ok_vals
+    board2 = Board()
+    b2, board2, _ = make(board2, seq_rng=_seq_rng(0xFFFF_FFFE))
+    for i in range(3):
+        ok(b2.handle({"die": "A", "op": "wr32", "off": 4 * i, "val": i}))
+    assert [q for q, _ in board2.ctl[0].frames] == [0xFFFF_FFFE, 0, 1]   # wraps past NONE
+
+def test_an_executor_reset_mid_session_marks_the_die_unknown():
+    b, board, _ = make()
+    die = board.ctl[0]
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 1}))
+    _exec_reset(die)
+    r = b.handle({"die": "A", "op": "wr32", "off": 4, "val": 2})
+    assert r["ok"] is False and "executor reset observed" in r["err"], r
+    assert "executor reset observed" in _wstate(b)
+
+def test_an_executor_reset_seen_after_a_reconnect_marks_the_die_unknown():
+    b, board, clock = make(reconnect_secs=270)
+    die = board.ctl[0]
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 1}))
+    _exec_reset(die)
+    clock.t += 280
+    b.handle({"die": "A", "op": "wr32", "off": 4, "val": 2})
+    assert board.nconn == 2 and "executor reset observed" in _wstate(b)
+
+def test_a_fresh_executor_at_startup_is_warned_about_not_marked():
+    import io
+    log = io.StringIO()
+    b, board, _ = make(log=log)
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 1}))
+    assert ("executor reset or fresh bitstream; queued frames from a previous host may "
+            "still execute") in log.getvalue()
+    assert _wstate(b) == "ok"
