@@ -2307,3 +2307,58 @@ def test_r1_8_a_lost_link_waits_before_dialing_and_a_rotation_does_not(tmp_path)
                           reconnect_secs=30, clock=clock)
     ld2.run_load()
     assert ld2.reconnects >= 1 and slept2 == []
+
+# ---------------------------------------------------------------- CoeTransport user= (2026-10-07)
+
+class RecordingChainSock(ChainSock):
+    """ChainSock that also keeps every byte string the client wrote, in order."""
+    def __init__(s, *a, **k):
+        ChainSock.__init__(s, *a, **k)
+        s.wire = []
+    def sendall(s, b):
+        s.wire.append(bytes(b))
+        ChainSock.sendall(s, b)
+
+def _scan_bytes(**kw):
+    """One open_scan, two poll slots, close_scan on a modelled chain: every byte sent."""
+    sock = RecordingChainSock(LoaderModel(), 1)
+    t = L.CoeTransport(None, "B", "AB", client=coe.CoE(None, sock=sock), **kw)
+    t.open_scan()
+    for _ in range(2):
+        t.send(F.poll_slot())
+        t.recv()
+    t.close_scan()
+    # ChainSock models no USER3 core, so it flags a CMD_TDI under USER3; nothing else
+    assert [v for v in sock.violations if "under IR 0x8a4" not in v] == []
+    assert kw.get("user") == 3 or sock.violations == []
+    return t, sock
+
+def test_coe_transport_default_user_is_byte_identical_to_user4():
+    """The default path must not move: no user= argument and user=4 put the same bytes
+    on the wire, select USER4 on the target and BYPASS elsewhere, and the IR shift is
+    exactly coe.ir_scan_payload([BYPASS, USER4]) for die B at position 1."""
+    t0, s0 = _scan_bytes()
+    t4, s4 = _scan_bytes(user=4)
+    assert s0.wire == s4.wire and len(s0.wire) > 10
+    assert t0.ops == t4.ops == [coe.IR_BYPASS, coe.IR_USER4]
+    irp = coe.ir_scan_payload([coe.IR_BYPASS, coe.IR_USER4])
+    assert sum(1 for b in s0.wire if b[8:] == irp) == 1
+    assert (coe.IR_BYPASS, coe.IR_USER4) in s0.ir_updates
+
+def test_coe_transport_user3_differs_only_in_the_ir_opcode():
+    t0, s0 = _scan_bytes()
+    t3, s3 = _scan_bytes(user=3)
+    assert t3.ops == [coe.IR_BYPASS, coe.IR_USER3]
+    assert (coe.IR_BYPASS, coe.IR_USER3) in s3.ir_updates
+    assert len(s0.wire) == len(s3.wire)
+    diff = [i for i, (a, b) in enumerate(zip(s0.wire, s3.wire)) if a != b]
+    assert len(diff) == 1
+    assert s0.wire[diff[0]][8:] == coe.ir_scan_payload([coe.IR_BYPASS, coe.IR_USER4])
+    assert s3.wire[diff[0]][8:] == coe.ir_scan_payload([coe.IR_BYPASS, coe.IR_USER3])
+
+@pytest.mark.parametrize("user", [0, 1, 2, 5, "4", None])
+def test_coe_transport_refuses_another_user_before_dialing(user):
+    sock = RecordingChainSock(LoaderModel(), 0)
+    with pytest.raises(ValueError):
+        L.CoeTransport(None, "A", "AB", client=coe.CoE(None, sock=sock), user=user)
+    assert sock.wire == []

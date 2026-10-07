@@ -641,10 +641,16 @@ class CoeTransport:
     Die identity (Task 9b): if BOTH dies carry the loader, a wrong --chain selects USER4
     on the OTHER die, whose status word is just as valid; this transport cannot tell.
     The Loader can: every status carries the die's DNA, checked against the die record
-    on every scan open."""
-    def __init__(s, ip, die, chain, hz=27_000_000, client=None):
+    on every scan open.
+
+    `user` (2026-10-07, jc_broker.py) picks the target's USER register: 4 (the default,
+    the loader) or 3 (the USER3 control core). Nothing else changes with it; the default
+    path's bytes on the wire are unchanged."""
+    def __init__(s, ip, die, chain, hz=27_000_000, client=None, user=4):
         if len(chain) != coe.CHAIN_DEVICES or sorted(chain) != ["A", "B"] or die not in chain:
             raise ValueError("chain must be AB or BA and contain the die")
+        if type(user) is not int or user not in (3, 4):
+            raise ValueError("user must be 3 (USER3) or 4 (USER4), got %r" % (user,))
         s.c = client if client is not None else coe.CoE(ip)
         s.hz = hz
         s.pending = []
@@ -655,7 +661,8 @@ class CoeTransport:
             s.close()                                   # fix round 1 item 3: never leak it
             raise
         pos = chain.index(die)
-        s.ops = [coe.IR_USER4 if d == die else coe.IR_BYPASS for d in chain]
+        ir = coe.IR_USER4 if user == 4 else coe.IR_USER3
+        s.ops = [ir if d == die else coe.IR_BYPASS for d in chain]
         s.lead = pos
         s.tdo_delay = len(chain) - 1 - pos
         s.status_offset = s.lead + s.tdo_delay
