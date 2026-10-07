@@ -479,3 +479,91 @@ which avoids the 10 s socket timeout on every other drop and the ~30 s re-plan p
 **Not determined:** whether the timer counts from TCP connect, from HELLO, or from the first
 JTAG command (the soak's clock starts after `start()` and `open_scan`), and why connections
 alternate between RST and silence at the limit.
+
+## 16. UPDATE 2026-10-07: proactive reconnect does not reset the BMC timer; module A drops off the chain during die B loads
+
+### 16a. Proactive reconnect
+
+**Question (from S15).** If the client closes its own connection before ~300 s and reconnects,
+does the BMC's timer restart?
+
+**Answer.** No. MEASURED (`tools/jc/coe_load.py --reconnect-secs 270`, die A r2 reload): every
+proactive reconnect at 270 s is followed by a drop about 50-56 s later, so the BMC timer is not
+per TCP connection, or a fresh connection inherits the old one's clock. Run loads with
+`--reconnect-secs 0` (reactive reconnect only).
+
+```
+JCLOAD_RECONNECT 1 lost:ConnectionResetError 229.2
+JCLOAD_RECONNECT 2 proactive 270.0
+JCLOAD_RECONNECT 3 lost:TimeoutError 55.9
+...
+JCLOAD_RECONNECT 8 proactive 270.0
+JCLOAD_RECONNECT 9 lost:ConnectionResetError 53.8
+JCLOAD_RECONNECT 10 proactive 270.0
+JCLOAD_RECONNECT 11 lost:TimeoutError 52.8
+JCLOAD_RECONNECT 12 proactive 270.0
+JCLOAD_RECONNECT 13 lost:ConnectionResetError 50.6
+JCLOAD_DONE ... crc_fail=9 resyncs=0 pieces=7170 matched, wall 2833 s (planning 24 s), connections=17 reconnects=16
+```
+
+The same die reloaded with `--reconnect-secs 0` (die B, 16:23-17:13) needed 10 connections for
+6,750 pieces, each lost at ~300-327 s:
+
+```
+JCLOAD_DONE last=3735241 committed=3735242 crc_fail=7 resyncs=0 pieces=6750 matched, wall 2940 s (planning 21 s), connections=10 reconnects=9, this run sent 7388428736 data bytes in 2920 s at 2.53 MB/s
+JCVERIFY_PASS 6750 pieces, 0 bad
+```
+
+**Measured and REJECTED, do not retry:** proactive reconnect at 270 s as a way to avoid the
+BMC's drops (it adds a drop per cycle; 17 connections vs 10 for a similar-size load).
+
+**Not determined:** what the BMC timer is keyed on (client IP and port, the HELLO, or a global
+JTAG-engine session), and whether a longer idle gap between connections resets it.
+
+### 16b. Module A drops off the JTAG chain during die B loads
+
+**Question.** Twice on 2026-10-07, die A's freshly reloaded HBM image was lost during die B's
+load. What happened to die A?
+
+**Answer (partial).** Module A lost power, or at least its BMC I2C and JTAG presence, while die B
+was being loaded. Oren saw module A's LEDs off and the module "considerably hotter (can still touch quickly)". A power
+cycle with the fan moved, and B loaded BEFORE A, completed B's load with A still on the chain.
+The two changes (fan moved, load order) were made together, so which one mattered is NOT
+separated.
+
+**Evidence** (sqrl_bridge read-only enumerate, CoE; Device 0 = die A, Device 1 = die B by DNA):
+
+| scan | time | FPGAs | die A SLR0/1 (C) | die B SLR0/1 (C) | note |
+|---|---|---|---|---|---|
+| bridge_temp | 12:38 | 1 | absent | 47.5 / 47.5 | after drop 1 |
+| bridge_pc2 | 14:41 | 2 | 37.1 / 36.1 | 45.1 / 45.1 | after power cycle 1, idle |
+| bridge_scan3 | 16:05 | 1 | absent | 60.5 / 61.0 | drop 2, 34 min into B's load |
+| bridge_pc3 | 16:22 | 2 | 61.0 / 61.0 | 51.5 / 52.5 | after power cycle 2, fan moved, idle |
+| bridge_afterB | 17:14 | 2 | 50.0 / 49.0 | 59.0 / 58.0 | after B's 49 min load, A survived |
+
+Both single-FPGA scans print, before the scan:
+
+```
+One CoE Board Device, but I2C did not respond to ping on BusIdx 0 - Switching to Slot B
+Found 1 FPGAs on board 0, creating virtual TCP serial ports...
+```
+
+so the BMC loses module A's I2C (slot A), not just its JTAG. In drop 2, die B read 60 C and its
+VRM 59 C.
+
+**Procedure.** (1) Enumerate read-only with sqrl_bridge after every load step and before the
+next (the scan is the only way to see A's presence without touching it). (2) Map devices by DNA,
+never by index: with A absent, die B becomes Device 0. (3) Read SYSMON temperature for both SLRs
+from the same scan.
+
+**Measurement traps.** Device index is not identity: in the 1-FPGA scans "Device 0" is die B.
+A load wrapper that reports only its own die's verify misses that the OTHER die's image was
+lost; scan both dies after each load.
+
+**Open, not yet answered.**
+- Is it thermal (A sits downstream of B's airflow?) or electrical (shared 12 V input or VRM
+  sequencing when B's HBM and fabric are busy)? Die A at 61 C idle right after power cycle 2
+  (16:22) is unexplained: hotter than B, with nothing loaded.
+- Does A survive a B load with the original fan position but B loaded first (separates the two
+  changes)?
+- Does it ever happen during A's own load (not observed so far; the die A load running at the time of writing is the next data point)?
