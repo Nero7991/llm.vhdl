@@ -19,6 +19,7 @@ may shift only BYPASS 0xFFF, IDCODE 0x249, USER3 0x8A4 and USER4 0x8E4.
 | `sim/tb_jc_ctl_core.vhd` | end-to-end bench through the real crossings |
 | `sim/gen_jc_ctl_core_vec.py`, `sim/jc_ctl_core_vec.txt` | host-library slots (from `tools/jc/jc_ctl.py`) the bench cross-checks |
 | `sim/mutate_jc_ctl_core.sh` | composition mutants against the bench |
+| `hw/jc/ctl/test_jc_ctl_timing.tcl` | tclsh unit check of the synchroniser consumer trace (mocked Vivado commands) |
 
 The composition uses the following units:
 - `rtl/jc_ctl_frame_core.vhd` (TCK)
@@ -159,7 +160,16 @@ Gate on these lines:
   `rsp_ack_tgl` and `rst` (fix round 1). The script refuses, with no DONE, when:
   - a stage lacks ASYNC_REG;
   - a first stage feeds anything other than its second stage;
-  - the executor's ack or reset is not driven by the second stage's Q.
+  - the executor's ack or reset is not taken from the second stage. Fix round 2 checks
+    this on LEAF loads, not hierarchical port names, which synthesis does not keep:
+    - every leaf load of `rak_s2_reg/Q` is under `ex/`;
+    - `rst_s2_reg/Q` loads are under `ex/` or `fifo/`, or are a top-level combinational
+      reset gate;
+    - at least one load is under `ex/`;
+    - no load of a first stage is under `ex/`.
+
+  `tclsh hw/jc/ctl/test_jc_ctl_timing.tcl` checks that trace against a mocked netlist,
+  with no Vivado.
 - `JCCTL_OOC_WNS` and `JCCTL_OOC_WHS` must not be negative.
 
 Budget: 5.56 GB peak, MEASURED on this core. Run one Vivado per box, under

@@ -180,22 +180,66 @@ proc jctl_sync_chain {s1 s2} {
   puts "JCCTL_SYNC_OK [llength $c1] $s1 -> $s2"
 }
 
-# The hierarchical input pin hpin (e.g. ex/rsp_ack_tgl) must be driven by exactly one leaf
-# pin, the Q of cell qcell (e.g. rak_s2_reg): the consumer takes the SECOND stage.
-proc jctl_driven_by {hpin qcell} {
-  set p [get_pins -quiet $hpin]
-  if {[llength $p] != 1} { error "JCCTL_SYNC no single pin $hpin" }
-  set n [get_nets -quiet -of_objects $p]
-  # a hierarchical pin can return both net segments; they resolve to one leaf driver
-  set drv [get_pins -quiet [lsort -unique [get_pins -quiet -leaf -of_objects $n -filter {DIRECTION == OUT}]]]
-  if {[llength $drv] != 1 || [get_property NAME [get_cells -of_objects $drv]] ne $qcell
-      || [get_property REF_PIN_NAME $drv] ne "Q"} {
-    error "JCCTL_SYNC $hpin is driven by {$drv}, expected $qcell/Q"
+# CONSUMER TRACE (fix round 2). The first version traced the executor's hierarchical input
+# pins (ex/rsp_ack_tgl, ex/rst). MEASURED (controller, /mnt/storage/fk33_builds/jcctl_ooc3):
+# synthesis keeps `ex` as a hierarchical cell but not those port pins under their names,
+# so the trace refused a correct netlist ("JCCTL_SYNC no single pin ex/rsp_ack_tgl"). This
+# version uses only LEAF cells and nets, never a hierarchical port name, and adds no
+# KEEP_HIERARCHY or DONT_TOUCH (that would change the implementation under test).
+
+# The leaf input pins on the net driven by cell/Q (empty if Q drives nothing).
+proc jctl_q_loads {cell} {
+  set q [get_pins -quiet -of_objects $cell -filter {REF_PIN_NAME == Q}]
+  if {[llength $q] != 1} { error "JCCTL_SYNC [get_property NAME $cell] has no single Q pin" }
+  set n [get_nets -quiet -of_objects $q]
+  if {[llength $n] == 0} { return {} }
+  return [lsort -unique [get_pins -quiet -leaf -of_objects $n -filter {DIRECTION == IN}]]
+}
+
+# Is load cell lc allowed? pats: glob patterns of allowed cells. top_comb 1 also allows a
+# combinational cell at the core's own level (directly under core, not in a sub-block).
+proc jctl_load_ok {lc pats top_comb core} {
+  foreach p $pats { if {[string match $p $lc]} { return 1 } }
+  if {$top_comb && [string match "${core}*" $lc] && ![string match "${core}*/*" $lc]
+      && ![string is true -strict [get_property IS_SEQUENTIAL [get_cells $lc]]]} { return 1 }
+  return 0
+}
+
+# The consumer takes the SECOND stage. Refuses (JCCTL_SYNC) unless:
+#   * s2 (one cell) drives at least one leaf load;
+#   * every leaf load of s2/Q is an allowed cell (pats, or a top-level combinational cell
+#     when top_comb is 1);
+#   * at least one leaf load matches need (the consumer block is really fed);
+#   * no leaf load of any s1 cell's Q matches need (the consumer never takes stage one).
+proc jctl_drives {s1 s2 need pats top_comb core} {
+  set c2 [jctl_cells $s2]
+  if {[llength $c2] != 1} { error "JCCTL_SYNC expected one $s2 cell, got [llength $c2]" }
+  set loads [jctl_q_loads $c2]
+  if {[llength $loads] == 0} { error "JCCTL_SYNC $s2/Q has no loads" }
+  set nneed 0
+  foreach p $loads {
+    set lc [get_property NAME [get_cells -of_objects $p]]
+    if {[string match $need $lc]} { incr nneed }
+    if {![jctl_load_ok $lc $pats $top_comb $core]} {
+      error "JCCTL_SYNC $s2/Q drives $p, outside {$pats}"
+    }
   }
-  puts "JCCTL_SYNC_DRIVER $hpin <- $drv"
+  if {$nneed == 0} { error "JCCTL_SYNC $s2/Q drives nothing matching $need" }
+  foreach c1 [jctl_cells $s1] {
+    foreach p [jctl_q_loads $c1] {
+      if {[string match $need [get_property NAME [get_cells -of_objects $p]]]} {
+        error "JCCTL_SYNC first stage [get_property NAME $c1]/Q drives $p"
+      }
+    }
+  }
+  puts "JCCTL_SYNC_DRIVER $s2 loads [llength $loads] ($nneed under $need)"
 }
 
 # Every synchroniser of the core, structurally (call after synth_design).
+#   rak_s2: rtl/jc_ctl_core.vhd's only reader is ex.rsp_ack_tgl  -> loads only under ex/.
+#   rst_s2: its readers are ex.rst, and the reset gates q_vx (into ex.q_valid) and
+#           q_ready (into fifo.q_ready). Synthesis may place those LUTs at the top level,
+#           in ex/ or in fifo/      -> loads under ex/ or fifo/, or top-level combinational.
 proc jctl_syncs {core} {
   jctl_sync_chain "${core}rak_s1_reg"        "${core}rak_s2_reg"
   jctl_sync_chain "${core}rst_s1_reg"        "${core}rst_s2_reg"
@@ -203,8 +247,9 @@ proc jctl_syncs {core} {
   jctl_sync_chain "${core}sync/ack_s1_reg"   "${core}sync/ack_s2_reg"
   jctl_sync_chain "${core}fifo/wp_g_s1_reg*" "${core}fifo/wp_g_s2_reg*"
   jctl_sync_chain "${core}fifo/rp_g_s1_reg*" "${core}fifo/rp_g_s2_reg*"
-  jctl_driven_by "${core}ex/rsp_ack_tgl" "${core}rak_s2_reg"
-  jctl_driven_by "${core}ex/rst"         "${core}rst_s2_reg"
+  jctl_drives "${core}rak_s1_reg" "${core}rak_s2_reg" "${core}ex/*" [list "${core}ex/*"] 0 $core
+  jctl_drives "${core}rst_s1_reg" "${core}rst_s2_reg" "${core}ex/*" \
+    [list "${core}ex/*" "${core}fifo/*"] 1 $core
 }
 
 # BSCANE2 TDI into the TCK-domain receiver (card build only; the loader's jcl_tdi). The
