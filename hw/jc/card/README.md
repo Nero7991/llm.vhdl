@@ -210,15 +210,49 @@ story for this flat, non-BD OOC flow -- `gen_ooc27_top.py` sets no lever
 generic itself. `CB_STYLE` (lever C) is a true module-boundary generic on
 `fk33_engine`, separate from the levers-off patch, and is set explicitly to
 `"distributed"` to match `jc_card_bd.tcl`'s own `CONFIG.CB_STYLE` for build
-27B-1. `run_ooc27.sh` also greps its own Vivado log for the
-`Parameter <NAME> bound to:` trace line (via `jccard_levers.tcl`'s already-
-tested parser) and prints `JCOOC27_LEVER` lines, but does not fail the run on
-them: whether that trace line reaches a plain (non-project) `synth_design`'s
-`-log` file at all is UNVERIFIED (`build_card.tcl`'s own finding was that a
-PROJECT-MODE run writes it only to `<top>.vds`, never `runme.log`), so the
-`git apply --check` in step 2 is the load-bearing guarantee, not this.
+27B-1, alongside `USE_XEXP_PORT => true` (`jc_card_bd.tcl:299`, fix round 1,
+I1) -- `test_eng_generics_match_the_bd_exactly`/`test_seam_generics_match_
+the_bd_exactly` diff every `CONFIG.*` the BD sets on `eng`/`fk33_seam_0`
+against this generator's own dicts.
 
-**Memory.** `task-10-brief.md`'s own ESTIMATE is 4-8 GB, from the recorded
-2.58 GiB for the 9B `fk33_card` OOC on the VU35P; `run_ooc27.sh` defaults
-`MemoryHigh` to 12G with a 2x swap guard, well under the 24G/30GiB card-build
-shape, and prints `MemAvailable`/`SwapFree` before dispatch either way.
+Fix round 1, I6 made the levers check two-layered: a FATAL grep of the
+patched sources (`run_ooc27.sh`, before Vivado runs at all) for `FAST_POP`'s
+default, `NWIDE`/`SWEEP_PIPE`/`SCORE_EARLY`'s values, and `PIPE`/`WIDE`/
+`MAXOUT 8`'s own (unpatched) values -- this is the load-bearing guarantee.
+On top of that, `run_ooc27.sh` also greps its own Vivado log for the
+`Parameter <NAME> bound to:` trace line (via `jccard_levers.tcl`'s already-
+tested parser) and prints `JCOOC27_LEVER` lines; this second opinion IS
+fatal on an "on" or "mixed" verdict (the trace line is present and says the
+lever is bound wrong -- not ambiguous), but stays non-fatal on "missing":
+whether that trace line reaches a plain (non-project) `synth_design`'s
+`-log` file at all is UNVERIFIED (`build_card.tcl`'s own finding was that a
+PROJECT-MODE run writes it only to `<top>.vds`, never `runme.log`), so
+"missing" is as likely to mean "this log is not where the trace lands" as
+"the patch did not apply" -- and the pre-Vivado source grep already covers
+the real failure mode either way.
+
+**Memory.** Fix round 1, I3: the original 4-8 GB ESTIMATE (from "2.58 GiB
+for the 9B `fk33_card` OOC on the VU35P") was extrapolated from the wrong
+reference point -- a DIFFERENT, smaller OOC (`fk33_card` alone, no engine).
+Vivado's own log from the real reference runs reports a peak of 11780 MB
+for the 27B `fk33_card` OOC alone and 9008 MB for `fk33_engine` OOC alone
+(`ooc27_vu35/{fk33_card,fk33_engine}/build.log`); this composition places
+both together, so ESTIMATE 16-20 GB. `run_ooc27.sh` defaults `MemoryHigh` to
+`22G` with a FIXED 4 GiB swap guard (not scaled to the cap), refuses if
+`MemAvailable` is below cap+2G or another Vivado is already running, and
+prints `MemAvailable`/`SwapFree` before dispatch either way.
+
+**Fix round 1 (2026-10-07), summary.** CRITICAL C1: `gen_ooc27_top.py` used
+to export every unwired port, including `card/obs_wsum` -- the exact debug
+hash (`fk33_llama_top.vhd:8243`, a 60-level multiply-by-31-add) the 2026-09-
+30 artifact note's "70 MHz" number traced to, and which the real build never
+pays for (`jc_card_bd.tcl` never connects it; build 20's own log: `port
+'obs_wsum' of module 'bd_card_0' is unconnected`). A port the BD never
+connects to anything is now tied off (`open` for an output, a quiescent
+constant for an input) instead of exported --
+`bd_connected_ports()`, scanning `jc_card_bd.tcl`'s own `connect_bd_net`/
+`connect_bd_intf_net` calls, decides which. See
+`docs/debugging/2026-09-30_27b-fits-vu35p-ooc-timing-artifact.md`'s
+CORRECTION section and
+`.superpowers/sdd/2026-10-07-jc-engine-composition/task-10-fix-round-1-
+report.md` for the full account, including I1-I6 and M1-M3.

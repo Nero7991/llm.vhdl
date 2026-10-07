@@ -39,30 +39,51 @@
 #
 # Usage:
 #   vivado -mode batch -nojournal -log <logfile> -source ooc_card_200.tcl \
-#       -tclargs <repo> <outdir> [part]
+#       -tclargs <repo> <outdir> [part] -nonce <value>
 #   <repo>   the prepared tree's root (run_ooc27.sh's <root>/src)
 #   <outdir> where checkpoints and reports land
 #   [part]   default xcvu35p-fsvh2104-2L-e (global-constraints.md)
+#   -nonce   this run's identity (fix round 1, I2): printed FIRST, before
+#            anything else, exactly as build_card.tcl's JCCARD_NONCE is, so
+#            run_ooc27.sh can gate JCOOC27_DONE on a log that carries THIS
+#            run's own nonce with DONE appearing AFTER it. The original
+#            version of run_ooc27.sh instead appended the nonce to the log
+#            file ITSELF before launching Vivado -- but Vivado's own -log
+#            truncates/rotates the file it is given, so that line never
+#            survived to be found, and every run therefore read as
+#            JCOOC27_FAIL regardless of whether Vivado actually succeeded.
 #
 # Sentinels (anchored):
+#   ^JCOOC27_NONCE <value>                     FIRST line this script prints
 #   ^JCOOC27_PART <part>
-#   ^JCOOC27_ROUTE routing_errors <n>          (else ^JCOOC27_ROUTE_FAIL)
+#   ^JCOOC27_SCOPE internal_reg_to_reg_only io_untimed   (fix round 1, I5)
+#   ^JCOOC27_ROUTE routing_errors <n>          (else ^JCOOC27_ROUTE_FAIL, which
+#                                                stops this script before WNS/
+#                                                WHS/WORST10/UTIL/DONE -- fix
+#                                                round 1, M1)
 #   ^JCOOC27_WNS <ns>   ^JCOOC27_WHS <ns>
 #   ^JCOOC27_WORST10 <rank> slack=<ns> src_clk=<name> dst_clk=<name> start=<pin> end=<pin>
 #   ^JCOOC27_UTIL <CATEGORY> used=<n> pct=<pct>
-#   ^JCOOC27_DONE                              last line this script prints
+#   ^JCOOC27_DONE                              LAST line this script prints
 # A Tcl error anywhere ends the run WITHOUT ^JCOOC27_DONE -- a waiter gates on
 # that sentinel in THIS script's own log, never on Vivado's exit code alone
 # (CLAUDE.md: "a completion signal that also fires on failure is not one").
 
+proc jcoo27_fail {msg} { puts "JCOOC27_FAIL $msg"; exit 1 }
+
 set repo  [file normalize [lindex $argv 0]]
 set out   [file normalize [lindex $argv 1]]
-set part  [expr {[llength $argv] > 2 ? [lindex $argv 2] : "xcvu35p-fsvh2104-2L-e"}]
+set part  [expr {[llength $argv] > 2 && [lindex $argv 2] ne "-nonce" ? [lindex $argv 2] : "xcvu35p-fsvh2104-2L-e"}]
+set nonce_idx [lsearch -exact $argv -nonce]
+set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : ""}]
+if {$nonce eq ""} { jcoo27_fail "no -nonce given on -tclargs (run_ooc27.sh always passes one)" }
+puts "JCOOC27_NONCE $nonce"
 set ACLK_P 5.000
 
 file mkdir $out
 puts "JCOOC27_PART $part"
 puts "JCOOC27_CLK_CORE_MHZ 200"
+puts "JCOOC27_SCOPE internal_reg_to_reg_only io_untimed"
 set_param general.maxThreads 8
 
 # ---- the file list, explicit, never globbed (CLAUDE.md house style) --------
@@ -113,18 +134,28 @@ foreach f $VHDL_FILES {
 }
 puts "JCOOC27_SOURCES [llength $VHDL_FILES]"
 
-# ---- the one clock, and the three free control inputs ----------------------
+# ---- the one clock, two registered-reset inputs, and one false-pathed
+#      control input ---------------------------------------------------------
+# rst/rstn: fix round 1, I4. jc_ooc27_top.vhd now registers both on clk
+# before use (rst_r2/rstn_r2, two flops), so the top-level port itself only
+# ever fans out to ONE flop's D input, not ~2.7e5 of them (the original
+# version's rst drove every reset pin across all three instances directly).
+# A light input delay on that single-fanout net is still the right harness
+# convention (ooc_loader_core.tcl's own rationale for arst/hbm_cat_trip:
+# -min 0.5 stands for a parent register's clock-to-out plus route).
+foreach p {rst rstn} {
+  lappend xdc_lines "set_input_delay -clock clk -max 2.000 \[get_ports $p\]"
+  lappend xdc_lines "set_input_delay -clock clk -min 0.500 \[get_ports $p\]"
+}
+# compute_halt: fix round 1, I4. build_card.tcl:342's own treatment of this
+# exact signal (CATTRIP, ruled asynchronous/quasi-static, no synchroniser)
+# is a false path, not a timed input delay -- an input delay implies a
+# meaningful clock-relative timing requirement this signal does not have.
+lappend xdc_lines "set_false_path -from \[get_ports compute_halt\]"
 set x [file join $out clocks.xdc]
 set fh [open $x w]
 puts $fh "create_clock -name clk -period $ACLK_P \[get_ports clk\]"
-# rst/rstn/compute_halt are free top-level control inputs with no real driver
-# here (ooc_loader_core.tcl's own rationale for arst/hbm_cat_trip: -min 0.5
-# stands for a parent register's clock-to-out plus route; at 0 the unrouted
-# port produced spurious hold "failures" into every flop it reaches).
-foreach p {rst rstn compute_halt} {
-  puts $fh "set_input_delay -clock clk -max 2.000 \[get_ports $p\]"
-  puts $fh "set_input_delay -clock clk -min 0.500 \[get_ports $p\]"
-}
+foreach l $xdc_lines { puts $fh $l }
 close $fh
 read_xdc -mode out_of_context $x
 
@@ -147,13 +178,19 @@ report_methodology -file [file join $out methodology.rpt]
 check_timing -file [file join $out check_timing.rpt]
 
 # ---- ^JCOOC27_ROUTE ---------------------------------------------------------
+# fix round 1, M1: a routing failure must stop this script HERE, before WNS/
+# WHS/WORST10/UTIL are even read (a route that did not finish has no
+# meaningful timing to report) and, critically, before ^JCOOC27_DONE -- the
+# original version printed JCOOC27_ROUTE_FAIL and then carried on to print
+# JCOOC27_DONE anyway at the end regardless, so a waiter gating on DONE
+# alone would have read a failed route as a finished one.
 set rs [report_route_status -return_string]
 if {[regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr]} {
   puts "JCOOC27_ROUTE routing_errors $nerr"
-  if {$nerr != 0} { puts "JCOOC27_ROUTE_FAIL $nerr" }
+  if {$nerr != 0} { jcoo27_fail "route status: $nerr routing error(s)" }
 } else {
-  puts "JCOOC27_ROUTE_FAIL unparsed"
   puts $rs
+  jcoo27_fail "route status: could not parse routing error count"
 }
 
 # ---- ^JCOOC27_WNS / ^JCOOC27_WHS --------------------------------------------
@@ -163,7 +200,10 @@ puts "JCOOC27_WNS $wns"
 puts "JCOOC27_WHS $whs"
 
 # ---- ^JCOOC27_WORST10 --------------------------------------------------------
-set worst10 [get_timing_paths -max_paths 10 -nworst 10 -setup]
+# fix round 1, M2: -nworst 1 (one path PER ENDPOINT), not -nworst 10 (up to
+# ten paths to the SAME endpoint, which could and did let the "worst 10"
+# list repeat one endpoint instead of surfacing ten distinct ones).
+set worst10 [get_timing_paths -max_paths 10 -nworst 1 -setup]
 set rank 0
 foreach p $worst10 {
   incr rank

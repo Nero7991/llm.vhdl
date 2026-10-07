@@ -151,3 +151,128 @@ def test_aborts_on_a_direction_mismatched_pair(tmp_path):
     assert r.returncode != 0
     assert "GENOOC27 ABORT" in r.stderr
     assert not os.path.exists(out)
+
+
+# ---- fix round 1, CRITICAL C1: jc_card_bd.tcl never connects card's debug/
+# observability outputs (obs_wsum and its siblings), the dead "m_*" HBM read
+# bus, several AXI SIZE/BURST/WSTRB/RESP/ID fields, bst_busy/done/err, or
+# a_jobs_issued -- 2026-09-30's own "70 MHz" OOC number on fk33_card ALONE
+# was obs_wsum's 60-level debug hash (fk33_llama_top.vhd:8243), which drives
+# NOTHING in the real card and is dead-code-eliminated there, kept alive only
+# because this generator used to export EVERY unwired port, including it.
+# A port the BD never connects to anything (inside OR outside the three
+# cells) must be tied to `open` (an output) or a quiescent constant (an
+# input), never exported, so synthesis can eliminate it exactly as the real
+# build does. Only a port the BD connects to something OUTSIDE the three
+# cells (HBM AXI, a host AXI4-Lite slave, clocks, reset, CATTRIP) may be
+# exported.
+
+BD_UNCONNECTED_CARD_OUTPUTS = [
+    "obs_wsum", "obs_unit", "obs_opcode", "obs_step", "obs_dst", "obs_cmp",
+    "obs_cmp_exp", "obs_res_take", "obs_res_ea", "obs_res_eb", "obs_norm_pub",
+    "obs_norm_exp", "obs_norm_ssq", "obs_norm_n",
+    "smp_valid", "smp_v", "smp_idx", "smp_done",
+    "bst_busy", "bst_done", "bst_err", "a_jobs_issued",
+    "m_arvalid", "m_araddr", "m_arlen", "m_arsize", "m_arburst", "m_rready",
+]
+BD_UNCONNECTED_CARD_INPUTS = [
+    "m_arready", "m_rvalid", "m_rdata", "m_rlast",
+    "kv0_rresp", "kv1_rresp", "kv_bresp", "bst_rresp", "bst_bresp",
+]
+BD_UNCONNECTED_ENG_OUTPUTS = ["m00_axi_awid", "m00_axi_arid", "m05_axi_awid"]
+BD_UNCONNECTED_ENG_INPUTS = ["m00_axi_bid", "m00_axi_rid", "m05_axi_bid"]
+
+
+def test_bd_unconnected_card_outputs_are_not_exported(tmp_path):
+    """RED (fix round 1, C1): before the fix, every one of these was
+    exported as card_<name>, including card_obs_wsum -- the exact debug
+    hash the 2026-09-30 artifact note traced the "70 MHz" OOC number to."""
+    out = str(tmp_path / "jc_ooc27_top.vhd")
+    r = _run(REPO, out, extra=["--haddr-w", "14", "--regmax", "16384"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = open(out).read()
+    for nm in BD_UNCONNECTED_CARD_OUTPUTS:
+        assert ("card_%s " % nm) not in text and ("card_%s\n" % nm) not in text, (
+            "card.%s is not connected to anything by jc_card_bd.tcl and must "
+            "not be exported (tie to open instead)" % nm)
+    for nm in BD_UNCONNECTED_CARD_INPUTS:
+        assert ("card_%s " % nm) not in text and ("card_%s\n" % nm) not in text, (
+            "card.%s is not connected to anything by jc_card_bd.tcl and must "
+            "not be exported (tie to a quiescent constant instead)" % nm)
+
+
+def test_bd_unconnected_card_outputs_are_tied_open(tmp_path):
+    out = str(tmp_path / "jc_ooc27_top.vhd")
+    r = _run(REPO, out, extra=["--haddr-w", "14", "--regmax", "16384"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = open(out).read()
+    m = re.search(r"u_card : entity work\.fk33_card.*?port map\((.*?)\);", text, re.S)
+    card_map = m.group(1)
+    for nm in BD_UNCONNECTED_CARD_OUTPUTS:
+        pm = re.search(r"\b%s\s*=>\s*(\S+)" % re.escape(nm), card_map)
+        assert pm, "card.%s missing from the port map entirely" % nm
+        assert pm.group(1).rstrip(",") == "open", (
+            "card.%s => %s, expected open" % (nm, pm.group(1)))
+
+
+def test_bd_unconnected_eng_axi_id_fields_are_not_exported(tmp_path):
+    """The engine's own AXI ID fields (HBM is AXI3: no AWID/ARID/BID/RID) are
+    just as unconnected by the BD as card's debug ports, by the same rule."""
+    out = str(tmp_path / "jc_ooc27_top.vhd")
+    r = _run(REPO, out, extra=["--haddr-w", "14", "--regmax", "16384"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = open(out).read()
+    for nm in BD_UNCONNECTED_ENG_OUTPUTS + BD_UNCONNECTED_ENG_INPUTS:
+        assert ("eng_%s " % nm) not in text and ("eng_%s\n" % nm) not in text
+
+
+def test_bd_connected_ports_are_still_exported(tmp_path):
+    """The fix must not become a blanket tie-off: HBM AXI masters, the host
+    AXI4-Lite slaves and card's bst_*/kv_*_* ports the real BD DOES connect
+    (to HBM, to the host, or to bcgrant, all outside the three-cell scope)
+    must still reach the top level."""
+    out = str(tmp_path / "jc_ooc27_top.vhd")
+    r = _run(REPO, out, extra=["--haddr-w", "14", "--regmax", "16384"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    text = open(out).read()
+    for nm in ["eng_m00_axi_awvalid", "eng_s_axix_awvalid", "eng_s_axi_arvalid",
+               "seam_s_axi_awvalid", "card_bst_arvalid", "card_kv0_arvalid"]:
+        assert nm in text, "%s should still be exported (BD-connected outside scope)" % nm
+
+
+# ---- fix round 1, IMPORTANT I1: every CONFIG.* the BD sets on eng/seam must
+# be reproduced here, not just CB_STYLE. jc_card_bd.tcl:299 also sets
+# CONFIG.USE_XEXP_PORT {true} on eng, which the original generator missed.
+
+def _bd_generic_overrides(bd_text, cell, skip=()):
+    pat = re.compile(
+        r"set_property\s+CONFIG\.(\w+)\s+\{([^}]*)\}\s+\[get_bd_cells\s+%s\]" %
+        re.escape(cell))
+    out = {}
+    for name, val in pat.findall(bd_text):
+        if name in skip:
+            continue
+        out[name] = val
+    return out
+
+
+def test_eng_generics_match_the_bd_exactly():
+    bd_text = open(os.path.join(REPO, "hw", "jc", "card", "jc_card_bd.tcl")).read()
+    bd_eng = _bd_generic_overrides(bd_text, "eng")
+    gen_src = open(GEN).read()
+    m = re.search(r'ENG_GENERICS = \{([^}]*)\}', gen_src)
+    gen_eng = dict(re.findall(r'"(\w+)":\s*\'?"?([^,\'"}]+)', m.group(1)))
+    for name, bd_val in bd_eng.items():
+        assert name in gen_eng, "eng CONFIG.%s (BD value %r) missing from ENG_GENERICS" % (name, bd_val)
+
+
+def test_seam_generics_match_the_bd_exactly():
+    bd_text = open(os.path.join(REPO, "hw", "jc", "card", "jc_card_bd.tcl")).read()
+    bd_seam = _bd_generic_overrides(bd_text, "fk33_seam_0")
+    gen_src = open(GEN).read()
+    m = re.search(r'SEAM_GENERICS_FIXED = \{([^}]*)\}', gen_src, re.S)
+    fixed_names = set(re.findall(r'"(\w+)":', m.group(1)))
+    # HADDR_W/REGMAX are CLI-overridable (model-dependent widths), not fixed.
+    fixed_names |= {"HADDR_W", "REGMAX"}
+    missing = set(bd_seam) - fixed_names
+    assert not missing, "seam CONFIG.%s set by the BD but not reproduced here" % missing

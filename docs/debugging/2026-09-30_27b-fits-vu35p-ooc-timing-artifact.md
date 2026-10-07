@@ -96,3 +96,67 @@ Timing Summary WNS +4.98 ns; worst routed paths all in
   composition limiter below 200.
 - Whether the engine's 222 MHz (just above 200) holds in-context with the HBM
   AXI clock and real floorplan.
+
+## CORRECTION, 2026-10-07 (plan Task 10, fix round 1)
+
+**The "isolation pessimism" explanation above for `fk33_card` ALONE's 69.9 MHz
+OOC number is WITHDRAWN as the cause.** It is not retracted as a measurement
+(69.9 MHz OOC, worst path `seq_vec_issue/j_dst -> wsump.h_reg`, is still what
+that run reported) but the EXPLANATION this document gave for it -- "no
+engine, no block design, no floorplan," attributed in the body text to
+isolation making the composition artificially sparse/pessimistic -- is wrong.
+The real cause, root-caused while building Task 10's OOC harness for the
+engine+seam+card composition: `wsump.h_reg` is NOT on the path this document
+assumed. It is the output register of a 60-level, 8-step multiply-by-31-add
+DEBUG HASH (`fk33_llama_top.vhd:8243`) that drives exactly one thing: the
+card's `obs_wsum` debug/observability output port.
+
+`hw/jc/card/jc_card_bd.tcl` never connects `obs_wsum` to anything -- not to
+HBM, not to the host, not to any of the other cells. Build 20's own
+synthesis log confirms the real build never pays for this logic at all:
+`port 'obs_wsum' of module 'bd_card_0' is unconnected`, and Vivado's
+synthesis of a module-reference cell with a dangling output simply drops the
+logic feeding it. The OOC harness that produced 69.9 MHz, by contrast, ran
+`synth_design -mode out_of_context` directly on `fk33_card` with EVERY port
+(including `obs_wsum`) exported as a top-level OOC port -- an OOC top-level
+port can never be optimised away, so the 60-level hash stayed alive and its
+own 14.28 ns path dominated the routed critical path. The 9B control number
+(69.0 MHz, "the identical path") is not independent evidence of isolation
+pessimism either: it is the SAME debug hash on the SAME dangling port, run
+through the SAME harness, so of course it reproduces almost exactly -- a
+hash with no data dependency on the model size reporting the same number at
+two model sizes is additional confirmation of THIS cause, not of the
+withdrawn one.
+
+**What is NOT withdrawn.** The comparison to the shipped 9B build 20
+in-context (core clock 75 MHz, WNS +4.98 ns, worst paths all HBM-controller
+IP, `vissue`/`wsum`/`j_dst` nowhere in them) is still good evidence that
+`fk33_card` ALONE's OOC number was never a real limiter -- it just was not,
+and is not now shown to be, evidence of "isolation" as the mechanism. The
+"Open, not yet answered" section's open question (does the real composed
+design meet 200 MHz in-context) remains open: this correction identifies one
+wrong number's wrong cause, not a new measurement of the real composed fmax.
+
+**Procedure that found it, for the next person who hits a dangling-debug-
+port artifact:** build an OOC harness that EXPORTS every port of a module
+whose BD wiring you have in text (`jc_card_bd.tcl`), DIFF the exported set
+against the BD's own `connect_bd_net`/`connect_bd_intf_net` calls (which
+ports does the BD actually drive to something), and read the worst path's
+ENDPOINT net name (`wsump.h_reg` fans out to `obs_wsum`, nothing else) against
+that diff. A port in the "exported but BD never connects it" set that also
+happens to be the worst path's endpoint is the tell; a debug/observability
+name (`obs_*`, `smp_*`) on that list should be the first thing checked, not
+the last.
+
+**Measured and REJECTED, additionally -- do not retry:** "the composed 27B
+card's OOC number reflects isolation-induced placement pessimism" as a
+mechanism for THIS specific 69.9/69.0 MHz pair. It was never tested directly
+(no OOC run of `fk33_card` with `obs_wsum` and its siblings tied off existed
+when this document was first written); it is superseded by the dangling-
+debug-port explanation above, which is directly supported by `jc_card_bd.
+tcl`'s own text and build 20's own synthesis log, not by inference.
+
+See `hw/jc/card/gen_ooc27_top.py`'s own docstring and
+`.superpowers/sdd/2026-10-07-jc-engine-composition/task-10-fix-round-1-
+report.md` for the fix (tie off every port the BD never connects, rather than
+exporting it) and its tests.

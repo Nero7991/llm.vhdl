@@ -36,18 +36,29 @@
 #   4. generates hw/jc/card/jc_ooc27_top.vhd in that tree
 #      (hw/jc/card/gen_ooc27_top.py $SRC --haddr-w 15 --regmax 17408, build
 #      27B-1's own fk33_seam CONFIG from jc_card_bd.tcl);
-#   5. deletes any stale build log, then runs Vivado under
+#   5. a FATAL grep of the patched sources (fix round 1, I6) for FAST_POP's
+#      generic default, NWIDE/SWEEP_PIPE/SCORE_EARLY's generic-map values,
+#      and PIPE/WIDE/MAXOUT 8's own (unpatched) values, BEFORE Vivado runs
+#      at all -- the load-bearing lever check, independent of whether
+#      Vivado's own elaboration trace ever reaches this run's log;
+#   6. deletes any stale build log, then runs Vivado under
 #      hw/jc/loader/run_capped.sh with the given (or default) MemoryHigh cap
-#      and a swap guard at twice that, passing this run's own nonce;
-#   6. harvests ooc_card_200.tcl's reports into <root>/results, and checks
-#      the levers read back off in the run's own Vivado log (jccard_levers.tcl,
-#      run under plain tclsh, no Vivado needed -- the same parser
-#      build_card.tcl itself uses, tested stand-alone against real log
-#      excerpts by test_jccard_levers.py);
-#   7. writes the JCOOC27_DONE or JCOOC27_FAIL <reason> sentinel -- anchored
+#      and a 4 GiB swap guard, passing this run's own nonce on -tclargs
+#      (fix round 1, I2: NOT appended to the log file by this script, which
+#      Vivado's own -log truncates/rotates before writing anything -- the
+#      Tcl prints its own nonce first instead, build_card.tcl's own pattern);
+#   7. harvests ooc_card_200.tcl's reports into <root>/results, and reads
+#      back the levers from the run's own Vivado log too (jccard_levers.tcl,
+#      run under plain tclsh, no Vivado needed) as a second opinion -- FATAL
+#      on "on" or "mixed" (fix round 1, I6), non-fatal only on "missing"
+#      (this script's own log may simply not be where Vivado's elaboration
+#      trace lands for a plain, non-project synth_design; see the comment
+#      at the check itself);
+#   8. writes the JCOOC27_DONE or JCOOC27_FAIL <reason> sentinel -- anchored
 #      (grep -qE '^JCOOC27_(DONE|FAIL)'), gated on a log that both contains
-#      THIS run's own nonce and a JCOOC27_DONE line AFTER it, never on a
-#      timeout or an exit code alone.
+#      THIS run's own nonce and a JCOOC27_DONE line strictly AFTER it (line
+#      number, not just both present), never on a timeout or an exit code
+#      alone.
 #
 # --dry-run prints every command this script would run and every parameter
 # binding and exits 0, touching NOTHING: no git, no Vivado, no filesystem
@@ -81,7 +92,20 @@ if [ $# -lt 1 ]; then
 fi
 ROOT=$1
 PART=${2:-xcvu35p-fsvh2104-2L-e}
-MEM_HIGH=${3:-12G}
+# fix round 1, I3: the memory basis was wrong. The ORIGINAL default (12G
+# cap, 2x/24GiB swap guard) was an ESTIMATE extrapolated from "2.58 GiB for
+# fk33_card OOC" in task-10-brief.md -- but that number is from a DIFFERENT,
+# smaller OOC (fk33_card alone, no engine). Vivado's own log from the real
+# reference runs reports a peak of 11780 MB for the 27B fk33_card OOC ALONE
+# and 9008 MB for fk33_engine OOC ALONE (ooc27_vu35/{fk33_card,fk33_engine}/
+# build.log); this composition adds both together in one placement, so
+# ESTIMATE 16-20 GB, not 4-8. 22G leaves headroom above that without
+# reaching the 24G/30GiB card-build shape; the swap guard is a FIXED 4 GiB,
+# not scaled to the cap (swap in use at all, this early in the project's own
+# measured shape, is already the leading indicator CLAUDE.md names, not a
+# multiple of whatever cap was requested).
+MEM_HIGH=${3:-22G}
+SWAP_KILL_BYTES=4294967296   # fixed 4 GiB (fix round 1, I3)
 
 jcooc27_fail() {
   echo "JCOOC27_FAIL $1"
@@ -109,12 +133,6 @@ if [ -e "$ROOT" ] && [ -n "$(ls -A "$ROOT" 2>/dev/null)" ]; then
 fi
 
 PATCH="$REPO/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch"
-# a swap guard at twice the requested cap, the same ratio run_card.sh's own
-# 24G/30GiB pair uses (30GiB / 24G = 1.25x there; this job's measured peak is
-# expected far below its cap -- task-10-brief.md's own ESTIMATE is 4-8 GB
-# against a 12G default -- so 2x gives more headroom before the guard fires
-# on a job that is not actually runaway).
-SWAP_KILL_BYTES=$(( $(numfmt --from=iec "$MEM_HIGH") * 2 ))
 UNIT="jcooc27_$(date +%s)_$$"
 NONCE="$UNIT"
 SRC="$ROOT/src"
@@ -125,6 +143,19 @@ MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || ec
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 echo "JCOOC27_RUN root=$ROOT part=$PART mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES nonce=$NONCE"
 echo "JCOOC27_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES"
+
+# ---- fix round 1, I3: refuse if MemAvailable is below cap+2G. Not enforced
+#      under --dry-run (same reasoning as the Vivado-presence refusal below:
+#      a dry run's exit code must not depend on what else the box is doing
+#      right now). numfmt turns "22G" into bytes the same way the swap-kill
+#      arithmetic elsewhere in this project's scripts does. ---------------
+if [ "$DRY_RUN" != 1 ] && [ -n "$MEMAVAIL" ]; then
+  CAP_BYTES=$(numfmt --from=iec "$MEM_HIGH")
+  HEADROOM_BYTES=2147483648   # 2 GiB
+  if [ "$MEMAVAIL" -lt "$((CAP_BYTES + HEADROOM_BYTES))" ]; then
+    jcooc27_fail "MemAvailable=$MEMAVAIL is below cap ($MEM_HIGH = $CAP_BYTES bytes) + 2 GiB headroom"
+  fi
+fi
 
 run() {
   if [ "$DRY_RUN" = 1 ]; then
@@ -204,31 +235,66 @@ else
   fi
 fi
 
+# ---- fix round 1, I6: a FATAL grep of the patched sources, BEFORE Vivado
+#      runs at all. This is the LOAD-BEARING lever check -- the post-run
+#      log-based one further down is a second opinion of unverified
+#      reliability, not a substitute for this. Exact text, taken directly
+#      from build12_levers_off.patch's own diff hunks (fix round 1 report). --
+LEVERS_PRE_CHECKS=(
+  "hw/fk33/rtl/fk33_engine.vhd|FAST_POP : boolean := false|FAST_POP default false"
+  "rtl/fk33_llama_top.vhd|NWIDE        => false,|NWIDE => false"
+  "rtl/fk33_llama_top.vhd|SWEEP_PIPE => false, SCORE_EARLY => false)|SWEEP_PIPE/SCORE_EARLY => false"
+  "rtl/fk33_llama_top.vhd|PIPE         => true,|PIPE => true (unpatched, must stay on)"
+  "rtl/fk33_llama_top.vhd|WIDE         => true)|WIDE => true (unpatched, must stay on)"
+  "rtl/fk33_llama_top.vhd|MAXOUT       => 8,|MAXOUT => 8 (unpatched, must stay on)"
+)
+if [ "$DRY_RUN" = 1 ]; then
+  for row in "${LEVERS_PRE_CHECKS[@]}"; do
+    IFS='|' read -r f pat label <<< "$row"
+    echo "+ grep -qF $pat $SRC/$f  # $label"
+  done
+else
+  for row in "${LEVERS_PRE_CHECKS[@]}"; do
+    IFS='|' read -r f pat label <<< "$row"
+    grep -qF -- "$pat" "$SRC/$f" \
+      || jcooc27_fail "levers (pre-Vivado): $label not found in $SRC/$f -- build12_levers_off.patch did not take effect as expected"
+  done
+  echo "JCOOC27_LEVERS_PRE_CHECK_OK ${#LEVERS_PRE_CHECKS[@]} patterns"
+fi
+
 # ---- 5. Vivado, capped -------------------------------------------------------
 OOC_TCL="$SRC/hw/jc/card/ooc_card_200.tcl"
 PROJDIR="$ROOT/ooc"
 run rm -f "$BUILD_LOG"
+# fix round 1, I2: the nonce goes on -tclargs, and ooc_card_200.tcl prints it
+# FIRST, before anything else -- build_card.tcl's own pattern. The original
+# version instead appended "JCOOC27_NONCE $NONCE" to $BUILD_LOG before
+# launching Vivado, but Vivado's own -log truncates/rewrites the file it is
+# given from scratch, so that line never survived for the gate below to find,
+# and every run therefore read as JCOOC27_FAIL regardless of what Vivado did.
 run bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
   vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
-  -tclargs "$SRC" "$PROJDIR" "$PART"
+  -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE"
 if [ "$DRY_RUN" != 1 ]; then
-  echo "JCOOC27_NONCE $NONCE" >> "$BUILD_LOG"
   bash "$REPO/hw/jc/loader/run_capped.sh" "$UNIT" "$MEM_HIGH" "$SWAP_KILL_BYTES" "$ROOT" \
     vivado -mode batch -nojournal -log "$BUILD_LOG" -source "$OOC_TCL" \
-    -tclargs "$SRC" "$PROJDIR" "$PART"
+    -tclargs "$SRC" "$PROJDIR" "$PART" -nonce "$NONCE"
   RC=$?
-  # the sentinel is read from Vivado's OWN log, anchored, never from $RC alone
+  # the sentinel is read from Vivado's OWN log, anchored, never from $RC
+  # alone, and DONE must come STRICTLY AFTER the nonce by LINE NUMBER (a
+  # stale JCOOC27_DONE surviving from an earlier run in a reused log cannot
+  # satisfy both conditions in order; two bare "both present" checks could).
   NONCE_LINE=$(grep -nE "^JCOOC27_NONCE ${NONCE}\$" "$BUILD_LOG" 2>/dev/null | head -1 | cut -d: -f1)
   DONE_LINE=$(grep -nE '^JCOOC27_DONE' "$BUILD_LOG" 2>/dev/null | tail -1 | cut -d: -f1)
-  if [ -z "$NONCE_LINE" ] || [ -z "$DONE_LINE" ]; then
-    SENTINEL_OK=0
-  else
+  if [ -n "$NONCE_LINE" ] && [ -n "$DONE_LINE" ] && [ "$DONE_LINE" -gt "$NONCE_LINE" ]; then
     SENTINEL_OK=1
+  else
+    SENTINEL_OK=0
   fi
   if [ "$SENTINEL_OK" != 1 ]; then
-    REASON=$(grep -E '^JCOOC27_(FAIL|ROUTE_FAIL)' "$BUILD_LOG" | tail -1)
+    REASON=$(grep -E '^JCOOC27_FAIL' "$BUILD_LOG" | tail -1)
     if [ -z "$REASON" ]; then
-      REASON="JCOOC27_FAIL no JCOOC27_DONE in $BUILD_LOG (vivado rc=$RC; check the swap guard log)"
+      REASON="JCOOC27_FAIL no JCOOC27_DONE after this run's JCOOC27_NONCE ($NONCE) in $BUILD_LOG (vivado rc=$RC; check the swap guard log)"
     fi
     echo "$REASON"
     exit 1
@@ -250,31 +316,40 @@ else
 
   # jccard_levers.tcl's jccard_lever_status is pure Tcl (no Vivado), already
   # tested stand-alone against real log excerpts by test_jccard_levers.py.
-  # build_card.tcl's own MEASURED finding was that this elaboration-trace
-  # "Parameter <NAME> bound to: <value>" line, for a PROJECT-MODE run, goes
-  # only to the run's own <top>.vds, never to runme.log or the project
+  # This is a SECOND OPINION, read from THIS run's own Vivado log, on top of
+  # step 5's load-bearing pre-Vivado source grep -- not a replacement for
+  # it. build_card.tcl's own MEASURED finding was that this elaboration-
+  # trace "Parameter <NAME> bound to: <value>" line, for a PROJECT-MODE run,
+  # goes only to the run's own <top>.vds, never to runme.log or the project
   # launcher's log. Whether a PLAIN (non-project) `synth_design`, running
   # in-process in the very batch session this script's own -log captures,
-  # writes that same line to THIS run's $BUILD_LOG is UNVERIFIED (no Vivado
-  # access from here to check it). So this reads $BUILD_LOG on the chance it
-  # is there, but ONLY REPORTS the result (JCOOC27_LEVER lines) -- it never
-  # fails the run on a "missing" verdict, which the real build_card.tcl DOES
-  # treat as a hard failure but only because it already proved its own trace
-  # file is the right place to look; this script has not proved that of its
-  # own log, so a "missing" verdict here would be as likely to mean "this
-  # script is looking in the wrong place" as "the patch did not apply", and
-  # the git-apply --check above is already the load-bearing lever guarantee.
+  # writes that same line to THIS run's $BUILD_LOG at all is UNVERIFIED (no
+  # Vivado access from here to check it) -- which is exactly why "missing"
+  # stays non-fatal (fix round 1, I6): it is as likely to mean "this log is
+  # not where the trace lands" as "the patch did not apply", and the
+  # pre-Vivado source grep above already covers that case. "on" or "mixed"
+  # are a DIFFERENT finding: the trace line IS present and says the lever is
+  # bound wrong, which is not an ambiguous result, so those ARE fatal here.
   LEVER_TCL=$(cat <<'TCLEOF'
 source [lindex $argv 0]
 set logtxt [read [open [lindex $argv 1]]]
+set bad {}
 foreach lv {NWIDE SWEEP_PIPE SCORE_EARLY} {
   set res [jccard_lever_status $lv $logtxt]
-  puts "JCOOC27_LEVER $lv [lindex $res 0] ([lindex $res 1])"
+  set status [lindex $res 0]
+  puts "JCOOC27_LEVER $lv $status ([lindex $res 1])"
+  if {$status eq "on" || $status eq "mixed"} { lappend bad "$lv:$status" }
+}
+if {[llength $bad] > 0} {
+  puts "JCOOC27_LEVER_FAIL [join $bad {,}]"
+  exit 1
 }
 TCLEOF
 )
   echo "$LEVER_TCL" > "$ROOT/lever_check.tcl"
-  tclsh "$ROOT/lever_check.tcl" "$SRC/hw/jc/card/jccard_levers.tcl" "$BUILD_LOG" || true
+  if ! tclsh "$ROOT/lever_check.tcl" "$SRC/hw/jc/card/jccard_levers.tcl" "$BUILD_LOG"; then
+    jcooc27_fail "levers (post-run log read-back): NWIDE/SWEEP_PIPE/SCORE_EARLY read 'on' or 'mixed' (see JCOOC27_LEVER lines above)"
+  fi
 fi
 
 # ---- 7. the sentinel, anchored ------------------------------------------------
