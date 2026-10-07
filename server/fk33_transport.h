@@ -125,6 +125,25 @@ fk33_transport *fk33_transport_open_filedir(const char *dir);
 fk33_transport *fk33_transport_open_sim(const void *opts);
 
 /* ------------------------------------------------------------------------
+ * THE JUNGLE CAT TRANSPORT.  No PCIe, no chardev: the Jungle Cat's only path
+ * off-die is JTAG (coe.py), and the only thing allowed to shift it is
+ * tools/jc/jc_broker.py, which owns the USER3 control core as a single
+ * client so the loader (USER4) and this host never fight it for the chain.
+ * server/fk33_transport_jc.c talks that broker's JSON-lines-over-a-Unix-
+ * socket protocol (docs/superpowers/plans/2026-10-07-jc-engine-composition.md,
+ * Task 6):  reg_read32/reg_write32 map to rd32/wr32, mem_read maps to memrd,
+ * and mem_write is refused with -EPERM because the loader is the only HBM
+ * writer.  Consecutive reg_write32 calls to the exact same offset (the
+ * FK33_SEAM_WIN_DATA loops in pl_backend.c) are coalesced into one `wrn`;
+ * see the header comment in fk33_transport_jc.c for the flush rule.
+ *
+ * `die` selects which die on the chain ("A"/"B"/...; the broker's own
+ * naming) and must be a plain identifier (letters, digits, '_', '-').
+ * Returns NULL on failure (bad args, socket/connect failure) and prints why.
+ * ------------------------------------------------------------------------ */
+fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die);
+
+/* ------------------------------------------------------------------------
  * Small helpers every caller wants, written once.
  * ------------------------------------------------------------------------ */
 

@@ -487,6 +487,9 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                    o->dev_c2h  ? o->dev_c2h  : "/dev/xdma0_c2h_0",
                    o->allow_hardware);
         break;
+    case PL_TRANSPORT_JC:
+        c->t = fk33_transport_open_jc(o->jc_sock, o->jc_die);
+        break;
     default:
         c->t = NULL;
     }

@@ -98,7 +98,9 @@ int pl_embed_synthetic(void *user, int token_id,
 typedef enum {
     PL_TRANSPORT_SIM = 0,   /* server/fk33_sim.c, the test double */
     PL_TRANSPORT_FILE,      /* three ordinary files; the real code, no engine */
-    PL_TRANSPORT_CHARDEV    /* /dev/xdma0_* -- THE SWAP POINT, requires a human */
+    PL_TRANSPORT_CHARDEV,   /* /dev/xdma0_* -- THE SWAP POINT, requires a human */
+    PL_TRANSPORT_JC         /* tools/jc/jc_broker.py over a Unix socket; see
+                             * fk33_transport_open_jc() in fk33_transport.h */
 } pl_transport_kind;
 
 typedef struct {
@@ -109,6 +111,13 @@ typedef struct {
     const char *file_dir;
     const char *dev_user, *dev_h2c, *dev_c2h;
     uint32_t    allow_hardware;   /* must be FK33_ALLOW_HARDWARE for /dev */
+
+    /* PL_TRANSPORT_JC only.  `jc_sock` is the broker's listening Unix
+     * socket path, `jc_die` the die identifier on its chain ("A"/"B"/...).
+     * Both NULL by default, which is why PL_TRANSPORT_JC is not the
+     * default transport: pl_open_opts_default() does not touch either. */
+    const char *jc_sock;
+    const char *jc_die;
 
     /* BAR offset of the seam register block.  0 -> FK33_SEAM_BASE. */
     uint32_t seam_base;

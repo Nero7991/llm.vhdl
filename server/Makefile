@@ -14,7 +14,9 @@
 #   pl_backend.c         v2, the FK33 host seam: prefill + decode returning
 #   fk33_transport.c     logits, over a transport that is either the real
 #   fk33_sim.c           pread/pwrite chardev code pointed at ordinary files,
-#                        or a modelled card.  NOTHING HERE OPENS /dev/xdma*.
+#                        a modelled card, or (fk33_transport_jc.c) JSON lines
+#                        over a Unix socket to tools/jc/jc_broker.py for the
+#                        Jungle Cat.  NOTHING HERE OPENS /dev/xdma* OR JTAG.
 #   qwen35_chat.c        the Qwen3.5 chat template, checked byte-for-byte
 #                        against Jinja2 by server/verify_chat_template.py.
 #
@@ -30,7 +32,8 @@ INC       := -I../ref
 ARM_CC    ?= aarch64-linux-gnu-gcc
 ARM_CXX   ?= aarch64-linux-gnu-g++
 
-CSRC := pl_backend_axu3eg.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
+CSRC := pl_backend_axu3eg.c pl_backend.c pl_pipeline.c fk33_transport.c \
+        fk33_transport_jc.c fk33_sim.c \
         fk33_imglock.c \
         fk33_manifest.c embed_mv4i.c embed_bf16.c \
         qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
@@ -61,11 +64,11 @@ board: $(DEPS)
 # ---------------------------------------------------------------------------
 # The seam self-test.  No card, no driver, no FPGA; see tests/seam_selftest.c
 # for what it can and cannot prove.
-seam_selftest: tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
-               fk33_manifest.c fk33_imglock.c pl_backend.h pl_pipeline.h fk33_transport.h fk33_seam.h \
-               fk33_manifest.h fk33_imglock.h
+seam_selftest: tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_transport_jc.c \
+               fk33_sim.c fk33_manifest.c fk33_imglock.c pl_backend.h pl_pipeline.h fk33_transport.h \
+               fk33_seam.h fk33_manifest.h fk33_imglock.h
 	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c \
-	      fk33_sim.c fk33_manifest.c fk33_imglock.c
+	      fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
 
 # ---------------------------------------------------------------------------
 # The host embedding gather (server/embed_mv4i.c), and its checks.
@@ -102,9 +105,9 @@ embed_ref_oracle: tests/embed_ref_oracle.c ../ref/matvec_int4.c ../ref/mv4i_arit
 	$(CC) $(CBACK) -o $@ tests/embed_ref_oracle.c -lm
 
 embed_e2e: tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
-           fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c
+           fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
 	$(CC) $(CBACK) -o $@ tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
-	      fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lm
+	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lm
 
 embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 	@if [ ! -f "$(EMBED_MV4I)" ]; then \
@@ -134,12 +137,12 @@ embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 libqwen35chat.so: qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c qwen35_tok.h qwen35_chat.h
 	$(CC) $(CBACK) -fPIC -shared -I. -o $@ qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c -lm
 
-run_prompt: tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_sim.c \
-            fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
+run_prompt: tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_transport_jc.c \
+            fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
             qwen35_chat.c qwen35_unicode_data.c
 	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c \
-	      fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c qwen35_tok.c \
-	      qwen35_chat.c qwen35_unicode_data.c -lm
+	      fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c \
+	      qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c -lm
 
 # The chat-template batch driver, for server/verify_chat_template.py.  That
 # script builds it itself with --build; this rule exists so `make check` can
@@ -152,14 +155,21 @@ chat_batch: tests/chat_batch.c qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 check:
 	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c \
 	      tests/embed_dump.c tests/embed_e2e.c tests/embed_bf16_dump.c \
-	      tests/run_prompt.c tests/imglock_selftest.c
+	      tests/run_prompt.c tests/imglock_selftest.c test_transport_jc.c
 	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c 2>/dev/null \
 	  || echo "  (no aarch64 toolchain; the SBC-side syntax check was skipped)" 
 	$(CXX) $(CXXFLAGS) $(INC) -fsyntax-only llama_server.cpp
 	@echo "SERVER_COMPILE OK"
 
-test: seam_selftest
+test: seam_selftest test_transport_jc
 	./seam_selftest
+	./test_transport_jc
+
+# The JC transport's own teeth (server/test_transport_jc.c): a fake broker on
+# a Unix socket under ~/regress_scratch/, scripted per case.  No hardware, no
+# tools/jc/jc_broker.py, no coe.py, nothing under /dev.
+test_transport_jc: test_transport_jc.c fk33_transport_jc.c fk33_transport.h
+	$(CC) $(CBACK) -o $@ test_transport_jc.c fk33_transport_jc.c
 
 # THE IMAGE INTERLOCK, both halves in one command so it can be a single gate
 # row (sim/regress.sh runs a row's command unquoted and not through a shell,
@@ -226,6 +236,7 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 clean:
 	rm -f llama_server llama_server_arm seam_selftest imglock_selftest chat_batch \
 	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt libqwen35chat.so \
+	      test_transport_jc \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
@@ -237,8 +248,8 @@ clean:
 # record must be REFUSED, and the SAME pair with no record -- the state of the
 # world before 2026-09-20 -- must be ACCEPTED, which is the attribution
 # control.  No hardware, no model file, no /mnt/storage.
-imglock_selftest: tests/imglock_selftest.c pl_backend.c fk33_transport.c \
+imglock_selftest: tests/imglock_selftest.c pl_backend.c fk33_transport.c fk33_transport_jc.c \
                   fk33_sim.c fk33_manifest.c fk33_imglock.c pl_backend.h \
                   fk33_transport.h fk33_seam.h fk33_manifest.h fk33_imglock.h
 	$(CC) $(CBACK) -o $@ tests/imglock_selftest.c pl_backend.c \
-	      fk33_transport.c fk33_sim.c fk33_manifest.c fk33_imglock.c
+	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
