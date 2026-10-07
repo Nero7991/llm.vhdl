@@ -3,6 +3,7 @@
 
     coe_load.py identify --bmc 192.0.2.1 --chain AB|BA --die A|B --dies DIES.json [--force]
     coe_load.py load   MANIFEST.json --bmc 192.0.2.1 --die A|B --chain AB|BA --dies DIES.json [--resume]
+                [--reconnect-secs 270] [--max-reconnects 50]
     coe_load.py verify MANIFEST.json --bmc 192.0.2.1 --die A|B --chain AB|BA --dies DIES.json
 
 (192.0.2.1 is a documentation address; --bmc is required and has no default.)
@@ -107,6 +108,29 @@ Fix round 3 (final review, 2026-10-05), host-only, no RTL/Vivado change:
      (file, addr, file_offset, nbytes, blake2b_128, die, MAX_PAYLOAD_BYTES) -- a derived
      CRC is not identity data, so two manifests that plan identically still resume
      against the same checkpoint.
+
+Reconnect (2026-10-07, host-only). MEASURED (docs/debugging/2026-10-05_jc-jtag-axi-host-
+path-is-latency-bound.md S14-S15): the BMC ends every CoE connection after ~310-320 s
+whatever the data rate, alternately by RST and by going silent. A whole die used to take
+~10 `load --resume` invocations, each re-planning (re-hashing ~7 GB) first. Now one
+`load`/`verify` runs to completion by itself, with the plan built once:
+  - proactive: `--reconnect-secs` (default 270, 0 < s <= 300, 0 disables), counted from
+    the moment the current connection's start() completed. When it is reached, at a
+    clean point (between slots, never with a frame half-sent): read every outstanding
+    reply, leave Shift-DR through close_scan (the client's vetted exit_dr_to_idle),
+    close the socket, open a new connection (a fresh CoeTransport: start() flushes
+    stale replies and resyncs from UNKNOWN), open the scan, and settle -- which
+    re-checks the die's DNA exactly as on any scan open -- then continue from the
+    die's own committed seq.
+  - reactive: a link-level failure (ConnectionError, TimeoutError, any OSError from the
+    transport, wrapped as LinkLost so a file error is never mistaken for one) closes
+    the dead socket and reconnects the same way, up to `--max-reconnects` (default 50)
+    per run. Neither kind counts against --max-resyncs. Each prints one line,
+    `JCLOAD_RECONNECT n reason secs_on_connection`. RECONNECT_TRIES consecutive failed
+    attempts (dial, start, scan open or settle) abort with the connection-lost message,
+    which says to run again with --resume.
+The CoE client's JTAG guard is untouched: every new connection goes through start() and
+only the vetted calls CoeTransport already used.
 """
 import argparse, collections, contextlib, hashlib, json, math, os, re, sys, time, zlib
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -236,11 +260,61 @@ MAX_RESYNCS = 8           # resyncs/recoveries/tail resends: the floor (--max-re
 REFILL_FRAMES = 100_000   # frames committed per extra MAX_RESYNCS granted (fix round 3 item 3)
 MAX_POLLS = 32            # status polls per wait; small so a wrong --chain fails fast
 CKPT_EVERY = 1000         # frames between checkpoint writes
+RECONNECT_SECS = 270      # proactive reconnect after this long on one connection (--reconnect-secs)
+RECONNECT_SECS_MAX = 300  # the BMC ends a connection at ~310-320 s (MEASURED, S15)
+MAX_RECONNECTS = 50       # reactive reconnects per run (--max-reconnects)
+RECONNECT_TRIES = 5       # consecutive failed reconnect attempts before giving up
+RECONNECT_BACKOFF = 2.0   # seconds; attempt k waits k * this before the next
 NONE = 0xFFFFFFFF         # status "last committed seq" before anything committed
 M32 = 0xFFFFFFFF
 
 class LoadAborted(Exception):
     pass
+
+class LinkLost(ConnectionError):
+    """The connection itself is gone (RST, silence past the socket timeout, a poisoned
+    client): what the transport raised, as `orig`. Raised only by _Guarded, around
+    transport calls, so an OSError from a manifest file or a checkpoint write is never
+    taken for one."""
+    def __init__(s, orig):
+        ConnectionError.__init__(s, "%s: %s" % (type(orig).__name__, orig))
+        s.orig = orig
+
+class _Guarded:
+    """The Loader's handle on one connection: transport calls that fail at the link
+    level (OSError, ConnectionError and TimeoutError included) raise LinkLost instead.
+    LinkFault, the CoE guard's refusals and everything else pass through untouched."""
+    def __init__(s, t):
+        s.raw = t
+    def __getattr__(s, k):
+        return getattr(s.raw, k)
+    def _call(s, fn, *a):
+        try:
+            return fn(*a)
+        except OSError as e:
+            if isinstance(e, LinkLost):
+                raise
+            raise LinkLost(e)
+    def open_scan(s):
+        return s._call(s.raw.open_scan)
+    def send(s, slot):
+        return s._call(s.raw.send, slot)
+    def recv(s):
+        return s._call(s.raw.recv)
+    def close_scan(s):
+        return s._call(s.raw.close_scan)
+    def recover(s):
+        return s._call(s.raw.recover)
+    def abort_close(s):
+        try:
+            s.raw.abort_close()
+        except Exception:
+            pass
+    def close(s):
+        try:
+            s.raw.close()
+        except Exception:
+            pass
 
 class LinkFault(Exception):
     """A CoE reply was bad (status, txn or length) but the connection is still framed:
@@ -374,6 +448,14 @@ class FakeTransport:
     that is not yet valid for the first `dna_valid_after` slots shifted. The die's
     DNA itself is the model's (`model.dna`, `model.dna_valid`).
 
+    Reconnect (2026-10-07): `drop_after` ends the connection RST-like (that send
+    raises ConnectionResetError, nothing shifted); `silent_after` ends it silence-like
+    (slots still reach the die, but no reply comes: the first recv owed one raises
+    TimeoutError). Either way the connection is then dead, as the CoE client's poison
+    makes it: every later call raises ConnectionError. `close()` closes the socket
+    (`gone`); any call after it fails the test. `on_shift` runs once per slot shifted
+    (a test's fake clock).
+
     `model` is a LoaderModel, or (fix round 1) a jc_model.FifoOverflowModel built with
     `crc_ticks_per_byte`: then every slot shifted advances its clock one tick, so the
     CRC unit's busy time and the finite FIFO behind it are modelled too.
@@ -385,7 +467,7 @@ class FakeTransport:
     def __init__(s, model, lead, lag_slots=2, fail_seqs=(), drop_after=None,
                  wrong_lead=False, drop_seqs=(), desync_seqs=(), fault_sends=(),
                  trip_after=None, fail_forever=False, rerr_seqs=(), stale_range=False,
-                 dna_valid_after=0, hz=27_000_000):
+                 dna_valid_after=0, hz=27_000_000, silent_after=None, on_shift=None):
         s.m, s.lead, s.lag = model, lead, lag_slots
         s.fail = set(fail_seqs); s.fail_forever = fail_forever
         s.drop = set(drop_seqs); s.desync = set(desync_seqs); s.faults = set(fault_sends)
@@ -397,6 +479,8 @@ class FakeTransport:
         s.hist, s.out, s.sent, s.first_seq_sent = [], [], 0, None
         s.state, s.opens, s.recovers, s.abort_closes = "closed", 0, 0, 0
         s.misaligned = False
+        s.silent_after, s.on_shift = silent_after, on_shift
+        s.dead, s.gone = None, False
         s._feed = getattr(model, "feed_slot", None) or model.feed
         s._status = getattr(model, "loader_status", None) or model.status
         s._tick = getattr(model, "tick", None)
@@ -405,6 +489,8 @@ class FakeTransport:
         """One slot on the wire: what the die does with it, and the TDO it returns."""
         if s._tick is not None:
             s._tick(1)
+        if s.on_shift is not None:
+            s.on_shift()
         s.nshift += 1
         h0 = dict(s._status())
         if s.nshift <= s.dna_valid_after:
@@ -444,40 +530,56 @@ class FakeTransport:
         tdo[:nb] = v.to_bytes(nb, "little")
         return bytes(tdo)
 
+    def _alive(s, what):
+        assert not s.gone, "%s after close()" % what
+        if s.dead:
+            raise ConnectionError("fake: connection is dead (%s)" % s.dead)
+
     def open_scan(s):
+        s._alive("open_scan")
         assert s.state == "closed", "open_scan while %s" % s.state
         s.state = "open"; s.opens += 1
         s.misaligned = s.wrong
         s._shift(bytes(F.SLOT_BYTES))                 # the filler: one desync, TDO unread
 
     def send(s, slot):
+        s._alive("send")
         assert s.state == "open", "send while %s" % s.state
         assert len(slot) == F.SLOT_BYTES
         if s.drop_after is not None and s.sent >= s.drop_after:
-            raise ConnectionError("fake link dropped")
+            s.dead = "reset"
+            raise ConnectionResetError("fake link reset")
         h = F.parse_header(slot)
         if s.first_seq_sent is None and h["magic"] == F.MAGIC_FRAME and (h["nwords"] or h["flags"]):
             s.first_seq_sent = h["seq"]
         fault = s.sent in s.faults
+        if s.silent_after is not None and s.sent >= s.silent_after:
+            fault = "silent"
         tdo = s._shift(slot)
         s.sent += 1
         s.out.append((fault, tdo))
 
     def recv(s):
+        s._alive("recv")
         assert s.state == "open", "recv while %s" % s.state
         assert s.out, "recv with nothing outstanding"
         fault, tdo = s.out.pop(0)
+        if fault == "silent":
+            s.dead = "silent"
+            raise TimeoutError("timed out")
         if fault:
             s.state = "faulted"
             raise LinkFault("fake: injected bad CoE reply")
         return tdo
 
     def close_scan(s):
+        s._alive("close_scan")
         assert s.state == "open", "close_scan while %s" % s.state
         assert not s.out, "close_scan with %d TDO unread" % len(s.out)
         s.state = "closed"
 
     def recover(s):
+        s._alive("recover")
         s.out.clear()
         s.state = "closed"; s.recovers += 1
 
@@ -487,6 +589,11 @@ class FakeTransport:
         if s.state != "closed":
             s.abort_closes += 1
         s.state = "closed"
+
+    def close(s):
+        """What CoeTransport.close does: the socket is closed; nothing may follow."""
+        s.out.clear()
+        s.gone = True
 
 @contextlib.contextmanager
 def _link():
@@ -580,6 +687,18 @@ class CoeTransport:
             try:
                 step()
             except Exception:
+                pass
+
+    def close(s):
+        """Close the socket (no JTAG traffic). The loader calls it after close_scan has
+        left Shift-DR (a proactive reconnect) or on a connection already lost; this
+        client is never used again, a new connection is a new CoeTransport."""
+        s.pending = []
+        sock = getattr(s.c, "s", None)
+        if sock is not None and hasattr(sock, "close"):
+            try:
+                sock.close()
+            except OSError:
                 pass
 
 # Range-CRC wait (Task 9 review M1/M3, folded into 9b), TIME-based from the transport's
@@ -731,12 +850,31 @@ class Loader(_Session):
     mismatch aborts naming the pieces. The die's status, never the checkpoint, says
     how far a load got; the checkpoint only binds a resume to the plan's sha."""
     def __init__(s, t, frames, plan_sha, ckpt_path, resume=False, *, dna,
-                 dna_label="the die record", max_resyncs=MAX_RESYNCS, corrupt_seq=None):
+                 dna_label="the die record", max_resyncs=MAX_RESYNCS, corrupt_seq=None,
+                 connect=None, reconnect_secs=0, max_reconnects=MAX_RECONNECTS,
+                 clock=time.monotonic, sleep=None, log=None):
+        """`connect` makes a NEW connection (a CoeTransport, whose constructor runs
+        start()); None means no reconnect at all (a lost link ends the run, as before).
+        `reconnect_secs` > 0 turns on the proactive reconnect; `max_reconnects` bounds
+        the reactive ones. `clock`, `sleep` and `log` are injectable for tests."""
         if dna is None:
             raise ValueError("the Loader needs the die's expected DNA (from --dies)")
         if max_resyncs < 1:
             raise ValueError("max_resyncs must be >= 1, got %r" % (max_resyncs,))
-        _Session.__init__(s, t, dna, dna_label)
+        if not 0 <= reconnect_secs <= RECONNECT_SECS_MAX:
+            raise ValueError("reconnect_secs must be 0 (off) or in (0, %d], got %r"
+                             % (RECONNECT_SECS_MAX, reconnect_secs))
+        if max_reconnects < 0:
+            raise ValueError("max_reconnects must be >= 0, got %r" % (max_reconnects,))
+        _Session.__init__(s, _Guarded(t), dna, dna_label)
+        s.connect, s.reconnect_secs, s.max_reconnects = connect, reconnect_secs, max_reconnects
+        s.clock = clock
+        s.sleep = sleep if sleep is not None else (lambda secs: time.sleep(secs))
+        s.log = log if log is not None else (lambda line: print(line, flush=True))
+        s.conn_t0 = clock()       # the first connection's start() completed just before this
+        s.connections = 1
+        s.reconnects = 0          # every reconnect, proactive or reactive
+        s.lost = 0                # reactive ones only: bounded by max_reconnects
         if not frames or [f.seq for f in frames] != list(range(len(frames))):
             raise ValueError("frames must be plan_frames() output: seq 0..n-1 in order")
         s.frames, s.sha, s.ckpt, s.resume = frames, plan_sha, ckpt_path, resume
@@ -825,7 +963,92 @@ class Loader(_Session):
             s.t.open_scan()
             return s._settle()
         except LinkFault as e:
-            return s._reopen("link: %s" % e, True)
+            return s._restore("link: %s" % e, faulted=True)
+        except LinkLost as e:
+            return s._restore(lost=e)
+
+    # ------------------------------------------------------------ reconnect (2026-10-07)
+
+    def _restore(s, why=None, faulted=False, lost=None):
+        """Get back to a settled scan: _reopen (a resync, counted against max_resyncs)
+        unless the connection itself is gone (`lost`), in which case reconnect. A
+        connection lost DURING a reopen also turns into a reconnect."""
+        while True:
+            try:
+                if lost is not None:
+                    return s._reconnect_lost(lost)
+                return s._reopen(why, faulted)
+            except LinkLost as e:
+                lost = e
+
+    def _due(s):
+        return (s.connect is not None and s.reconnect_secs > 0
+                and s.clock() - s.conn_t0 >= s.reconnect_secs)
+
+    def _rotate(s):
+        """Proactive reconnect, at a clean point (the caller has read every reply it
+        owes: no frame is half-sent). Leave Shift-DR the vetted way, close the socket,
+        reconnect. Returns the new connection's settled status."""
+        secs = s.clock() - s.conn_t0
+        try:
+            s.t.close_scan()
+        except (LinkFault, LinkLost):
+            s.t.abort_close()     # swallows; the connection is being dropped anyway
+        s.t.close()
+        return s._reconnect("proactive", secs)
+
+    def _reconnect_lost(s, e):
+        """Reactive reconnect after LinkLost `e`. Without a connect factory, or with
+        max_reconnects used up, the run ends with the connection-lost abort."""
+        secs = s.clock() - s.conn_t0
+        s.t.close()
+        if s.connect is None or s.max_reconnects == 0:
+            raise e.orig
+        if s.lost >= s.max_reconnects:
+            raise ConnectionError("the link was lost again (%s) after %d reconnects "
+                                  "(--max-reconnects %d); the die keeps what it committed: "
+                                  "run again with --resume" % (e, s.lost, s.max_reconnects))
+        s.lost += 1
+        return s._reconnect("lost:%s" % type(e.orig).__name__, secs)
+
+    def _reconnect(s, reason, secs):
+        """A new connection (s.connect(): a fresh CoeTransport, whose constructor runs
+        start()), a new scan, and _settle -- which re-checks the die's DNA exactly as
+        on any scan open. Up to RECONNECT_TRIES consecutive attempts with a short
+        backoff; LoadAborted (a DNA mismatch above all) is never retried."""
+        s.reconnects += 1
+        s.log("JCLOAD_RECONNECT %d %s %.1f" % (s.reconnects, reason, secs))
+        last = None
+        for k in range(1, RECONNECT_TRIES + 1):
+            t = None
+            try:
+                t = _Guarded(s.connect())
+                s.t, s.conn_t0 = t, s.clock()
+                s.connections += 1
+                t.open_scan()
+                return s._settle()
+            except (OSError, LinkFault) as e:      # LinkLost is an OSError
+                last = e
+                if t is not None:
+                    t.abort_close()
+                    t.close()
+            if k < RECONNECT_TRIES:
+                s.sleep(RECONNECT_BACKOFF * k)
+        raise ConnectionError("could not reconnect in %d consecutive attempts (last: %s: "
+                              "%s); the die keeps what it committed: run again with --resume"
+                              % (RECONNECT_TRIES, type(last).__name__, last))
+
+    def _close_end(s):
+        """Leave Shift-DR at the end of a run; every result is already in hand."""
+        try:
+            s.t.close_scan()
+        except LinkFault:
+            try:
+                s.t.recover()
+            except LinkLost:
+                pass
+        except LinkLost:
+            pass
 
     def _check_ckpt(s):
         _outside_repo(s.ckpt, "the checkpoint")
@@ -895,6 +1118,12 @@ class Loader(_Session):
         inflight, stalls = 0, 0
         while True:
             try:
+                if s._due():
+                    while inflight:               # a clean point: every owed reply read
+                        s._take(); inflight -= 1
+                    st = s._rotate()
+                    base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
+                    continue
                 while nxt < s.nd and inflight < s.t.depth:
                     s.t.send(s._slot(s.frames[nxt])); nxt += 1; inflight += 1
                 if inflight == 0:
@@ -929,7 +1158,11 @@ class Loader(_Session):
                 s._maybe_ckpt(st)
             except LinkFault as e:
                 inflight = 0
-                st = s._reopen("link: %s" % e, True)
+                st = s._restore("link: %s" % e, faulted=True)
+                base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
+            except LinkLost as e:
+                inflight = 0
+                st = s._restore(lost=e)
                 base, nxt = _errs(st), (0 if st["last"] == NONE else st["last"] + 1)
 
     def _range_ok(s, q):
@@ -980,6 +1213,13 @@ class Loader(_Session):
         first, final = s.ranges[0].seq, s.frames[-1].seq
         base = _errs(st)
         while len(s.range_results) < len(s.ranges):
+            if s._due():                          # between pieces: nothing outstanding
+                try:
+                    st = s._rotate()
+                except LinkLost as e:
+                    st = s._restore(lost=e)
+                base = _errs(st)
+                continue
             seq = (st["last"] + 1) & M32
             i = seq - first if use_plan_seqs and first <= seq <= final else None
             if i is None or i in s.range_results:
@@ -1002,7 +1242,9 @@ class Loader(_Session):
                     st = s._reopen("error counters %s -> %s in the range phase"
                                    % (base, _errs(x)), False)
             except LinkFault as e:
-                st = s._reopen("link: %s" % e, True)
+                st = s._restore("link: %s" % e, faulted=True)
+            except LinkLost as e:
+                st = s._restore(lost=e)
             # M1: the reopen's settled status may already carry this frame's result
             if s._range_ok(seq)(st):
                 s._accept(i, st)
@@ -1049,10 +1291,7 @@ class Loader(_Session):
                                            % (f.addr, f.n, "RERR" if g is None else "%08x" % g, w)
                                            for f, g, w in bad[:8]),
                                  " ..." if len(bad) > 8 else "", advice))
-        try:
-            s.t.close_scan()
-        except LinkFault:
-            s.t.recover()                              # every result is already in hand
+        s._close_end()                                 # every result is already in hand
         return st
 
     def _run_verify(s):
@@ -1068,10 +1307,7 @@ class Loader(_Session):
                               "finish the load (load --resume) before verify"
                               % ("none" if st["last"] == NONE else st["last"], s.frames[-1].seq))
         st = s._range_phase(st, use_plan_seqs=False)
-        try:
-            s.t.close_scan()
-        except LinkFault:
-            s.t.recover()
+        s._close_end()
         return s._mismatches()
 
 CKPT_DIR = "/mnt/storage/fk33_builds/jc_load"
@@ -1166,6 +1402,26 @@ def _max_resyncs_type(s):
         raise argparse.ArgumentTypeError("--max-resyncs must be >= 1, got %d" % v)
     return v
 
+def _reconnect_secs_type(s):
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--reconnect-secs must be a number, got %r" % s)
+    if not (v == 0 or 0 < v <= RECONNECT_SECS_MAX):
+        raise argparse.ArgumentTypeError("--reconnect-secs must be 0 (off) or > 0 and <= %d "
+                                          "(the BMC ends a connection at ~310 s), got %s"
+                                          % (RECONNECT_SECS_MAX, s))
+    return int(v) if v == int(v) else v
+
+def _max_reconnects_type(s):
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("--max-reconnects must be an integer, got %r" % s)
+    if v < 0:
+        raise argparse.ArgumentTypeError("--max-reconnects must be >= 0, got %d" % v)
+    return v
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Load or verify a Jungle Cat die's HBM over "
                                  "JTAG, or record a die's identity (main session only: "
@@ -1198,6 +1454,16 @@ def main(argv=None):
                        "die has committed this run, so a long load gets a proportionally "
                        "larger allowance for transient events than a short one"
                        ).format(REFILL_FRAMES))
+        p.add_argument("--reconnect-secs", type=_reconnect_secs_type, default=RECONNECT_SECS,
+                       help=("open a new CoE connection after this many seconds on one, at "
+                       "a clean point, before the BMC ends it (MEASURED ~310-320 s); "
+                       "default %(default)s, must be > 0 and <= {0}, 0 disables. The plan "
+                       "is reused and the die's DNA re-checked on every new connection"
+                       ).format(RECONNECT_SECS_MAX))
+        p.add_argument("--max-reconnects", type=_max_reconnects_type, default=MAX_RECONNECTS,
+                       help=("reconnects after a LOST connection allowed per run (default: "
+                       "%(default)s, 0 disables); proactive ones (--reconnect-secs) are not "
+                       "counted, and neither kind counts against --max-resyncs"))
         p.add_argument("--corrupt-seq", type=int, default=None,
                        help=("DEBUG (load only): send this data frame once with one payload "
                              "bit flipped, to prove on silicon that the die's CRC check "
@@ -1224,6 +1490,7 @@ def main(argv=None):
               "against Vivado)" % (a.die, a.chain, dna_hex(dna), how, a.dies,
                                    dna_hex(dna_bitrev(dna))))
         return 0
+    t_start = time.time()
     try:
         dna = dna_for(a.dies, a.die)
         label = "the die record %s (die %s)" % (a.dies, a.die)
@@ -1242,23 +1509,32 @@ def main(argv=None):
         return 2
     os.makedirs(os.path.dirname(os.path.abspath(ck)), exist_ok=True)
     t0 = time.time()
+    plan_s = t0 - t_start
+    connect = lambda: CoeTransport(a.bmc, a.die, a.chain, hz=a.hz)
     try:
-        t = CoeTransport(a.bmc, a.die, a.chain, hz=a.hz)
+        t = connect()
         ld = Loader(t, frames, sha, ck, resume=a.resume, dna=dna, dna_label=label,
                    max_resyncs=a.max_resyncs,
-                   corrupt_seq=a.corrupt_seq if a.cmd == "load" else None)
+                   corrupt_seq=a.corrupt_seq if a.cmd == "load" else None,
+                   connect=connect, reconnect_secs=a.reconnect_secs,
+                   max_reconnects=a.max_reconnects)
         if a.cmd == "load":
             st = ld.run_load()
             n = ld.data_bytes_sent          # this run only (a resume sends the remainder)
-            dt = max(time.time() - t0, 1e-9)
+            now = time.time()
+            dt = max(now - t0, 1e-9)        # on the link: first connection to done
+            wall = now - t_start            # planning included
+            conns = "connections=%d reconnects=%d" % (ld.connections, ld.reconnects)
             if ld.already_complete:
                 print("JCLOAD_DONE already complete: %d pieces re-checked by range CRC, "
-                      "last=%d resyncs=%d %.0f s" % (len(ld.range_results), st["last"],
-                                                     ld.resyncs, dt))
+                      "last=%d resyncs=%d, wall %.0f s (planning %.0f s), %s"
+                      % (len(ld.range_results), st["last"], ld.resyncs, wall, plan_s, conns))
             else:
                 print("JCLOAD_DONE last=%d committed=%d crc_fail=%d resyncs=%d pieces=%d "
-                      "matched %.0f s, this run sent %d data bytes at %.2f MB/s" % (st["last"], st["committed"],
-                      st["crc_fail"], ld.resyncs, len(ld.range_results), dt, n, n / dt / 1e6))
+                      "matched, wall %.0f s (planning %.0f s), %s, this run sent %d data "
+                      "bytes in %.0f s at %.2f MB/s"
+                      % (st["last"], st["committed"], st["crc_fail"], ld.resyncs,
+                         len(ld.range_results), wall, plan_s, conns, n, dt, n / dt / 1e6))
             return 0
         bad = ld.run_verify()
     except (LoadAborted, LinkFault) as e:

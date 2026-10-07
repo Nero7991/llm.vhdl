@@ -459,9 +459,13 @@ class ChainSock:
         s.bitcnt, s.acc, s.st_sr, s.sthist = [0, 0], [0, 0], [0, 0], [[], []]
         s.q, s.ntdi = b"", 0
         s.ir_updates, s.violations = [], []
+        s.closed = False
 
     def setsockopt(s, *a):
         pass
+
+    def close(s):
+        s.closed = True
 
     def _status(s, d):
         h = s.sthist[d]
@@ -1684,3 +1688,344 @@ def test_done_line_rate_counts_only_bytes_sent_this_run(tmp_path, capsys, monkey
     ld2 = Ld(t2, frames, sha, str(tmp_path / "ck.json"), resume=True)
     ld2.run_load()
     assert ld2.data_bytes_sent == 0             # nothing left to send on a complete die
+
+# ---------------------------------------------------------------- reconnect (2026-10-07)
+# MEASURED (docs/debugging/2026-10-05_jc-jtag-axi-host-path-is-latency-bound.md S14-S15):
+# the BMC ends every CoE connection after ~310-320 s, alternately by RST and by going
+# silent. One load/verify must now run to completion by itself: proactive reconnect
+# before the timer, reactive reconnect when a connection is lost anyway, the plan built
+# once, the die's identity re-checked on every new connection.
+
+class FakeClock:
+    def __init__(s):
+        s.now = 0.0
+    def __call__(s):
+        return s.now
+    def advance(s, dt=1.0):
+        s.now += dt
+
+class Dialer:
+    """A connection factory over ONE die model: every connection it makes ends after
+    `life` sends, RST-like ('rst': the next send raises ConnectionResetError) or
+    silence-like ('silent': slots still reach the die, but no reply ever comes and the
+    next recv times out). `life=None` never ends. The first `fail_connects` dials after
+    the initial one are refused. `on_dial(n)` runs before connection n (0-based) is made."""
+    def __init__(s, m, life, how="rst", lead=1, fail_connects=0, on_shift=None, on_dial=None):
+        s.m, s.life, s.how, s.lead = m, life, how, lead
+        s.fail_connects, s.on_shift, s.on_dial = fail_connects, on_shift, on_dial
+        s.made, s.refused = [], 0
+    def __call__(s, *a, **k):
+        if s.made and s.fail_connects:
+            s.fail_connects -= 1; s.refused += 1
+            raise ConnectionRefusedError("fake: connection refused")
+        if s.on_dial is not None:
+            s.on_dial(len(s.made))
+        kw = {}
+        if s.life is not None:
+            kw["drop_after" if s.how == "rst" else "silent_after"] = s.life
+        t = L.FakeTransport(s.m, lead=s.lead, on_shift=s.on_shift, **kw)
+        s.made.append(t)
+        return t
+
+def reconnecting(dialer, frames, sha, ck, **kw):
+    lines = []
+    kw.setdefault("log", lines.append)
+    kw.setdefault("sleep", lambda secs: None)
+    kw.setdefault("reconnect_secs", 0)
+    ld = Ld(dialer(), frames, sha, ck, connect=dialer, **kw)
+    return ld, lines
+
+RECONNECT_RE = r"^JCLOAD_RECONNECT (\d+) (\S+) (\d+\.\d)$"
+
+def parse_reconnects(lines):
+    import re
+    out = []
+    for ln in lines:
+        mo = re.match(RECONNECT_RE, ln)
+        assert mo, ln
+        out.append((int(mo.group(1)), mo.group(2), float(mo.group(3))))
+    return out
+
+BIG = (100_000, 64, 40_000)      # 72 data frames, 3 pieces
+
+@pytest.mark.parametrize("how,reason", [("rst", "lost:ConnectionResetError"),
+                                        ("silent", "lost:TimeoutError")])
+def test_reactive_reconnect_completes_the_load_in_one_run(tmp_path, how, reason):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    d = Dialer(m, life=40, how=how)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"))
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq
+    assert_die_holds_the_plan(m, frames)
+    assert len(ld.range_results) == 3 and not ld._mismatches()
+    k = len(d.made) - 1
+    assert k >= 2
+    rc = parse_reconnects(lines)
+    assert [n for n, _, _ in rc] == list(range(1, k + 1))
+    assert all(r == reason for _, r, _ in rc)
+    assert ld.reconnects == k and ld.connections == k + 1
+    assert ld.resyncs == 0                         # a reconnect is not a resync
+    assert all(t.gone for t in d.made[:-1])        # every lost connection's socket closed
+
+def test_reconnects_do_not_count_against_the_resync_budget(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    d = Dialer(m, life=25)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"), max_resyncs=1)
+    ld.run_load()
+    assert ld.reconnects >= 3 and ld.resyncs == 0
+
+def test_the_dna_is_rechecked_on_every_connection(tmp_path, monkeypatch):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    d = Dialer(m, life=40)
+    calls = []
+    real = L._Session._identify
+    def spy(self, st):
+        calls.append(len(d.made))
+        return real(self, st)
+    monkeypatch.setattr(L._Session, "_identify", spy)
+    ld, _ = reconnecting(d, frames, sha, str(tmp_path / "ck.json"))
+    ld.run_load()
+    assert sorted(set(calls)) == list(range(1, len(d.made) + 1))   # once per connection
+
+def test_a_dna_change_across_a_reconnect_aborts(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    def swap(n):
+        if n == 1:
+            m.dna = DNA_B
+    d = Dialer(m, life=40, on_dial=swap)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"))
+    with pytest.raises(L.LoadAborted, match="die identity mismatch.*changed under the run"):
+        ld.run_load()
+    assert len(d.made) == 2 and d.made[1].state == "closed" and d.made[1].abort_closes == 1
+    assert m.last < frames[-1].seq
+
+def test_max_reconnects_is_enforced(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    d = Dialer(m, life=25)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"), max_reconnects=2)
+    with pytest.raises(ConnectionError, match="max-reconnects 2.*--resume"):
+        ld.run_load()
+    assert len(parse_reconnects(lines)) == 2 and len(d.made) == 3
+    assert d.made[-1].gone
+
+def test_max_reconnects_zero_keeps_the_old_behaviour(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    d = Dialer(LoaderModel(), life=40)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"), max_reconnects=0)
+    with pytest.raises(ConnectionResetError):
+        ld.run_load()
+    assert lines == [] and len(d.made) == 1
+
+def test_reconnect_survives_a_few_refused_dials(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    d = Dialer(m, life=40, fail_connects=L.RECONNECT_TRIES - 1)
+    slept = []
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"), sleep=slept.append)
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq
+    assert d.refused == L.RECONNECT_TRIES - 1 and len(slept) == L.RECONNECT_TRIES - 1
+    assert all(0 < x <= 10 for x in slept)
+
+def test_reconnect_gives_up_after_consecutive_refused_dials(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    d = Dialer(LoaderModel(), life=40, fail_connects=1000)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"))
+    with pytest.raises(ConnectionError, match="--resume"):
+        ld.run_load()
+    assert d.refused == L.RECONNECT_TRIES
+
+@pytest.mark.parametrize("sizes", [BIG, (40_000,) + (64,) * 24])
+def test_proactive_reconnect_before_the_bmc_timer_never_mid_frame(tmp_path, sizes):
+    """Fake clock: one second per slot on the wire. The fake BMC goes silent after 60
+    slots on a connection; --reconnect-secs 30 must rotate every connection first, at a
+    clean point: every old connection left Shift-DR through close_scan (the fake refuses
+    it with a TDO unread), none needed recover/abort_close, and the die saw no garbage:
+    one desync per connection (its filler), no CRC or sequence error. The second plan
+    (24 small pieces) puts proactive reconnects into the range phase too."""
+    frames, sha = plan(tmp_path, sizes)
+    m = LoaderModel()
+    clock = FakeClock()
+    d = Dialer(m, life=60, how="silent", on_shift=clock.advance)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"),
+                             reconnect_secs=30, clock=clock)
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq and not ld._mismatches()
+    assert_die_holds_the_plan(m, frames)
+    rc = parse_reconnects(lines)
+    assert len(rc) >= 2 and all(r == "proactive" for _, r, _ in rc)
+    assert all(30 <= secs <= 30 + 4 + 2 for _, _, secs in rc)
+    for t in d.made[:-1]:
+        assert t.gone and t.state == "closed" and t.recovers == 0 and t.abort_closes == 0
+    assert m.desync == len(d.made) and m.crc_fail == 0 and m.seq_err == 0
+    assert ld.resyncs == 0
+    if len(sizes) > 3:                             # a connection opened in the range phase
+        nd = sum(1 for f in frames if f.kind == "data")
+        assert any(t.first_seq_sent is not None and t.first_seq_sent >= nd for t in d.made[1:])
+
+def test_proactive_reconnect_is_off_at_zero(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    clock = FakeClock()
+    d = Dialer(LoaderModel(), life=None, on_shift=clock.advance)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"),
+                             reconnect_secs=0, clock=clock)
+    ld.run_load()
+    assert lines == [] and len(d.made) == 1 and clock.now > 60      # 30 would have rotated
+
+def test_verify_reconnects_and_passes(tmp_path):
+    frames, sha = plan(tmp_path, (64,) * 30)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck.json")).run_load()
+    d = Dialer(m, life=40)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck2.json"))
+    assert ld.run_verify() == []
+    assert ld.reconnects >= 2 and len(ld.range_results) == 30
+
+def test_verify_still_refuses_a_partial_die_with_reconnect(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    with pytest.raises(ConnectionError):
+        Ld(L.FakeTransport(m, lead=1, drop_after=30), frames, sha, str(tmp_path / "ck.json")).run_load()
+    d = Dialer(m, life=40)
+    ld, _ = reconnecting(d, frames, sha, str(tmp_path / "ck2.json"))
+    with pytest.raises(L.LoadAborted, match="finish the load"):
+        ld.run_verify()
+
+def test_a_bresp_error_after_a_reconnect_still_aborts(tmp_path):
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel(bad_bresp_addrs={frames[60].addr})        # past the first connection
+    d = Dialer(m, life=40)
+    ld, lines = reconnecting(d, frames, sha, str(tmp_path / "ck.json"))
+    with pytest.raises(L.LoadAborted, match="BRESP"):
+        ld.run_load()
+    assert len(lines) >= 1 and d.made[-1].abort_closes == 1
+
+def test_reconnect_through_the_real_client_leaves_every_old_chain_clean(tmp_path):
+    """CoeTransport over the modelled chain: a proactive rotation must leave Shift-DR
+    through the client's own exit_dr_to_idle (shadow and modelled TAP both back at RTI,
+    no reply owed, no guard violation), and each new connection must go through
+    start() (handshake + resync from UNKNOWN) before its scan opens."""
+    frames, sha = plan(tmp_path, BIG)
+    m = LoaderModel()
+    made, starts = [], []
+    def dial(*a, **k):
+        sock = ChainSock(m, 0)
+        client = coe.CoE(None, sock=sock)
+        real_start = client.start
+        def start(hz=27_000_000):
+            starts.append(client.tap)
+            return real_start(hz)
+        client.start = start
+        made.append((sock, client))
+        return L.CoeTransport(None, "A", "AB", client=client)
+    n = [0]
+    def clock():
+        n[0] += 1
+        return float(n[0])
+    lines = []
+    ld = Ld(dial(), frames, sha, str(tmp_path / "ck.json"), connect=dial,
+            reconnect_secs=25, clock=clock, log=lines.append, sleep=lambda x: None)
+    st = ld.run_load()
+    assert st["last"] == frames[-1].seq
+    assert_die_holds_the_plan(m, frames)
+    assert len(made) >= 3 and len(starts) == len(made)
+    assert all(t is coe.UNKNOWN for t in starts)
+    for sock, client in made[:-1]:
+        assert_chain_clean(sock, client)
+        assert sock.closed
+    assert m.crc_fail == 0 and m.seq_err == 0 and m.desync == len(made)
+
+# ------------------------------------------------ CLI: one invocation, plan built once
+
+def cli_dialer(monkeypatch, d):
+    monkeypatch.setattr(L, "CoeTransport", lambda ip, die, chain, hz=None, client=None: d())
+
+def test_cli_load_reconnects_plans_once_and_reports_connections(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, list(BIG))
+    m = LoaderModel()
+    d = Dialer(m, life=40)
+    cli_dialer(monkeypatch, d)
+    nplan = []
+    real_plan = L.plan_frames
+    def counting(*a, **k):
+        nplan.append(1)
+        return real_plan(*a, **k)
+    monkeypatch.setattr(L, "plan_frames", counting)
+    nhash = []
+    real_b2 = L.hashlib.blake2b
+    monkeypatch.setattr(L.hashlib, "blake2b", lambda *a, **k: nhash.append(1) or real_b2(*a, **k))
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert len(nplan) == 1 and len(nhash) == len(BIG)          # one hash per file, once
+    k = len(d.made) - 1
+    assert k >= 2
+    import re
+    assert len(re.findall(r"^JCLOAD_RECONNECT \d+ lost:ConnectionResetError \d+\.\d$", out, re.M)) == k
+    mo = re.search(r"^JCLOAD_DONE .*wall (\d+) s.* connections=(\d+) reconnects=(\d+)"
+                   r".* sent (\d+) data bytes .* at ([\d.]+) MB/s", out, re.M)
+    assert mo, out
+    assert int(mo.group(2)) == k + 1 and int(mo.group(3)) == k
+    assert int(mo.group(4)) >= sum(BIG)
+
+def test_cli_verify_reconnects_in_one_run(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, [64] * 30)
+    m = LoaderModel()
+    frames, sha = L.plan_frames(mp, die="A")
+    Ld(L.FakeTransport(m, lead=1), frames, sha, str(tmp_path / "ck0.json")).run_load()
+    d = Dialer(m, life=40)
+    cli_dialer(monkeypatch, d)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["verify", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    out = capsys.readouterr().out
+    assert rc == 0 and re_match_line(out, r"^JCVERIFY_PASS 30 pieces, 0 bad")
+    assert re_match_line(out, r"^JCLOAD_RECONNECT 2 ")
+
+def test_cli_consecutive_dial_failures_print_the_resume_abort(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, list(BIG))
+    d = Dialer(LoaderModel(), life=40, fail_connects=1000)
+    cli_dialer(monkeypatch, d)
+    monkeypatch.setattr(L.time, "sleep", lambda x: None)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies, "--ckpt", str(tmp_path / "ck.json")])
+    out = capsys.readouterr().out
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT connection lost .*--resume")
+
+def test_cli_reconnect_options_reach_the_loader(tmp_path, monkeypatch):
+    mp = make_manifest(tmp_path, [64])
+    seen = {}
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: L.FakeTransport(LoaderModel(), lead=1))
+    real_init = L.Loader.__init__
+    def capturing_init(self, *a, **k):
+        seen.update(k)
+        return real_init(self, *a, **k)
+    monkeypatch.setattr(L.Loader, "__init__", capturing_init)
+    dies = dies_file(tmp_path, {"A": DEFAULT_DNA})
+    base = ["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB", "--dies", dies]
+    assert L.main(base + ["--ckpt", str(tmp_path / "a.json")]) == 0
+    assert seen["reconnect_secs"] == 270 and seen["max_reconnects"] == 50
+    assert callable(seen["connect"])
+    assert L.main(base + ["--ckpt", str(tmp_path / "b.json"), "--reconnect-secs", "0",
+                          "--max-reconnects", "0"]) == 0
+    assert seen["reconnect_secs"] == 0 and seen["max_reconnects"] == 0
+    assert L.main(base + ["--ckpt", str(tmp_path / "c.json"), "--reconnect-secs", "300"]) == 0
+    assert seen["reconnect_secs"] == 300
+
+@pytest.mark.parametrize("opt,v", [("--reconnect-secs", "301"), ("--reconnect-secs", "-1"),
+                                   ("--reconnect-secs", "x"), ("--max-reconnects", "-1"),
+                                   ("--max-reconnects", "1.5")])
+def test_cli_reconnect_options_are_validated(tmp_path, opt, v):
+    mp = make_manifest(tmp_path, [64])
+    with pytest.raises(SystemExit) as e:
+        L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                "--dies", str(tmp_path / "dies.json"), opt, v])
+    assert e.value.code == 2
