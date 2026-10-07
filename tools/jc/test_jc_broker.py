@@ -49,13 +49,27 @@ class FakeCtlDie:
     ack it never touches last_done_seq, rsp_seq or the error bits. axi_err is sticky until
     the next non-NOP frame executes. `fifos[off]` makes off a FIFO window for reads.
 
+    Status word as the RTL sends it (Ruling 2026-10-07, after the Task 6 review):
+    [383:352] st_crc over bits [351:0] as shifted; [351:213] zero. STALE mask: once a
+    response is acked, the status shows that rsp_seq with rsp_valid = 0, rsp_count = 0,
+    rsp_crc = 0 and no words. crc_fail and desync are the frame core's: they move at the
+    end of the failing slot and show from the next slot's status on, no lag. EXEC
+    fields move `lag` (0..16) slot times after the frame passed, plus `bp[off]` more
+    for a fixed-window op at `off` (window backpressure).
+
     Injections: `flip_rsp` corrupts response word 0 in that many TDOs that present a
-    response; `ghost` makes the next that-many TDOs after a read frame arrives present
-    a CRC-correct response of a seq nobody issued. Records: `frames` (every execution),
-    `acks`, `reads_over_unacked` (read frames that arrived while a response was still
-    presented, which the broker must never cause)."""
-    def __init__(s, seed, lag=1, slverr=(), fifos=None):
+    response; `flip_st` corrupts status bit `flip_st_bit` in that many TDOs (st_crc
+    then fails); `fake_done` makes that many TDOs after an op frame arrives show
+    last_done_seq = its seq with a st_crc that does NOT cover it; `ghost` makes the next
+    that-many TDOs after a read frame arrives present a CRC-correct response of a seq
+    nobody issued. Records: `frames` (every execution), `acks`, `reads_over_unacked`
+    (read frames that arrived while a response was still presented, which the broker
+    must never cause)."""
+    def __init__(s, seed, lag=1, slverr=(), fifos=None, bp=None):
         s.seed, s.lag, s.slverr = seed, lag, set(slverr)
+        s.bp = dict(bp or {})
+        s.flip_st, s.flip_st_bit, s.fake_done, s.fake_seq = 0, 40, 0, None
+        s.bad_count = 0
         s.regs = {}
         s.fifos = {k: list(v) for k, v in (fifos or {}).items()}
         s.wlog = collections.defaultdict(list)       # off -> every value written there
@@ -77,26 +91,40 @@ class FakeCtlDie:
         if s.ghost_left:
             s.ghost_left -= 1
             valid, seq, cnt, words = 1, 0x0BADBEEF, s.rsp_count or 1, [0xBAD0BAD0] * C.MAX_ITEMS
+        if valid and s.bad_count:
+            s.bad_count -= 1
+            cnt += 1                     # an executor glitch: self-consistent, wrong count
         if valid:
             data = b"".join(struct.pack("<I", w) for w in words[:cnt])
             crc = zlib.crc32(data) & 0xFFFFFFFF
             rsp = b"".join(struct.pack("<I", w) for w in words)
         else:
-            crc, rsp = 0, bytes(C.RSP_BUF_BYTES)
+            cnt, crc, rsp = 0, 0, bytes(C.RSP_BUF_BYTES)      # the STALE mask
         v = (C.STAT_MAGIC | s.last_done << 32 | seq << 64 | cnt << 96
              | valid << 112 | s.axi_err << 113 | s.axi_resp << 114
              | s.err_seq << 116 | s.desync << 148 | s.ovf << 164 | s.crc_fail << 165
              | crc << 181)
+        v |= (zlib.crc32(v.to_bytes(44, "little")) & 0xFFFFFFFF) << 352     # st_crc
+        if s.fake_done and s.fake_seq is not None:
+            s.fake_done -= 1
+            v = (v & ~(0xFFFFFFFF << 32)) | s.fake_seq << 32  # st_crc no longer covers it
         st = v.to_bytes(C.STATUS_BYTES, "little")
         tdo = int.from_bytes((st + rsp).ljust(C.SLOT_BYTES, b"\0"), "little")
         if valid and s.flip_rsp:
             s.flip_rsp -= 1
             tdo ^= 1 << (C.STATUS_BITS + 5)               # one bit of response word 0
+        if s.flip_st:
+            s.flip_st -= 1
+            tdo ^= 1 << s.flip_st_bit
         return tdo
 
     def end_slot(s, slot):
         s.nslot += 1
         s._exec()
+        s._rx(slot)
+        s._exec()                                         # lag 0: runs at once
+
+    def _rx(s, slot):
         h = C.parse_header(slot)
         if (h["magic"] != C.MAGIC or not 1 <= h["count"] <= C.MAX_ITEMS
                 or h["nwords"] > C.MAX_PAYLOAD_WORDS):
@@ -105,6 +133,8 @@ class FakeCtlDie:
         if not C.slot_crc_ok(slot):
             s.crc_fail += 1
             return
+        if h["op"] != C.OP_NOP:
+            s.fake_seq = h["seq"]
         if h["op"] in READ_OPS:
             # judged BEFORE this frame's own ack: read B riding on the frame that acks
             # read A still went out before A was acked
@@ -114,10 +144,11 @@ class FakeCtlDie:
         if av and s.rsp_valid and aseq == s.rsp_seq:
             s.rsp_valid = 0                               # rsp_ack (host-driven)
             s.acks += 1
-        s.q.append((s.nslot, h, slot))
+        wait = s.lag + (s.bp.get(h["addr"], 0) if h["op"] in (C.OP_WR_FIX, C.OP_RD_FIX) else 0)
+        s.q.append((s.nslot + wait, h, slot))
 
     def _exec(s):
-        while s.q and not s.stall and s.nslot - s.q[0][0] >= s.lag:
+        while s.q and not s.stall and s.nslot >= s.q[0][0]:
             _, h, slot = s.q[0]
             op, seq, addr, n = h["op"], h["seq"], h["addr"], h["count"]
             if op in READ_OPS and s.rsp_valid:
@@ -230,8 +261,13 @@ class CtlChainSock(ChainSock):
         lose_reply = False
         if cmd == coe.CMD_TDI:
             drop = s.board.drop.get(s.board.nconn)
-            if drop is not None and s.ntdi_conn >= drop:
+            if (drop is not None and s.ntdi_conn >= drop) or s.board.drop_next:
+                s.board.drop_next = False
                 raise ConnectionResetError("fake BMC: connection reset")
+            if s.board.drop_after_op is not None and len(b) >= 8 + 4 + 32:
+                h = C.parse_header(b[12:12 + 32])
+                if h["magic"] == C.MAGIC and h["op"] == s.board.drop_after_op:
+                    s.board.drop_after_op, s.board.drop_next = None, True
             lr = s.board.drop_reply.get(s.board.nconn)
             lose_reply = lr is not None and s.ntdi_conn >= lr
             s.ntdi_conn += 1
@@ -251,11 +287,13 @@ class Board:
     dial: each call is one new BMC connection (a new CtlChainSock, the TAP where the
     last one left it). `drop[n]` resets connection n after that many CMD_TDI."""
     def __init__(s, lag=1, **ctl_kw):
+        # ctl_kw (fifos, slverr, bp) configure die A; die B is plain
         s.models = [LoaderModel(dna=DNA_A), LoaderModel(dna=DNA_B)]
         s.ctl = [FakeCtlDie(seed=1, lag=lag, **ctl_kw), FakeCtlDie(seed=2, lag=lag)]
         s.tap = coe.TEST_LOGIC_RESET
         s.flip, s.drop, s.drop_reply, s.flip_acknops = set(), {}, {}, set()
         s.flip_nops = set()
+        s.drop_after_op, s.drop_next = None, False   # reset the command after that op's frame
         s.nframes, s.nconn, s.nacknops, s.nnops = 0, 0, 0, 0
         s.wire_ops = []
         s.socks, s.clients = [], []
@@ -531,33 +569,9 @@ def test_a_response_crc_that_never_checks_is_bounded():
     b, board, _ = make()
     board.ctl[0].flip_rsp = 10 ** 6
     r = b.handle({"die": "A", "op": "rd32", "off": 0})
-    assert r["ok"] is False and "CRC mismatched" in r["err"], r
+    assert r["ok"] is False and r["err"].startswith("WindowUnknown:") and "rsp_crc" in r["err"], r
     assert b.rsp_crc_mismatches == B.RSP_CRC_RETRIES + 1
     assert board.ctl[0].acks == 0                         # a bad response is never acked
-
-
-def _drop_cases():
-    return [(kind, extra) for kind in ("drop", "drop_reply") for extra in range(0, 8)]
-
-@pytest.mark.parametrize("kind,extra", _drop_cases())
-def test_a_drop_around_a_response_accepts_it_once_and_reads_the_window_once(kind, extra):
-    """A CoE drop anywhere from the read frame to past its ack (send side: the command
-    never reaches the board; reply side: it is shifted but its TDO is lost). The
-    window read (a FIFO: every execution pops) runs exactly once per frame and the
-    caller gets every value exactly once, in order."""
-    src = [(0x01000193 * i) & 0xFFFFFFFF for i in range(1, 1201)]
-    b, board, _ = make(Board(fifos={0xE00C: src}))
-    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
-    getattr(board, kind)[1] = board.socks[0].ntdi_conn + extra
-    r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 600}))
-    die = board.ctl[0]
-    assert r["vals"] == src[:600]
-    assert die.fifos[0xE00C] == src[600:]
-    assert [op for _, op in die.frames] == [C.OP_RD_INC, C.OP_RD_FIX, C.OP_RD_FIX]
-    assert board.nconn == 2 and b.reconnects == 1
-    assert die.reads_over_unacked == 0
-    r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 600}))
-    assert r["vals"] == src[600:] and die.fifos[0xE00C] == []
 
 
 def test_a_drop_right_after_the_response_is_received_still_acks_it_on_the_next_link():
@@ -593,30 +607,6 @@ def test_read_b_never_goes_out_before_read_a_is_acked():
     assert die.acks == 8 + 3 - 1 and die.rsp_valid == 1   # the last one is still owed
 
 
-def test_a_reactive_reconnect_inside_a_write_resumes_without_a_double_write():
-    """The link resets part-way through an 11-slot fixed-window write. The broker
-    reconnects, re-identifies the die, and continues from the die's own last_done_seq:
-    the window sees every value exactly once, in order."""
-    b, board, _ = make()
-    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
-    board.drop[1] = board.socks[0].ntdi_conn + 9          # mid-request
-    vals = [i ^ 0x5A5A for i in range(5120)]
-    ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": vals}))
-    assert board.nconn == 2 and b.reconnects == 1
-    assert board.ctl[0].wlog[0xE008] == vals
-    assert board.violations() == []
-
-
-@pytest.mark.parametrize("extra", range(0, 6))
-def test_a_reset_at_any_point_of_a_slot_wait_loses_and_doubles_nothing(extra):
-    b, board, _ = make()
-    ok(b.handle({"die": "B", "op": "rd32", "off": 0}))
-    board.drop[1] = board.socks[0].ntdi_conn + extra
-    vals = list(range(1, 1001))
-    ok(b.handle({"die": "B", "op": "wrn", "off": 0xE008, "fix": True, "vals": vals}))
-    assert board.ctl[1].wlog[0xE008] == vals
-
-
 def test_the_link_is_given_up_after_bounded_attempts():
     b, board, _ = make()
     ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
@@ -647,7 +637,8 @@ def test_a_poll_timeout_raises_and_is_bounded():
     board.ctl[0].stall = True
     n0 = board.socks[0].ntdi_conn
     r = b.handle({"die": "A", "op": "wr32", "off": 4, "val": 1})
-    assert r["ok"] is False and r["err"].startswith("CtlTimeout:"), r
+    assert r["ok"] is False and r["err"].startswith("WindowUnknown:"), r
+    assert "UNKNOWN" in ok(b.handle({"op": "status"}))["dies"]["A"]["window_state"]
     assert board.socks[0].ntdi_conn - n0 <= B.CTL_POLLS + 2
 
 
@@ -757,3 +748,325 @@ def test_cli_requires_the_bmc_address_and_has_no_default(tmp_path):
     import re
     ips = set(re.findall(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", open(B.__file__).read()))
     assert ips <= {"192.0.2.1"}, ips
+
+
+# ---------------------------------------------------------------- fix round 1 (review of f7f0713)
+# Ported from the reviewer's probes (scratchpad test_rev_t6.py, test_rev_t6b.py), with
+# assertions added where the probe only printed.
+
+def _rev_setup(extra_flip):
+    src = list(range(100, 200))
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0x10, "val": 1}))
+    n0 = board.socks[0].ntdi_conn
+    board.drop[1] = n0 + 2                    # read frame n0, first poll n0+1, reset at n0+2
+    def oc(bd, n):
+        if n == 2:
+            bd.ctl[0].flip_rsp = extra_flip
+    board.on_connect = oc
+    r = b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 4})
+    return b, board, r, src
+
+@pytest.mark.parametrize("extra_flip", [0, 3])
+def test_rev_pending_read_with_corrupt_responses_executes_once(extra_flip):
+    """C1: after a reconnect the read's response fails rsp_crc; it must be re-polled and
+    accepted, never acked unaccepted and re-sent."""
+    b, board, r, src = _rev_setup(extra_flip)
+    assert r.get("vals") == src[:4], r
+    assert [op for _, op in board.ctl[0].frames].count(C.OP_RD_FIX) == 1
+    assert b.discarded == 0
+
+def test_rev_deep_json_answers_ok_false():
+    """M1: deeply nested JSON must not kill the broker."""
+    b, board, _ = make()
+    srv = B.Server(b)
+    a1, c1 = socket.socketpair()
+    c1.settimeout(5)
+    srv.offer(a1)
+    c1.sendall(b"[" * 200000 + b"\n")
+    srv.pump()
+    r = json.loads(c1.makefile("rb").readline())
+    assert r["ok"] is False
+    c1.sendall(b'{"op":"status"}\n')
+    srv.pump()
+
+@pytest.mark.parametrize("lag", [1, 10, 12])
+@pytest.mark.parametrize("op", ["rd", "wr"])
+def test_rev_corrupt_poll_behind_a_frame_never_doubles_it(op, lag):
+    """I1: the first NOP after a frame fails CRC; the frame itself passed and executes
+    `lag` slots later. It must run exactly once."""
+    src = list(range(100, 200))
+    b, board, _ = make(Board(lag=lag, fifos={0xE00C: src}))
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0x10, "val": 1}))
+    board.flip_nops = {board.nnops}
+    die = board.ctl[0]
+    if op == "rd":
+        r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 4}))
+        r2 = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 4}))
+        assert r["vals"] == src[:4] and r2["vals"] == src[4:8]
+        assert [op_ for _, op_ in die.frames].count(C.OP_RD_FIX) == 2
+    else:
+        ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [7, 8]}))
+        assert die.wlog[0xE008] == [7, 8]
+    assert die.crc_fail == 1 and b.crc_retries == 0
+
+
+# ---- link loss: exactly once, or UNKNOWN; never twice
+
+def _window_write_under_drop(die_name, kind, extra, lag, n=1200):
+    d = 0 if die_name == "A" else 1
+    b, board, _ = make(Board(lag=lag))
+    if d:
+        board.ctl[1].lag = lag
+    ok(b.handle({"die": die_name, "op": "rd32", "off": 0}))
+    getattr(board, kind)[1] = board.socks[0].ntdi_conn + extra
+    vals = [(0x9E3779B9 * (i + 1)) & 0xFFFFFFFF for i in range(n)]
+    r = b.handle({"die": die_name, "op": "wrn", "off": 0xE008, "fix": True, "vals": vals})
+    return r, b, board, vals, board.ctl[d]
+
+DROPS = [(die, kind, extra) for die in "AB" for kind in ("drop", "drop_reply")
+         for extra in range(0, 9)]
+
+@pytest.mark.parametrize("lag", [0, 1, 10])
+@pytest.mark.parametrize("die_name,kind,extra", DROPS)
+def test_a_link_loss_in_a_window_write_is_exactly_once_or_unknown(die_name, kind, extra, lag):
+    r, b, board, vals, die = _window_write_under_drop(die_name, kind, extra, lag)
+    w = die.wlog[0xE008]
+    assert w == vals[:len(w)], "a value was written twice or out of order"
+    assert board.violations() == []
+    if r["ok"]:
+        assert w == vals
+        assert ok(b.handle({"op": "status"}))["dies"][die_name]["window_state"] == "ok"
+    else:
+        assert r["err"].startswith("WindowUnknown:"), r
+        assert len(w) % C.MAX_ITEMS == 0 or len(w) == len(vals)
+        st = ok(b.handle({"op": "status"}))
+        assert st["dies"][die_name]["window_state"].startswith("UNKNOWN")
+
+@pytest.mark.parametrize("lag", [0, 1, 12])
+@pytest.mark.parametrize("die_name,kind,extra", DROPS)
+def test_a_link_loss_in_a_window_read_is_exactly_once_or_unknown(die_name, kind, extra, lag):
+    """A FIFO window read (every execution pops) under a link loss anywhere from the
+    read frame to past its ack: either the caller gets every value once in order and
+    each frame ran once, or WindowUnknown with no frame run twice."""
+    d = 0 if die_name == "A" else 1
+    src = [(0x01000193 * i) & 0xFFFFFFFF for i in range(1, 1201)]
+    board = Board(lag=lag)
+    board.ctl[d] = FakeCtlDie(seed=d + 1, lag=lag, fifos={0xE00C: src})
+    b, board, _ = make(board)
+    ok(b.handle({"die": die_name, "op": "rd32", "off": 0}))
+    getattr(board, kind)[1] = board.socks[0].ntdi_conn + extra
+    r = b.handle({"die": die_name, "op": "rdn", "off": 0xE00C, "fix": True, "n": 600})
+    die = board.ctl[d]
+    seqs = [q for q, op in die.frames if op == C.OP_RD_FIX]
+    assert len(seqs) == len(set(seqs)) <= 2
+    assert die.reads_over_unacked == 0
+    if r["ok"]:
+        assert r["vals"] == src[:600] and len(seqs) == 2 and die.fifos[0xE00C] == src[600:]
+        r2 = ok(b.handle({"die": die_name, "op": "rdn", "off": 0xE00C, "fix": True, "n": 600}))
+        assert r2["vals"] == src[600:]
+    else:
+        assert r["err"].startswith("WindowUnknown:"), r
+
+def test_a_link_loss_after_the_frames_own_verdict_resumes():
+    """The frame's own slot and the first poll's status are both in hand (PASSED)
+    before the link drops: the broker resumes on the new connection and completes."""
+    for lag in (0, 1, 10):
+        r, b, board, vals, die = _window_write_under_drop("A", "drop", 2, lag, n=10)
+        assert r == {"ok": True} and die.wlog[0xE008] == vals, (lag, r)
+
+def test_most_drop_points_resume():
+    """Not a correctness property, a usefulness one: over the drop grid above, at least
+    half of the window writes complete rather than end UNKNOWN."""
+    okn = tot = 0
+    for die_name, kind, extra in DROPS:
+        r = _window_write_under_drop(die_name, kind, extra, 1)[0]
+        tot += 1
+        okn += r["ok"]
+    assert okn * 2 >= tot, (okn, tot)
+
+
+# ---- st_crc, the stale mask, lag and backpressure
+
+def test_a_status_with_a_flipped_last_done_seq_is_rejected():
+    """M4: the executor is stalled; a status claims last_done_seq == the frame's seq but
+    its st_crc does not cover that. It must be rejected (counted), and the write must
+    not be reported done."""
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
+    die = board.ctl[0]
+    die.stall, die.fake_done = True, 5
+    r = b.handle({"die": "A", "op": "wr32", "off": 0x20, "val": 5})
+    assert r["ok"] is False and r["err"].startswith("WindowUnknown:"), r
+    assert b.st_crc_fails >= 5 and 0x20 not in die.regs
+
+@pytest.mark.parametrize("bit", [40, 70, 100, 113, 150, 170, 200])
+def test_corrupted_status_fields_are_rejected_and_repolled(bit):
+    """Corruption in last_done_seq, rsp_seq, rsp_count, axi_err, desync, crc_fail and
+    rsp_crc: every such status is discarded; the ops still complete exactly once."""
+    src = list(range(3000, 3600))
+    b, board, _ = make(Board(fifos={0xE00C: src}))
+    die = board.ctl[0]
+    die.flip_st_bit = bit
+    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
+    die.flip_st = 3
+    ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": list(range(600))}))
+    die.flip_st = 3
+    r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 600}))
+    assert r["vals"] == src and die.wlog[0xE008] == list(range(600))
+    assert b.st_crc_fails == 6 and b.crc_retries == 0
+
+def test_the_stale_mask_after_an_ack():
+    """After its ack the status shows the acked rsp_seq with rsp_valid=0 and count 0:
+    that is not a response, and the next read proceeds."""
+    b, board, _ = make()
+    die = board.ctl[0]
+    die.regs.update({0: 1, 4: 2})
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 0}))["val"] == 1
+    ok(b.handle({"die": "A", "op": "wr32", "off": 8, "val": 3}))
+    st = b.st["A"]
+    assert st["rsp_valid"] == 0 and st["rsp_count"] == 0 and st["rsp_seq"] == b.ack["A"]
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 4}))["val"] == 2
+    assert b.discarded == 0
+
+@pytest.mark.parametrize("lag", [0, 1, 2, 5, 10, 12, 16])
+def test_executor_lag_0_to_16_with_window_backpressure(lag):
+    src = list(range(7000, 7000 + 1000))
+    b, board, _ = make(Board(lag=lag, fifos={0xE00C: src}, bp={0xE008: 16 - lag, 0xE00C: 16 - lag}))
+    vals = list(range(1000))
+    board.flip = {2}                                      # one op frame fails CRC
+    board.flip_nops = {5, 9}                              # and two polls
+    ok(b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": vals}))
+    r = ok(b.handle({"die": "A", "op": "rdn", "off": 0xE00C, "fix": True, "n": 1000}))
+    die = board.ctl[0]
+    assert die.wlog[0xE008] == vals and r["vals"] == src
+    assert b.crc_retries == 1 and die.crc_fail == 3
+    assert die.reads_over_unacked == 0
+
+def test_identify_retries_a_transient_settle_then_halts_on_mismatch_at_once(monkeypatch):
+    b, board, _ = make()
+    calls = []
+    real = L._Session._poll_settled
+    def flaky(sess):
+        calls.append(1)
+        if len(calls) <= 2:
+            raise L.LoadAborted("status never settled in 32 polls (busy=1)")
+        return real(sess)
+    monkeypatch.setattr(L._Session, "_poll_settled", flaky)
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 1}))
+    assert b.identify_retries == 2 and b.halted is None
+    calls.clear()
+    def always(sess):
+        raise L.LoadAborted("no status word in 32 polls: check --chain")
+    monkeypatch.setattr(L._Session, "_poll_settled", always)
+    r = b.handle({"die": "B", "op": "wr32", "off": 0, "val": 1})
+    assert r["err"].startswith("LoadAborted:") and b.halted
+
+
+
+# ---- fix round 1 teeth: cases that tell the surviving mutants apart
+
+def test_a_memrd_whose_last_bit_never_reached_die_b_is_resent():
+    """Die B sits behind one BYPASS bit, so a slot's last bit reaches it only with the
+    next command. If the link dies on that next command, the MEM_RD never completed:
+    its fate is unproven (NOTFAILED), and a MEM_RD may then be resent; it succeeds."""
+    b, board, _ = make(allow_image_read=True)
+    ok(b.handle({"die": "B", "op": "rd32", "off": 0}))
+    board.drop_after_op = C.OP_MEM_RD
+    r = ok(b.handle({"die": "B", "op": "memrd", "addr": 0x4000, "n": 64}))
+    want = b"".join(board.ctl[1].hbm(a) for a in (0x4000, 0x4020))
+    assert bytes.fromhex(r["hex"]) == want
+    assert [op for _, op in board.ctl[1].frames].count(C.OP_MEM_RD) == 1
+    assert b.crc_retries == 1 and board.nconn == 2
+
+def test_a_window_write_that_executes_after_the_poll_bound_is_never_resent():
+    """The write's TDO is lost on the wire (shifted, fate unproven) and the window is
+    backpressured past CTL_POLLS: the request ends UNKNOWN, and the write still runs
+    exactly once when the window drains."""
+    b, board, _ = make(Board(bp={0xE008: B.CTL_POLLS + 20}))
+    ok(b.handle({"die": "A", "op": "rd32", "off": 0}))
+    board.drop_reply[1] = board.socks[0].ntdi_conn
+    r = b.handle({"die": "A", "op": "wrn", "off": 0xE008, "fix": True, "vals": [1, 2, 3]})
+    assert r["ok"] is False and r["err"].startswith("WindowUnknown:"), r
+    for _ in range(3):
+        ok(b.handle({"die": "A", "op": "rdn", "off": 0x100, "fix": False, "n": 40}))
+    assert board.ctl[0].wlog[0xE008] == [1, 2, 3]
+
+def test_a_presented_response_of_the_current_frame_is_accepted_by_release():
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 0}))
+    die = board.ctl[0]
+    die.rsp_valid, die.rsp_seq, die.rsp_count = 1, 0x5151, 2
+    die.rsp = [11, 22] + [0] * (C.MAX_ITEMS - 2)
+    ok(b.handle({"die": "A", "op": "wr32", "off": 4, "val": 0}))   # the broker sees it
+    v = b._ensure("A")
+    assert b._release(v, "A", [0x5151], 2) == [11, 22]
+    assert b.discarded == 0 and b.ack["A"] == 0x5151
+
+def test_a_self_consistent_wrong_rsp_count_is_repolled_not_fatal():
+    b, board, _ = make()
+    die = board.ctl[0]
+    die.regs[0x60] = 77
+    die.bad_count = 2
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 0x60}))["val"] == 77
+    assert b.rsp_count_mismatches == 2 and len(die.frames) == 1
+
+def test_each_scan_open_hands_its_filler_to_the_ledger(monkeypatch):
+    """Every reopen of a die's USER3 scan shifts one filler slot (one desync at the
+    die); the first window resolved after it must carry exactly one certain [1, 1]
+    entry, or D would be misattributed to the frames in that window."""
+    b, board, _ = make()
+    ok(b.handle({"die": "A", "op": "wr32", "off": 0, "val": 0}))
+    ok(b.handle({"die": "B", "op": "wr32", "off": 0, "val": 0}))
+    seen = []
+    real = B.Broker._resolve
+    def spy(self, die, st, entries):
+        seen.append((die, [list(e[:4]) for e in entries]))
+        return real(self, die, st, entries)
+    monkeypatch.setattr(B.Broker, "_resolve", spy)
+    d0 = board.ctl[0].desync
+    ok(b.handle({"die": "A", "op": "wr32", "off": 4, "val": 1}))      # reopens A
+    assert board.ctl[0].desync == d0 + 1
+    first = [ents for die, ents in seen if die == "A"][0]
+    assert first.count([1, 1, None, True]) == 1
+
+def _verdict(prev, st, entries):
+    b, _, _ = make()
+    b.st["A"] = prev
+    b._resolve("A", st, entries)
+    return b.verdict.get(7)
+
+def _st(crc=0, desync=0, ovf=0):
+    return dict(crc_fail=crc, desync=desync, ovf=ovf)
+
+@pytest.mark.parametrize("entries,st,want", [
+    ([[0, 1, 7, True, 1]], _st(0), "PASSED"),
+    ([[0, 1, 7, True, 1]], _st(1), "LOST"),
+    ([[0, 1, 7, False, 1]], _st(0), "NOTFAILED"),
+    ([[0, 1, 7, False, 1]], _st(0, 1), "LOST"),              # it shifted and desynced
+    ([[0, 1, 7, True, 1], [1, 1, None, True, 2]], _st(0, 1), "PASSED"),   # filler counted
+    ([[0, 1, 7, True, 1], [1, 1, None, True, 2]], _st(0, 2), "LOST"),
+    ([[0, 1, 7, True, 1], [0, 1, None, True, 1]], _st(1), "AMBIGUOUS"),
+    ([[0, 1, 7, True, 1], [0, 1, None, True, 1]], _st(2), "LOST"),
+    ([[0, 1, 7, True, 1]], _st(0, 0, 1), "AMBIGUOUS"),        # ovf rose: may be dropped
+])
+def test_the_ledger_verdicts(entries, st, want):
+    assert _verdict(_st(), st, entries) == want
+
+
+@pytest.mark.parametrize("die_name", ["A", "B"])
+def test_a_window_write_whose_next_command_is_reset(die_name):
+    """The link dies on the command right after a window write's frame. Die A (lead 0)
+    has the whole frame by the end of its own command, so it PASSED and the broker
+    resumes; die B (lead 1) never got the frame's last bit, so its fate is unproven and
+    the request ends UNKNOWN. Either way the window holds the values at most once."""
+    d = "AB".index(die_name)
+    b, board, _ = make()
+    ok(b.handle({"die": die_name, "op": "wr32", "off": 0, "val": 0}))
+    board.drop_after_op = C.OP_WR_FIX
+    r = b.handle({"die": die_name, "op": "wrn", "off": 0xE008, "fix": True, "vals": [4, 5]})
+    w = board.ctl[d].wlog[0xE008]
+    if die_name == "A":
+        assert r == {"ok": True} and w == [4, 5]
+    else:
+        assert r["err"].startswith("WindowUnknown:") and w == []
