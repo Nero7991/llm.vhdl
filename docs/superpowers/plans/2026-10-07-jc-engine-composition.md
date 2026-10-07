@@ -188,11 +188,21 @@ TDI LSB first, header word 0 then 62 payload words of 256 bits, CRC-32 over bits
 | [87:72] | count of 32-bit items, 1..496 |
 | [119:104] | nwords: payload words, `ceil(count/8)` for writes, 0 otherwise |
 | [183:120] | addr: AXI-Lite byte offset (ops 1-4) or HBM byte address (op 5, 32-byte aligned, count a multiple of 8) |
+| [215:184] | ack_seq: the rsp_seq this frame acknowledges (Ruling 2026-10-07, host-driven ack) |
+| [216] | ack_valid |
 
 TDO for every slot:
 - bits `0..383` are the status word `JC_CTL_STATUS_BITS = 384`;
 - bits `384..384+32*496-1` are the response buffer, word 0 first, each word LSB first;
 - the rest are zero.
+
+**Ack rule (Ruling 2026-10-07, after the Task 2 review).** A valid response is re-presented
+in every slot until a PASS frame carries `ack_valid = 1` and `ack_seq = rsp_seq`. Only then
+does the frame core toggle `rsp_ack_tgl`. An ack of an already-acked seq is ignored, and a
+status still showing an acked seq goes out with `rsp_valid = 0` and no words. The executor
+gives each response the seq of its own frame, clears `rsp_valid` on the ack, and does not
+start another read until then. The host accepts a response only when `rsp_seq`,
+`rsp_valid` and `rsp_crc` all check, and otherwise re-polls with a NOP.
 
 Status word fields:
 
@@ -209,7 +219,8 @@ Status word fields:
 | [163:148] | desync count |
 | [164] | FIFO overflow seen |
 | [180:165] | CRC-fail count |
-| [383:181] | zero |
+| [212:181] | rsp_crc: CRC-32 (loader conventions) over the rsp_count response words as shifted, computed by the executor |
+| [383:213] | zero (forced by the frame core) |
 
 - [ ] **Step 1: Write the failing bench.** The bench drives TCK, CAPTURE and SHIFT with
   real BSCAN timing (TCK only while shifting). It reads frames from
