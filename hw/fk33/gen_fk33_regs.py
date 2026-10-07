@@ -80,7 +80,9 @@ def scrape_desc_pkg():
 # Read what that check does and does not do.  It compares this transcription
 # against the RTL's COMMENT, so two transcriptions of the same decode agreeing
 # is all it proves; the decode itself was read by hand (writes decode 0, 1, 2,
-# 9; reads decode 0, 1, 3..8, 10..15, and CTRL/Y_IDX are write-only in both).
+# 9, 16, 18; reads decode 0, 1, 3..8, 10..17, and CTRL/Y_IDX/UTIL_CLR are
+# write-only in both).  16..18 are the per-port utilisation counters, added
+# 2026-10-07 (Jungle Cat engine composition, Task 1).
 # The check that has real teeth is on the card and is in fk33_run_job.py: ID,
 # ADDR_CAP, CAPS and DESC_WORDS are four constants at four different offsets,
 # and all four reading their expected values cannot happen if this table is
@@ -102,6 +104,9 @@ ENG_REGS = [
     (0x34, "CYCLES",      "R"),
     (0x38, "BEATS",       "R"),
     (0x3C, "STARVED",     "R"),
+    (0x40, "UTIL_SEL",    "RW"),
+    (0x44, "UTIL_DATA",   "R"),
+    (0x48, "UTIL_CLR",    "W"),
 ]
 
 # The activation writer, rtl/fk33_engine.vhd (generated).  Its decode is on
@@ -116,7 +121,7 @@ ENGX_REGS = [
 
 def check_reg_table():
     """Require rtl/matvec_int4_desc_axi.vhd's header table to name the same
-    sixteen registers at the same offsets, in the same order."""
+    registers at the same offsets, in the same order."""
     txt = DESC_AXI.read_text()
     found = re.findall(r'^--\s+(0x[0-9A-F]{2})\s+([A-Z_0-9]+)\s+(RW|R|W)\s',
                        txt, re.M)
@@ -315,6 +320,20 @@ def render_engine():
     a("#define FK33_ENG_CAPS_NPORTS_S(v) (((v) >>  8) & 0xFFu)")
     a("#define FK33_ENG_CAPS_ROWS_IF(v)  (((v) >> 16) & 0xFFu)")
     a("#define FK33_ENG_CAPS_AXI_B(v)    (((v) >> 24) & 0xFFu)  /* AXI_DW/8 */")
+    a("")
+    a("/* Per-port utilisation counters (rtl/a_util_ctr.vhd), 48 bits each.")
+    a(" * Index i < NPORTS_W is weight port i's R beats, then the NPORTS_S scale")
+    a(" * ports, and i = NPORTS_W + NPORTS_S is the job-cycle counter.  Write")
+    a(" * UTIL_SEL = FK33_ENG_UTIL_SEL_LO(i), read UTIL_DATA (bits [31:0], and")
+    a(" * the high half is latched), write FK33_ENG_UTIL_SEL_HI(i), read UTIL_DATA")
+    a(" * again (bits [47:32]).  Counted only while the engine is in the CYCLES")
+    a(" * window, and accumulated across jobs until UTIL_CLR or reset.  The")
+    a(" * counters run on the AXI master clock: on a DUAL_CLK build (the FK33,")
+    a(" * hbm_aclk) the job-cycle counter is in hbm_aclk cycles, NOT CYCLES. */")
+    a("#define FK33_ENG_UTIL_SEL_LO(i)  ((uint32_t)(i) << 1)")
+    a("#define FK33_ENG_UTIL_SEL_HI(i)  (((uint32_t)(i) << 1) | 1u)")
+    a("#define FK33_ENG_UTIL_JOBCYC(caps) \\")
+    a("    (FK33_ENG_CAPS_NPORTS_W(caps) + FK33_ENG_CAPS_NPORTS_S(caps))")
     a("")
     a("/* What THIS bitstream was built with (hw/fk33/gen_fk33_engine.py).  Use")
     a(" * these to CHECK what CAPS/ADDR_CAP/DESC_WORDS report, never in place of")

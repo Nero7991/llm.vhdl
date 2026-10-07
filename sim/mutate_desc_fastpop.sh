@@ -98,7 +98,7 @@ TOP=tb_matvec_fk33_desc_dual
 SRCS="rtl/util_pkg.vhd rtl/act_mem_striped.vhd rtl/async_fifo.vhd \
       rtl/axi_rd_fsm.vhd rtl/matvec_int4_desc_pkg.vhd rtl/mv4i_arith_pkg.vhd \
       rtl/stream_fifo.vhd rtl/axi_rd_port.vhd rtl/matvec_core.vhd \
-      rtl/weight_streamer.vhd rtl/matvec_int4.vhd rtl/matvec_int4_desc_axi.vhd"
+      rtl/weight_streamer.vhd rtl/matvec_int4.vhd rtl/a_util_ctr.vhd rtl/matvec_int4_desc_axi.vhd"
 
 # The vector directory.  This bench reads mv_fk33_tr.txt, which ref/mv_fk33_tr
 # builds from a REAL packed tensor, and ../mem through a symlink.  Point

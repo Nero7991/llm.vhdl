@@ -102,7 +102,7 @@ FILES="rtl/util_pkg.vhd rtl/async_fifo.vhd rtl/axi_rd_fsm.vhd
        rtl/stream_fifo.vhd rtl/axi_rd_port.vhd rtl/act_mem_striped.vhd
        rtl/mv4i_arith_pkg.vhd rtl/matvec_core.vhd rtl/weight_streamer.vhd
        rtl/matvec_int4.vhd rtl/matvec_int4_desc_pkg.vhd
-       rtl/matvec_int4_desc_axi.vhd sim/tb_mv4i_desc_image.vhd"
+       rtl/a_util_ctr.vhd rtl/matvec_int4_desc_axi.vhd sim/tb_mv4i_desc_image.vhd"
 
 TARGET="rtl/matvec_int4_desc_axi.vhd"
 

@@ -77,6 +77,18 @@
 --                         FIFO full and the scale superword missing counts as
 --                         neither BEATS nor STARVED.  On silicon that residual
 --                         is 10% to 47% of CYCLES.
+--   0x40 UTIL_SEL     RW  [0] hi, [7:1] index i of the per-port utilisation
+--                         counters (rtl/a_util_ctr.vhd): i in 0..NPORTS_W-1
+--                         is weight port i's R beats, NPORTS_W..NP_ALL-1 the
+--                         scale ports', and i = NP_ALL the job-cycle counter.
+--   0x44 UTIL_DATA    R   hi = 0: counter i bits [31:0], and LATCHES its bits
+--                         [47:32]; hi = 1: the latched [47:32], zero-extended.
+--                         So sel=2i, read, sel=2i+1, read is one atomic
+--                         48-bit sample while the counter runs.
+--   0x48 UTIL_CLR     W   any write clears every utilisation counter.
+--                         Nothing else clears them except reset: they
+--                         ACCUMULATE across jobs, unlike CYCLES/BEATS.
+--                         See UTILISATION COUNTERS in the body.
 --
 -- NOT IN THE MAP, ON PURPOSE: N_ROWS, N_COLS, OUT_SHIFT, W_EXP, X_EXP,
 -- OUT_MODE, the bases, W_BEATS, S_BEATS and the codebook are all descriptor
@@ -535,6 +547,20 @@ architecture rtl of matvec_int4_desc_axi is
   signal c_cycles, c_beats, c_starve : unsigned(31 downto 0)
          := (others => '0');
 
+  -- UTILISATION COUNTERS.  Core-domain side of the read handshake; the
+  -- counter and its half of the handshake are in the `u_*` domain below.
+  signal u_sel    : std_logic_vector(7 downto 0) := (others => '0');
+  signal u_req_t  : std_logic := '0';   -- toggles once per UTIL_DATA read
+  signal u_clr_t  : std_logic := '0';   -- toggles once per UTIL_CLR write
+  signal u_pend   : std_logic := '0';   -- a UTIL_DATA read is in flight
+  signal u_ack_s  : std_logic_vector(1 downto 0) := (others => '0');
+  signal u_rd_dat : std_logic_vector(31 downto 0);
+  signal u_job_c  : std_logic;          -- S_WAIT, core domain
+  signal m_rready_i : std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+  signal u_ack_t_x : std_logic;         -- the counter domain's ack toggle
+  attribute ASYNC_REG : string;
+  attribute ASYNC_REG of u_ack_s : signal is "TRUE";
+
   -- ---------------------------------------------------------- field access
   -- 64-bit little-endian words; every accessor assigns through a declared
   -- 0-based variable, the same rule rtl/seq_desc_fetch.vhd:355 states: a
@@ -699,7 +725,7 @@ begin
              m_arvalid => m_arvalid, m_arready => m_arready,
              m_araddr => m_araddr, m_arlen => m_arlen,
              m_arsize => m_arsize, m_arburst => m_arburst,
-             m_rvalid => m_rvalid, m_rready => m_rready,
+             m_rvalid => m_rvalid, m_rready => m_rready_i,
              m_rdata => m_rdata, m_rlast => m_rlast,
              y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
              y_mask => y_mask_i, y_exp => v_yexp,
@@ -1060,6 +1086,7 @@ begin
       if s_axi_aresetn = '0' then
         awready <= '0'; wready <= '0'; bvalid <= '0';
         err_addr <= '0'; dptr <= (others => '0'); y_idx <= (others => '0');
+        u_sel <= (others => '0'); u_clr_t <= '0';
       else
         if awready = '0' and s_axi_awvalid = '1' and s_axi_wvalid = '1' then
           awready <= '1'; wready <= '1'; wr_addr <= s_axi_awaddr;
@@ -1087,6 +1114,8 @@ begin
             -- start of the job one clock behind the write.
             when 2 => null;
             when 9 => y_idx <= unsigned(s_axi_wdata(15 downto 0));
+            when 16 => u_sel <= s_axi_wdata(7 downto 0);
+            when 18 => u_clr_t <= not u_clr_t;
             when others => null;
           end case;
           bvalid <= '1';
@@ -1172,8 +1201,18 @@ begin
     if rising_edge(s_axi_aclk) then
       if s_axi_aresetn = '0' then
         arready <= '0'; rvalid <= '0';
+        u_req_t <= '0'; u_pend <= '0';
       else
         rreg := to_integer(unsigned(s_axi_araddr(7 downto 2)));
+        -- UTIL_DATA STALLS like Y_LO/Y_HI: the first cycle of the read
+        -- toggles u_req_t, and arready is held low until the counter domain
+        -- has toggled the acknowledge back, by which time u_rd_dat is the
+        -- registered answer and stays put until the next request.
+        if arready = '0' and s_axi_arvalid = '1' and rreg = 17
+           and u_pend = '0' and (u_ack_s(1) = u_req_t) then
+          u_req_t <= not u_req_t;
+          u_pend  <= '1';
+        end if;
         -- Y_LO / Y_HI STALL until Y_IDX has been resolved to (tile, lane) and
         -- res_q has been fetched at that tile.  Holding arready low is a real
         -- handshake; the alternative -- answering immediately and trusting
@@ -1181,8 +1220,10 @@ begin
         -- software convention that no constraint or test would ever check.
         -- Every other register answers in the same cycle it always did.
         if arready = '0' and s_axi_arvalid = '1'
+           and not (rreg = 17 and (u_pend = '0' or u_ack_s(1) /= u_req_t))
            and not ((rreg = 10 or rreg = 11) and (y_ok and y_rdy) = '0') then
           arready <= '1';
+          if rreg = 17 then u_pend <= '0'; end if;
           case rreg is
             when 0 => rdata_r <= dptr(31 downto 0);
             when 1 => rdata_r <= dptr(63 downto 32);
@@ -1205,6 +1246,8 @@ begin
             when 13 => rdata_r <= std_logic_vector(c_cycles);
             when 14 => rdata_r <= std_logic_vector(c_beats);
             when 15 => rdata_r <= std_logic_vector(c_starve);
+            when 16 => rdata_r <= x"000000" & u_sel;
+            when 17 => rdata_r <= u_rd_dat;
             when others => rdata_r <= (others => '0');
           end case;
           rvalid <= '1';
@@ -1216,4 +1259,137 @@ begin
       end if;
     end if;
   end process;
+
+  -- ack synchroniser back into the core domain (two flops in both clock
+  -- configurations, so the read protocol is the same text either way)
+  uack : process(s_axi_aclk)
+  begin
+    if rising_edge(s_axi_aclk) then
+      if s_axi_aresetn = '0' then
+        u_ack_s <= (others => '0');
+      else
+        u_ack_s <= u_ack_s(0) & u_ack_t_x;
+      end if;
+    end if;
+  end process;
+
+  -- =====================================================================
+  -- UTILISATION COUNTERS (Jungle Cat engine composition, Task 1)
+  -- =====================================================================
+  -- Per read port, R-channel handshakes (m_rvalid and m_rready) while a job
+  -- is in S_WAIT; and, at index NP_ALL, cycles in S_WAIT.  S_WAIT is the
+  -- window CYCLES/BEATS/STARVED count in (see the 0x34 entry above), so the
+  -- per-port beats are comparable to BEATS: on a completed job each WEIGHT
+  -- port delivers exactly BEATS beats.  Beats outside S_WAIT (none are
+  -- expected: the core issues its reads after `core_start`) are not counted.
+  --
+  -- THE CLOCK.  The handshakes are synchronous to the AXI master clock,
+  -- which is `m_aclk` when DUAL_CLK and `s_axi_aclk` otherwise, so the
+  -- counters run on THAT clock.  beats / job-cycles is then a port's fraction
+  -- of its one-beat-per-cycle ceiling.  Under DUAL_CLK the job-cycle counter
+  -- therefore counts m_aclk cycles and is NOT CYCLES; with one clock it
+  -- equals the sum of every job's CYCLES exactly.
+  --
+  -- THE CROSSING (DUAL_CLK).  `u_job_c` crosses as a level (two flops): its
+  -- edges arrive two m_aclk cycles late, which delays the window by the
+  -- same amount at both ends and so keeps its length.  A read crosses as a
+  -- toggle request with a toggle acknowledge; u_sel is quasi-static (written
+  -- by the host before the read it selects), and u_rd_dat is held stable by
+  -- the counter between requests.  The card XDC declares core_clk and
+  -- hbm_aclk asynchronous, so none of these paths are timed.
+  u_job_c <= '1' when st = S_WAIT else '0';
+  m_rready <= m_rready_i;
+
+  -- The counter domain's clock is a PORT, mapped straight onto m_aclk or
+  -- s_axi_aclk in two generate arms, never a signal assigned from one: a
+  -- clock through an assignment is a delta late in simulation, so the
+  -- counter would sample the post-edge value of everything the real clock's
+  -- processes update, which silicon never does.
+  gu : block
+    signal rst_s    : std_logic_vector(1 downto 0) := (others => '1');
+    signal job_s    : std_logic_vector(1 downto 0) := (others => '0');
+    signal req_s    : std_logic_vector(2 downto 0) := (others => '0');
+    signal clr_s    : std_logic_vector(2 downto 0) := (others => '0');
+    signal u_rst    : std_logic;
+    signal u_rden   : std_logic;
+    signal u_rden_q : std_logic := '0';
+    signal u_ack_t  : std_logic := '0';
+    signal u_beat   : std_logic_vector(NP_ALL-1 downto 0);
+    attribute ASYNC_REG of rst_s : signal is "TRUE";
+    attribute ASYNC_REG of job_s : signal is "TRUE";
+    attribute ASYNC_REG of req_s : signal is "TRUE";
+    attribute ASYNC_REG of clr_s : signal is "TRUE";
+  begin
+    u_beat <= m_rvalid and m_rready_i;
+    u_rden <= req_s(2) xor req_s(1);
+    u_rst  <= rst_s(1) or (clr_s(2) xor clr_s(1));
+    u_ack_t_x <= u_ack_t;
+
+    gdc : if DUAL_CLK generate
+      usync : process(m_aclk)
+      begin
+        if rising_edge(m_aclk) then
+          rst_s <= rst_s(0) & rst;
+          job_s <= job_s(0) & u_job_c;
+          u_rden_q <= u_rden;
+          -- The request and clear toggles are reset to the value their core-
+          -- domain sources take in reset, so a toggle left over from before a
+          -- reset cannot fire a read whose acknowledge the core never expects.
+          if rst_s(1) = '1' then
+            req_s <= (others => '0'); clr_s <= (others => '0');
+          else
+            req_s <= req_s(1 downto 0) & u_req_t;
+            clr_s <= clr_s(1 downto 0) & u_clr_t;
+          end if;
+          if rst_s(1) = '1' then
+            u_ack_t <= '0';
+          elsif u_rden_q = '1' then
+            -- rd_data was registered at the edge that ended the rd_en cycle
+            u_ack_t <= not u_ack_t;
+          end if;
+        end if;
+      end process;
+
+      uctr : entity work.a_util_ctr
+        generic map(NP => NP_ALL)
+        port map(clk => m_aclk, rst => u_rst, in_job => job_s(1),
+                 rbeat => u_beat,
+                 rd_idx => unsigned(u_sel(7 downto 1)), rd_hi => u_sel(0),
+                 rd_en => u_rden, rd_data => u_rd_dat);
+    end generate;
+
+    gsc : if not DUAL_CLK generate
+      -- one clock: the window is S_WAIT itself, cycle for cycle
+      usync : process(s_axi_aclk)
+      begin
+        if rising_edge(s_axi_aclk) then
+          rst_s <= rst_s(0) & rst;
+          job_s <= job_s(0) & u_job_c;
+          u_rden_q <= u_rden;
+          -- The request and clear toggles are reset to the value their core-
+          -- domain sources take in reset, so a toggle left over from before a
+          -- reset cannot fire a read whose acknowledge the core never expects.
+          if rst_s(1) = '1' then
+            req_s <= (others => '0'); clr_s <= (others => '0');
+          else
+            req_s <= req_s(1 downto 0) & u_req_t;
+            clr_s <= clr_s(1 downto 0) & u_clr_t;
+          end if;
+          if rst_s(1) = '1' then
+            u_ack_t <= '0';
+          elsif u_rden_q = '1' then
+            -- rd_data was registered at the edge that ended the rd_en cycle
+            u_ack_t <= not u_ack_t;
+          end if;
+        end if;
+      end process;
+
+      uctr : entity work.a_util_ctr
+        generic map(NP => NP_ALL)
+        port map(clk => s_axi_aclk, rst => u_rst, in_job => u_job_c,
+                 rbeat => u_beat,
+                 rd_idx => unsigned(u_sel(7 downto 1)), rd_hi => u_sel(0),
+                 rd_en => u_rden, rd_data => u_rd_dat);
+    end generate;
+  end block;
 end architecture;

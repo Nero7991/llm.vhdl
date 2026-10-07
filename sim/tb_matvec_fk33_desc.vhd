@@ -538,6 +538,13 @@ architecture sim of tb_matvec_fk33_desc is
 
   -- ----------------------------------------------------- per-case results
   signal nchk, nbad : integer := 0;
+
+  -- UTILISATION COUNTER ORACLE (JC engine composition Task 1, 2026-10-07).
+  -- Every R handshake per port since the last reset, counted by the bench on
+  -- the clock the slaves run on.  Independent of the DUT's S_WAIT window, so
+  -- equality also says no beat fell outside the window the DUT counts in.
+  type ucnt_arr is array (natural range <>) of integer;
+  signal mon_rb : ucnt_arr(0 to NPW + NPS - 1) := (others => 0);
   -- The counters have exactly ONE driver, the capture process.  The driver
   -- process asks for a clear with `cap_clr` rather than assigning them: two
   -- processes driving one unresolved signal does not merely misbehave, GHDL
@@ -843,6 +850,21 @@ begin
   -- three structural checks as sim/tb_matvec_fk33.vhd, with `psrc` added so
   -- that a deliberately wrong base can be SERVED instead of aborting the run.
   -- =====================================================================
+  rbmon : process(mclk)
+    variable c : ucnt_arr(0 to NP_ALL-1) := (others => 0);
+  begin
+    if rising_edge(mclk) then
+      if aresetn = '0' then
+        c := (others => 0);
+      else
+        for p in 0 to NP_ALL-1 loop
+          if m_rvalid(p) = '1' and m_rready(p) = '1' then c(p) := c(p) + 1; end if;
+        end loop;
+      end if;
+      mon_rb <= c;
+    end if;
+  end process;
+
   slaves : for p in 0 to NP_ALL-1 generate
     slv : process
       variable lf : unsigned(15 downto 0) := to_unsigned(4919 + p*277, 16);
@@ -1192,6 +1214,10 @@ begin
     variable q_yexp  : exp_t := (others => -1);   -- Y_EXP, per sequence job
     variable q_stale : integer := 0;              -- stale STATUS reads seen
     variable q_want  : integer;
+    -- the utilisation counter check, after the sequence section
+    variable u_cyc_sum, u_beat_sum, u_wsum, u_nbad, u_tol : integer := 0;
+    variable u_v : ucnt_arr(0 to NP_ALL) := (others => 0);
+    variable u_lo, u_hi : std_logic_vector(31 downto 0);
 
     procedure awr(addr : natural; d : std_logic_vector(31 downto 0)) is
     begin
@@ -1829,6 +1855,9 @@ begin
 
       ard(16#38#, rd);
       q_beats(j) := to_integer(unsigned(rd));
+      u_beat_sum := u_beat_sum + q_beats(j);
+      ard(16#34#, rd);
+      u_cyc_sum := u_cyc_sum + to_integer(unsigned(rd));
 
       -- The cycle-accurate window, off the job_done port.  Zero is the
       -- invariant; see the monitor's header for why the register read above
@@ -1859,6 +1888,96 @@ begin
     end loop;
     xbump <= 0;
     wait until rising_edge(clk);
+
+    -- ------------------------------------------- UTILISATION COUNTERS
+    -- Three jobs have run since the reset above.  Read every counter through
+    -- UTIL_SEL / UTIL_DATA (low then high), then compare against:
+    --   per port      mon_rb, the bench's own count of every R handshake;
+    --   weight ports  their sum against NPW * sum(BEATS): BEATS counts
+    --                 weight words, one beat from each weight port;
+    --   job cycles    sum(CYCLES) exactly with one clock; under DUAL the
+    --                 counter is in m_aclk cycles, so the core-time window
+    --                 rescaled to m_aclk, within 2 cycles per job.
+    -- Then UTIL_CLR must zero all of them.
+    u_nbad := 0; u_wsum := 0;
+    for i in 0 to NP_ALL loop
+      awr(16#40#, std_logic_vector(to_unsigned(2*i, 32)));
+      ard(16#40#, rd);
+      if to_integer(unsigned(rd)) /= 2*i then
+        u_nbad := u_nbad + 1;
+        report "UTIL_SEL read back " & integer'image(to_integer(unsigned(rd))) &
+               " after writing " & integer'image(2*i) & " MISMATCH"
+          severity error;
+      end if;
+      ard(16#44#, u_lo);
+      awr(16#40#, std_logic_vector(to_unsigned(2*i + 1, 32)));
+      ard(16#44#, u_hi);
+      if u_hi /= x"00000000" or u_lo(31) = '1' then
+        u_nbad := u_nbad + 1;
+        report "UTIL counter " & integer'image(i) & " out of range: hi=" &
+               integer'image(to_integer(unsigned(u_hi(15 downto 0)))) &
+               " MISMATCH" severity error;
+        u_v(i) := -1;
+      else
+        u_v(i) := to_integer(unsigned(u_lo(30 downto 0)));
+      end if;
+    end loop;
+    for p in 0 to NP_ALL-1 loop
+      if u_v(p) /= mon_rb(p) then
+        u_nbad := u_nbad + 1;
+        report "UTIL port " & integer'image(p) & ": counter " &
+               integer'image(u_v(p)) & " bench saw " &
+               integer'image(mon_rb(p)) & " R beats MISMATCH" severity error;
+      end if;
+      if p < NPW then u_wsum := u_wsum + u_v(p); end if;
+    end loop;
+    if u_wsum /= NPW * u_beat_sum then
+      u_nbad := u_nbad + 1;
+      report "UTIL weight-port beat sum " & integer'image(u_wsum) &
+             " /= NPORTS_W * sum(BEATS) = " & integer'image(NPW) & " * " &
+             integer'image(u_beat_sum) & " MISMATCH" severity error;
+    end if;
+    if not DUAL then
+      if u_v(NP_ALL) /= u_cyc_sum then
+        u_nbad := u_nbad + 1;
+        report "UTIL job cycles " & integer'image(u_v(NP_ALL)) &
+               " /= sum(CYCLES) " & integer'image(u_cyc_sum) & " MISMATCH"
+          severity error;
+      end if;
+    else
+      -- core period 10,000 ps, m_aclk period 2*ACLK_HALF_PS
+      u_tol := 2 * 3 * 2 * ACLK_HALF_PS;
+      if abs(u_v(NP_ALL) * 2 * ACLK_HALF_PS - u_cyc_sum * 10000) > u_tol then
+        u_nbad := u_nbad + 1;
+        report "UTIL job cycles " & integer'image(u_v(NP_ALL)) &
+               " m_aclk cycles inconsistent with sum(CYCLES) " &
+               integer'image(u_cyc_sum) & " core cycles MISMATCH"
+          severity error;
+      end if;
+    end if;
+    awr(16#48#, x"00000001");                          -- UTIL_CLR
+    for k in 0 to 15 loop wait until rising_edge(clk); end loop;
+    for i in 0 to NP_ALL loop
+      awr(16#40#, std_logic_vector(to_unsigned(2*i, 32)));
+      ard(16#44#, u_lo);
+      awr(16#40#, std_logic_vector(to_unsigned(2*i + 1, 32)));
+      ard(16#44#, u_hi);
+      if u_lo /= x"00000000" or u_hi /= x"00000000" then
+        u_nbad := u_nbad + 1;
+        report "UTIL counter " & integer'image(i) &
+               " not zero after UTIL_CLR MISMATCH" severity error;
+      end if;
+    end loop;
+    if u_nbad = 0 then
+      report "UTIL counters: " & integer'image(NP_ALL) & " ports match the " &
+             "bench's R-beat count, weight sum = " & integer'image(NPW) &
+             " * BEATS " & integer'image(u_beat_sum) & ", job cycles " &
+             integer'image(u_v(NP_ALL)) & " vs sum(CYCLES) " &
+             integer'image(u_cyc_sum) & ", UTIL_CLR zeroes all " &
+             integer'image(NP_ALL + 1) severity note;
+    else
+      nerr := nerr + 1;
+    end if;
 
     -- ------------------------- THE TWO BLINDNESSES, ASSERTED NOT DESCRIBED
     -- A quantity that cannot tell the jobs apart is an invariant of this

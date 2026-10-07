@@ -116,7 +116,7 @@ switch -- $unit {
                                stream_fifo.vhd async_fifo.vhd \
                                axi_rd_fsm.vhd axi_rd_port.vhd weight_streamer.vhd \
                                act_mem_striped.vhd matvec_core.vhd matvec_int4.vhd \
-                               matvec_int4_desc_axi.vhd}]
+                               a_util_ctr.vhd matvec_int4_desc_axi.vhd}]
     set top   matvec_int4_desc_axi
     set clks  {s_axi_aclk m_aclk}
   }

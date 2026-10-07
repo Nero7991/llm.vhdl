@@ -105,6 +105,7 @@ read_vhdl -vhdl2008 $pfRoot/rtl/weight_streamer.vhd
 read_vhdl -vhdl2008 $pfRoot/rtl/act_mem_striped.vhd
 read_vhdl -vhdl2008 $pfRoot/rtl/matvec_core.vhd
 read_vhdl -vhdl2008 $pfRoot/rtl/matvec_int4.vhd
+read_vhdl -vhdl2008 $pfRoot/rtl/a_util_ctr.vhd
 read_vhdl -vhdl2008 $pfRoot/rtl/matvec_int4_desc_axi.vhd
 read_vhdl -vhdl2008 $pfRoot/hw/fk33/rtl/fk33_engine.vhd
 read_vhdl -vhdl2008 $pfRoot/rtl/fk33_seam.vhd

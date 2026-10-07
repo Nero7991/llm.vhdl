@@ -126,6 +126,9 @@
 #define FK33_ENG_CYCLES       (FK33_ENG_CTL_BASE + 0x34u)  /* R  */
 #define FK33_ENG_BEATS        (FK33_ENG_CTL_BASE + 0x38u)  /* R  */
 #define FK33_ENG_STARVED      (FK33_ENG_CTL_BASE + 0x3Cu)  /* R  */
+#define FK33_ENG_UTIL_SEL     (FK33_ENG_CTL_BASE + 0x40u)  /* RW */
+#define FK33_ENG_UTIL_DATA    (FK33_ENG_CTL_BASE + 0x44u)  /* R  */
+#define FK33_ENG_UTIL_CLR     (FK33_ENG_CTL_BASE + 0x48u)  /* W  */
 
 #define FK33_ENG_ID_MAGIC   0x4D563449u   /* "MV4I" */
 #define FK33_ENG_GO         0x1u          /* CTRL bit 0, self-clearing */
@@ -163,6 +166,20 @@
 #define FK33_ENG_CAPS_NPORTS_S(v) (((v) >>  8) & 0xFFu)
 #define FK33_ENG_CAPS_ROWS_IF(v)  (((v) >> 16) & 0xFFu)
 #define FK33_ENG_CAPS_AXI_B(v)    (((v) >> 24) & 0xFFu)  /* AXI_DW/8 */
+
+/* Per-port utilisation counters (rtl/a_util_ctr.vhd), 48 bits each.
+ * Index i < NPORTS_W is weight port i's R beats, then the NPORTS_S scale
+ * ports, and i = NPORTS_W + NPORTS_S is the job-cycle counter.  Write
+ * UTIL_SEL = FK33_ENG_UTIL_SEL_LO(i), read UTIL_DATA (bits [31:0], and
+ * the high half is latched), write FK33_ENG_UTIL_SEL_HI(i), read UTIL_DATA
+ * again (bits [47:32]).  Counted only while the engine is in the CYCLES
+ * window, and accumulated across jobs until UTIL_CLR or reset.  The
+ * counters run on the AXI master clock: on a DUAL_CLK build (the FK33,
+ * hbm_aclk) the job-cycle counter is in hbm_aclk cycles, NOT CYCLES. */
+#define FK33_ENG_UTIL_SEL_LO(i)  ((uint32_t)(i) << 1)
+#define FK33_ENG_UTIL_SEL_HI(i)  (((uint32_t)(i) << 1) | 1u)
+#define FK33_ENG_UTIL_JOBCYC(caps) \
+    (FK33_ENG_CAPS_NPORTS_W(caps) + FK33_ENG_CAPS_NPORTS_S(caps))
 
 /* What THIS bitstream was built with (hw/fk33/gen_fk33_engine.py).  Use
  * these to CHECK what CAPS/ADDR_CAP/DESC_WORDS report, never in place of
