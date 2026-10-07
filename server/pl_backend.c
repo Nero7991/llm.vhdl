@@ -488,7 +488,8 @@ int pl_open(const pl_open_opts *o, pl_ctx **out)
                    o->allow_hardware);
         break;
     case PL_TRANSPORT_JC:
-        c->t = fk33_transport_open_jc(o->jc_sock, o->jc_die);
+        c->t = fk33_transport_open_jc(o->jc_sock, o->jc_die,
+                                      c->base + FK33_SEAM_WIN_DATA);
         break;
     default:
         c->t = NULL;

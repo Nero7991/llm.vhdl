@@ -68,7 +68,7 @@ seam_selftest: tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c
                fk33_sim.c fk33_manifest.c fk33_imglock.c pl_backend.h pl_pipeline.h fk33_transport.h \
                fk33_seam.h fk33_manifest.h fk33_imglock.h
 	$(CC) $(CBACK) -o $@ tests/seam_selftest.c pl_backend.c pl_pipeline.c fk33_transport.c \
-	      fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
+	      fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lpthread
 
 # ---------------------------------------------------------------------------
 # The host embedding gather (server/embed_mv4i.c), and its checks.
@@ -107,7 +107,7 @@ embed_ref_oracle: tests/embed_ref_oracle.c ../ref/matvec_int4.c ../ref/mv4i_arit
 embed_e2e: tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
            fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
 	$(CC) $(CBACK) -o $@ tests/embed_e2e.c embed_mv4i.c embed_bf16.c pl_backend.c \
-	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lm
+	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lm -lpthread
 
 embed-check: embed_dump embed_ref_oracle embed_e2e embed_bf16_dump
 	@if [ ! -f "$(EMBED_MV4I)" ]; then \
@@ -142,7 +142,7 @@ run_prompt: tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c fk33_
             qwen35_chat.c qwen35_unicode_data.c
 	$(CC) $(CBACK) -I. -o $@ tests/run_prompt.c pl_backend.c pl_pipeline.c fk33_transport.c \
 	      fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c \
-	      qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c -lm
+	      qwen35_tok.c qwen35_chat.c qwen35_unicode_data.c -lm -lpthread
 
 # The chat-template batch driver, for server/verify_chat_template.py.  That
 # script builds it itself with --build; this rule exists so `make check` can
@@ -169,7 +169,7 @@ test: seam_selftest test_transport_jc
 # a Unix socket under ~/regress_scratch/, scripted per case.  No hardware, no
 # tools/jc/jc_broker.py, no coe.py, nothing under /dev.
 test_transport_jc: test_transport_jc.c fk33_transport_jc.c fk33_transport.h
-	$(CC) $(CBACK) -o $@ test_transport_jc.c fk33_transport_jc.c
+	$(CC) $(CBACK) -o $@ test_transport_jc.c fk33_transport_jc.c -lpthread
 
 # THE IMAGE INTERLOCK, both halves in one command so it can be a single gate
 # row (sim/regress.sh runs a row's command unquoted and not through a shell,
@@ -252,4 +252,4 @@ imglock_selftest: tests/imglock_selftest.c pl_backend.c fk33_transport.c fk33_tr
                   fk33_sim.c fk33_manifest.c fk33_imglock.c pl_backend.h \
                   fk33_transport.h fk33_seam.h fk33_manifest.h fk33_imglock.h
 	$(CC) $(CBACK) -o $@ tests/imglock_selftest.c pl_backend.c \
-	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c
+	      fk33_transport.c fk33_transport_jc.c fk33_sim.c fk33_manifest.c fk33_imglock.c -lpthread

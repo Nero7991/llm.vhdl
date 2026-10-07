@@ -139,9 +139,27 @@ fk33_transport *fk33_transport_open_sim(const void *opts);
  *
  * `die` selects which die on the chain ("A"/"B"/...; the broker's own
  * naming) and must be a plain identifier (letters, digits, '_', '-').
+ * `win_data_off` is the ABSOLUTE BAR offset of the window port this die
+ * coalesces register writes to -- pl_backend.c passes `c->base +
+ * FK33_SEAM_WIN_DATA`.  ONLY writes to that exact offset are coalesced;
+ * every other reg_write32() goes out as its own `wr32`, acknowledged
+ * before the call returns (see fk33_transport_jc.c's "C1" header note for
+ * why a CTRL/GO write must never sit buffered).
+ *
+ * One socket is opened per (process, sock_path) and shared, refcounted,
+ * across every die that opens the same path -- the broker serves one
+ * client at a time, so a second die opening its own socket would just get
+ * refused.  A receive (and send) deadline applies to that socket, default
+ * 120000 ms, overridable with the FK33_JC_TIMEOUT_MS environment variable;
+ * on a timeout, or any flush failure, or any malformed reply, the shared
+ * connection is marked broken and every later call on every die sharing it
+ * fails fast without sending anything, until each die's close() releases
+ * its reference.
+ *
  * Returns NULL on failure (bad args, socket/connect failure) and prints why.
  * ------------------------------------------------------------------------ */
-fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die);
+fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die,
+                                       uint32_t win_data_off);
 
 /* ------------------------------------------------------------------------
  * Small helpers every caller wants, written once.

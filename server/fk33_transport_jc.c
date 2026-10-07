@@ -5,84 +5,114 @@
  * THE WIRE PROTOCOL (docs/superpowers/plans/2026-10-07-jc-engine-composition.md,
  * Task 6; field names taken from tools/jc/jc_broker.py's Broker.handle()).
  * One JSON object per line, sent and answered in strict order -- the broker
- * serves one client, one request at a time, so this file never needs to
- * pipeline or tag a reply back to its request.
+ * serves one client, one request at a time.
  *
  *   {"die":D,"op":"rd32","off":N}                  -> {"ok":true,"val":V}
+ *   {"die":D,"op":"wr32","off":N,"val":V}          -> {"ok":true}
  *   {"die":D,"op":"wrn","off":N,"fix":true,"vals":[...]} -> {"ok":true}
  *   {"die":D,"op":"memrd","addr":A,"n":K}           -> {"ok":true,"hex":".."}
- *   anything else                                   -> {"ok":false,"err":".."}
+ *   anything else                                   -> {"ok":false,"err":".."
+ *                                                        [,"done_items":I,
+ *                                                          "done_items_exact":B]}
  *
- * COALESCING.  pl_backend.c pushes and reads a card row through the
- * FK33_SEAM_WIN_DATA register one 32-bit word at a time: n_embd writes in a
- * row to the exact same BAR offset on the way in (server/pl_backend.c
- * push_row(), pl_push_embedding()), and n_embd reads in a row from the exact
- * same offset on the way out (pl_read_xout()).  This file turns a run of
- * reg_write32() calls that all land on the same offset into ONE `wrn` with
- * `fix:true` covering the whole run -- one socket round trip where the naive
- * translation would be n_embd of them.
+ * FIX ROUND 1 (review on the first cut).  Four things changed shape:
  *
- * A READ run is deliberately NOT coalesced.  WIN_DATA is a read-and-advance
- * window: reading element k+1 before the caller has asked for it is reading a
+ * C1 -- COALESCING SCOPE.  The first cut coalesced any run of writes to the
+ * same offset, no matter what that offset was.  That is wrong: pl_backend.c
+ * writes CTRL=GO through reg_write32() too (pl_backend.c:1330), and a GO that
+ * sits buffered until some unrelated later register access touches the
+ * socket is a GO the card never saw -- it breaks pl_pipeline's two-card
+ * overlap (pl_pipeline.c, prefill_overlap()) outright and corrupts every
+ * timing measurement built on "the GO is on the wire now" (t_go0).  This file
+ * now takes the window's ABSOLUTE BAR offset as an explicit, separate
+ * argument to fk33_transport_open_jc() (pl_backend.c passes `c->base +
+ * FK33_SEAM_WIN_DATA`), coalesces ONLY reg_write32() calls that land on that
+ * exact offset, and sends every other write as its own `wr32`, synchronously
+ * -- acknowledged before reg_write32() returns, never deferred.
+ *
+ * I1 -- NO RECEIVE DEADLINE.  recv() used to block forever; a broker that
+ * hangs (or a half-dead chain) hung the whole server.  Every socket created
+ * here now carries SO_RCVTIMEO (and SO_SNDTIMEO, for the send side of the
+ * same failure mode), default 120000 ms, overridable with the
+ * FK33_JC_TIMEOUT_MS environment variable (read once, when a new connection
+ * is opened).  A timeout returns -ETIMEDOUT and marks the connection broken
+ * (see M1).
+ *
+ * I2 -- THE REAL ok:false SHAPE.  A partial wrn failure
+ * (tools/jc/jc_broker.py's err_reply(), jc_broker.py:178-182, reflecting
+ * AxiError.done_items/.done_items_exact) carries two extra fields,
+ * "done_items" and "done_items_exact", always together.  The old strict
+ * 2-field-only check rejected that as -EPROTO and threw the broker's actual
+ * error text away.  The false shape is now EITHER {"ok":false,"err":S} OR
+ * {"ok":false,"err":S,"done_items":I,"done_items_exact":B} -- nothing else --
+ * and the err string (plus done_items when present) is printed to stderr
+ * with the die before returning -EIO.
+ *
+ * I3 -- ONE CONNECTION PER BROKER.  The broker serves exactly one client.
+ * The first cut opened one socket per pl_ctx, so a second die got "Busy".
+ * Connections are now refcounted per (process, sock_path): opened on first
+ * use, closed on last close, and every byte on the wire -- for every die
+ * sharing that path -- goes through the one jc_conn's mutex, which is held
+ * for an entire request/reply round trip (including the flush it may have
+ * to do first), so two dies' requests can never interleave on the wire.
+ * Each die still keeps its OWN pending coalesce run (jc_ctx), because the
+ * window being coalesced belongs to one die's register file, not the
+ * socket; that run is only ever touched while holding its connection's lock.
+ *
+ * M1 -- STICKY BROKEN.  After any flush failure (of any kind -- see below),
+ * any receive timeout, or any protocol error (malformed JSON, wrong/missing/
+ * extra fields, an oversized line), the shared connection is marked broken.
+ * Every later call on EVERY die sharing it returns -ECONNABORTED without
+ * sending anything, until close() releases it.  mem_write() still always
+ * returns -EPERM, but if its own flush attempt fails, the connection is
+ * marked broken anyway -- the refusal value does not change, but the
+ * connection's fate does.
+ *
+ *   ONE ASYMMETRY ON PURPOSE: an isolated rd32/wr32/memrd round trip that
+ *   comes back {"ok":false,...} (a normal in-band AxiError, say) does NOT
+ *   mark the connection broken -- that is an ordinary operational failure
+ *   for that one call. A FLUSH that comes back {"ok":false,...} DOES mark it
+ *   broken, always, even though the reply is perfectly well-formed: a
+ *   partial wrn leaves the card's WIN_ADDR sitting at done_items, not at the
+ *   n this file asked for, and this transport has no mechanism to
+ *   resynchronize that window afterwards, so continuing to drive it is worse
+ *   than refusing to.
+ *
+ * READS ARE STILL NEVER COALESCED.  WIN_DATA is a read-and-advance window:
+ * reading element k+1 before the caller has asked for it is reading a
  * register that has not been "asked for" yet, and speculative reads of a
- * stateful window are exactly the shape of bug this project keeps finding
- * (see docs/WORKLOG.md on coalesced reads getting the order wrong). So every
- * reg_read32() issues its own `rd32`, full stop. THE COST OF THAT CORRECTNESS:
- * an n_embd read-out run costs n_embd round trips here, the same as if no
- * transport existed at all. That cost is accepted on purpose; see brief
- * Task 7.
- *
- * FLUSH TIMING, AND WHICH OF THE BRIEF'S TWO OPTIONS THIS FILE TAKES.
- * The brief allows either "a flush failure is reported on the next call" or,
- * better, "the write that triggers the flush reports it". This file always
- * flushes SYNCHRONOUSLY, as the first thing done by whichever call ends the
- * run: a reg_write32() to a different offset, any reg_read32(), mem_read(),
- * mem_write(), or close(). If that flush fails, THAT call returns the
- * flush's error and never attempts its own operation. Because a flush here
- * only ever happens as the first step of handling some "next call", the two
- * descriptions in the brief describe the same observable behaviour in this
- * file, and this is the more specific ("better still") one: there is no
- * separate deferred-error slot, the very call that ends the run IS the
- * report.  The one exception is mem_write(), which is unconditionally
- * refused with -EPERM regardless of whether its own flush attempt
- * succeeded -- see the note on jc_mem_write() below.
- *
- * SIZE BOUND.  A coalesced run is capped at JC_WRN_MAX values; a longer run
- * is flushed early and a new run started, so it becomes two (or more) `wrn`
- * requests rather than one. JC_WRN_MAX (8192) sits comfortably above the one
- * run size this backend ever actually produces -- n_embd items, 5,120 for the
- * shipped 9B shape -- and well under the broker's own MAX_N (65,536), so
- * ordinary operation never splits and the split path exists for whatever
- * wider row drives this transport later.
+ * stateful window are exactly the shape of bug this project keeps finding.
+ * Every reg_read32() issues its own `rd32`, full stop -- an n_embd read-out
+ * run costs n_embd round trips here, the same as if no transport existed.
+ * That cost is accepted on purpose.
  *
  * ERROR CODES.  All four struct functions return 0 or a negative
- * errno-like code, per fk33_transport.h:
- *   -EPERM   mem_write(), always (the loader is the only HBM writer).
- *   -EPROTO  a reply that is not a single well-formed, schema-matching
- *            JSON object for the op that asked (wrong/missing/extra
- *            fields, bad JSON, or a reply line over JC_LINE_MAX).
- *   -EIO     a reply that parsed and said {"ok":false,...}, a memrd whose
- *            "hex" was the wrong length (the memrd equivalent of a short
- *            transfer), or a connection that closed before a full line
- *            arrived.
- *   -errno   straight from a failing send()/recv()/socket()/connect().
+ * errno-like code:
+ *   -EPERM          mem_write(), always.
+ *   -EPROTO         a malformed/schema-violating reply, or a line over the
+ *                   JC_LINE_MAX bound.
+ *   -EIO            a reply that parsed and said {"ok":false,...}, or a
+ *                   memrd whose "hex" was the wrong length.
+ *   -ETIMEDOUT      no reply within the configured deadline.
+ *   -ECONNABORTED   the connection is already marked broken; nothing was
+ *                   sent for this call.
+ *   -errno          straight from a failing send()/recv()/socket()/connect().
  *
- * The JSON here is small, flat, and never nested (no reply this file reads
- * contains an array or a sub-object), so it is parsed by a minimal
- * hand-written scanner below rather than pulling in a JSON library -- per
- * the brief.  It is STRICT: an unexpected extra field, a missing required
- * one, or a line over the bound is -EPROTO, not a best-effort skip.  No
- * input, however malformed, is allowed to crash this file; every scan
- * function takes an explicit length and never reads past it.
+ * The JSON is small, flat, and never nested, so it is parsed by a minimal
+ * hand-written scanner rather than pulling in a library.  It is STRICT: an
+ * unexpected extra field, a missing required one, or a line over the bound
+ * is -EPROTO.  No input, however malformed, is allowed to crash this file.
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
 
@@ -95,11 +125,18 @@
 #define JC_LINE_MAX     (8u << 20)   /* bytes of one reply line we will buffer */
 #define JC_MEMRD_CHUNK  (1u << 20)   /* bytes per memrd request we issue */
 #define JC_MAX_FIELDS   8            /* top-level keys a reply may have */
-#define JC_MAX_KEY      16           /* bytes, including NUL, per key */
+#define JC_MAX_KEY      24           /* bytes, including NUL, per key: must
+                                      * hold "done_items_exact" (17 with the
+                                      * NUL) plus margin */
 
-#define JC_ERR_PROTO    (-EPROTO)    /* malformed / schema-violating reply */
-#define JC_ERR_FALSE    (-EIO)       /* a well-formed {"ok":false,...} */
-#define JC_ERR_CLOSED   (-EIO)       /* socket closed before a full line */
+#define JC_TIMEOUT_ENV         "FK33_JC_TIMEOUT_MS"
+#define JC_TIMEOUT_MS_DEFAULT  120000L
+
+#define JC_ERR_PROTO    (-EPROTO)       /* malformed / schema-violating reply */
+#define JC_ERR_FALSE    (-EIO)          /* a well-formed {"ok":false,...} */
+#define JC_ERR_CLOSED   (-EIO)          /* socket closed before a full line */
+#define JC_ERR_TIMEOUT  (-ETIMEDOUT)    /* no reply within the deadline */
+#define JC_ERR_BROKEN   (-ECONNABORTED) /* the connection is already dead */
 
 /* --------------------------------------------------------- the minimal JSON
  * scanner.  Flat objects only: no value here is ever an array or a nested
@@ -247,7 +284,8 @@ static int jv_parse_string(jscan *c, char **out, size_t *outlen)
 
 /* Non-negative or negative decimal, optional fraction/exponent -- the JSON
  * number grammar, no more.  Only ever used here for small non-negative
- * integers ("val"), so a double is exact for every value this file needs. */
+ * integers ("val", "done_items"), so a double is exact for every value this
+ * file needs. */
 static int jv_parse_number(jscan *c, double *out)
 {
     char tmp[48];
@@ -382,36 +420,53 @@ static int jc_parse_line(const char *s, size_t len, jv_obj *out)
 }
 
 /* --------------------------------------------------------- per-op schemas.
- * Each returns 0 (success payload extracted), JC_ERR_FALSE (well-formed
- * {"ok":false,"err":str}, nothing else), or JC_ERR_PROTO (anything that does
- * not match one of those two shapes exactly -- wrong types, missing fields,
- * or EXTRA fields neither shape calls for). */
+ * Each returns 0 (success payload extracted), JC_ERR_FALSE (a well-formed
+ * false shape -- see jc_check_false), or JC_ERR_PROTO (anything else). */
 
-static int jc_check_false(const jv_obj *o)
+/* {"ok":false,"err":S} or {"ok":false,"err":S,"done_items":I,
+ * "done_items_exact":B} -- the two extra fields always arrive together
+ * (tools/jc/jc_broker.py's err_reply()), never alone.  Prints the broker's
+ * error text, with the die, to stderr before returning. */
+static int jc_check_false(const jv_obj *o, const char *die)
 {
-    int i_err;
-    if (o->n != 2) return JC_ERR_PROTO;
-    i_err = jv_find(o, "err");
+    int i_err = jv_find(o, "err");
     if (i_err < 0 || o->f[i_err].type != JVT_STR) return JC_ERR_PROTO;
-    return JC_ERR_FALSE;
+
+    if (o->n == 2) {
+        fprintf(stderr, "fk33_transport_jc: die %s: %s\n", die, o->f[i_err].sval);
+        return JC_ERR_FALSE;
+    }
+    if (o->n == 4) {
+        int i_di = jv_find(o, "done_items");
+        int i_de = jv_find(o, "done_items_exact");
+        double v;
+        if (i_di < 0 || o->f[i_di].type != JVT_NUM) return JC_ERR_PROTO;
+        if (i_de < 0 || o->f[i_de].type != JVT_BOOL) return JC_ERR_PROTO;
+        v = o->f[i_di].nval;
+        if (v < 0.0 || v > 4294967295.0 || (double)(uint32_t)v != v) return JC_ERR_PROTO;
+        fprintf(stderr, "fk33_transport_jc: die %s: %s (done_items=%u exact=%s)\n",
+                die, o->f[i_err].sval, (unsigned)v, o->f[i_de].bval ? "true" : "false");
+        return JC_ERR_FALSE;
+    }
+    return JC_ERR_PROTO;
 }
 
 /* {"ok":true} alone, or the false shape above.  wr32/wrn's success reply. */
-static int jc_reply_plain(const jv_obj *o)
+static int jc_reply_plain(const jv_obj *o, const char *die)
 {
     int i_ok = jv_find(o, "ok");
     if (i_ok < 0 || o->f[i_ok].type != JVT_BOOL) return JC_ERR_PROTO;
-    if (!o->f[i_ok].bval) return jc_check_false(o);
+    if (!o->f[i_ok].bval) return jc_check_false(o, die);
     return o->n == 1 ? 0 : JC_ERR_PROTO;
 }
 
 /* {"ok":true,"val":V} (V a 0..2^32-1 integer) or the false shape. rd32. */
-static int jc_reply_val(const jv_obj *o, uint32_t *val)
+static int jc_reply_val(const jv_obj *o, const char *die, uint32_t *val)
 {
     int i_ok = jv_find(o, "ok"), i_val;
     double v;
     if (i_ok < 0 || o->f[i_ok].type != JVT_BOOL) return JC_ERR_PROTO;
-    if (!o->f[i_ok].bval) return jc_check_false(o);
+    if (!o->f[i_ok].bval) return jc_check_false(o, die);
     if (o->n != 2) return JC_ERR_PROTO;
     i_val = jv_find(o, "val");
     if (i_val < 0 || o->f[i_val].type != JVT_NUM) return JC_ERR_PROTO;
@@ -433,7 +488,7 @@ static int hex_nibble(unsigned char c)
  * memrd. A wrong-length hex is the memrd equivalent of a short transfer, so
  * it is JC_ERR_FALSE (-EIO) rather than JC_ERR_PROTO: the reply was
  * well-formed JSON that answered the wrong amount, not malformed JSON. */
-static int jc_reply_hex(const jv_obj *o, void *buf, size_t len)
+static int jc_reply_hex(const jv_obj *o, const char *die, void *buf, size_t len)
 {
     int i_ok = jv_find(o, "ok"), i_hex;
     const char *h;
@@ -441,7 +496,7 @@ static int jc_reply_hex(const jv_obj *o, void *buf, size_t len)
     size_t k;
 
     if (i_ok < 0 || o->f[i_ok].type != JVT_BOOL) return JC_ERR_PROTO;
-    if (!o->f[i_ok].bval) return jc_check_false(o);
+    if (!o->f[i_ok].bval) return jc_check_false(o, die);
     if (o->n != 2) return JC_ERR_PROTO;
     i_hex = jv_find(o, "hex");
     if (i_hex < 0 || o->f[i_hex].type != JVT_STR) return JC_ERR_PROTO;
@@ -456,27 +511,36 @@ static int jc_reply_hex(const jv_obj *o, void *buf, size_t len)
     return 0;
 }
 
-/* ---------------------------------------------------------------- the ctx */
+/* --------------------------------------------------- the shared connection.
+ * One per (process, sock_path), refcounted; see I3 in the file header. */
+
+typedef struct jc_conn {
+    struct jc_conn *next;
+    char            sock_path[256];
+    int             fd;
+    int             refcount;
+    int             broken;          /* sticky; see M1 */
+    pthread_mutex_t lock;            /* held for a whole request/reply round
+                                       * trip, including any flush first */
+
+    char   *rbuf; size_t rbuf_len, rbuf_cap;   /* bytes not yet a full line */
+    char   *sbuf; size_t sbuf_cap;             /* one request is built here */
+} jc_conn;
+
+static jc_conn *g_conns = NULL;
+static pthread_mutex_t g_registry_lock = PTHREAD_MUTEX_INITIALIZER;
 
 typedef struct {
-    int  fd;
-    char die[JC_DIE_MAX + 1];
-    char desc[256];
+    jc_conn *conn;             /* shared; released, not freed, at close() */
+    char     die[JC_DIE_MAX + 1];
+    char     desc[256];
+    uint32_t win_off;           /* the ABSOLUTE offset this die coalesces */
 
-    /* the pending coalesced write run (see the file header) */
+    /* this die's own pending coalesced run; touched only while holding
+     * conn->lock */
     int      pend_active;
-    uint32_t pend_off;
     uint32_t pend_n;
     uint32_t pend_vals[JC_WRN_MAX];
-
-    /* bytes read from the socket not yet consumed as a complete line */
-    char   *rbuf;
-    size_t  rbuf_len, rbuf_cap;
-
-    /* one request line is built here; sized once for the biggest line this
-     * file ever sends (a full JC_WRN_MAX-value wrn) */
-    char   *sbuf;
-    size_t  sbuf_cap;
 } jc_ctx;
 
 static int jc_die_ok(const char *d)
@@ -493,14 +557,19 @@ static int jc_die_ok(const char *d)
     return 1;
 }
 
-/* ------------------------------------------------------------- the socket */
+/* ------------------------------------------------------- the socket itself.
+ * Every function below is called with conn->lock already held. */
 
-static int jc_send_all(jc_ctx *x, const char *buf, size_t len)
+static int jc_send_all(jc_conn *conn, const char *buf, size_t len)
 {
     size_t done = 0;
     while (done < len) {
-        ssize_t n = send(x->fd, buf + done, len - done, MSG_NOSIGNAL);
-        if (n < 0) { if (errno == EINTR) continue; return -errno; }
+        ssize_t n = send(conn->fd, buf + done, len - done, MSG_NOSIGNAL);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) return JC_ERR_TIMEOUT;
+            return -errno;
+        }
         if (n == 0) return JC_ERR_CLOSED;
         done += (size_t)n;
     }
@@ -508,138 +577,196 @@ static int jc_send_all(jc_ctx *x, const char *buf, size_t len)
 }
 
 /* Returns one reply line (newline stripped, NUL-terminated) in *line_out,
- * valid until the next call on this ctx -- which is fine, because every
- * caller fully parses and copies out of a line before issuing another
- * request.  JC_ERR_PROTO on a line over JC_LINE_MAX; JC_ERR_CLOSED if the
- * socket closes before a full line arrives. */
-static int jc_recv_line(jc_ctx *x, char **line_out, size_t *len_out)
+ * valid until the next call on this conn.  JC_ERR_PROTO on a line over
+ * JC_LINE_MAX; JC_ERR_CLOSED if the socket closes before a full line
+ * arrives; JC_ERR_TIMEOUT if SO_RCVTIMEO elapses first (see I1). */
+static int jc_recv_line(jc_conn *conn, char **line_out, size_t *len_out)
 {
     for (;;) {
         size_t i;
-        for (i = 0; i < x->rbuf_len; i++)
-            if (x->rbuf[i] == '\n') break;
-        if (i < x->rbuf_len) {
-            size_t rest = x->rbuf_len - (i + 1);
-            x->rbuf[i] = 0;
-            *line_out = x->rbuf;
+        for (i = 0; i < conn->rbuf_len; i++)
+            if (conn->rbuf[i] == '\n') break;
+        if (i < conn->rbuf_len) {
+            size_t rest = conn->rbuf_len - (i + 1);
+            conn->rbuf[i] = 0;
+            *line_out = conn->rbuf;
             *len_out = i;
-            memmove(x->rbuf, x->rbuf + i + 1, rest);
-            x->rbuf_len = rest;
+            memmove(conn->rbuf, conn->rbuf + i + 1, rest);
+            conn->rbuf_len = rest;
             return 0;
         }
-        if (x->rbuf_len >= JC_LINE_MAX) return JC_ERR_PROTO;
-        if (x->rbuf_len == x->rbuf_cap) {
-            size_t newcap = x->rbuf_cap ? x->rbuf_cap * 2 : 4096;
+        if (conn->rbuf_len >= JC_LINE_MAX) return JC_ERR_PROTO;
+        if (conn->rbuf_len == conn->rbuf_cap) {
+            size_t newcap = conn->rbuf_cap ? conn->rbuf_cap * 2 : 4096;
             char *nb;
             if (newcap > JC_LINE_MAX) newcap = JC_LINE_MAX;
-            nb = (char *)realloc(x->rbuf, newcap);
+            nb = (char *)realloc(conn->rbuf, newcap);
             if (!nb) return -ENOMEM;
-            x->rbuf = nb; x->rbuf_cap = newcap;
+            conn->rbuf = nb; conn->rbuf_cap = newcap;
         }
         {
-            ssize_t n = recv(x->fd, x->rbuf + x->rbuf_len,
-                             x->rbuf_cap - x->rbuf_len, 0);
-            if (n < 0) { if (errno == EINTR) continue; return -errno; }
+            ssize_t n = recv(conn->fd, conn->rbuf + conn->rbuf_len,
+                             conn->rbuf_cap - conn->rbuf_len, 0);
+            if (n < 0) {
+                if (errno == EINTR) continue;
+                if (errno == EAGAIN || errno == EWOULDBLOCK) return JC_ERR_TIMEOUT;
+                return -errno;
+            }
             if (n == 0) return JC_ERR_CLOSED;
-            x->rbuf_len += (size_t)n;
+            conn->rbuf_len += (size_t)n;
         }
     }
 }
 
-static int jc_recv_plain(jc_ctx *x)
+static int jc_recv_plain(jc_conn *conn, const char *die)
 {
     char *line; size_t llen; jv_obj o; int rc;
-    rc = jc_recv_line(x, &line, &llen);
+    rc = jc_recv_line(conn, &line, &llen);
     if (rc) return rc;
     if (jc_parse_line(line, llen, &o)) { jv_obj_free(&o); return JC_ERR_PROTO; }
-    rc = jc_reply_plain(&o);
+    rc = jc_reply_plain(&o, die);
     jv_obj_free(&o);
     return rc;
 }
 
-static int jc_recv_val(jc_ctx *x, uint32_t *val)
+static int jc_recv_val(jc_conn *conn, const char *die, uint32_t *val)
 {
     char *line; size_t llen; jv_obj o; int rc;
-    rc = jc_recv_line(x, &line, &llen);
+    rc = jc_recv_line(conn, &line, &llen);
     if (rc) return rc;
     if (jc_parse_line(line, llen, &o)) { jv_obj_free(&o); return JC_ERR_PROTO; }
-    rc = jc_reply_val(&o, val);
+    rc = jc_reply_val(&o, die, val);
     jv_obj_free(&o);
     return rc;
 }
 
-static int jc_recv_hex(jc_ctx *x, void *buf, size_t len)
+static int jc_recv_hex(jc_conn *conn, const char *die, void *buf, size_t len)
 {
     char *line; size_t llen; jv_obj o; int rc;
-    rc = jc_recv_line(x, &line, &llen);
+    rc = jc_recv_line(conn, &line, &llen);
     if (rc) return rc;
     if (jc_parse_line(line, llen, &o)) { jv_obj_free(&o); return JC_ERR_PROTO; }
-    rc = jc_reply_hex(&o, buf, len);
+    rc = jc_reply_hex(&o, die, buf, len);
     jv_obj_free(&o);
     return rc;
 }
 
-/* ------------------------------------------------------- request encoding
- * By-hand snprintf building, not a generic encoder: the only strings this
- * file ever sends are the fixed op literals and `die`, and `die` was
- * validated by jc_die_ok() to be a plain identifier that needs no escaping. */
+/* ------------------------------------------------------- request encoding.
+ * By-hand snprintf building: the only strings sent are the fixed op
+ * literals and `die`, and `die` was validated by jc_die_ok() to need no
+ * escaping. */
 
-static long jc_build_rd32(jc_ctx *x, uint32_t off)
+static long jc_build_rd32(jc_conn *conn, const char *die, uint32_t off)
 {
-    int w = snprintf(x->sbuf, x->sbuf_cap,
-                     "{\"die\":\"%s\",\"op\":\"rd32\",\"off\":%u}\n",
-                     x->die, off);
-    if (w < 0 || (size_t)w >= x->sbuf_cap) return -1;
+    int w = snprintf(conn->sbuf, conn->sbuf_cap,
+                     "{\"die\":\"%s\",\"op\":\"rd32\",\"off\":%u}\n", die, off);
+    if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
     return w;
 }
 
-static long jc_build_memrd(jc_ctx *x, uint64_t addr, size_t n)
+static long jc_build_wr32(jc_conn *conn, const char *die, uint32_t off, uint32_t val)
 {
-    int w = snprintf(x->sbuf, x->sbuf_cap,
+    int w = snprintf(conn->sbuf, conn->sbuf_cap,
+                     "{\"die\":\"%s\",\"op\":\"wr32\",\"off\":%u,\"val\":%u}\n",
+                     die, off, val);
+    if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
+    return w;
+}
+
+static long jc_build_memrd(jc_conn *conn, const char *die, uint64_t addr, size_t n)
+{
+    int w = snprintf(conn->sbuf, conn->sbuf_cap,
                      "{\"die\":\"%s\",\"op\":\"memrd\",\"addr\":%llu,\"n\":%zu}\n",
-                     x->die, (unsigned long long)addr, n);
-    if (w < 0 || (size_t)w >= x->sbuf_cap) return -1;
+                     die, (unsigned long long)addr, n);
+    if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
     return w;
 }
 
-static long jc_build_wrn(jc_ctx *x, uint32_t off, const uint32_t *vals, uint32_t n)
+static long jc_build_wrn(jc_conn *conn, const char *die, uint32_t off,
+                         const uint32_t *vals, uint32_t n)
 {
     size_t p; int w; uint32_t i;
-    w = snprintf(x->sbuf, x->sbuf_cap,
+    w = snprintf(conn->sbuf, conn->sbuf_cap,
                 "{\"die\":\"%s\",\"op\":\"wrn\",\"off\":%u,\"fix\":true,\"vals\":[",
-                x->die, off);
-    if (w < 0 || (size_t)w >= x->sbuf_cap) return -1;
+                die, off);
+    if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
     p = (size_t)w;
     for (i = 0; i < n; i++) {
-        w = snprintf(x->sbuf + p, x->sbuf_cap - p, "%s%u", i ? "," : "", vals[i]);
-        if (w < 0 || (size_t)w >= x->sbuf_cap - p) return -1;
+        w = snprintf(conn->sbuf + p, conn->sbuf_cap - p, "%s%u", i ? "," : "", vals[i]);
+        if (w < 0 || (size_t)w >= conn->sbuf_cap - p) return -1;
         p += (size_t)w;
     }
-    w = snprintf(x->sbuf + p, x->sbuf_cap - p, "]}\n");
-    if (w < 0 || (size_t)w >= x->sbuf_cap - p) return -1;
+    w = snprintf(conn->sbuf + p, conn->sbuf_cap - p, "]}\n");
+    if (w < 0 || (size_t)w >= conn->sbuf_cap - p) return -1;
     p += (size_t)w;
     return (long)p;
 }
 
-/* ------------------------------------------------------------- the flush.
- * Ends whatever run is pending, succeed or fail, before this returns: a
- * failed flush is NOT retried with the same buffered values later (that
- * would risk reordering against whatever the caller does next), it is just
- * reported, once, to whichever call forced it. */
-static int jc_flush(jc_ctx *x)
+/* -------------------------------------------------------- the round trips.
+ * Each does build+send+recv and marks the connection broken on anything
+ * other than success or a well-formed {"ok":false,...} -- see M1's
+ * asymmetry note in the file header for why the flush path below does NOT
+ * share this leniency. */
+
+static int jc_mark_if_bad(jc_conn *conn, int rc)
 {
-    long len; int rc;
-    uint32_t n;
+    if (rc != 0 && rc != JC_ERR_FALSE) conn->broken = 1;
+    return rc;
+}
+
+static int jc_do_wr32(jc_conn *conn, jc_ctx *x, uint32_t off, uint32_t val)
+{
+    long len = jc_build_wr32(conn, x->die, off, val);
+    int rc;
+    if (len < 0) return jc_mark_if_bad(conn, JC_ERR_PROTO);
+    rc = jc_send_all(conn, conn->sbuf, (size_t)len);
+    if (rc) return jc_mark_if_bad(conn, rc);
+    rc = jc_recv_plain(conn, x->die);
+    return jc_mark_if_bad(conn, rc);
+}
+
+static int jc_do_rd32(jc_conn *conn, jc_ctx *x, uint32_t off, uint32_t *val)
+{
+    long len = jc_build_rd32(conn, x->die, off);
+    int rc;
+    if (len < 0) return jc_mark_if_bad(conn, JC_ERR_PROTO);
+    rc = jc_send_all(conn, conn->sbuf, (size_t)len);
+    if (rc) return jc_mark_if_bad(conn, rc);
+    rc = jc_recv_val(conn, x->die, val);
+    return jc_mark_if_bad(conn, rc);
+}
+
+static int jc_do_memrd(jc_conn *conn, jc_ctx *x, uint64_t addr, void *buf, size_t n)
+{
+    long len = jc_build_memrd(conn, x->die, addr, n);
+    int rc;
+    if (len < 0) return jc_mark_if_bad(conn, JC_ERR_PROTO);
+    rc = jc_send_all(conn, conn->sbuf, (size_t)len);
+    if (rc) return jc_mark_if_bad(conn, rc);
+    rc = jc_recv_hex(conn, x->die, buf, n);
+    return jc_mark_if_bad(conn, rc);
+}
+
+/* Ends x's pending run (if any), succeed or fail, before returning.  ANY
+ * nonzero result -- including a well-formed {"ok":false,...} -- marks the
+ * connection broken: see the M1 asymmetry note in the file header. A failed
+ * run's buffered values are never retried later; replaying them after
+ * whatever the caller does next would risk reordering. */
+static int jc_flush_locked(jc_conn *conn, jc_ctx *x)
+{
+    long len; int rc; uint32_t n;
 
     if (!x->pend_active) return 0;
     x->pend_active = 0;
     n = x->pend_n;
     x->pend_n = 0;
-    len = jc_build_wrn(x, x->pend_off, x->pend_vals, n);
-    if (len < 0) return JC_ERR_PROTO;
-    rc = jc_send_all(x, x->sbuf, (size_t)len);
-    if (rc) return rc;
-    return jc_recv_plain(x);
+    len = jc_build_wrn(conn, x->die, x->win_off, x->pend_vals, n);
+    if (len < 0) { conn->broken = 1; return JC_ERR_PROTO; }
+    rc = jc_send_all(conn, conn->sbuf, (size_t)len);
+    if (rc) { conn->broken = 1; return rc; }
+    rc = jc_recv_plain(conn, x->die);
+    if (rc) conn->broken = 1;
+    return rc;
 }
 
 /* ------------------------------------------------------- the four struct
@@ -648,83 +775,115 @@ static int jc_flush(jc_ctx *x)
 static int jc_reg_write32(void *ctx, uint32_t off, uint32_t val)
 {
     jc_ctx *x = (jc_ctx *)ctx;
-    if (!(x->pend_active && off == x->pend_off && x->pend_n < JC_WRN_MAX)) {
-        int rc = jc_flush(x);
-        if (rc) return rc;
-        x->pend_active = 1;
-        x->pend_off = off;
-        x->pend_n = 0;
+    jc_conn *conn = x->conn;
+    int rc;
+
+    pthread_mutex_lock(&conn->lock);
+    if (conn->broken) { pthread_mutex_unlock(&conn->lock); return JC_ERR_BROKEN; }
+
+    if (off == x->win_off) {
+        if (!(x->pend_active && x->pend_n < JC_WRN_MAX)) {
+            rc = jc_flush_locked(conn, x);
+            if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
+            x->pend_active = 1;
+            x->pend_n = 0;
+        }
+        x->pend_vals[x->pend_n++] = val;
+        pthread_mutex_unlock(&conn->lock);
+        return 0;
     }
-    x->pend_vals[x->pend_n++] = val;
-    return 0;
+
+    /* Not the coalesced window.  Flush whatever run is pending first (order),
+     * then THIS write goes out as its own wr32, acknowledged before this
+     * call returns: a CTRL/GO write must be on the wire the instant
+     * reg_write32() returns, not deferred to whatever happens to touch the
+     * socket next (C1). */
+    rc = jc_flush_locked(conn, x);
+    if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
+    rc = jc_do_wr32(conn, x, off, val);
+    pthread_mutex_unlock(&conn->lock);
+    return rc;
 }
 
 static int jc_reg_read32(void *ctx, uint32_t off, uint32_t *val)
 {
     jc_ctx *x = (jc_ctx *)ctx;
-    long len; int rc;
-    rc = jc_flush(x);
-    if (rc) return rc;
-    len = jc_build_rd32(x, off);
-    if (len < 0) return JC_ERR_PROTO;
-    rc = jc_send_all(x, x->sbuf, (size_t)len);
-    if (rc) return rc;
-    return jc_recv_val(x, val);
+    jc_conn *conn = x->conn;
+    int rc;
+
+    pthread_mutex_lock(&conn->lock);
+    if (conn->broken) { pthread_mutex_unlock(&conn->lock); return JC_ERR_BROKEN; }
+    rc = jc_flush_locked(conn, x);
+    if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
+    rc = jc_do_rd32(conn, x, off, val);
+    pthread_mutex_unlock(&conn->lock);
+    return rc;
 }
 
 static int jc_mem_read(void *ctx, uint64_t addr, void *buf, size_t len)
 {
     jc_ctx *x = (jc_ctx *)ctx;
+    jc_conn *conn = x->conn;
     size_t done = 0;
-    int rc = jc_flush(x);
-    if (rc) return rc;
+    int rc;
+
+    pthread_mutex_lock(&conn->lock);
+    if (conn->broken) { pthread_mutex_unlock(&conn->lock); return JC_ERR_BROKEN; }
+    rc = jc_flush_locked(conn, x);
+    if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
     while (done < len) {
         size_t chunk = len - done;
-        long rl;
         if (chunk > JC_MEMRD_CHUNK) chunk = JC_MEMRD_CHUNK;
-        rl = jc_build_memrd(x, addr + done, chunk);
-        if (rl < 0) return JC_ERR_PROTO;
-        rc = jc_send_all(x, x->sbuf, (size_t)rl);
-        if (rc) return rc;
-        rc = jc_recv_hex(x, (unsigned char *)buf + done, chunk);
-        if (rc) return rc;
+        rc = jc_do_memrd(conn, x, addr + done, (unsigned char *)buf + done, chunk);
+        if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
         done += chunk;
     }
+    pthread_mutex_unlock(&conn->lock);
     return 0;
 }
 
 /* THE LOADER IS THE ONLY HBM WRITER.  This always returns -EPERM, no matter
- * what.  A pending write run is still flushed first so the attempt does not
- * silently reorder past whatever the caller does after seeing the refusal --
- * but a failed flush here does NOT change the return value: -EPERM is what
- * the brief requires this call to report, unconditionally, and swallowing
- * the refusal to report a flush failure instead would be a worse answer to
- * "why did mem_write fail" than the true one. A flush failure immediately
- * before a refused mem_write is therefore silent on this one path, by
- * design. */
+ * what.  A pending write run is still flushed first (if the connection is
+ * not already broken) so the attempt does not silently reorder past
+ * whatever the caller does after seeing the refusal -- and per M1, a flush
+ * failure here still marks the connection broken, even though -EPERM is
+ * what this call reports either way: that refusal value is fixed by the
+ * brief, the connection's fate is not. */
 static int jc_mem_write(void *ctx, uint64_t addr, const void *buf, size_t len)
 {
     jc_ctx *x = (jc_ctx *)ctx;
-    (void)jc_flush(x);
+    jc_conn *conn = x->conn;
+
+    pthread_mutex_lock(&conn->lock);
+    if (!conn->broken) (void)jc_flush_locked(conn, x);
+    pthread_mutex_unlock(&conn->lock);
     (void)buf;
     fprintf(stderr,
-        "fk33_transport_jc: mem_write refused at addr=0x%llx len=%zu: the "
-        "loader is the only HBM writer\n",
-        (unsigned long long)addr, len);
+        "fk33_transport_jc: die %s: mem_write refused at addr=0x%llx len=%zu: "
+        "the loader is the only HBM writer\n",
+        x->die, (unsigned long long)addr, len);
     return -EPERM;
 }
+
+static void jc_conn_release(jc_conn *conn);
 
 static void jc_close(void *ctx)
 {
     jc_ctx *x = (jc_ctx *)ctx;
-    int rc = jc_flush(x);
-    if (rc)
-        fprintf(stderr,
-            "fk33_transport_jc: close: a pending coalesced write failed to "
-            "flush (rc=%d); its values were never sent\n", rc);
-    if (x->fd >= 0) close(x->fd);
-    free(x->rbuf);
-    free(x->sbuf);
+    jc_conn *conn = x->conn;
+
+    pthread_mutex_lock(&conn->lock);
+    if (!conn->broken) {
+        int rc = jc_flush_locked(conn, x);
+        if (rc)
+            fprintf(stderr,
+                "fk33_transport_jc: die %s: close: a pending coalesced write "
+                "failed to flush (rc=%d); its values were never sent\n",
+                x->die, rc);
+    }
+    pthread_mutex_unlock(&conn->lock);
+
+    jc_conn_release(conn);
     free(x);
 }
 
@@ -733,14 +892,141 @@ static const char *jc_describe(void *ctx)
     return ((jc_ctx *)ctx)->desc;
 }
 
+/* --------------------------------------------------- the connection registry
+ * (I3).  g_registry_lock only ever guards the list itself and a refcount;
+ * every actual request/reply round trip is serialized by the conn's OWN
+ * lock instead, so two dies on two different sockets never contend with
+ * each other here. */
+
+static long jc_timeout_ms(void)
+{
+    const char *e = getenv(JC_TIMEOUT_ENV);
+    long v;
+    if (!e || !*e) return JC_TIMEOUT_MS_DEFAULT;
+    v = strtol(e, NULL, 10);
+    return v > 0 ? v : JC_TIMEOUT_MS_DEFAULT;
+}
+
+static void jc_set_timeout(int fd)
+{
+    struct timeval tv;
+    long ms = jc_timeout_ms();
+    tv.tv_sec = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+}
+
+static jc_conn *jc_conn_new(const char *sock_path, int fd)
+{
+    size_t sbuf_cap = 64 + (size_t)JC_WRN_MAX * 11 + 16;
+    jc_conn *c = (jc_conn *)calloc(1, sizeof *c);
+    if (!c) return NULL;
+    c->sbuf = (char *)malloc(sbuf_cap);
+    if (!c->sbuf) { free(c); return NULL; }
+    c->sbuf_cap = sbuf_cap;
+    strcpy(c->sock_path, sock_path);
+    c->fd = fd;
+    c->refcount = 1;
+    pthread_mutex_init(&c->lock, NULL);
+    return c;
+}
+
+static void jc_conn_free(jc_conn *c)
+{
+    pthread_mutex_destroy(&c->lock);
+    free(c->rbuf);
+    free(c->sbuf);
+    free(c);
+}
+
+/* Looked up / inserted under g_registry_lock; a NEW socket is created and
+ * connected OUTSIDE that lock (connect() can block), so two openers racing
+ * on a brand-new path each connect and then re-check under the lock -- the
+ * loser's fresh connection is closed and discarded rather than risking two
+ * live sockets registered under one path. */
+static jc_conn *jc_conn_acquire(const char *sock_path)
+{
+    jc_conn *c;
+    struct sockaddr_un addr;
+    int fd;
+
+    if (strlen(sock_path) >= sizeof addr.sun_path) {
+        fprintf(stderr, "fk33_transport_jc: socket path too long: %s\n", sock_path);
+        return NULL;
+    }
+
+    pthread_mutex_lock(&g_registry_lock);
+    for (c = g_conns; c; c = c->next) {
+        if (!strcmp(c->sock_path, sock_path)) {
+            c->refcount++;
+            pthread_mutex_unlock(&g_registry_lock);
+            return c;
+        }
+    }
+    pthread_mutex_unlock(&g_registry_lock);
+
+    fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) {
+        fprintf(stderr, "fk33_transport_jc: socket: %s\n", strerror(errno));
+        return NULL;
+    }
+    memset(&addr, 0, sizeof addr);
+    addr.sun_family = AF_UNIX;
+    strcpy(addr.sun_path, sock_path);
+    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+        fprintf(stderr, "fk33_transport_jc: connect %s: %s\n", sock_path, strerror(errno));
+        close(fd);
+        return NULL;
+    }
+    jc_set_timeout(fd);
+
+    c = jc_conn_new(sock_path, fd);
+    if (!c) { close(fd); return NULL; }
+
+    pthread_mutex_lock(&g_registry_lock);
+    {
+        jc_conn *other;
+        for (other = g_conns; other; other = other->next) {
+            if (!strcmp(other->sock_path, sock_path)) {
+                other->refcount++;
+                pthread_mutex_unlock(&g_registry_lock);
+                close(fd);
+                jc_conn_free(c);
+                return other;
+            }
+        }
+        c->next = g_conns;
+        g_conns = c;
+    }
+    pthread_mutex_unlock(&g_registry_lock);
+    return c;
+}
+
+static void jc_conn_release(jc_conn *conn)
+{
+    pthread_mutex_lock(&g_registry_lock);
+    conn->refcount--;
+    if (conn->refcount > 0) { pthread_mutex_unlock(&g_registry_lock); return; }
+    {
+        jc_conn **pp = &g_conns;
+        while (*pp && *pp != conn) pp = &(*pp)->next;
+        if (*pp == conn) *pp = conn->next;
+    }
+    pthread_mutex_unlock(&g_registry_lock);
+
+    close(conn->fd);
+    jc_conn_free(conn);
+}
+
 /* ---------------------------------------------------------------- open() */
 
-fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die)
+fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die,
+                                       uint32_t win_data_off)
 {
     jc_ctx *x;
     fk33_transport *t;
-    struct sockaddr_un addr;
-    size_t sbuf_cap;
+    jc_conn *conn;
 
     if (!sock_path || !*sock_path) {
         fprintf(stderr, "fk33_transport_jc: a socket path is required\n");
@@ -753,39 +1039,20 @@ fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die)
             die ? die : "(null)", JC_DIE_MAX);
         return NULL;
     }
-    if (strlen(sock_path) >= sizeof addr.sun_path) {
-        fprintf(stderr, "fk33_transport_jc: socket path too long: %s\n", sock_path);
-        return NULL;
-    }
+
+    conn = jc_conn_acquire(sock_path);
+    if (!conn) return NULL;
 
     x = (jc_ctx *)calloc(1, sizeof *x);
-    if (!x) return NULL;
-    x->fd = -1;
+    if (!x) { jc_conn_release(conn); return NULL; }
+    x->conn = conn;
     strcpy(x->die, die);
-
-    sbuf_cap = 64 + (size_t)JC_WRN_MAX * 11 + 16;
-    x->sbuf = (char *)malloc(sbuf_cap);
-    if (!x->sbuf) { free(x); return NULL; }
-    x->sbuf_cap = sbuf_cap;
-
-    x->fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (x->fd < 0) {
-        fprintf(stderr, "fk33_transport_jc: socket: %s\n", strerror(errno));
-        free(x->sbuf); free(x); return NULL;
-    }
-    memset(&addr, 0, sizeof addr);
-    addr.sun_family = AF_UNIX;
-    strcpy(addr.sun_path, sock_path);   /* length already checked above */
-    if (connect(x->fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
-        fprintf(stderr, "fk33_transport_jc: connect %s: %s\n",
-                sock_path, strerror(errno));
-        close(x->fd); free(x->sbuf); free(x); return NULL;
-    }
-
-    snprintf(x->desc, sizeof x->desc, "jc sock=%s die=%s", sock_path, die);
+    x->win_off = win_data_off;
+    snprintf(x->desc, sizeof x->desc, "jc sock=%s die=%s win=0x%x",
+             sock_path, die, win_data_off);
 
     t = (fk33_transport *)calloc(1, sizeof *t);
-    if (!t) { close(x->fd); free(x->sbuf); free(x); return NULL; }
+    if (!t) { free(x); jc_conn_release(conn); return NULL; }
     t->reg_read32  = jc_reg_read32;
     t->reg_write32 = jc_reg_write32;
     t->mem_read    = jc_mem_read;

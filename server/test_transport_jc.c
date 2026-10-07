@@ -1,23 +1,22 @@
 /* server/test_transport_jc.c -- TEETH for fk33_transport_open_jc().
  *
- * Each case forks a FAKE BROKER that listens on a real AF_UNIX socket under
- * ~/regress_scratch/ (no hardware, no /dev, nothing jc_broker.py itself
- * touches), scripts the exact lines it expects to see and the exact lines
- * it answers with, and reports a mismatch by exiting 1.  The parent process
- * is the actual test: it drives server/fk33_transport_jc.c's PUBLIC API
- * (fk33_transport_open_jc() and the four struct fk33_transport functions),
- * checks the return codes and values the brief specifies, and then checks
- * that the broker's own script was satisfied (its exit status).
+ * Fix round 1: the review failed the first cut on C1 (coalescing scope),
+ * I1 (no receive deadline), I2 (the real ok:false shape), I3 (one socket
+ * per die instead of one shared connection) and M1 (sticky broken).  This
+ * file's cases were rewritten for the new three-argument open() signature
+ * and the new behaviour, and five cases are new (marked below).
  *
- * Two independent checks per case, deliberately: the broker's hand-rolled
- * line scanning (below, NOT sharing code with fk33_transport_jc.c's parser)
- * catches a wire-format defect even if this file's own assertions would not
- * have noticed one, and the parent's return-code assertions catch an API
- * defect even if the wire happened to look right.
+ * Each case forks a FAKE BROKER that listens on a real AF_UNIX socket under
+ * ~/regress_scratch/, scripts the exact lines it expects to see and answers
+ * with, and reports a mismatch by exiting 1.  The parent process is the
+ * actual test: it drives fk33_transport_jc.c's public API, checks the
+ * return codes and values, and then checks the broker's own exit status.
+ * The broker's line matching is hand-rolled (strstr/strtol), independent of
+ * fk33_transport_jc.c's own JSON parser, so a wire-format defect is caught
+ * twice.
  *
  * NO HARDWARE.  This never touches /dev, tools/jc/jc_broker.py, coe.py, or
- * any JTAG state; it is a textual protocol test against a process this file
- * forked itself.
+ * any JTAG state.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -26,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -34,6 +34,12 @@
 #include <sys/wait.h>
 
 #include "fk33_transport.h"
+
+/* The coalesced-window offset every test opens its transport(s) with,
+ * unless a test is specifically about a DIFFERENT (non-coalesced) offset.
+ * An arbitrary absolute BAR-style offset, distinct from every other offset
+ * used below. */
+#define T_WIN 0x9000u
 
 static int checks, failed;
 static char g_dir[512];
@@ -53,7 +59,7 @@ static void CK(int cond, const char *fmt, ...)
 
 /* ============================================================== plumbing
  * A tiny buffered line reader for the BROKER side (the child), independent
- * of fk33_transport_jc.c's own jc_recv_line(). */
+ * of fk33_transport_jc.c's own line reader. */
 
 #define LB_CAP (256 * 1024)
 
@@ -111,8 +117,7 @@ static void send_line(int fd, const char *s)
 #define BCK(cond, ...) do { if (!(cond)) BFAIL(__VA_ARGS__); } while (0)
 
 /* Checks that line contains `"vals":[` holding exactly n_expect integers,
- * the k-th equal to start+k, nothing else inside the brackets. Independent
- * of fk33_transport_jc.c's parser, on purpose. */
+ * the k-th equal to start+k, nothing else inside the brackets. */
 static int check_vals_seq(const char *line, long start, size_t n_expect)
 {
     const char *p = strstr(line, "\"vals\":[");
@@ -138,6 +143,20 @@ static int has_off(const char *line, uint32_t off)
 {
     char needle[32];
     snprintf(needle, sizeof needle, "\"off\":%u", off);
+    return strstr(line, needle) != NULL;
+}
+
+static int has_val(const char *line, uint32_t val)
+{
+    char needle[32];
+    snprintf(needle, sizeof needle, "\"val\":%u", val);
+    return strstr(line, needle) != NULL;
+}
+
+static int has_die(const char *line, const char *die)
+{
+    char needle[32];
+    snprintf(needle, sizeof needle, "\"die\":\"%s\"", die);
     return strstr(line, needle) != NULL;
 }
 
@@ -176,14 +195,14 @@ static int start_broker(const char *path, void (*fn)(int), pid_t *pid_out)
 static int wait_broker(pid_t pid, int *exit_code)
 {
     int tries;
-    for (tries = 0; tries < 50; tries++) {
+    for (tries = 0; tries < 70; tries++) {
         int status;
         pid_t r = waitpid(pid, &status, WNOHANG);
         if (r == pid) {
             *exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
             return 0;
         }
-        usleep(100000);   /* 100 ms; 50 tries = 5 s bound */
+        usleep(100000);   /* 100 ms; 70 tries = 7 s bound */
     }
     kill(pid, SIGKILL);
     waitpid(pid, NULL, 0);
@@ -196,70 +215,117 @@ static void sock_path(char *out, size_t outsz, const char *name)
     snprintf(out, outsz, "%s/%s.sock", g_dir, name);
 }
 
+static double now_s(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
 /* ================================================================= cases */
 
-/* Case 1: a buffered write flushes when a read to a different address comes
- * in, and the read returns the broker's value. */
-static void broker_read_write(int cfd)
+/* Case 1: an isolated write to a NON-coalesced offset goes out as its own
+ * wr32, immediately -- not buffered into a wrn (C1). */
+static void broker_write_then_read(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case1: expected the write's flush");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case1: not a wrn: %s", line);
-    BCK(has_off(line, 0x1000), "case1: wrong off: %s", line);
-    BCK(strstr(line, "\"fix\":true") != NULL, "case1: fix not true: %s", line);
-    BCK(check_vals_seq(line, 0xCAFEBABEL, 1), "case1: wrong vals: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected an immediate wr32");
+    BCK(strstr(line, "\"op\":\"wr32\"") != NULL, "not a wr32: %s", line);
+    BCK(has_off(line, 0x1000), "wrong off: %s", line);
+    BCK(has_val(line, 0xCAFEBABEu), "wrong val: %s", line);
     send_line(cfd, "{\"ok\":true}");
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case1: expected the rd32");
-    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "case1: not a rd32: %s", line);
-    BCK(has_off(line, 0x2000), "case1: wrong off: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rd32");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
+    BCK(has_off(line, 0x2000), "wrong off: %s", line);
     send_line(cfd, "{\"ok\":true,\"val\":305419896}");
     _exit(0);
 }
 
-static void test_read_write(void)
+static void test_write_then_read(void)
 {
     char path[600]; pid_t pid; int ec = -1;
     fk33_transport *t; uint32_t v = 0; int rc;
 
-    sock_path(path, sizeof path, "read_write");
-    if (start_broker(path, broker_read_write, &pid) != 0) {
-        CK(0, "read_write: could not start the fake broker"); return;
+    sock_path(path, sizeof path, "write_then_read");
+    if (start_broker(path, broker_write_then_read, &pid) != 0) {
+        CK(0, "write_then_read: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
-    CK(t != NULL, "read_write: fk33_transport_open_jc failed");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "write_then_read: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
     rc = t->reg_write32(t->ctx, 0x1000, 0xCAFEBABEu);
-    CK(rc == 0, "read_write: reg_write32 rc=%d, expected 0 (buffered)", rc);
+    CK(rc == 0, "write_then_read: reg_write32 rc=%d, expected 0 (sent)", rc);
     rc = t->reg_read32(t->ctx, 0x2000, &v);
     CK(rc == 0 && v == 305419896u,
-       "read_write: reg_read32 rc=%d val=%u, expected 0/305419896", rc, v);
+       "write_then_read: reg_read32 rc=%d val=%u, expected 0/305419896", rc, v);
 
     t->close(t->ctx); free(t);
     CK(wait_broker(pid, &ec) == 0 && ec == 0,
-       "read_write: broker script exit=%d", ec);
+       "write_then_read: broker script exit=%d", ec);
 }
 
-/* Case 2: 5,120 writes to the same offset become ONE wrn with all 5,120
- * values in order, and a following rd32 only goes out after that flush. */
+/* Case 2 (NEW, C1): a write to CTRL is on the wire, acknowledged, BEFORE
+ * reg_write32() returns -- the broker sees it with no other call made. */
+static void broker_ctrl_on_wire(int cfd)
+{
+    linebuf lb; char *line; size_t llen; int rc;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the CTRL write immediately");
+    BCK(strstr(line, "\"op\":\"wr32\"") != NULL, "not a wr32: %s", line);
+    BCK(has_off(line, 0x3000), "wrong off: %s", line);
+    BCK(has_val(line, 0xDEADBEEFu), "wrong val: %s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    rc = lb_getline(&lb, &line, &llen);
+    BCK(rc == -2, "something else arrived after the CTRL write: rc=%d line=%s",
+        rc, rc == 0 ? line : "(none)");
+    _exit(0);
+}
+
+static void test_ctrl_on_wire_before_return(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; int rc;
+
+    sock_path(path, sizeof path, "ctrl_on_wire");
+    if (start_broker(path, broker_ctrl_on_wire, &pid) != 0) {
+        CK(0, "ctrl_on_wire: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "ctrl_on_wire: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+
+    rc = t->reg_write32(t->ctx, 0x3000, 0xDEADBEEFu);
+    CK(rc == 0, "ctrl_on_wire: reg_write32 (CTRL) rc=%d, expected 0", rc);
+    /* No other call before close(): the write must already be acked. */
+    t->close(t->ctx); free(t);
+
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "ctrl_on_wire: broker script exit=%d (CTRL was buffered, not sent)", ec);
+}
+
+/* Case 3: 5,120 writes to T_WIN become ONE wrn with all 5,120 values in
+ * order, and a following rd32 only appears after that flush. */
 static void broker_coalesce(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case2: expected the coalesced wrn");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case2: not a wrn: %.80s", line);
-    BCK(has_off(line, 0x4000), "case2: wrong off: %.80s", line);
-    BCK(strstr(line, "\"fix\":true") != NULL, "case2: fix not true: %.80s", line);
-    BCK(check_vals_seq(line, 0, 5120), "case2: vals not 0..5119 in order");
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the coalesced wrn");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %.80s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %.80s", line);
+    BCK(strstr(line, "\"fix\":true") != NULL, "fix not true: %.80s", line);
+    BCK(check_vals_seq(line, 0, 5120), "vals not 0..5119 in order");
     send_line(cfd, "{\"ok\":true}");
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case2: expected the rd32");
-    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "case2: not a rd32: %s", line);
-    BCK(has_off(line, 0x5000), "case2: wrong off: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rd32");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
+    BCK(has_off(line, 0x5000), "wrong off: %s", line);
     send_line(cfd, "{\"ok\":true,\"val\":777}");
     _exit(0);
 }
@@ -274,12 +340,12 @@ static void test_coalesce_5120(void)
     if (start_broker(path, broker_coalesce, &pid) != 0) {
         CK(0, "coalesce: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "coalesce: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
     for (i = 0; i < 5120; i++)
-        wrc |= t->reg_write32(t->ctx, 0x4000, i);
+        wrc |= t->reg_write32(t->ctx, T_WIN, i);
     CK(wrc == 0, "coalesce: a buffered reg_write32 returned nonzero");
 
     rc = t->reg_read32(t->ctx, 0x5000, &v);
@@ -291,27 +357,27 @@ static void test_coalesce_5120(void)
        "coalesce: broker script exit=%d (wire format or order was wrong)", ec);
 }
 
-/* Case 3: a coalesced run longer than JC_WRN_MAX (8192) splits into two wrn
+/* Case 4: a coalesced run longer than JC_WRN_MAX (8192) splits into two wrn
  * requests, in order, rather than one oversized or reordered one. */
 static void broker_split(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case3: expected the first wrn");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case3: not a wrn: %.80s", line);
-    BCK(has_off(line, 0x7000), "case3: wrong off: %.80s", line);
-    BCK(check_vals_seq(line, 0, 8192), "case3: first chunk not 0..8191 in order");
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the first wrn");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %.80s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %.80s", line);
+    BCK(check_vals_seq(line, 0, 8192), "first chunk not 0..8191 in order");
     send_line(cfd, "{\"ok\":true}");
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case3: expected the split remainder");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case3: not a wrn: %.80s", line);
-    BCK(has_off(line, 0x7000), "case3: wrong off: %.80s", line);
-    BCK(check_vals_seq(line, 8192, 10), "case3: second chunk not 8192..8201 in order");
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the split remainder");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %.80s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %.80s", line);
+    BCK(check_vals_seq(line, 8192, 10), "second chunk not 8192..8201 in order");
     send_line(cfd, "{\"ok\":true}");
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case3: expected the forcing rd32");
-    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "case3: not a rd32: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the forcing rd32");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
     send_line(cfd, "{\"ok\":true,\"val\":999}");
     _exit(0);
 }
@@ -326,12 +392,12 @@ static void test_split_wrn(void)
     if (start_broker(path, broker_split, &pid) != 0) {
         CK(0, "split: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "split: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
     for (i = 0; i < 8202; i++)
-        wrc |= t->reg_write32(t->ctx, 0x7000, i);
+        wrc |= t->reg_write32(t->ctx, T_WIN, i);
     CK(wrc == 0, "split: a buffered reg_write32 returned nonzero");
 
     rc = t->reg_read32(t->ctx, 0x8000, &v);
@@ -343,22 +409,22 @@ static void test_split_wrn(void)
        "split: broker script exit=%d (the bound/split was wrong)", ec);
 }
 
-/* Case 4: mem_write is refused with -EPERM, after flushing any pending
- * write, and never puts anything on the wire of its own. */
+/* Case 5: mem_write is refused with -EPERM, after flushing any pending
+ * write (to T_WIN), and never puts anything on the wire of its own. */
 static void broker_memwrite(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     int rc;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case4: expected the flush before refusal");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case4: not a wrn: %s", line);
-    BCK(has_off(line, 0x10), "case4: wrong off: %s", line);
-    BCK(check_vals_seq(line, 42, 1), "case4: wrong vals: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the flush before refusal");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %s", line);
+    BCK(check_vals_seq(line, 42, 1), "wrong vals: %s", line);
     send_line(cfd, "{\"ok\":true}");
 
     rc = lb_getline(&lb, &line, &llen);
-    BCK(rc == -2, "case4: mem_write put something on the wire: rc=%d line=%s",
+    BCK(rc == -2, "mem_write put something on the wire: rc=%d line=%s",
         rc, rc == 0 ? line : "(none)");
     _exit(0);
 }
@@ -372,11 +438,11 @@ static void test_mem_write_refused(void)
     if (start_broker(path, broker_memwrite, &pid) != 0) {
         CK(0, "mem_write: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "mem_write: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
-    rc = t->reg_write32(t->ctx, 0x10, 42);
+    rc = t->reg_write32(t->ctx, T_WIN, 42);
     CK(rc == 0, "mem_write: reg_write32 rc=%d, expected 0 (buffered)", rc);
     rc = t->mem_write(t->ctx, 0xABCULL, "hi", 2);
     CK(rc == -EPERM, "mem_write: rc=%d, expected -EPERM(%d)", rc, -EPERM);
@@ -386,14 +452,15 @@ static void test_mem_write_refused(void)
        "mem_write: broker script exit=%d", ec);
 }
 
-/* Case 5: a well-formed {"ok":false,...} reply returns a negative code. */
+/* Case 6: a well-formed {"ok":false,"err":...} reply (no done_items)
+ * returns a negative code and does not mark a lone, non-flush call fatal. */
 static void broker_okfalse(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case5: expected a rd32");
-    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "case5: not a rd32: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected a rd32");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
     send_line(cfd, "{\"ok\":false,\"err\":\"AxiError: boom\"}");
     _exit(0);
 }
@@ -407,71 +474,91 @@ static void test_ok_false(void)
     if (start_broker(path, broker_okfalse, &pid) != 0) {
         CK(0, "ok_false: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "ok_false: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
     rc = t->reg_read32(t->ctx, 0x30, &v);
-    CK(rc < 0, "ok_false: reg_read32 rc=%d, expected a negative code", rc);
+    CK(rc == -EIO, "ok_false: reg_read32 rc=%d, expected -EIO", rc);
 
     t->close(t->ctx); free(t);
     CK(wait_broker(pid, &ec) == 0 && ec == 0,
        "ok_false: broker script exit=%d", ec);
 }
 
-/* Case 6: three shapes of malformed reply (bad JSON, a missing field, an
- * unexpected extra field) each return a negative code and never crash. */
-static void broker_malformed(int cfd)
+/* Case 7: three shapes of malformed reply each return -EPROTO and never
+ * crash.  Each gets its OWN connection: a protocol error correctly (M1)
+ * marks the connection it happened on sticky broken, so a second malformed
+ * reply on the SAME connection would read back -ECONNABORTED instead of
+ * its own -EPROTO -- which is exercised deliberately as the bonus check
+ * below, rather than being a surprise. */
+static void broker_malformed_one(int cfd, const char *reply)
 {
-    linebuf lb; char *line; size_t llen;
+    linebuf lb; char *line; size_t llen; int rc;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case6a: expected a rd32");
-    send_line(cfd, "not json at all");
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected a rd32");
+    send_line(cfd, reply);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case6b: expected a rd32");
-    send_line(cfd, "{\"ok\":true}");               /* rd32 success needs "val" */
-
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case6c: expected a rd32");
-    send_line(cfd, "{\"ok\":true,\"val\":5,\"extra\":1}");  /* unexpected field */
+    /* A second request on this now-broken connection must never reach the
+     * wire -- there is nothing scripted to answer it. */
+    rc = lb_getline(&lb, &line, &llen);
+    BCK(rc == -2, "a second request arrived on a connection a protocol "
+        "error should have broken: rc=%d line=%s", rc, rc == 0 ? line : "(none)");
     _exit(0);
 }
 
-static void test_malformed(void)
+static void broker_malformed_bad_json(int cfd)
+{ broker_malformed_one(cfd, "not json at all"); }
+
+static void broker_malformed_missing_field(int cfd)
+{ broker_malformed_one(cfd, "{\"ok\":true}"); }           /* rd32 needs "val" */
+
+static void broker_malformed_extra_field(int cfd)
+{ broker_malformed_one(cfd, "{\"ok\":true,\"val\":5,\"extra\":1}"); }
+
+static void run_malformed_case(const char *name, void (*broker_fn)(int))
 {
     char path[600]; pid_t pid; int ec = -1;
     fk33_transport *t; uint32_t v = 0; int rc;
 
-    sock_path(path, sizeof path, "malformed");
-    if (start_broker(path, broker_malformed, &pid) != 0) {
-        CK(0, "malformed: could not start the fake broker"); return;
+    sock_path(path, sizeof path, name);
+    if (start_broker(path, broker_fn, &pid) != 0) {
+        CK(0, "%s: could not start the fake broker", name); return;
     }
-    t = fk33_transport_open_jc(path, "A");
-    CK(t != NULL, "malformed: fk33_transport_open_jc failed");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "%s: fk33_transport_open_jc failed", name);
     if (!t) { wait_broker(pid, &ec); return; }
 
-    rc = t->reg_read32(t->ctx, 0x40, &v);
-    CK(rc < 0, "malformed: bad JSON rc=%d, expected negative", rc);
     rc = t->reg_read32(t->ctx, 0x41, &v);
-    CK(rc < 0, "malformed: missing field rc=%d, expected negative", rc);
+    CK(rc == -EPROTO, "%s: rc=%d, expected -EPROTO", name, rc);
     rc = t->reg_read32(t->ctx, 0x42, &v);
-    CK(rc < 0, "malformed: extra field rc=%d, expected negative", rc);
+    CK(rc == -ECONNABORTED,
+       "%s: a call after a protocol error rc=%d, expected sticky "
+       "-ECONNABORTED (M1)", name, rc);
 
     t->close(t->ctx); free(t);
-    CK(wait_broker(pid, &ec) == 0 && ec == 0,
-       "malformed: broker script exit=%d", ec);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0, "%s: broker script exit=%d",
+       name, ec);
 }
 
-/* Case 7: the broker closes the connection mid-reply (no trailing newline
- * ever arrives); the call must return a negative code, not hang or crash. */
+static void test_malformed(void)
+{
+    run_malformed_case("malformed_bad_json", broker_malformed_bad_json);
+    run_malformed_case("malformed_missing_field", broker_malformed_missing_field);
+    run_malformed_case("malformed_extra_field", broker_malformed_extra_field);
+}
+
+/* Case 8: the broker closes the connection mid-reply; the call must return
+ * a negative code, not hang or crash. */
 static void broker_closemid(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case7: expected a rd32");
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected a rd32");
     send_raw(cfd, "{\"ok\":true,\"va", 14);   /* deliberately truncated, no \n */
-    _exit(0);                                 /* closing cfd is the point */
+    _exit(0);
 }
 
 static void test_broker_closes_mid_reply(void)
@@ -483,28 +570,28 @@ static void test_broker_closes_mid_reply(void)
     if (start_broker(path, broker_closemid, &pid) != 0) {
         CK(0, "closemid: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "closemid: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
     rc = t->reg_read32(t->ctx, 0x50, &v);
-    CK(rc < 0, "closemid: rc=%d, expected a negative code", rc);
+    CK(rc == -EIO, "closemid: rc=%d, expected -EIO", rc);
 
     t->close(t->ctx); free(t);
     CK(wait_broker(pid, &ec) == 0 && ec == 0,
        "closemid: broker script exit=%d", ec);
 }
 
-/* Case 8: mem_read maps to memrd and decodes the hex payload correctly. */
+/* Case 9: mem_read maps to memrd and decodes the hex payload correctly. */
 static void broker_memread(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case8: expected a memrd");
-    BCK(strstr(line, "\"op\":\"memrd\"") != NULL, "case8: not a memrd: %s", line);
-    BCK(strstr(line, "\"addr\":38654705664") != NULL, "case8: wrong addr: %s", line);
-    BCK(strstr(line, "\"n\":8") != NULL, "case8: wrong n: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected a memrd");
+    BCK(strstr(line, "\"op\":\"memrd\"") != NULL, "not a memrd: %s", line);
+    BCK(strstr(line, "\"addr\":38654705664") != NULL, "wrong addr: %s", line);
+    BCK(strstr(line, "\"n\":8") != NULL, "wrong n: %s", line);
     send_line(cfd, "{\"ok\":true,\"hex\":\"0011223344556677\"}");
     _exit(0);
 }
@@ -521,7 +608,7 @@ static void test_mem_read(void)
     if (start_broker(path, broker_memread, &pid) != 0) {
         CK(0, "mem_read: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "mem_read: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
@@ -535,16 +622,17 @@ static void test_mem_read(void)
        "mem_read: broker script exit=%d", ec);
 }
 
-/* Case 9: close() flushes a pending write with no other access forcing it. */
+/* Case 10: close() flushes a pending T_WIN write with no other access
+ * forcing it. */
 static void broker_closeflush(int cfd)
 {
     linebuf lb; char *line; size_t llen;
     lb_init(&lb, cfd);
 
-    BCK(lb_getline(&lb, &line, &llen) == 0, "case9: expected close() to flush");
-    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "case9: not a wrn: %s", line);
-    BCK(has_off(line, 0x50), "case9: wrong off: %s", line);
-    BCK(check_vals_seq(line, 123, 1), "case9: wrong vals: %s", line);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected close() to flush");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %s", line);
+    BCK(check_vals_seq(line, 123, 1), "wrong vals: %s", line);
     send_line(cfd, "{\"ok\":true}");
     _exit(0);
 }
@@ -558,11 +646,11 @@ static void test_close_flushes(void)
     if (start_broker(path, broker_closeflush, &pid) != 0) {
         CK(0, "close_flushes: could not start the fake broker"); return;
     }
-    t = fk33_transport_open_jc(path, "A");
+    t = fk33_transport_open_jc(path, "A", T_WIN);
     CK(t != NULL, "close_flushes: fk33_transport_open_jc failed");
     if (!t) { wait_broker(pid, &ec); return; }
 
-    rc = t->reg_write32(t->ctx, 0x50, 123);
+    rc = t->reg_write32(t->ctx, T_WIN, 123);
     CK(rc == 0, "close_flushes: reg_write32 rc=%d, expected 0 (buffered)", rc);
     t->close(t->ctx); free(t);   /* no other access -- close must flush */
 
@@ -570,23 +658,266 @@ static void test_close_flushes(void)
        "close_flushes: broker script exit=%d (close did not flush)", ec);
 }
 
-/* Case 10: open() rejects a bad die and a missing socket path without
- * forking anything or touching the filesystem beyond the check itself. */
+/* Case 11: open() rejects a bad die and a missing/bad socket path. */
 static void test_open_rejects_bad_args(void)
 {
     fk33_transport *t;
 
-    t = fk33_transport_open_jc(NULL, "A");
+    t = fk33_transport_open_jc(NULL, "A", T_WIN);
     CK(t == NULL, "open: NULL sock_path should fail");
 
-    t = fk33_transport_open_jc("/nonexistent/path/does/not/exist.sock", "A");
+    t = fk33_transport_open_jc("/nonexistent/path/does/not/exist.sock", "A", T_WIN);
     CK(t == NULL, "open: a socket that does not exist should fail");
 
-    t = fk33_transport_open_jc("/tmp/irrelevant.sock", "has a space");
+    t = fk33_transport_open_jc("/tmp/irrelevant.sock", "has a space", T_WIN);
     CK(t == NULL, "open: a die with a space should be rejected before connect()");
 
-    t = fk33_transport_open_jc("/tmp/irrelevant.sock", "\"quote\"");
+    t = fk33_transport_open_jc("/tmp/irrelevant.sock", "\"quote\"", T_WIN);
     CK(t == NULL, "open: a die with a quote should be rejected before connect()");
+}
+
+/* Case 12 (NEW, I1): a broker that never answers must not hang the caller.
+ * A short FK33_JC_TIMEOUT_MS makes the deadline fire quickly, and the
+ * connection must then be STICKY broken (M1). */
+static void broker_never_replies(int cfd)
+{
+    linebuf lb; char *line; size_t llen;
+    lb_init(&lb, cfd);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rd32 to arrive");
+    /* ...and then just go silent, well past the test's configured deadline,
+     * before finally going away. */
+    struct timespec ts = { 1, 0 };
+    nanosleep(&ts, NULL);
+    _exit(0);
+}
+
+static void test_recv_timeout(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t v = 0; int rc;
+    double t0, dt;
+
+    sock_path(path, sizeof path, "timeout");
+    if (start_broker(path, broker_never_replies, &pid) != 0) {
+        CK(0, "recv_timeout: could not start the fake broker"); return;
+    }
+    setenv("FK33_JC_TIMEOUT_MS", "150", 1);
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    unsetenv("FK33_JC_TIMEOUT_MS");
+    CK(t != NULL, "recv_timeout: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+
+    t0 = now_s();
+    rc = t->reg_read32(t->ctx, 0x60, &v);
+    dt = now_s() - t0;
+    CK(rc == -ETIMEDOUT, "recv_timeout: rc=%d, expected -ETIMEDOUT", rc);
+    CK(dt < 1.0, "recv_timeout: took %.3f s, expected well under the 1 s "
+                 "broker silence (the 150 ms deadline did not fire)", dt);
+
+    rc = t->reg_read32(t->ctx, 0x61, &v);
+    CK(rc == -ECONNABORTED,
+       "recv_timeout: a call after the timeout rc=%d, expected sticky "
+       "-ECONNABORTED (M1)", rc);
+
+    t->close(t->ctx); free(t);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "recv_timeout: broker script exit=%d", ec);
+}
+
+/* Case 13 (NEW, I4): a flush that fails (plain {"ok":false,...}) must stop
+ * the write that triggered it from sending anything of its own, and must
+ * leave the connection sticky broken. */
+static void broker_flush_fail_write(int cfd)
+{
+    linebuf lb; char *line; size_t llen; int rc;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the failing wrn");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %s", line);
+    BCK(check_vals_seq(line, 99, 1), "wrong vals: %s", line);
+    send_line(cfd, "{\"ok\":false,\"err\":\"AxiError: boom\"}");
+
+    rc = lb_getline(&lb, &line, &llen);
+    BCK(rc == -2, "a wr32 (or anything else) arrived after the failed flush: "
+        "rc=%d line=%s", rc, rc == 0 ? line : "(none)");
+    _exit(0);
+}
+
+static void test_flush_fail_blocks_next_write(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t v = 0; int rc;
+
+    sock_path(path, sizeof path, "flushfailwr");
+    if (start_broker(path, broker_flush_fail_write, &pid) != 0) {
+        CK(0, "flush_fail_write: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "flush_fail_write: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+
+    rc = t->reg_write32(t->ctx, T_WIN, 99);
+    CK(rc == 0, "flush_fail_write: buffering write rc=%d, expected 0", rc);
+    rc = t->reg_write32(t->ctx, 0x7000, 77);
+    CK(rc == -EIO, "flush_fail_write: the triggering write rc=%d, expected "
+                   "-EIO (the flush's own failure) and nothing sent for it", rc);
+    rc = t->reg_read32(t->ctx, 0x9999, &v);
+    CK(rc == -ECONNABORTED,
+       "flush_fail_write: a call after a failed flush rc=%d, expected "
+       "sticky -ECONNABORTED (M1)", rc);
+
+    t->close(t->ctx); free(t);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "flush_fail_write: broker script exit=%d", ec);
+}
+
+/* Case 14 (NEW, I2 + M1): the REAL partial-wrn failure shape -- "err" plus
+ * done_items/done_items_exact -- must be accepted (not -EPROTO), reported
+ * as -EIO, and still mark the connection sticky broken because it IS a
+ * flush failure. */
+static void broker_flush_fail_done_items(int cfd)
+{
+    linebuf lb; char *line; size_t llen; int rc;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the failing wrn");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %s", line);
+    BCK(has_off(line, T_WIN), "wrong off: %s", line);
+    BCK(check_vals_seq(line, 7, 1), "wrong vals: %s", line);
+    send_line(cfd,
+        "{\"ok\":false,\"err\":\"AxiError: boom\",\"done_items\":37,"
+        "\"done_items_exact\":true}");
+
+    rc = lb_getline(&lb, &line, &llen);
+    BCK(rc == -2, "a rd32 (or anything else) arrived after the failed flush: "
+        "rc=%d line=%s", rc, rc == 0 ? line : "(none)");
+    _exit(0);
+}
+
+static void test_flush_fail_done_items(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t v = 0; int rc;
+
+    sock_path(path, sizeof path, "flushfaildi");
+    if (start_broker(path, broker_flush_fail_done_items, &pid) != 0) {
+        CK(0, "flush_fail_done_items: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "flush_fail_done_items: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+
+    rc = t->reg_write32(t->ctx, T_WIN, 7);
+    CK(rc == 0, "flush_fail_done_items: buffering write rc=%d, expected 0", rc);
+    rc = t->reg_read32(t->ctx, 0x8800, &v);
+    CK(rc == -EIO, "flush_fail_done_items: the triggering read rc=%d, "
+                   "expected -EIO (the done_items shape must parse, not "
+                   "-EPROTO) and no rd32 sent", rc);
+    rc = t->reg_read32(t->ctx, 0x8801, &v);
+    CK(rc == -ECONNABORTED,
+       "flush_fail_done_items: a call after rc=%d, expected sticky "
+       "-ECONNABORTED (M1)", rc);
+
+    t->close(t->ctx); free(t);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "flush_fail_done_items: broker script exit=%d", ec);
+}
+
+/* Case 15 (NEW, I3): two dies on the SAME sock_path share ONE connection;
+ * interleaved A/B/A/B/A calls each carry the correct die, in order, and
+ * the underlying socket is not closed until the LAST of the two transports
+ * is closed. */
+static void broker_shared(int cfd)
+{
+    linebuf lb; char *line; size_t llen; int rc;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected wr32 A");
+    BCK(strstr(line, "\"op\":\"wr32\"") && has_die(line, "A") &&
+        has_off(line, 0x100) && has_val(line, 11),
+        "line 1 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected wr32 B");
+    BCK(strstr(line, "\"op\":\"wr32\"") && has_die(line, "B") &&
+        has_off(line, 0x200) && has_val(line, 22),
+        "line 2 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rd32 A");
+    BCK(strstr(line, "\"op\":\"rd32\"") && has_die(line, "A") &&
+        has_off(line, 0x300), "line 3 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true,\"val\":33}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rd32 B");
+    BCK(strstr(line, "\"op\":\"rd32\"") && has_die(line, "B") &&
+        has_off(line, 0x400), "line 4 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true,\"val\":44}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected wr32 A again");
+    BCK(strstr(line, "\"op\":\"wr32\"") && has_die(line, "A") &&
+        has_off(line, 0x500) && has_val(line, 55),
+        "line 5 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0,
+        "expected a 6th request from B, proving the shared connection "
+        "survived A's close");
+    BCK(strstr(line, "\"op\":\"wr32\"") && has_die(line, "B") &&
+        has_off(line, 0xFFF) && has_val(line, 0),
+        "line 6 wrong: %s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    /* Nothing else until BOTH dies have closed. */
+    rc = lb_getline(&lb, &line, &llen);
+    BCK(rc == -2, "EOF expected only after the last close: rc=%d line=%s",
+        rc, rc == 0 ? line : "(none)");
+    _exit(0);
+}
+
+static void test_shared_connection_interleaved(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *ta, *tb; uint32_t v = 0; int rc;
+
+    sock_path(path, sizeof path, "shared");
+    if (start_broker(path, broker_shared, &pid) != 0) {
+        CK(0, "shared: could not start the fake broker"); return;
+    }
+
+    ta = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(ta != NULL, "shared: opening die A failed");
+    tb = fk33_transport_open_jc(path, "B", T_WIN);
+    CK(tb != NULL, "shared: opening die B on the SAME path failed -- "
+                   "connection sharing is broken (a second connect() was "
+                   "attempted against a listener nothing accepts any more)");
+    if (!ta || !tb) {
+        if (ta) { ta->close(ta->ctx); free(ta); }
+        if (tb) { tb->close(tb->ctx); free(tb); }
+        wait_broker(pid, &ec);
+        return;
+    }
+
+    rc = ta->reg_write32(ta->ctx, 0x100, 11);
+    CK(rc == 0, "shared: A write #1 rc=%d", rc);
+    rc = tb->reg_write32(tb->ctx, 0x200, 22);
+    CK(rc == 0, "shared: B write #1 rc=%d", rc);
+    rc = ta->reg_read32(ta->ctx, 0x300, &v);
+    CK(rc == 0 && v == 33, "shared: A read rc=%d val=%u, expected 0/33", rc, v);
+    rc = tb->reg_read32(tb->ctx, 0x400, &v);
+    CK(rc == 0 && v == 44, "shared: B read rc=%d val=%u, expected 0/44", rc, v);
+    rc = ta->reg_write32(ta->ctx, 0x500, 55);
+    CK(rc == 0, "shared: A write #2 rc=%d", rc);
+
+    ta->close(ta->ctx); free(ta);   /* refcount 2 -> 1: the fd must survive */
+    rc = tb->reg_write32(tb->ctx, 0xFFF, 0);
+    CK(rc == 0, "shared: B after A's close rc=%d, expected 0 -- the shared "
+                "connection must not have been torn down by A's close", rc);
+
+    tb->close(tb->ctx); free(tb);   /* refcount 1 -> 0: NOW the fd closes */
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "shared: broker script exit=%d", ec);
 }
 
 /* ================================================================== main */
@@ -612,7 +943,8 @@ int main(void)
         return 1;
     }
 
-    test_read_write();
+    test_write_then_read();
+    test_ctrl_on_wire_before_return();
     test_coalesce_5120();
     test_split_wrn();
     test_mem_write_refused();
@@ -622,13 +954,21 @@ int main(void)
     test_mem_read();
     test_close_flushes();
     test_open_rejects_bad_args();
+    test_recv_timeout();
+    test_flush_fail_blocks_next_write();
+    test_flush_fail_done_items();
+    test_shared_connection_interleaved();
 
     /* best-effort cleanup of this run's own scratch directory */
     {
         static const char *names[] = {
-            "read_write.sock", "coalesce.sock", "split.sock", "memwrite.sock",
-            "okfalse.sock", "malformed.sock", "closemid.sock", "memread.sock",
-            "closeflush.sock"
+            "write_then_read.sock", "ctrl_on_wire.sock", "coalesce.sock",
+            "split.sock", "memwrite.sock", "okfalse.sock",
+            "malformed_bad_json.sock", "malformed_missing_field.sock",
+            "malformed_extra_field.sock",
+            "closemid.sock", "memread.sock", "closeflush.sock",
+            "timeout.sock", "flushfailwr.sock", "flushfaildi.sock",
+            "shared.sock"
         };
         size_t i;
         char p[700];
