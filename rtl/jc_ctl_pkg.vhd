@@ -29,13 +29,19 @@ package jc_ctl_pkg is
   constant JC_H_COUNT_LO  : natural := 72;  constant JC_H_COUNT_HI  : natural := 87;
   constant JC_H_NWORDS_LO : natural := 104; constant JC_H_NWORDS_HI : natural := 119;
   constant JC_H_ADDR_LO   : natural := 120; constant JC_H_ADDR_HI   : natural := 183;
+  -- fix round 1: host-driven ack. A PASS frame with ack_valid = 1 and ack_seq equal to the
+  -- rsp_seq being presented in that slot acks the response (rsp_ack_tgl toggles at its verdict)
+  constant JC_H_ACKSEQ_LO : natural := 184; constant JC_H_ACKSEQ_HI : natural := 215;
+  constant JC_H_ACKVALID  : natural := 216;
 
   -- status word fields (TDO bits 0..383). The executor (Task 3) drives the fields marked
-  -- EXEC; the frame core overwrites the fields marked CORE with its own values.
+  -- EXEC; the frame core overwrites the fields marked CORE with its own values. rsp_count
+  -- [111:96] on TDO is the number of response words actually shifted in that slot:
+  -- min(rsp_count, 496) when rsp_valid is shown, else 0.
   constant JC_S_MAGIC_HI    : natural := 31;                                   -- CORE
   constant JC_S_DONE_LO     : natural := 32;  constant JC_S_DONE_HI    : natural := 63;  -- EXEC
   constant JC_S_RSPSEQ_LO   : natural := 64;  constant JC_S_RSPSEQ_HI  : natural := 95;  -- EXEC
-  constant JC_S_RSPCNT_LO   : natural := 96;  constant JC_S_RSPCNT_HI  : natural := 111; -- EXEC
+  constant JC_S_RSPCNT_LO   : natural := 96;  constant JC_S_RSPCNT_HI  : natural := 111; -- CORE: words shifted
   constant JC_S_RSPVALID    : natural := 112; -- EXEC; the core masks it on a stale status
   constant JC_S_AXIERR      : natural := 113;                                  -- EXEC
   constant JC_S_AXIRESP_LO  : natural := 114; constant JC_S_AXIRESP_HI : natural := 115; -- EXEC
@@ -43,5 +49,8 @@ package jc_ctl_pkg is
   constant JC_S_DESYNC_LO   : natural := 148; constant JC_S_DESYNC_HI  : natural := 163; -- CORE
   constant JC_S_OVF         : natural := 164;                                  -- CORE
   constant JC_S_CRCF_LO     : natural := 165; constant JC_S_CRCF_HI    : natural := 180; -- CORE
-  -- [383:181] zero by convention (the executor ties them low; the core passes them through)
+  -- fix round 1: CRC-32 (crc32_bit, init all ones, final xor ones) over the rsp_count response
+  -- words in shift order, computed by the executor; the core passes it through
+  constant JC_S_RSPCRC_LO   : natural := 181; constant JC_S_RSPCRC_HI  : natural := 212; -- EXEC
+  constant JC_S_ZERO_LO     : natural := 213; -- [383:213] forced to zero by the core
 end package;

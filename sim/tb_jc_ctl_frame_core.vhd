@@ -9,12 +9,19 @@
 --   * TDO bits 0..383 against st_in with the core's own fields merged in;
 --   * TDO bits 384.. against the stub response RAM (word k = address k, LSB first) for the
 --     expected number of words, and zero for every bit after that;
---   * rsp_ack_tgl: exactly one toggle at the edge that shifts bit 383 + 32*nrsp when the
---     vector says so, none otherwise (including the edges between scans);
+--   * the presented rsp_crc [212:181] against a CRC-32 the bench computes over the response
+--     bits that actually came out on TDO (and against the CRC its stub status supplied);
+--   * rsp_ack_tgl (fix round 1, host-driven ack): exactly one toggle at the edge that shifts
+--     bit 16159 (the verdict) when the vector says so, none otherwise (including the edges
+--     between scans);
 --   * desync_cnt / crcf_cnt against the counts the next slot must show.
 -- st_in changes to the next slot's value in the middle of every slot, so a core that
 -- shifts the live status instead of the copy latched at slot start is visible. Between
--- scans a foreign scan (sel = 0, random TDI) must change nothing.
+-- scans a foreign scan (sel = 0, random TDI) must change nothing (endscan 1); endscan 2
+-- returns straight to Capture-DR, so a Capture lands mid-slot.
+-- The stub status: st_in from the vector with rsp_crc [212:181] replaced by the CRC-32
+-- (crc32_bit, init ones, final xor ones) of the stub RAM's first min(rsp_count, 496) words,
+-- as the executor will supply it.
 -- The response RAM stub is a one-cycle synchronous read on TCK, as Task 4's BRAM will be.
 library ieee;
 use ieee.std_logic_1164.all;
@@ -29,7 +36,7 @@ end entity;
 
 architecture sim of tb_jc_ctl_frame_core is
   constant TCK_P  : time := 37 ns;
-  constant MAXS   : natural := 48;      -- slots
+  constant MAXS   : natural := 64;      -- slots
   constant MAXP   : natural := 64;      -- pushes per slot
   signal tck, sel, capture, shift, tdi, tdo : std_logic := '0';
   signal w_valid, ovf, ack_tgl : std_logic;
@@ -103,6 +110,8 @@ begin
     variable checks, errors : natural := 0;
     variable cur : natural := 0;
     variable lfsr : unsigned(31 downto 0) := x"1234ABCD";
+    variable crcv : std_logic_vector(31 downto 0);
+    variable nw_st : natural;
 
     procedure chk(cond : boolean; msg : string) is
     begin
@@ -165,6 +174,14 @@ begin
       read(l, v_ack(nslots));   read(l, v_rspv(nslots)); read(l, v_nrsp(nslots));
       read(l, v_des(nslots));   read(l, v_crcf(nslots)); read(l, v_ovf(nslots));
       hread(l, v_st(nslots));
+      -- the stub executor's rsp_crc, from the stub RAM model
+      nw_st := to_integer(unsigned(v_st(nslots)(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO)));
+      if nw_st > JC_CTL_MAX_ITEMS then nw_st := JC_CTL_MAX_ITEMS; end if;
+      crcv := (others => '1');
+      for k in 0 to nw_st - 1 loop
+        crcv := crc32_word(crcv, ram_word(k));
+      end loop;
+      v_st(nslots)(JC_S_RSPCRC_HI downto JC_S_RSPCRC_LO) := crcv xor x"FFFFFFFF";
       for k in 0 to JC_SLOT_BITS / 256 - 1 loop
         hread(l, w256);
         v_slot(nslots)(256 * k + 255 downto 256 * k) := w256;
@@ -178,7 +195,7 @@ begin
       end loop;
       nslots := nslots + 1;
     end loop;
-    assert nslots >= 20 report "vector file too short" severity failure;
+    assert nslots >= 40 report "vector file too short" severity failure;
 
     -- ---- run ----
     wait for TCK_P;                        -- let the DUT's initial values settle
@@ -223,13 +240,19 @@ begin
       -- TDO: status
       exp_st := v_st(j);
       exp_st(31 downto 0)    := JC_CTL_MAGIC_STAT;
+      exp_st(111 downto 96)  := std_logic_vector(to_unsigned(v_nrsp(j), 16));
       exp_st(112)            := '1' when v_rspv(j) = 1 else '0';
       exp_st(163 downto 148) := std_logic_vector(to_unsigned(v_des(j), 16));
       exp_st(164)            := '1' when v_ovf(j) = 1 else '0';
       exp_st(180 downto 165) := std_logic_vector(to_unsigned(v_crcf(j), 16));
-      if v_nbits(j) >= JC_CTL_STATUS_BITS then
-        chk(tdo_bits(JC_CTL_STATUS_BITS-1 downto 0) = exp_st, "status on TDO");
-      end if;
+      exp_st(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');
+      first_bad := -1;
+      for i in 0 to JC_CTL_STATUS_BITS - 1 loop
+        if i < v_nbits(j) and tdo_bits(i) /= exp_st(i) and first_bad < 0 then
+          first_bad := i;
+        end if;
+      end loop;
+      chk(first_bad < 0, "status on TDO wrong from bit " & integer'image(first_bad));
       -- TDO: response words, then zero
       rsp_end := JC_CTL_STATUS_BITS + 32 * v_nrsp(j);
       first_bad := -1;
@@ -245,16 +268,32 @@ begin
       end loop;
       chk(first_bad < 0, "TDO response/zero region wrong from bit " & integer'image(first_bad)
                          & " (" & integer'image(v_nrsp(j)) & " response words)");
+      -- the response CRC, recomputed from the bits that came out on TDO
+      if v_rspv(j) = 1 and v_nbits(j) >= rsp_end then
+        crcv := (others => '1');
+        for i in JC_CTL_STATUS_BITS to rsp_end - 1 loop
+          crcv := crc32_bit(crcv, tdo_bits(i));
+        end loop;
+        chk((crcv xor x"FFFFFFFF") = tdo_bits(JC_S_RSPCRC_HI downto JC_S_RSPCRC_LO),
+            "rsp_crc on TDO does not match the CRC of the " & integer'image(v_nrsp(j))
+            & " response words shifted");
+      end if;
       -- the ack
       if v_ack(j) = 1 then
-        chk(nack = 1 and ack_at = rsp_end - 1,
+        chk(nack = 1 and ack_at = JC_CRC_LAST,
             "ack: " & integer'image(nack) & " toggles, last at bit " & integer'image(ack_at)
-            & ", expected one at bit " & integer'image(rsp_end - 1));
+            & ", expected one at bit " & integer'image(JC_CRC_LAST));
       else
         chk(nack = 0, "ack must not toggle, toggled " & integer'image(nack) & " times");
       end if;
 
-      if v_end(j) = 1 then
+      if v_end(j) = 2 then
+        nack := 0;
+        end_scan;                          -- Exit1-DR -> Update-DR -> Select-DR
+        quiet_edge('0', '0', '0');         -- Select-DR -> Capture-DR
+        quiet_edge('1', '0', '0');         -- Capture-DR -> Shift-DR (CAPTURE sampled)
+        chk(nack = 0, "ack toggled outside a slot");
+      elsif v_end(j) = 1 then
         nack := 0;
         end_scan;
         -- a foreign scan (another instruction selected): nothing may change

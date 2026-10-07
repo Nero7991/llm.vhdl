@@ -9,9 +9,11 @@
 --
 -- TRANSMIT, per slot:
 --   bits 0..383        the status word: st_in latched at slot start, with [31:0] "JCST",
---                      [163:148] desync, [164] ovf, [180:165] crc-fail count merged in
---                      (the counts as they stood at slot start), and [112] rsp_valid
---                      masked to 0 when the latched status is STALE (below);
+--                      [111:96] rsp_count = n (the words shifted below), [112] rsp_valid
+--                      masked to 0 when the latched status is STALE (below), [163:148]
+--                      desync, [164] ovf, [180:165] crc-fail count (the counts as they
+--                      stood at slot start), [212:181] rsp_crc passed through from the
+--                      executor, and [383:213] forced to zero;
 --   bits 384..         n response words, word k = response RAM address k, LSB first, where
 --                      n = min(rsp_count, 496) if the shown rsp_valid is 1, else 0;
 --   the rest           zero.
@@ -20,17 +22,18 @@
 -- output register on the edge that shifts bit 383 + 32*k; rsp_addr was set to k on the
 -- previous load edge (32 edges earlier; 0 at slot start), so rsp_q has long been valid.
 --
--- ACK: rsp_ack_tgl toggles on the rising TCK edge that shifts slot bit 383 + 32*n (the
--- last response bit; bit 383, the last status bit, when n = 0) in a slot whose SHOWN
--- rsp_valid is 1. A slot cut short before that bit (Exit1-DR or a new Capture) does not
--- ack, so the response is presented again in the next slot. After an ack the acked rsp_seq
--- is remembered: a later slot whose latched status still has rsp_valid = 1 with that same
--- rsp_seq is stale (the executor's clear has not crossed into TCK yet, which can take
--- longer than the TCK edges between slots when TCK stops between scans), so it is shown
--- with rsp_valid = 0 and no response, and it never acks again. The memory is dropped at the
--- first slot whose latched status has rsp_valid = 0 or a different rsp_seq. So each
--- published response is acked once, provided consecutive responses either carry
--- different seqs or are separated by a slot that saw rsp_valid = 0.
+-- ACK (fix round 1: host-driven). TDO carries no CRC of its own except rsp_crc, and a read
+-- cannot safely be re-executed (WIN_DATA reads auto-increment), so a response is acked
+-- only by the host, after it has checked rsp_crc: rsp_ack_tgl toggles on the rising TCK
+-- edge that shifts bit 16159 (the CRC verdict) of a PASS frame whose header carries
+-- ack_valid [216] = 1 and ack_seq [215:184] equal to the rsp_seq presented in this slot
+-- (the latched status, shown rsp_valid = 1). An ack of a seq that is not being presented,
+-- including one already acked, is ignored. A valid unacked response is presented again in
+-- every slot until it is acked.
+-- STALE: after an ack the acked rsp_seq is remembered; a later slot whose latched status
+-- still has rsp_valid = 1 with that rsp_seq (the executor's clear has not crossed into TCK
+-- yet) is shown with rsp_valid = 0 and no words, and cannot be acked. The memory is dropped
+-- at the first slot whose latched status has rsp_valid = 0 or a different rsp_seq.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -86,17 +89,21 @@ architecture rtl of jc_ctl_frame_core is
   signal ack_t    : std_logic := '0';
   signal ack_pend : std_logic := '0';
   signal ack_seq  : std_logic_vector(31 downto 0) := (others => '0');
+  signal h_ack_v  : std_logic := '0';                                -- this frame's ack
+  signal h_ack_seq : std_logic_vector(31 downto 0) := (others => '0');
 
   function merged(st : std_logic_vector(JC_CTL_STATUS_BITS-1 downto 0); d : unsigned(15 downto 0);
-                  o  : std_logic; c : unsigned(15 downto 0); v : std_logic)
-    return std_logic_vector is
+                  o  : std_logic; c : unsigned(15 downto 0); v : std_logic;
+                  n  : natural) return std_logic_vector is
     variable r : std_logic_vector(JC_CTL_STATUS_BITS-1 downto 0) := st;
   begin
     r(JC_S_MAGIC_HI downto 0)              := JC_CTL_MAGIC_STAT;
+    r(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO) := std_logic_vector(to_unsigned(n, 16));
     r(JC_S_RSPVALID)                       := v;
     r(JC_S_DESYNC_HI downto JC_S_DESYNC_LO) := std_logic_vector(d);
     r(JC_S_OVF)                            := o;
     r(JC_S_CRCF_HI downto JC_S_CRCF_LO)     := std_logic_vector(c);
+    r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');
     return r;
   end function;
 begin
@@ -118,6 +125,8 @@ begin
     variable stale  : boolean;
     variable v      : std_logic;
     variable cnt    : unsigned(15 downto 0);
+    variable n      : natural range 0 to JC_CTL_MAX_ITEMS;
+    variable pass   : boolean;
   begin
     if rising_edge(tck) then
       start := false;
@@ -145,6 +154,8 @@ begin
               good   <= '1';
               nwords <= unsigned(word(JC_H_NWORDS_HI downto JC_H_NWORDS_LO));
               seq    <= word(JC_H_SEQ_HI downto JC_H_SEQ_LO);
+              h_ack_v   <= word(JC_H_ACKVALID);
+              h_ack_seq <= word(JC_H_ACKSEQ_HI downto JC_H_ACKSEQ_LO);
               wv     <= '1';
               wd     <= TAG_HDR & word;
             else
@@ -159,11 +170,18 @@ begin
         if bitcnt = JC_CRC_LAST and good = '1' then
           crc_rx := tdi & rx_crc(31 downto 1);
           wv <= '1';
-          if crc_rx = (crc xor x"FFFFFFFF") then
+          pass := crc_rx = (crc xor x"FFFFFFFF");
+          if pass then
             wd <= TAG_PASS & std_logic_vector(resize(unsigned(seq), 256));
           else
             wd <= TAG_FAIL & std_logic_vector(resize(unsigned(seq), 256));
             crcf <= crcf + 1;
+          end if;
+          -- the host's ack of the response presented in this slot
+          if pass and h_ack_v = '1' and h_ack_seq = lat_seq and lat_v = '1' then
+            ack_t    <= not ack_t;
+            ack_pend <= '1';
+            ack_seq  <= lat_seq;
           end if;
         end if;
         -- ---------------- transmit ----------------
@@ -181,11 +199,6 @@ begin
           rsp_a <= to_unsigned(k + 1, JC_CTL_RSP_AW);
         else
           rsp_sr <= '0' & rsp_sr(31 downto 1);
-        end if;
-        if lat_v = '1' and bitcnt = ST_LAST + 32 * lat_n then
-          ack_t    <= not ack_t;
-          ack_pend <= '1';
-          ack_seq  <= lat_seq;
         end if;
         if bitcnt = JC_SLOT_BITS - 1 then
           start := true;
@@ -208,16 +221,17 @@ begin
           ack_pend <= '0';
         end if;
         cnt := unsigned(st_in(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO));
-        st_sr   <= merged(st_in, desync, ovf, crcf, v);
+        if v = '0' then
+          n := 0;
+        elsif cnt > JC_CTL_MAX_ITEMS then
+          n := JC_CTL_MAX_ITEMS;
+        else
+          n := to_integer(cnt);
+        end if;
+        st_sr   <= merged(st_in, desync, ovf, crcf, v, n);
         lat_v   <= v;
         lat_seq <= st_in(JC_S_RSPSEQ_HI downto JC_S_RSPSEQ_LO);
-        if v = '0' then
-          lat_n <= 0;
-        elsif cnt > JC_CTL_MAX_ITEMS then
-          lat_n <= JC_CTL_MAX_ITEMS;
-        else
-          lat_n <= to_integer(cnt);
-        end if;
+        lat_n   <= n;
         in_st  <= '1';
         rsp_sr <= (others => '0');
         rsp_a  <= (others => '0');

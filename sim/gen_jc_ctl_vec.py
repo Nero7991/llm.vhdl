@@ -20,22 +20,28 @@ TAG_DATA, TAG_HDR, TAG_PASS, TAG_FAIL = 0, 1, 2, 3
 
 FORMAT = """\
 # jc_ctl_frame_vec.txt: vectors for sim/tb_jc_ctl_frame_core.vhd (USER3 control frame core).
-# Written by sim/gen_jc_ctl_vec.py (Task 2); tools/jc/jc_ctl.py gen must write the same format.
-# Lines starting with '#' are comments. Fields are separated by single spaces.
+# Written by sim/gen_jc_ctl_vec.py (Task 2, fix round 1); tools/jc/jc_ctl.py gen must write
+# the same format. Lines starting with '#' are comments. Fields are separated by single spaces.
 #
 # S <nbits> <endscan> <wready> <ack> <rspv> <nrsp> <desync> <crcf> <ovf> <st_in> <slot> <npush> {<tag> <word>}
-#   nbits    bits of this slot shifted, 1..16384 (decimal); < 16384 only with endscan 1
-#   endscan  1: the host leaves Shift-DR after this slot; the next slot starts a new scan
-#            (a new Capture-DR). 0: the next slot follows in the same Shift-DR
+#   nbits    bits of this slot shifted, 1..16384 (decimal); < 16384 only with endscan 1 or 2
+#   endscan  0: the next slot follows in the same Shift-DR. 1: the host leaves Shift-DR,
+#            a foreign scan (another instruction, sel = 0) runs, then a new Capture-DR.
+#            2: the host leaves Shift-DR and goes straight back to Capture-DR
+#            (Exit1, Update, Select, Capture), so a Capture lands mid-slot
 #   wready   the FIFO's w_ready during this slot (0 makes every push an overflow)
-#   ack      1 if rsp_ack_tgl toggles in this slot, at the rising TCK edge that shifts slot
-#            bit 383 + 32*nrsp (the last response bit); 0 if it must not toggle at all
+#   ack      1 if rsp_ack_tgl toggles in this slot, exactly once, at the rising TCK edge that
+#            shifts slot bit 16159 (the CRC verdict of a PASS frame whose header carries
+#            ack_valid = 1 and ack_seq = the rsp_seq presented in this slot); 0: no toggle
 #   rspv     rsp_valid (status bit 112) as it must appear on TDO in this slot
-#   nrsp     response words that must follow the status on TDO (bits 384..384+32*nrsp-1)
+#   nrsp     response words that must follow the status on TDO (bits 384..384+32*nrsp-1);
+#            also the rsp_count [111:96] that TDO must show
 #   desync, crcf, ovf  the frame core's own status fields as they must appear on TDO in this
 #            slot, i.e. counted over the slots BEFORE this one (decimal)
 #   st_in    the 384-bit status the aclk side presents for this slot: 96 hex digits, most
-#            significant first (bit 383 leftmost). The frame core latches it at slot start
+#            significant first (bit 383 leftmost). The frame core latches it at slot start.
+#            Its rsp_crc field [212:181] is random here: the bench replaces it with the
+#            CRC-32 of its own response RAM model over min(rsp_count, 496) words
 #   slot     the 16,384 TDI bits: 4,096 hex digits with no separators, LSB word first: 64
 #            words of 256 bits, word 0 (the header) first, each word 64 hex digits MSB first.
 #            TDI bit i is bit (i mod 256) of word (i div 256)
@@ -44,19 +50,21 @@ FORMAT = """\
 # E <desync> <crcf> <ovf>
 #   the final counts after the last slot
 #
-# TDO in every slot: bits 0..383 are st_in with [31:0] = 4A435354, [112] = rspv,
-# [163:148] = desync, [164] = ovf, [180:165] = crcf; then nrsp words of the response RAM,
-# word k = RAM address k, LSB first; then zero to the end of the slot.
+# TDO in every slot: bits 0..383 are st_in with [31:0] = 4A435354, [111:96] = nrsp,
+# [112] = rspv, [163:148] = desync, [164] = ovf, [180:165] = crcf, [212:181] passed through,
+# [383:213] = 0; then nrsp words of the response RAM, word k = RAM address k, LSB first;
+# then zero to the end of the slot.
 """
 
 
-def build_slot(seq, op, addr, count, items=None, nwords=None, magic=MAGIC):
+def build_slot(seq, op, addr, count, items=None, nwords=None, magic=MAGIC,
+               ack_seq=0, ack_valid=0):
     """2048 bytes, bit i of the slot = bit (i % 8) of byte (i // 8), as shifted on TDI."""
     items = list(items or [])
     if nwords is None:
         nwords = (count + 7) // 8 if op in (OP_WR_INC, OP_WR_FIX) else 0
     hdr = (magic | (seq << 32) | (op << 64) | (count << 72) | (nwords << 104)
-           | (addr << 120))
+           | (addr << 120) | (ack_seq << 184) | (ack_valid << 216))
     s = bytearray(SLOT_BITS // 8)
     s[0:32] = hdr.to_bytes(32, "little")
     for k, v in enumerate(items):
@@ -76,8 +84,8 @@ def slot_hex(s):
 
 
 def status(rng, rsp_valid, rsp_seq, rsp_count):
-    """A 384-bit st_in: random everywhere (so pass-through and the core's overwrites are
-    both visible), with the response fields this case is about set explicitly."""
+    """A 384-bit st_in: random everywhere (so pass-through, the core's overwrites and the
+    forced-zero top are all visible), with the response fields set explicitly."""
     v = rng.getrandbits(ST_BITS)
     def put(v, lo, width, x):
         m = ((1 << width) - 1) << lo
@@ -89,19 +97,21 @@ def status(rng, rsp_valid, rsp_seq, rsp_count):
 
 
 class Model:
-    """The frame core as the brief states it (plus the stale-status rule in the report)."""
+    """The frame core as the brief and fix round 1 state it."""
 
     def __init__(self):
         self.desync = self.crcf = self.ovf = 0
         self.pend = False
         self.acked_seq = None
         self.lines = []
+        self.nack = 0
 
     def slot(self, s, st, nbits=SLOT_BITS, endscan=0, wready=1):
+        assert nbits == SLOT_BITS or endscan in (1, 2)
         st_valid = (st >> 112) & 1
         st_seq = (st >> 64) & 0xFFFFFFFF
         st_cnt = (st >> 96) & 0xFFFF
-        # status latched at slot start
+        # status latched at slot start; stale = an acked seq a lagging status still shows
         stale = self.pend and st_valid == 1 and st_seq == self.acked_seq
         if not stale:
             self.pend = False
@@ -109,9 +119,6 @@ class Model:
         nrsp = min(st_cnt, MAX_ITEMS) if rspv else 0
         shown = (self.desync, self.crcf, self.ovf)
         ack = 0
-        if rspv and nbits > 383 + 32 * nrsp:
-            ack = 1
-            self.pend, self.acked_seq = True, st_seq
         # receive
         pushes = []
         if nbits >= 256:
@@ -130,6 +137,12 @@ class Model:
                     pushes.append((TAG_PASS if ok else TAG_FAIL, seq))
                     if not ok:
                         self.crcf = (self.crcf + 1) & 0xFFFF
+                    a_seq = (h >> 184) & 0xFFFFFFFF
+                    a_v = (h >> 216) & 1
+                    if ok and a_v and rspv and a_seq == st_seq:
+                        ack = 1
+                        self.nack += 1
+                        self.pend, self.acked_seq = True, st_seq
             else:
                 self.desync = (self.desync + 1) & 0xFFFF
         if pushes and not wready:
@@ -151,6 +164,8 @@ def main():
     m = Model()
     items = lambda n: [rng.getrandbits(32) for _ in range(n)]
     idle = lambda: status(rng, 0, 0xFFFFFFFF, 0)
+    nop = lambda seq, **kw: build_slot(seq, OP_NOP, 0, 1, **kw)
+    ack = lambda seq, a: build_slot(seq, OP_NOP, 0, 1, ack_seq=a, ack_valid=1)
 
     # (c) a zero filler: bad magic, desync, no pushes
     m.slot(bytes(SLOT_BITS // 8), idle())
@@ -164,54 +179,70 @@ def main():
     m.slot(bytes(s), idle())
     # a good RD_INC of 5 (header only)
     m.slot(build_slot(3, OP_RD_INC, 0xE000, 5), idle())
-    # (e) count 497 rejected as desync (exactly one over), and 0xFFFF
-    m.slot(build_slot(4, OP_RD_INC, 0xE000, 497), idle())
-    m.slot(build_slot(4, OP_RD_FIX, 0xE000, 0xFFFF), idle())
+    # (e) count over 496 rejected as desync: exactly one over, all ones, and high bits set
+    # over small low bits (0x0200 and 0x0203 pass a 9-bit compare, 0x8001 a 15-bit one)
+    for c in (497, 0xFFFF, 0x0200, 0x0203, 0x8001, 0x1005):
+        m.slot(build_slot(4, OP_RD_INC, 0xE000, c), idle())
+    # nwords over 62 rejected, with a legal count: 63, 64 and 0x41 (pass a 6-bit compare),
+    # 0x0100 and 0x8000 (pass an 8-bit and a 15-bit compare)
+    for nw in (63, 64, 0x41, 0x0100, 0x8000):
+        m.slot(build_slot(5, OP_WR_INC, 0xE000, 8, items(8), nwords=nw), idle())
     # the boundary: count 496 accepted (a full 62-word WR_FIX)
     m.slot(build_slot(4, OP_WR_FIX, 0xE004, 496, items(496)), idle())
-    # nwords 63 rejected even with a legal count
-    m.slot(build_slot(5, OP_WR_INC, 0xE000, 496, items(496), nwords=63), idle())
-    # (d) a response: seq 3, 5 words; acked at bit 383 + 160
+
+    # ---- (d) responses, host-driven ack ----
     st3 = status(rng, 1, 3, 5)
-    m.slot(build_slot(6, OP_NOP, 0, 1), st3)
-    # the same status again (the aclk side has not caught up): stale, masked, no ack
-    m.slot(build_slot(7, OP_RD_FIX, 0xE008, 2), status(rng, 1, 3, 5))
-    # the clear arrives
-    m.slot(build_slot(8, OP_MEM_RD, 0x1_0000_0020, 8), idle())
-    # a full 496-word response, acked at bit 16255; carries a full write
-    m.slot(build_slot(9, OP_WR_INC, 0xE100, 496, items(496)), status(rng, 1, 7, 496))
-    # a response of 2, aborted one bit before its last response bit: no ack. The header
-    # is pushed (bit 255 shifted), nothing after it. The scan ends here.
+    m.slot(nop(6), st3)                                           # presented, no ack frame
+    m.slot(ack(7, 4), st3)                                        # wrong ack_seq: ignored
+    m.slot(build_slot(8, OP_NOP, 0, 1, ack_seq=3, ack_valid=0), st3)  # ack_valid 0: ignored
+    s = bytearray(ack(9, 3)); s[100] ^= 0x01
+    m.slot(bytes(s), st3)                                         # right ack on a FAIL frame
+    m.slot(ack(9, 3), st3)                                        # acked at its verdict
+    m.slot(ack(10, 3), status(rng, 1, 3, 5))                      # lagging: stale, re-ack ignored
+    m.slot(ack(11, 3), status(rng, 0, 3, 5))                      # cleared: not presented, ignored
+    # a full 496-word response, acked by a frame that also carries a full write
+    m.slot(build_slot(12, OP_WR_INC, 0xE100, 496, items(496), ack_seq=7, ack_valid=1),
+           status(rng, 1, 7, 496))
+    # Captures mid-slot (endscan 2): one inside the status region before the header
+    # completes (no push), one right after a good header's push (HDR only, no verdict, no
+    # ack although the header acks). The response is presented again each time.
     st9 = status(rng, 1, 9, 2)
-    m.slot(build_slot(10, OP_WR_INC, 0xE000, 17, items(17)), st9, nbits=383 + 64, endscan=1)
-    # a new scan: the same response is presented again and acked this time; retry seq 10
-    m.slot(build_slot(10, OP_WR_INC, 0xE000, 17, items(17)), st9)
-    # stale again, with w_ready low: every push overflows
-    m.slot(build_slot(11, OP_RD_INC, 0xE000, 1), st9, wready=0)
-    # a NEW seq published with no clear in between: not stale, acked, ovf now shown
-    m.slot(build_slot(12, OP_MEM_RD, 0x2_0000_0000, 8), status(rng, 1, 12, 1))
-    m.slot(build_slot(13, OP_NOP, 0, 1), status(rng, 1, 12, 1))       # stale
-    m.slot(build_slot(14, OP_NOP, 0, 1), idle())                      # clear
-    # the same seq published again after a clear is a new response: acked
-    m.slot(build_slot(15, OP_NOP, 0, 1), status(rng, 1, 12, 1), endscan=1)
-    # a malformed rsp_count over 496 is clamped to 496 (ack at 16255)
-    m.slot(build_slot(16, OP_NOP, 0, 1), status(rng, 1, 20, 600))
-    # wrong magic in an otherwise good frame
-    s = bytearray(build_slot(17, OP_WR_INC, 0xE000, 8, items(8))); s[1] ^= 0x01
+    m.slot(ack(13, 9), st9, nbits=200, endscan=2)
+    m.slot(ack(13, 9), st9, nbits=257, endscan=2)
+    m.slot(build_slot(13, OP_WR_INC, 0xE000, 17, items(17), ack_seq=9, ack_valid=1), st9,
+           endscan=1)                                             # full slot: acked
+    m.slot(build_slot(14, OP_RD_INC, 0xE000, 1), st9, wready=0)   # stale; pushes overflow
+    st12 = status(rng, 1, 12, 1)
+    m.slot(ack(15, 12), st12)              # a NEW seq with no clear in between: acked
+    m.slot(ack(16, 12), status(rng, 1, 12, 1))                    # stale
+    m.slot(nop(17), idle())                                       # clear
+    m.slot(ack(18, 12), status(rng, 1, 12, 1), endscan=1)  # same seq after a clear: acked
+    # rsp_count 600 shows as 496 on TDO and 496 words are shifted; acked
+    m.slot(ack(19, 20), status(rng, 1, 20, 600))
+    # rsp_valid with rsp_count 0: presented (no words), then acked
+    st21 = status(rng, 1, 21, 0)
+    m.slot(nop(20), st21)
+    m.slot(ack(21, 21), st21)
+    # wrong magic in an otherwise good acking frame
+    s = bytearray(build_slot(22, OP_WR_INC, 0xE000, 8, items(8), ack_seq=21, ack_valid=1))
+    s[1] ^= 0x01
     m.slot(bytes(s), idle())
-    # back to back, random shapes and random responses
-    for k in range(8):
+    # back to back, random shapes; odd k present a response, acked on alternate ones
+    for k in range(10):
         op = rng.choice([OP_WR_INC, OP_WR_FIX, OP_RD_INC, OP_RD_FIX, OP_MEM_RD, OP_NOP])
         cnt = rng.randrange(1, MAX_ITEMS + 1)
         if op == OP_MEM_RD:
             cnt = 8 * rng.randrange(1, 63)
         its = items(cnt) if op in (OP_WR_INC, OP_WR_FIX) else None
-        st = status(rng, 1, 100 + k, rng.randrange(1, MAX_ITEMS + 1)) if k % 2 else idle()
-        m.slot(build_slot(18 + k, op, rng.getrandbits(16) & ~3, cnt, its), st)
+        rs = 100 + k
+        st = status(rng, 1, rs, rng.randrange(1, MAX_ITEMS + 1)) if k % 2 else idle()
+        m.slot(build_slot(30 + k, op, rng.getrandbits(16) & ~3, cnt, its,
+                          ack_seq=rs, ack_valid=int(k % 4 == 1)), st)
     m.end()
     with open(out, "w") as f:
         f.write(FORMAT)
         f.write("\n".join(m.lines) + "\n")
+    sys.stderr.write("%d slots, %d acks\n" % (len(m.lines) - 1, m.nack))
 
 
 if __name__ == "__main__":

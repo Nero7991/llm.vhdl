@@ -7,8 +7,9 @@
 # row mismatches (DID NOT ANALYZE always mismatches) or if Z0 does not report BADMUT.
 # No rm anywhere: every row writes into a new directory under one per-run root.
 #
-# M1-M4 are the brief's four required mutants; M5-M13 are the other behaviours the bench
-# claims to check (each named in its desc string).
+# M1-M3 and M4/M4b/M4c are the required mutants (fix round 1 moved the ack to the host:
+# the old "ack before the last bit" row became the three host-ack rows plus M4d); the rest
+# are the other behaviours the bench claims to check (each named in its desc string).
 set -u
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 GHDL=${GHDL:-ghdl}
@@ -79,24 +80,37 @@ PY
   printf '%-4s %-16s expected %-16s %-8s -- %-5s %s\n' "$tag" "$res" "$exp" "$verdict" "$cls" "$desc"
 }
 
-run_row C   CTRL  $F SURVIVED "control, no change" "x\"FFFFFFFF\") then" "x\"FFFFFFFF\") then"
+run_row C   CTRL  $F SURVIVED "control, no change" "(crc xor x\"FFFFFFFF\");" "(crc xor x\"FFFFFFFF\");"
 run_row Z0  AUDIT $F BADMUT   "self-teeth: anchor not in the file" "THIS TEXT IS NOT IN THE FILE" "x"
-# --- the brief's four ---
+# --- the brief's required mutants (M4 re-targeted in fix round 1: the ack is host-driven) ---
 run_row M1  VALUE $F KILLED "CRC compare dropped (every verdict PASS)" \
-  "if crc_rx = (crc xor x\"FFFFFFFF\") then" "if true then"
+  "pass := crc_rx = (crc xor x\"FFFFFFFF\");" "pass := true;"
 run_row M2  VALUE $F KILLED "response shifted by one bit" \
   "rsp_sr <= rsp_q;" "rsp_sr <= rsp_q(30 downto 0) & '0';"
 run_row M3  VALUE $F KILLED "count 497 accepted" \
   "unsigned(word(JC_H_COUNT_HI downto JC_H_COUNT_LO)) <= JC_CTL_MAX_ITEMS" \
   "unsigned(word(JC_H_COUNT_HI downto JC_H_COUNT_LO)) <= JC_CTL_MAX_ITEMS + 1"
-run_row M4  PROTO $F KILLED "ack one edge before the last response bit" \
-  "bitcnt = ST_LAST + 32 * lat_n then" "bitcnt = ST_LAST - 1 + 32 * lat_n then"
-# --- the rest of what the bench claims ---
-run_row M5  PROTO $F KILLED "stale-status guard off (re-acks, re-presents)" "if stale then" "if false then"
+run_row M4  PROTO $F KILLED "ack without the seq compare" \
+  "h_ack_seq = lat_seq and " ""
+run_row M4b PROTO $F KILLED "ack on a FAIL frame" \
+  "if pass and h_ack_v = '1'" "if h_ack_v = '1'"
+run_row M4c PROTO $F KILLED "ack ignores ack_valid" \
+  "h_ack_v = '1' and " ""
+run_row M4d PROTO $F KILLED "ack of a seq not being presented (lat_v ignored)" \
+  " and lat_v = '1' then" " then"
+# --- bounds truncations (fix round 1, minor 2) ---
+run_row M3b VALUE $F KILLED "count bound compared on 9 bits" \
+  "unsigned(word(JC_H_COUNT_HI downto JC_H_COUNT_LO)) <= JC_CTL_MAX_ITEMS" \
+  "unsigned(word(JC_H_COUNT_LO + 8 downto JC_H_COUNT_LO)) <= JC_CTL_MAX_ITEMS"
 run_row M6  VALUE $F KILLED "nwords 63 accepted" \
   "<= JC_CTL_MAX_PAYLOAD then" "<= JC_CTL_MAX_PAYLOAD + 1 then"
+run_row M6b VALUE $F KILLED "nwords bound compared on 6 bits" \
+  "unsigned(word(JC_H_NWORDS_HI downto JC_H_NWORDS_LO)) <= JC_CTL_MAX_PAYLOAD" \
+  "unsigned(word(JC_H_NWORDS_LO + 5 downto JC_H_NWORDS_LO)) <= JC_CTL_MAX_PAYLOAD"
+# --- the rest of what the bench claims ---
+run_row M5  PROTO $F KILLED "stale-status guard off (re-presents, accepts a re-ack)" "if stale then" "if false then"
 run_row M7  VALUE $F KILLED "rsp_count over 496 not clamped to 496" \
-  "lat_n <= JC_CTL_MAX_ITEMS;" "lat_n <= to_integer(cnt) mod 497;"
+  "n := JC_CTL_MAX_ITEMS;" "n := to_integer(cnt) mod 497;"
 run_row M8  VALUE $F KILLED "CRC failures not counted" "crcf <= crcf + 1;" "null;"
 run_row M9  PROTO $F KILLED "no read lookahead (rsp_addr = word being loaded)" \
   "rsp_a <= to_unsigned(k + 1, JC_CTL_RSP_AW);" "rsp_a <= to_unsigned(k, JC_CTL_RSP_AW);"
@@ -105,9 +119,17 @@ run_row M10 VALUE $F KILLED "ovf not merged into the status" \
 run_row M11 VALUE $F KILLED "desync not counted" "desync <= desync + 1;" "null;"
 run_row M12 PROTO $F KILLED "sel ignored while shifting (another instruction's scan)" \
   "elsif sel = '1' and shift = '1' then" "elsif shift = '1' then"
-run_row M13 VALUE $F KILLED "rsp_valid shown unmasked on a stale slot (ack guard kept)" \
-  "        st_sr   <= merged(st_in, desync, ovf, crcf, v);" \
-  "        st_sr   <= merged(st_in, desync, ovf, crcf, st_in(JC_S_RSPVALID));"
+run_row M13 VALUE $F KILLED "rsp_valid shown unmasked on a stale slot" \
+  "        st_sr   <= merged(st_in, desync, ovf, crcf, v, n);" \
+  "        st_sr   <= merged(st_in, desync, ovf, crcf, st_in(JC_S_RSPVALID), n);"
+run_row M14 VALUE $F KILLED "rsp_count on TDO not the shifted count (passed through)" \
+  "r(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO) := std_logic_vector(to_unsigned(n, 16));" \
+  "r(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO) := st(JC_S_RSPCNT_HI downto JC_S_RSPCNT_LO);"
+run_row M15 VALUE $F KILLED "[383:213] passed through instead of forced to zero" \
+  "r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');" "null;"
+run_row M16 VALUE $F KILLED "rsp_crc not passed through (zeroed with the top)" \
+  "r(JC_CTL_STATUS_BITS-1 downto JC_S_ZERO_LO) := (others => '0');" \
+  "r(JC_CTL_STATUS_BITS-1 downto JC_S_RSPCRC_LO) := (others => '0');"
 
 printf 'mutants killed %d/%d; controls passed %d/%d; self-teeth %s; rows %d; mismatches %d\n' \
   "$NMUT_OK" "$NMUT" "$NCTRL_OK" "$NCTRL" "$([ $Z0OK = 1 ] && echo ok || echo FAILED)" "$NT" "$NMISMATCH"
