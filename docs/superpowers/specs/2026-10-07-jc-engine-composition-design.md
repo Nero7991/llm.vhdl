@@ -220,3 +220,31 @@ All of the following hold:
   222.0 MHz with WNS -0.253 ns.
 - The full build's memory peak on the VU35P.
 - Which of SAXI_30/31 is B and which is C, to be read from the generator.
+
+---
+
+## CORRECTION 2026-10-07 (same day, before the plan): the B levers already ship ON
+
+Withdrawn: section 1's "ship off because the FK33 had no room" and section 3's "on:
+B `PIPE => true, WIDE => true, MAXOUT => 8`" as a change. Both rest on the 2026-09-20 kvreg
+profile (B_JOB 660,600 cycles), which predates the levers reaching the card.
+
+MEASURED since: B_JOB is **324,211 cycles** per job on build 18
+(`hw/fk33/results/card_build18_2026-09-23/profile_pair_2026-09-24/README.md`) and 324k on
+build 12b (`hw/fk33/results/card_build12b_2026-09-21/characterisation/README.md`). The
+shipping build 20's levers-off patch
+(`hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch`) turns OFF only
+`FAST_POP`, `NWIDE`, `SWEEP_PIPE` and `SCORE_EARLY`; `MAXOUT => 8, PIPE => true,
+WIDE => true` are unchanged context lines, i.e. on.
+
+What this changes:
+- **The current split, per card of the 9B pair at 75 MHz (MEASURED, build 18):** A_JOB
+  46.9% / 50.2%, B_JOB 37.1% / 32.6%, card totals 139.8 ms and 159.0 ms. **A is the
+  largest term**, which strengthens section 2's priority.
+- **Levers on the Jungle Cat:** exactly build 20's set, i.e. the committed tree plus
+  `build12_levers_off.patch` (FAST_POP, NWIDE, SWEEP_PIPE, SCORE_EARLY off; PIPE, WIDE,
+  MAXOUT 8 on). That is the set validated on silicon. No lever changes in this
+  sub-project.
+- **Sub-project 2's B figures** (double buffer ~156,000, small memories ~85,000 cycles per
+  job) were derived against the 660k job and must be re-derived against 324k before they
+  are quoted again.
