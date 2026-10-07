@@ -246,6 +246,7 @@ add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/weight_streamer.vhd
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/act_mem_striped.vhd
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_core.vhd
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4.vhd
+add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/a_util_ctr.vhd
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/rtl/matvec_int4_desc_axi.vhd
 add_files -norecurse /home/orencollaco/GitHub/llama.vhdl/hw/fk33/rtl/fk33_engine.vhd
 update_compile_order -fileset sources_1

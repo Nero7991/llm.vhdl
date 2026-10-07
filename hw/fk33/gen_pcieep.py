@@ -1255,7 +1255,7 @@ ENG_SRCS = [
     "util_pkg.vhd", "mv4i_arith_pkg.vhd", "matvec_int4_desc_pkg.vhd",
     "stream_fifo.vhd", "async_fifo.vhd", "axi_rd_fsm.vhd", "axi_rd_port.vhd",
     "weight_streamer.vhd", "act_mem_striped.vhd", "matvec_core.vhd",
-    "matvec_int4.vhd", "matvec_int4_desc_axi.vhd",
+    "matvec_int4.vhd", "a_util_ctr.vhd", "matvec_int4_desc_axi.vhd",
 ]
 
 ENG_RTL_ADD = "\n".join(
