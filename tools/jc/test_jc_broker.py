@@ -27,8 +27,8 @@ def _no_real_sockets(monkeypatch):
 # ---------------------------------------------------------------- the fake control core
 
 def _ack_of(slot):
-    """The ruling's header ack fields, decoded here independently of the broker's shim
-    (jc_ctl.parse_header does not carry them yet): [215:184] ack_seq, [216] ack_valid."""
+    """The ruling's header ack fields, decoded here independently of jc_ctl (which
+    does carry them, in parse_header/build_slot): [215:184] ack_seq, [216] ack_valid."""
     v = int.from_bytes(slot[:32], "little")
     return (v >> 216) & 1, (v >> 184) & 0xFFFFFFFF
 

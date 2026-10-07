@@ -196,10 +196,17 @@ def test_rsp_crc_ok_helper_matches_parse_tdo():
     assert C.rsp_crc_ok(d) == d["rsp_crc_ok"] == True
 
 
-def test_gen_reproduces_committed_vector_file_byte_identically(tmp_path):
-    """tools/jc/jc_ctl.py gen must reproduce sim/jc_ctl_frame_vec.txt exactly: it
-    delegates to the committed sim/gen_jc_ctl_vec.py (Task 2's own generator) rather
-    than a second, drift-prone implementation of the same vectors."""
+def test_gen_entry_point_execs_the_committed_generator(tmp_path):
+    """NOT a check of jc_ctl's encoder. `gen` deliberately delegates to the committed
+    sim/gen_jc_ctl_vec.py (Task 2's own generator) rather than re-implementing its
+    vectors, so this only proves that delegation is wired up (gen's own entry point
+    reproduces that script's file) -- it is `gen` execing sim/gen_jc_ctl_vec.py and then
+    comparing the result to sim/gen_jc_ctl_vec.py's own output, i.e. A calling A equals
+    A. It says nothing about jc_ctl.build_slot/jc_ctl.parse_tdo, the functions the
+    broker actually calls against hardware: see
+    test_production_encoder_and_decoder_match_the_sim_models_independent_implementation
+    below for the cross-check that exercises those directly, against the sim model's
+    own independent implementation, not through this delegation."""
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     committed = os.path.join(repo, "sim", "jc_ctl_frame_vec.txt")
     out = tmp_path / "jc_ctl_frame_vec.txt"
@@ -207,6 +214,121 @@ def test_gen_reproduces_committed_vector_file_byte_identically(tmp_path):
     with open(committed, "rb") as f:
         want = f.read()
     assert out.read_bytes() == want
+
+
+def _expected_tdo_status_bytes(st_in_v, rspv, nrsp, desync, ovf, crcf):
+    """The real TDO status for one slot, built by the rule documented at the top of
+    sim/jc_ctl_frame_vec.txt: st_in with the core's own fields forced (magic, rsp_count,
+    rsp_valid, desync, ovf, crc_fail) and [351:213] zeroed, then st_crc computed over
+    bits [351:0] and appended. Independent bit math: does not call jc_ctl.header,
+    jc_ctl.parse_header or jc_ctl.parse_tdo."""
+    v = st_in_v & ((1 << 384) - 1)
+
+    def put(v, lo, width, x):
+        m = ((1 << width) - 1) << lo
+        return (v & ~m) | ((x << lo) & m)
+
+    v = put(v, 0, 32, 0x4A435354)
+    v = put(v, 96, 16, nrsp)
+    v = put(v, 112, 1, rspv)
+    v = put(v, 148, 16, desync & 0xFFFF)
+    v = put(v, 164, 1, ovf)
+    v = put(v, 165, 16, crcf & 0xFFFF)
+    v = put(v, 213, 139, 0)                         # [351:213] forced zero
+    st_crc = zlib.crc32((v & ((1 << 352) - 1)).to_bytes(44, "little")) & 0xFFFFFFFF
+    v = put(v, 352, 32, st_crc)
+    return v.to_bytes(48, "little")
+
+
+def test_production_encoder_and_decoder_match_the_sim_models_independent_implementation(tmp_path):
+    """Cross-checks jc_ctl's PRODUCTION encoder and decoder -- header/build_slot and
+    parse_tdo, the functions the broker actually ships to and reads from hardware --
+    against sim/gen_jc_ctl_vec.py's own, independent implementation (its build_slot at
+    sim/gen_jc_ctl_vec.py:40-53 for TDI, its Model.slot's TDO construction, documented
+    at the top of sim/jc_ctl_frame_vec.txt, for TDO), for every case that script's
+    main() builds while writing the vector file.
+
+    Unlike test_gen_entry_point_execs_the_committed_generator, this never goes through
+    jc_ctl.gen: it loads the sim script, monkeypatches its module-level `build_slot`
+    and its `Model.slot` method to intercept the exact arguments main() uses (same
+    seed, same cases, run live rather than re-parsed from committed text), calls each
+    sim construction once as before, and in the same breath builds/parses the identical
+    case with jc_ctl's own functions, asserting the bytes (TDI) or every decoded field
+    (TDO) agree. A case the sim model can express but jc_ctl deliberately cannot build
+    (an out-of-range count, a magic or nwords override -- jc_ctl.build_slot has no
+    parameter for either) is skipped with an explicit reason instead of asserted on.
+    """
+    mod = C._load_ref_gen()
+    sim_build_slot = mod.build_slot
+    orig_model_slot = mod.Model.slot
+    checked, skipped, tdo_checked = [], [], []
+
+    def build_wrapper(seq, op, addr, count, items=None, nwords=None, magic=mod.MAGIC,
+                       ack_seq=0, ack_valid=0):
+        sim_slot = sim_build_slot(seq, op, addr, count, items, nwords, magic,
+                                   ack_seq, ack_valid)
+        if magic != mod.MAGIC:
+            skipped.append("seq=%d op=%d: magic override %#x -- jc_ctl.build_slot "
+                            "always writes MAGIC, it cannot forge another"
+                            % (seq, op, magic))
+        elif nwords is not None:
+            skipped.append("seq=%d op=%d count=%d: nwords override %d -- "
+                            "jc_ctl.build_slot has no nwords parameter, it always "
+                            "derives nwords from count" % (seq, op, count, nwords))
+        else:
+            try:
+                ours = C.build_slot(seq, op, addr, (list(items) if items else None),
+                                     count, ack_seq=ack_seq, ack_valid=ack_valid)
+            except ValueError as e:
+                skipped.append("seq=%d op=%d count=%d addr=%#x: jc_ctl.build_slot "
+                                "refuses it (%s)" % (seq, op, count, addr, e))
+            else:
+                assert ours == sim_slot, (
+                    "seq=%d op=%d addr=%#x count=%d: jc_ctl.build_slot produced a "
+                    "DIFFERENT slot than the sim model's own build_slot"
+                    % (seq, op, addr, count))
+                checked.append(seq)
+        return sim_slot
+
+    def slot_wrapper(self, s, st, nbits=mod.SLOT_BITS, endscan=0, wready=1):
+        orig_model_slot(self, s, st, nbits=nbits, endscan=endscan, wready=wready)
+        # "S" nbits endscan wready ack rspv nrsp desync crcf ovf st_in slot npush ...
+        fields = self.lines[-1].split()
+        rspv, nrsp = int(fields[5]), int(fields[6])
+        desync, crcf, ovf = int(fields[7]), int(fields[8]), int(fields[9])
+        st_in_v = int(fields[10], 16)
+        tdo = _expected_tdo_status_bytes(st_in_v, rspv, nrsp, desync, ovf, crcf) \
+            .ljust(C.SLOT_BYTES, b"\0")
+        d = C.parse_tdo(tdo)
+        assert d is not C.BAD_ST, "our own expected status failed its own st_crc check"
+        assert d["last_done_seq"] == (st_in_v >> 32) & 0xFFFFFFFF
+        assert d["rsp_seq"] == (st_in_v >> 64) & 0xFFFFFFFF
+        assert d["rsp_count"] == nrsp
+        assert d["rsp_valid"] == rspv
+        assert d["axi_err"] == (st_in_v >> 113) & 1
+        assert d["axi_resp"] == (st_in_v >> 114) & 0x3
+        assert d["err_seq"] == (st_in_v >> 116) & 0xFFFFFFFF
+        assert d["desync"] == desync & 0xFFFF
+        assert d["ovf"] == ovf
+        assert d["crc_fail"] == crcf & 0xFFFF
+        assert d["rsp_crc"] == (st_in_v >> 181) & 0xFFFFFFFF
+        tdo_checked.append(True)
+
+    mod.build_slot = build_wrapper
+    mod.Model.slot = slot_wrapper
+    try:
+        sys.argv = ["gen_jc_ctl_vec.py", str(tmp_path / "ignored_jc_ctl_frame_vec.txt")]
+        mod.main()
+    finally:
+        mod.build_slot = sim_build_slot
+        mod.Model.slot = orig_model_slot
+
+    # Sanity on the cross-check itself, not just on jc_ctl: both buckets must be
+    # non-trivial, or this test would be vacuously green (everything skipped, or
+    # nothing ever run).
+    assert len(checked) >= 30, "too few TDI cases actually compared: %d" % len(checked)
+    assert len(skipped) >= 1, "expected at least one deliberately-unbuildable case"
+    assert len(tdo_checked) >= 30, "too few TDO cases actually compared: %d" % len(tdo_checked)
 
 
 def test_parse_tdo_rsp_seq_none_sentinel():
