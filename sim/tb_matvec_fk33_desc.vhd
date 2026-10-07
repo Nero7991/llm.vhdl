@@ -545,6 +545,7 @@ architecture sim of tb_matvec_fk33_desc is
   -- equality also says no beat fell outside the window the DUT counts in.
   type ucnt_arr is array (natural range <>) of integer;
   signal mon_rb : ucnt_arr(0 to NPW + NPS - 1) := (others => 0);
+  signal mclk_run : boolean := true;
   -- The counters have exactly ONE driver, the capture process.  The driver
   -- process asks for a clear with `cap_clr` rather than assigning them: two
   -- processes driving one unresolved signal does not merely misbehave, GHDL
@@ -631,6 +632,8 @@ begin
     ckm : process
     begin
       while not finished loop
+        -- mclk_run: the UTIL_DATA timeout case stops the AXI clock
+        if not mclk_run then wait until mclk_run or finished; end if;
         mclk <= '0'; wait for ACLK_HALF_PS * 1 ps;
         mclk <= '1'; wait for ACLK_HALF_PS * 1 ps;
       end loop;
@@ -1218,6 +1221,9 @@ begin
     variable u_cyc_sum, u_beat_sum, u_wsum, u_nbad, u_tol : integer := 0;
     variable u_v : ucnt_arr(0 to NP_ALL) := (others => 0);
     variable u_lo, u_hi : std_logic_vector(31 downto 0);
+    variable u_wd, u_rd, u_to : boolean;
+    variable u_n : integer;
+    variable u_rr : std_logic_vector(1 downto 0);
 
     procedure awr(addr : natural; d : std_logic_vector(31 downto 0)) is
     begin
@@ -1955,6 +1961,99 @@ begin
           severity error;
       end if;
     end if;
+    -- ---- S (fix round 1): AW/W to UTIL_SEL and AR to UTIL_DATA presented
+    -- in the SAME cycle.  The read must answer for the index selected when
+    -- the read was REQUESTED (the old one, 0), not for the index the
+    -- concurrent write installs (NP_ALL, the job-cycle counter); then a
+    -- separate read answers for the new one.  u_v(0) /= u_v(NP_ALL) here.
+    awr(16#40#, std_logic_vector(to_unsigned(0, 32)));
+    wait until rising_edge(clk);
+    awaddr <= x"40"; wdata <= std_logic_vector(to_unsigned(2*NP_ALL, 32));
+    awvalid <= '1'; wvalid <= '1'; bready <= '1';
+    araddr_l <= x"44"; arvalid_l <= '1'; rready_l <= '1';
+    u_wd := false; u_rd := false; u_n := 0;
+    loop
+      wait until rising_edge(clk);
+      if awvalid = '1' and awready = '1' and wready = '1' then
+        awvalid <= '0'; wvalid <= '0';
+      end if;
+      if bvalid = '1' and not u_wd then bready <= '0'; u_wd := true; end if;
+      if rvalid_l = '1' and not u_rd then
+        u_lo := rdata_l; u_rr := rresp;
+        arvalid_l <= '0'; rready_l <= '0'; u_rd := true;
+      end if;
+      u_n := u_n + 1;
+      exit when (u_wd and u_rd) or u_n > 5000;
+    end loop;
+    wait until rising_edge(clk);
+    if not (u_wd and u_rd) then
+      u_nbad := u_nbad + 1;
+      report "UTIL same-cycle AW+AR did not complete MISMATCH" severity error;
+    elsif u_rr /= "00" or to_integer(unsigned(u_lo)) /= u_v(0) then
+      u_nbad := u_nbad + 1;
+      report "UTIL same-cycle AW+AR read " &
+             integer'image(to_integer(unsigned(u_lo))) & " (resp " &
+             integer'image(to_integer(unsigned(u_rr))) & "), want the " &
+             "index at request time, counter 0 = " & integer'image(u_v(0)) &
+             " (the new index would give " & integer'image(u_v(NP_ALL)) &
+             ") MISMATCH" severity error;
+    end if;
+    ard(16#44#, u_lo);
+    if to_integer(unsigned(u_lo)) /= u_v(NP_ALL) then
+      u_nbad := u_nbad + 1;
+      report "UTIL read after the same-cycle write got " &
+             integer'image(to_integer(unsigned(u_lo))) & " want " &
+             integer'image(u_v(NP_ALL)) & " MISMATCH" severity error;
+    end if;
+
+    -- ---- H (fix round 1, DUAL only): the AXI clock STOPS.  A UTIL_DATA
+    -- read must still answer, within the bench's bound, with SLVERR and
+    -- 0xDEADDEAD, rather than hold arready low forever; and once the clock
+    -- runs again the next read answers normally.
+    if DUAL then
+      awr(16#40#, std_logic_vector(to_unsigned(0, 32)));
+      mclk_run <= false;
+      for k in 0 to 31 loop wait until rising_edge(clk); end loop;
+      wait until rising_edge(clk);
+      araddr_l <= x"44"; arvalid_l <= '1'; rready_l <= '1';
+      u_to := true; u_n := 0;
+      loop
+        wait until rising_edge(clk);
+        if rvalid_l = '1' then
+          u_lo := rdata_l; u_rr := rresp; u_to := false; exit;
+        end if;
+        u_n := u_n + 1;
+        exit when u_n > 5000;
+      end loop;
+      arvalid_l <= '0'; rready_l <= '0';
+      wait until rising_edge(clk);
+      if u_to then
+        u_nbad := u_nbad + 1;
+        report "UTIL_DATA with the AXI clock stopped: no answer in 5000 " &
+               "core cycles MISMATCH" severity error;
+        -- release the master so the rest of the bench is not wedged
+        mclk_run <= true;
+        for k in 0 to 199 loop wait until rising_edge(clk); end loop;
+      elsif u_rr /= "10" or u_lo /= x"DEADDEAD" then
+        u_nbad := u_nbad + 1;
+        report "UTIL_DATA with the AXI clock stopped answered resp " &
+               integer'image(to_integer(unsigned(u_rr))) &
+               ", want SLVERR with 0xDEADDEAD MISMATCH" severity error;
+      else
+        report "UTIL_DATA timeout: SLVERR 0xDEADDEAD after " &
+               integer'image(u_n) & " core cycles" severity note;
+      end if;
+      mclk_run <= true;
+      for k in 0 to 63 loop wait until rising_edge(clk); end loop;
+      ard(16#44#, u_lo);
+      if to_integer(unsigned(u_lo)) /= u_v(0) then
+        u_nbad := u_nbad + 1;
+        report "UTIL read after the AXI clock restarted got " &
+               integer'image(to_integer(unsigned(u_lo))) & " want " &
+               integer'image(u_v(0)) & " MISMATCH" severity error;
+      end if;
+    end if;
+
     awr(16#48#, x"00000001");                          -- UTIL_CLR
     for k in 0 to 15 loop wait until rising_edge(clk); end loop;
     for i in 0 to NP_ALL loop

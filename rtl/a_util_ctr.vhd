@@ -31,6 +31,7 @@ entity a_util_ctr is
   );
   port(
     clk, rst : in  std_logic;
+    clr      : in  std_logic := '0';     -- clears the counters only
     in_job   : in  std_logic;                        -- '1' while an A job runs
     rbeat    : in  std_logic_vector(NP-1 downto 0);  -- RVALID and RREADY per port
     rd_idx   : in  unsigned(6 downto 0);  -- 0..NP-1 beats, NP job cycles
@@ -62,7 +63,7 @@ begin
   count : process(clk)
   begin
     if rising_edge(clk) then
-      if rst = '1' then
+      if rst = '1' or clr = '1' then
         cnt <= init_cnt;
       elsif in_job = '1' then
         for i in 0 to NP-1 loop
@@ -77,6 +78,9 @@ begin
     variable ix : natural;
   begin
     if rising_edge(clk) then
+      -- `clr` deliberately does NOT reach hi_q or rd_q: a clear between a
+      -- low read and its high read must not tear the sample, and must not
+      -- move rd_data under a read that has already been answered.
       if rst = '1' then
         hi_q <= (others => '0');
         rd_q <= (others => '0');

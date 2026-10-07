@@ -20,6 +20,10 @@
 --      happens between the two reads, so a live high word tears).  Then a
 --      quiescent read must give 2**32 + 7 as one 48-bit value.
 --   O  after W, 20 more beats with in_job low: counter 0 must not move.
+--   C  (fix round 1) a CLEAR between a low read and its high read: the high
+--      read must still return the pre-clear high word, and the clear must
+--      not move rd_data under the read already answered.  Then the counter
+--      reads its cleared value.
 --
 -- Prints `CHECKS <n>`; any mismatch is `severity failure`.
 library ieee;
@@ -52,6 +56,7 @@ architecture sim of tb_a_util_ctr is
   signal b_rd_hi  : std_logic := '0';
   signal b_rd_en  : std_logic := '0';
   signal b_rd_dat : std_logic_vector(31 downto 0);
+  signal b_clr    : std_logic := '0';
 
   type u48_arr is array (natural range <>) of unsigned(47 downto 0);
   type u16_arr is array (natural range <>) of unsigned(15 downto 0);
@@ -74,7 +79,8 @@ begin
 
   dut_b : entity work.a_util_ctr
     generic map(NP => NP, INIT_HI => true)
-    port map(clk => clk, rst => rst, in_job => b_in_job, rbeat => b_rbeat,
+    port map(clk => clk, rst => rst, clr => b_clr,
+             in_job => b_in_job, rbeat => b_rbeat,
              rd_idx => b_rd_idx, rd_hi => b_rd_hi, rd_en => b_rd_en,
              rd_data => b_rd_dat);
 
@@ -243,6 +249,36 @@ begin
     b_rd_en <= '0';
     got := unsigned(b_rd_dat(15 downto 0)) & unsigned(lo);
     chk(got = 10, "O job cycle counter got 0x" & hex48(got) & " want 10");
+
+    -- ---------------------------------------------------------------- C
+    -- counter 0 holds 2**32 + 7.  Low read, then a clear, then the high read.
+    b_rd_idx <= to_unsigned(0, 7); b_rd_hi <= '0'; b_rd_en <= '1';
+    wait until rising_edge(clk); wait until falling_edge(clk);
+    b_rd_en <= '0';
+    lo := b_rd_dat;
+    chk(lo = x"00000007", "C low read before the clear got 0x" &
+                          hex48(x"0000" & unsigned(lo)));
+    b_clr <= '1';
+    wait until rising_edge(clk); wait until falling_edge(clk);
+    b_clr <= '0';
+    chk(b_rd_dat = x"00000007", "C the clear moved rd_data under an " &
+        "answered read: 0x" & hex48(x"0000" & unsigned(b_rd_dat)));
+    b_rd_hi <= '1'; b_rd_en <= '1';
+    wait until rising_edge(clk); wait until falling_edge(clk);
+    b_rd_en <= '0';
+    got := unsigned(b_rd_dat(15 downto 0)) & unsigned(lo);
+    chk(got = x"000100000007", "C clear between low and high read tore " &
+        "the sample: got 0x" & hex48(got) & " want 0x000100000007");
+    -- and the clear did clear: INIT_HI's reset value, 2**32 - 3
+    b_rd_hi <= '0'; b_rd_en <= '1';
+    wait until rising_edge(clk); wait until falling_edge(clk);
+    lo := b_rd_dat;
+    b_rd_hi <= '1';
+    wait until rising_edge(clk); wait until falling_edge(clk);
+    b_rd_en <= '0';
+    got := unsigned(b_rd_dat(15 downto 0)) & unsigned(lo);
+    chk(got = x"0000FFFFFFFD", "C counter 0 after the clear got 0x" &
+        hex48(got) & " want 0x0000FFFFFFFD");
 
     report "CHECKS " & integer'image(checks);
     report "tb_a_util_ctr: PASS";

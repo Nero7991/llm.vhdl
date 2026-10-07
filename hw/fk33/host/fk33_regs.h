@@ -178,6 +178,9 @@
  * hbm_aclk) the job-cycle counter is in hbm_aclk cycles, NOT CYCLES. */
 #define FK33_ENG_UTIL_SEL_LO(i)  ((uint32_t)(i) << 1)
 #define FK33_ENG_UTIL_SEL_HI(i)  (((uint32_t)(i) << 1) | 1u)
+/* UTIL_DATA answers SLVERR with this data when the counter domain does not
+ * acknowledge (its clock stopped), or an earlier read is still unanswered. */
+#define FK33_ENG_UTIL_DEAD      0xDEADDEADu
 #define FK33_ENG_UTIL_JOBCYC(caps) \
     (FK33_ENG_CAPS_NPORTS_W(caps) + FK33_ENG_CAPS_NPORTS_S(caps))
 

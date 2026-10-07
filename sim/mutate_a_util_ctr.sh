@@ -8,6 +8,7 @@
 #   MA    beats counted with in_job ignored               must be KILLED
 #   MB    per-port counters count cycles, not beats       must be KILLED
 #   MC    high read returns the LIVE high word, not hi_q  must be KILLED
+#   MD    clr also clears hi_q and rd_q (fix round 1)     must be KILLED
 #
 # The sources are copied ONCE into the scratch tree before the first row, so
 # every row is judged against the same text and a concurrent edit in the repo
@@ -49,6 +50,10 @@ MUT = {
         if in_job = '1' then cnt(NP) <= cnt(NP) + 1; end if;
       end if;""")],
   "MB": [("if rbeat(i) = '1' then cnt(i)", "if true then cnt(i)")],
+  "MD": [("""      if rst = '1' then
+        hi_q <= (others => '0');""",
+          """      if rst = '1' or clr = '1' then
+        hi_q <= (others => '0');""")],
   "MC": [("rd_q <= x\"0000\" & hi_q;",
           "rd_q <= x\"0000\" & std_logic_vector(cnt(ix)(47 downto 32));")],
 }
@@ -90,6 +95,7 @@ run_row CTRL PASS
 run_row MA KILLED
 run_row MB KILLED
 run_row MC KILLED
+run_row MD KILLED
 if [ $BAD -eq 0 ]; then
   echo "MUTATE_A_UTIL_CTR: ALL ROWS AS EXPECTED"
 else

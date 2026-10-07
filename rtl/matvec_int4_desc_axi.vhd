@@ -84,7 +84,12 @@
 --   0x44 UTIL_DATA    R   hi = 0: counter i bits [31:0], and LATCHES its bits
 --                         [47:32]; hi = 1: the latched [47:32], zero-extended.
 --                         So sel=2i, read, sel=2i+1, read is one atomic
---                         48-bit sample while the counter runs.
+--                         48-bit sample while the counter runs.  The index
+--                         is the UTIL_SEL value when the read is REQUESTED.
+--                         If the counter domain does not answer within
+--                         UTIL_TMO core cycles (its clock stopped), or an
+--                         earlier read is still unanswered, the read
+--                         returns SLVERR with data 0xDEADDEAD.
 --   0x48 UTIL_CLR     W   any write clears every utilisation counter.
 --                         Nothing else clears them except reset: they
 --                         ACCUMULATE across jobs, unlike CYCLES/BEATS.
@@ -558,6 +563,12 @@ architecture rtl of matvec_int4_desc_axi is
   signal u_job_c  : std_logic;          -- S_WAIT, core domain
   signal m_rready_i : std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
   signal u_ack_t_x : std_logic;         -- the counter domain's ack toggle
+  signal u_job_r  : std_logic := '0';   -- S_WAIT, REGISTERED, for the CDC
+  signal u_sel_h  : std_logic_vector(7 downto 0) := (others => '0');
+                                        -- UTIL_SEL held from request to ack
+  constant UTIL_TMO : positive := 1024; -- core cycles before SLVERR
+  signal u_tmo    : integer range 0 to UTIL_TMO := 0;
+  signal rresp_r  : std_logic_vector(1 downto 0) := "00";
   attribute ASYNC_REG : string;
   attribute ASYNC_REG of u_ack_s : signal is "TRUE";
 
@@ -644,7 +655,7 @@ begin
   s_axi_awready <= awready; s_axi_wready <= wready;
   s_axi_bvalid  <= bvalid;  s_axi_bresp  <= "00";
   s_axi_arready <= arready; s_axi_rvalid <= rvalid;
-  s_axi_rresp   <= "00";    s_axi_rdata  <= rdata_r;
+  s_axi_rresp   <= rresp_r;  s_axi_rdata  <= rdata_r;
 
   -- The descriptor read master.  Same entity, same CDC, same flush-on-start
   -- discipline as a weight sub-region port; only the length differs.
@@ -1201,7 +1212,8 @@ begin
     if rising_edge(s_axi_aclk) then
       if s_axi_aresetn = '0' then
         arready <= '0'; rvalid <= '0';
-        u_req_t <= '0'; u_pend <= '0';
+        u_req_t <= '0'; u_pend <= '0'; u_tmo <= 0; rresp_r <= "00";
+        u_sel_h <= (others => '0');
       else
         rreg := to_integer(unsigned(s_axi_araddr(7 downto 2)));
         -- UTIL_DATA STALLS like Y_LO/Y_HI: the first cycle of the read
@@ -1212,6 +1224,13 @@ begin
            and u_pend = '0' and (u_ack_s(1) = u_req_t) then
           u_req_t <= not u_req_t;
           u_pend  <= '1';
+          -- the index is captured HERE, in the core domain, and held until
+          -- the next request; the counter domain reads only this copy, so a
+          -- UTIL_SEL write landing during the crossing cannot change it.
+          u_sel_h <= u_sel;
+          u_tmo   <= 0;
+        elsif u_pend = '1' and u_ack_s(1) /= u_req_t and u_tmo < UTIL_TMO then
+          u_tmo <= u_tmo + 1;
         end if;
         -- Y_LO / Y_HI STALL until Y_IDX has been resolved to (tile, lane) and
         -- res_q has been fetched at that tile.  Holding arready low is a real
@@ -1220,9 +1239,16 @@ begin
         -- software convention that no constraint or test would ever check.
         -- Every other register answers in the same cycle it always did.
         if arready = '0' and s_axi_arvalid = '1'
-           and not (rreg = 17 and (u_pend = '0' or u_ack_s(1) /= u_req_t))
+           -- UTIL_DATA answers when its request is acknowledged, or timed
+           -- out, or when an EARLIER request is still unacknowledged (then
+           -- with SLVERR at once: the counter domain is not answering).
+           and not (rreg = 17 and
+                    ((u_pend = '0' and u_ack_s(1) = u_req_t) or
+                     (u_pend = '1' and u_ack_s(1) /= u_req_t
+                      and u_tmo < UTIL_TMO)))
            and not ((rreg = 10 or rreg = 11) and (y_ok and y_rdy) = '0') then
           arready <= '1';
+          rresp_r <= "00";
           if rreg = 17 then u_pend <= '0'; end if;
           case rreg is
             when 0 => rdata_r <= dptr(31 downto 0);
@@ -1247,7 +1273,13 @@ begin
             when 14 => rdata_r <= std_logic_vector(c_beats);
             when 15 => rdata_r <= std_logic_vector(c_starve);
             when 16 => rdata_r <= x"000000" & u_sel;
-            when 17 => rdata_r <= u_rd_dat;
+            when 17 =>
+              if u_pend = '1' and u_ack_s(1) = u_req_t then
+                rdata_r <= u_rd_dat;
+              else
+                rdata_r <= x"DEADDEAD";
+                rresp_r <= "10";                       -- SLVERR
+              end if;
             when others => rdata_r <= (others => '0');
           end case;
           rvalid <= '1';
@@ -1270,6 +1302,11 @@ begin
       else
         u_ack_s <= u_ack_s(0) & u_ack_t_x;
       end if;
+      -- The window for the DUAL_CLK synchroniser comes from a FLOP, never
+      -- from the combinational state decode: a glitch through the S_WAIT
+      -- encoding would otherwise reach job_s(0) and could add counts.
+      -- One core cycle late at both ends, so the window keeps its length.
+      if st = S_WAIT then u_job_r <= '1'; else u_job_r <= '0'; end if;
     end if;
   end process;
 
@@ -1290,13 +1327,20 @@ begin
   -- therefore counts m_aclk cycles and is NOT CYCLES; with one clock it
   -- equals the sum of every job's CYCLES exactly.
   --
-  -- THE CROSSING (DUAL_CLK).  `u_job_c` crosses as a level (two flops): its
-  -- edges arrive two m_aclk cycles late, which delays the window by the
-  -- same amount at both ends and so keeps its length.  A read crosses as a
-  -- toggle request with a toggle acknowledge; u_sel is quasi-static (written
-  -- by the host before the read it selects), and u_rd_dat is held stable by
-  -- the counter between requests.  The card XDC declares core_clk and
-  -- hbm_aclk asynchronous, so none of these paths are timed.
+  -- THE CROSSING (DUAL_CLK).  The window crosses as a level: `u_job_r`, the
+  -- REGISTERED S_WAIT decode, through two flops.  Its edges arrive one core
+  -- cycle plus two m_aclk cycles late, which delays the window by the same
+  -- amount at both ends and so keeps its length.  A read crosses as a toggle
+  -- request with a toggle acknowledge.  The index is captured into u_sel_h
+  -- in the core domain at the request and held until the next one, and
+  -- u_rd_dat is held stable by the counter between requests.  A request the
+  -- counter domain does not acknowledge within UTIL_TMO core cycles is
+  -- answered with SLVERR.  The card XDC declares core_clk and hbm_aclk
+  -- asynchronous, so none of these paths are timed.
+  --
+  -- ONE CLOCK.  The counter takes the combinational decode `u_job_c`
+  -- directly: there is no crossing to glitch into, and it is what keeps the
+  -- job-cycle counter cycle-exact with CYCLES.
   u_job_c <= '1' when st = S_WAIT else '0';
   m_rready <= m_rready_i;
 
@@ -1311,6 +1355,7 @@ begin
     signal req_s    : std_logic_vector(2 downto 0) := (others => '0');
     signal clr_s    : std_logic_vector(2 downto 0) := (others => '0');
     signal u_rst    : std_logic;
+    signal u_clr    : std_logic;
     signal u_rden   : std_logic;
     signal u_rden_q : std_logic := '0';
     signal u_ack_t  : std_logic := '0';
@@ -1322,7 +1367,8 @@ begin
   begin
     u_beat <= m_rvalid and m_rready_i;
     u_rden <= req_s(2) xor req_s(1);
-    u_rst  <= rst_s(1) or (clr_s(2) xor clr_s(1));
+    u_rst  <= rst_s(1);
+    u_clr  <= clr_s(2) xor clr_s(1);
     u_ack_t_x <= u_ack_t;
 
     gdc : if DUAL_CLK generate
@@ -1330,7 +1376,7 @@ begin
       begin
         if rising_edge(m_aclk) then
           rst_s <= rst_s(0) & rst;
-          job_s <= job_s(0) & u_job_c;
+          job_s <= job_s(0) & u_job_r;
           u_rden_q <= u_rden;
           -- The request and clear toggles are reset to the value their core-
           -- domain sources take in reset, so a toggle left over from before a
@@ -1352,9 +1398,9 @@ begin
 
       uctr : entity work.a_util_ctr
         generic map(NP => NP_ALL)
-        port map(clk => m_aclk, rst => u_rst, in_job => job_s(1),
+        port map(clk => m_aclk, rst => u_rst, clr => u_clr, in_job => job_s(1),
                  rbeat => u_beat,
-                 rd_idx => unsigned(u_sel(7 downto 1)), rd_hi => u_sel(0),
+                 rd_idx => unsigned(u_sel_h(7 downto 1)), rd_hi => u_sel_h(0),
                  rd_en => u_rden, rd_data => u_rd_dat);
     end generate;
 
@@ -1364,7 +1410,7 @@ begin
       begin
         if rising_edge(s_axi_aclk) then
           rst_s <= rst_s(0) & rst;
-          job_s <= job_s(0) & u_job_c;
+          job_s <= job_s(0) & u_job_r;
           u_rden_q <= u_rden;
           -- The request and clear toggles are reset to the value their core-
           -- domain sources take in reset, so a toggle left over from before a
@@ -1386,9 +1432,9 @@ begin
 
       uctr : entity work.a_util_ctr
         generic map(NP => NP_ALL)
-        port map(clk => s_axi_aclk, rst => u_rst, in_job => u_job_c,
+        port map(clk => s_axi_aclk, rst => u_rst, clr => u_clr, in_job => u_job_c,
                  rbeat => u_beat,
-                 rd_idx => unsigned(u_sel(7 downto 1)), rd_hi => u_sel(0),
+                 rd_idx => unsigned(u_sel_h(7 downto 1)), rd_hi => u_sel_h(0),
                  rd_en => u_rden, rd_data => u_rd_dat);
     end generate;
   end block;
