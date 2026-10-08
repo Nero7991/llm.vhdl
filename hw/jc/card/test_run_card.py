@@ -417,3 +417,35 @@ def test_cattrip_treated_as_asynchronous():
     text = _build_card_text()
     assert "set_false_path" in text
     assert "halt_or" in text
+
+
+# ---- 2026-10-07: --clk-mhz (the 27B composition routes at 134.6 MHz, jcooc27_2) ----
+
+def test_dry_run_default_clock_reaches_tclargs_as_200(tmp_path):
+    r = _dry_run(str(tmp_path / "root"))
+    assert re.search(r"-tclargs\b.*\s-clk_mhz 200\b", r.stdout), r.stdout
+
+
+def test_dry_run_clk_mhz_option_sets_every_consumer(tmp_path):
+    r = _dry_run(str(tmp_path / "root"), flags=["--clk-mhz", "125"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "clk_core_mhz=125" in r.stdout
+    assert "JC_CLK_CORE_MHZ=125" in r.stdout
+    assert "JC_CLK_CORE_MHZ=200" not in r.stdout
+    assert re.search(r"-tclargs\b.*\s-clk_mhz 125\b", r.stdout), r.stdout
+
+
+def test_clk_mhz_outside_range_or_non_integer_is_refused(tmp_path):
+    for bad in ("49", "251", "12.5", "abc", ""):
+        r = _dry_run(str(tmp_path / ("root_" + (bad or "empty"))), flags=["--clk-mhz", bad])
+        assert r.returncode != 0, bad
+        assert not os.path.exists(str(tmp_path / ("root_" + (bad or "empty"))))
+
+
+def test_build_card_takes_the_clock_from_tclargs_not_a_constant():
+    t = _build_card_text()
+    assert re.search(r"lsearch -exact \$argv -clk_mhz", t)
+    assert 'puts "JCCARD_CLK_CORE_MHZ $clk_mhz"' in t
+    assert 'puts "JCCARD_CLK_CORE_MHZ 200"' not in t
+    assert "abs($aclk_p - 5.0)" not in t
+    assert re.search(r"1000\.0\s*/\s*\$clk_mhz", t)

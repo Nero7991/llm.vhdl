@@ -36,6 +36,10 @@ set bdonly    [expr {[lsearch -exact $argv bd_only]   >= 0}]
 set allow_neg [expr {[lsearch -exact $argv allow_neg] >= 0}]
 set nonce_idx [lsearch -exact $argv -nonce]
 set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : ""}]
+# clk_core in integer MHz from run_card.sh (--clk-mhz, default 200); gen_jc_card.py
+# already emitted the clk_wiz and HBM AXI frequencies from the same value.
+set clk_idx   [lsearch -exact $argv -clk_mhz]
+set clk_mhz   [expr {$clk_idx >= 0 ? [lindex $argv [expr {$clk_idx + 1}]] : 200}]
 set TCK_P 37.037
 set DNA_DIV 10
 set CORE_LOADER "*u_jc_core/"
@@ -51,7 +55,8 @@ proc jcc_fail {msg} { puts "JCCARD_FAIL $msg"; exit 1 }
 if {$nonce eq ""} { jcc_fail "no -nonce given on -tclargs (run_card.sh always passes one)" }
 puts "JCCARD_NONCE $nonce"
 puts "JCCARD_PART $part"
-puts "JCCARD_CLK_CORE_MHZ 200"
+if {![string is integer -strict $clk_mhz] || $clk_mhz < 50 || $clk_mhz > 250} { jcc_fail "-clk_mhz $clk_mhz is not an integer in 50..250" }
+puts "JCCARD_CLK_CORE_MHZ $clk_mhz"
 
 # BSCAN census, as a proc so it can be run twice (Task 9 fix round 1, CRITICAL C2):
 # once right after opt_design (cheap: the design is not yet placed or routed) and
@@ -305,12 +310,13 @@ source $repo/hw/jc/loader/jc_loader_timing.tcl
 source $repo/hw/jc/ctl/jc_ctl_timing.tcl
 if {[catch {
   # sysclk, and clk_core (clk_wiz_0/clk_out3) through its own IP constraints: find
-  # aclk from a register this build's own RTL clocks, and require 5.000 ns (200 MHz),
-  # the ONE clock global-constraints.md pins for this card.
+  # aclk from a register this build's own RTL clocks, and require 1000/clk_mhz ns:
+  # the ONE clock domain global-constraints.md pins for this card, at -clk_mhz.
   set aclk_clk [get_clocks -of_objects [jcl_pins "${CORE_LOADER}sync/pub_reg/C"]]
   set aclk_p [get_property PERIOD $aclk_clk]
   puts "JCCARD_ACLK $aclk_clk period $aclk_p"
-  if {abs($aclk_p - 5.0) > 0.001} { jcc_fail "aclk period $aclk_p, expected 5.000 (clk_core must be 200 MHz)" }
+  set aclk_want [expr {1000.0 / $clk_mhz}]
+  if {abs($aclk_p - $aclk_want) > 0.001} { jcc_fail "aclk period $aclk_p, expected [format %.3f $aclk_want] (clk_core must be $clk_mhz MHz)" }
 
   # chain-4 (loader, unchanged RTL/constraints, hierarchy prefix absorbed by the
   # leading wildcard in CORE_LOADER and in the bscan pattern below) and chain-3
