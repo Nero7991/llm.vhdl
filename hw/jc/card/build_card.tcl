@@ -233,10 +233,29 @@ add_files -fileset constrs_1 -norecurse $here/jc_card.xdc
 set_property top jc_card_top [current_fileset]
 update_compile_order -fileset sources_1
 
+# Every synthesis run (the OOC IP runs and synth_1) caps synth_design's helper processes
+# through a TCL.PRE hook: set_param here does not reach launch_runs' children, and each
+# synth_design otherwise forks up to 8 (jccard3/jccard4 ran out of swap, 2026-10-07).
+if {[catch {create_ip_run [get_files jcc.bd]} e]} { puts "JCCARD_SYNTH_HOOK create_ip_run: $e" }
+set synth_runs [get_runs -filter {IS_SYNTHESIS}]
+foreach r $synth_runs { set_property STEPS.SYNTH_DESIGN.TCL.PRE $here/synth_threads_pre.tcl $r }
+puts "JCCARD_SYNTH_HOOK runs=[llength $synth_runs]"
+if {[llength $synth_runs] < 2} { jcc_fail "synth hook: only [llength $synth_runs] synthesis run(s) exist before launch; the OOC IP runs would not get the cap" }
+
 # -jobs 2, not 4: jccard3 (2026-10-07) ran out of swap with four IP syntheses overlapping
 launch_runs synth_1 -jobs 2
 wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} { jcc_fail "synth_1 [get_property STATUS [get_runs synth_1]]" }
+# teeth for the hook: every run that ran synth_design must report the cap in its own log
+set uncapped {}
+foreach r $synth_runs {
+  set lf [file join [get_property DIRECTORY $r] runme.log]
+  if {![file exists $lf]} continue
+  set fh [open $lf]; set txt [read $fh]; close $fh
+  if {[string first "Multithreading enabled for synth_design" $txt] >= 0 && [string first "maximum of 2 processes" $txt] < 0} { lappend uncapped [get_property NAME $r] }
+}
+if {[llength $uncapped] > 0} { jcc_fail "synth hook not applied (not maximum of 2 processes): $uncapped" }
+puts "JCCARD_SYNTH_HOOK verified"
 puts "JCCARD_SYNTH_DONE"
 open_run synth_1 -name synth_1
 

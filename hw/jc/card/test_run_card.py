@@ -475,3 +475,23 @@ def test_ip_synthesis_runs_at_most_two_jobs():
     # 0.44 GB SwapFree before the system guard stopped it; jccard1/2 peaked at ~19 GB unit swap.
     t = _build_card_text()
     assert re.findall(r"launch_runs synth_1 -jobs (\d+)", t) == ["2"]
+
+
+def test_every_synth_run_gets_the_helper_cap_and_it_is_verified():
+    # jccard4 (2026-10-07): each IP synthesis forked up to 8 helper vivados ("Multithreading
+    # enabled for synth_design using a maximum of 8 processes"); set_param in this process
+    # does not reach launch_runs' children. Cap them through STEPS.SYNTH_DESIGN.TCL.PRE and
+    # refuse if any run's log does not show the cap.
+    t = _build_card_text()
+    hook = os.path.join(HERE, "synth_threads_pre.tcl")
+    assert os.path.exists(hook)
+    with open(hook) as f:
+        h = f.read()
+    assert "set_param synth.maxThreads 2" in h and "set_param general.maxThreads 2" in h
+    i_gen, i_hook, i_launch = (t.index("generate_target all [get_files jcc.bd]"),
+                               t.index("STEPS.SYNTH_DESIGN.TCL.PRE"),
+                               t.index("launch_runs synth_1"))
+    assert i_gen < i_hook < i_launch
+    assert "create_ip_run [get_files jcc.bd]" in t
+    assert "maximum of 2 processes" in t[i_launch:]
+    assert "JCCARD_SYNTH_HOOK" in t
