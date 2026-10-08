@@ -242,7 +242,9 @@ open_run synth_1 -name synth_1
 # ---- the six module-reference cells: each input pin must carry a net (BD 41-759 is
 #      silent when the VHDL port has a default; every one of ours has none) ----------
 set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant}
-set total_nin 0; set total_bad {}
+# constant BY DESIGN, per bit and polarity (jccard2 classification, 2026-10-07)
+source $repo/hw/jc/card/jccard_const_allow.tcl
+set total_nin 0; set total_bad {}; set total_allowed 0
 foreach cname $EXPECT_CELLS {
   # anchored on the IP REF_NAME: fk33_engine has an inner instance also named `eng`
   set c [get_cells -quiet -hierarchical -filter "NAME =~ \"*/$cname\" && IS_PRIMITIVE == 0 && REF_NAME == jcc_${cname}_0"]
@@ -252,10 +254,11 @@ foreach cname $EXPECT_CELLS {
     set n [get_nets -quiet -of_objects $pin]
     if {$n eq ""} { lappend total_bad "$pin:no_net"; continue }
     set t [get_property TYPE $n]
-    if {$t eq "GROUND" || $t eq "POWER"} { lappend total_bad "$pin:$t" }
+    if {($t eq "GROUND" || $t eq "POWER") && ![jcc_const_allowed $pin $t]} { lappend total_bad "$pin:$t"; continue }
+    if {$t eq "GROUND" || $t eq "POWER"} { incr total_allowed }
   }
 }
-puts "JCCARD_NETLIST_INPUTS checked=$total_nin constant_or_open=[llength $total_bad]"
+puts "JCCARD_NETLIST_INPUTS checked=$total_nin allowed_const=$total_allowed constant_or_open=[llength $total_bad]"
 foreach b $total_bad { puts "JCCARD_NETLIST_CONST $b" }
 if {[llength $total_bad] > 0} { jcc_fail "netlist: [llength $total_bad] module-reference inputs constant or open" }
 

@@ -460,3 +460,11 @@ def test_netlist_cell_check_is_anchored_on_the_bd_ip_ref_name():
     line = [l for l in t.splitlines() if "set c [get_cells" in l and "EXPECT" not in l and "$cname" in l]
     assert len(line) == 1, line
     assert 'REF_NAME == jcc_${cname}_0' in line[0], line[0]
+
+
+def test_netlist_const_check_consults_the_exact_allowlist():
+    t = _build_card_text()
+    assert "source $repo/hw/jc/card/jccard_const_allow.tcl" in t
+    assert re.search(r"if \{\(\$t eq \"GROUND\" \|\| \$t eq \"POWER\"\) && !\[jcc_const_allowed \$pin \$t\]\}", t), \
+        "a constant input must be refused unless jcc_const_allowed accepts that exact pin and polarity"
+    assert "JCCARD_NETLIST_INPUTS checked=$total_nin allowed_const=$total_allowed constant_or_open=[llength $total_bad]" in t
