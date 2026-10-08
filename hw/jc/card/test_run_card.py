@@ -468,3 +468,10 @@ def test_netlist_const_check_consults_the_exact_allowlist():
     assert re.search(r"if \{\(\$t eq \"GROUND\" \|\| \$t eq \"POWER\"\) && !\[jcc_const_allowed \$pin \$t\]\}", t), \
         "a constant input must be refused unless jcc_const_allowed accepts that exact pin and polarity"
     assert "JCCARD_NETLIST_INPUTS checked=$total_nin allowed_const=$total_allowed constant_or_open=[llength $total_bad]" in t
+
+
+def test_ip_synthesis_runs_at_most_two_jobs():
+    # jccard3 (2026-10-07): -jobs 4 overlapped the heavy IP syntheses and drove the box to
+    # 0.44 GB SwapFree before the system guard stopped it; jccard1/2 peaked at ~19 GB unit swap.
+    t = _build_card_text()
+    assert re.findall(r"launch_runs synth_1 -jobs (\d+)", t) == ["2"]

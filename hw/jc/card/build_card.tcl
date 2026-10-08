@@ -233,7 +233,8 @@ add_files -fileset constrs_1 -norecurse $here/jc_card.xdc
 set_property top jc_card_top [current_fileset]
 update_compile_order -fileset sources_1
 
-launch_runs synth_1 -jobs 4
+# -jobs 2, not 4: jccard3 (2026-10-07) ran out of swap with four IP syntheses overlapping
+launch_runs synth_1 -jobs 2
 wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} { jcc_fail "synth_1 [get_property STATUS [get_runs synth_1]]" }
 puts "JCCARD_SYNTH_DONE"
