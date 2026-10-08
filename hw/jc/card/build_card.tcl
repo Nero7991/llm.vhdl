@@ -244,7 +244,8 @@ open_run synth_1 -name synth_1
 set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant}
 set total_nin 0; set total_bad {}
 foreach cname $EXPECT_CELLS {
-  set c [get_cells -quiet -hierarchical -filter "NAME =~ \"*/$cname\" && IS_PRIMITIVE == 0"]
+  # anchored on the IP REF_NAME: fk33_engine has an inner instance also named `eng`
+  set c [get_cells -quiet -hierarchical -filter "NAME =~ \"*/$cname\" && IS_PRIMITIVE == 0 && REF_NAME == jcc_${cname}_0"]
   if {[llength $c] != 1} { jcc_fail "netlist: cell $cname not found ([llength $c])" }
   foreach pin [get_pins -of_objects $c -filter {DIRECTION == IN}] {
     incr total_nin

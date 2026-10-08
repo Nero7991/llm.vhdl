@@ -449,3 +449,14 @@ def test_build_card_takes_the_clock_from_tclargs_not_a_constant():
     assert 'puts "JCCARD_CLK_CORE_MHZ 200"' not in t
     assert "abs($aclk_p - 5.0)" not in t
     assert re.search(r"1000\.0\s*/\s*\$clk_mhz", t)
+
+
+def test_netlist_cell_check_is_anchored_on_the_bd_ip_ref_name():
+    # jccard1 (2026-10-07) failed "cell eng not found (2)": fk33_engine.vhd has its own
+    # inner instance named `eng` (matvec_int4_desc_axi), so NAME =~ "*/eng" alone matches
+    # the BD cell AND A's matvec. The BD's module-reference cells are IPs named
+    # jcc_<cell>_0; anchor on that REF_NAME.
+    t = _build_card_text()
+    line = [l for l in t.splitlines() if "set c [get_cells" in l and "EXPECT" not in l and "$cname" in l]
+    assert len(line) == 1, line
+    assert 'REF_NAME == jcc_${cname}_0' in line[0], line[0]
