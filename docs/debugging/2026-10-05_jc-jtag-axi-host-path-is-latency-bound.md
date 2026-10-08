@@ -620,3 +620,37 @@ with a 3-minute window cannot resolve a sub-ampere change.
 **Not determined:** absolute die power and the 0.85 -> 0.72 V saving (needs a wall meter or a
 known VCCINT output current); whether the setting survives a power cycle (the FK33's pot does
 not); the 200 MHz engine at 0.72 V (the loader is a different, lightly clocked design).
+
+**Addendum 2026-10-07 21:22: below the datasheet floor, to 0.65 V (Oren's call).** `vprobe.sh` then
+`vprobe065.sh`: 10 mV steps 0.71 -> 0.65 V, 180 s hold each, both dies present and SYSMON within
+15 mV, then a full range-CRC verify of both images at every step. Every step passed:
+
+```
+VPROBE_VERIFY 0.71 A JCVERIFY_PASS 7170 pieces, 0 bad   ... B JCVERIFY_PASS 6750 pieces, 0 bad
+VPROBE_VERIFY 0.70 ... 0.69 ... 0.68 ... 0.67 ... 0.66 ... (all PASS, 0 bad)
+VPROBE_VERIFY 0.65 A JCVERIFY_PASS 7170 pieces, 0 bad
+VPROBE_VERIFY 0.65 B JCVERIFY_PASS 6750 pieces, 0 bad
+VPROBE_END floor_reached_0.65 2026-10-07T21:22:34-04:00
+```
+
+Die temperature (mean of SLR0/SLR1, last 3 samples binned by SYSMON VCCINT to the nearest
+step; the regulator delivers 3-7 mV under the setpoint, so the 0.71 and 0.66 steps bin into
+their neighbours):
+
+| VCCINT | die A C | die B C | B - A |
+|---|---|---|---|
+| 0.85 | 48.0 | 56.6 | 8.6 |
+| 0.80 | 48.0 | 56.2 | 8.3 |
+| 0.76 | 47.5 | 55.7 | 8.1 |
+| 0.72 | 46.5 | 54.4 | 7.9 |
+| 0.70 | 46.3 | 53.8 | 7.5 |
+| 0.68 | 46.0 | 53.2 | 7.1 |
+| 0.65 | 45.4 | 52.6 | 7.2 |
+
+A fell 2.6 C and B 4.0 C over 80 minutes. B, the leakier die, gained more, consistent with
+leakage falling with voltage, but ambient drift over the same 80 minutes is not controlled.
+
+**What this does and does NOT show.** The loader bitstream (lightly clocked fabric plus the hard
+HBM controller) holds the HBM images at 0.65 V. It says nothing about the 200 MHz engine at any
+voltage below 0.85 V, which is the only voltage it is timed at. The card is OUT OF SPEC at 0.65 V
+and must be returned to >= 0.85 V before the engine bitstream is programmed.
