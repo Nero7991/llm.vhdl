@@ -1,0 +1,9 @@
+Running Device Scan
+Got NAK 0000000a
+One CoE Board Device, but I2C did not respond to ping on BusIdx 0 - Switching to Slot B
+Found 1 FPGAs on board 0, creating virtual TCP serial ports...
+Board 0 Device 0 DNA: <redacted>
+Board 0 Device 0 SLR 0 Temp: 60.473 C
+Board 0 Device 0 SLR 0 Rail VCCINT Voltage: 0.850
+Board 0 Device 0 SLR 1 Temp: 60.971 C
+Board 0 Device 0 SLR 1 Rail VCCINT Voltage: 0.850

@@ -1,0 +1,32 @@
+Running in CoE Mode
+Connected
+Orphaned Transaction 0001, 000a!
+Found 2 FPGAs on board 0, creating virtual TCP serial ports...
+Board 0 Device 0 IDCODE(14b71093) Name: VU35P
+Board 0 Device 0 DNA: <redacted>
+Board 0 Device 0 SLR 0 Temp: 49.531 C
+Board 0 Device 0 SLR 0 Rail VCCINT Voltage: 0.853
+Board 0 Device 0 SLR 0 Rail VCCAUX Voltage: 1.784
+Board 0 Device 0 SLR 0 Rail VCCBRAM Voltage: 0.861
+Board 0 Device 0 SLR 1 Temp: 49.034 C
+Board 0 Device 0 SLR 1 Rail VCCINT Voltage: 0.855
+Board 0 Device 0 SLR 1 Rail VCCAUX Voltage: 1.787
+Board 0 Device 0 SLR 1 Rail VCCBRAM Voltage: 0.861
+Board 0 Device 0 JungleCat Carrier: 0, Module A, LED RGBABCD: --B --C-
+Board 0 Device 1 IDCODE(14b71093) Name: VU35P
+Board 0 Device 1 DNA: <redacted>
+Board 0 Device 1 SLR 0 Temp: 58.484 C
+Board 0 Device 1 SLR 0 Rail VCCINT Voltage: 0.850
+Board 0 Device 1 SLR 0 Rail VCCAUX Voltage: 1.790
+Board 0 Device 1 SLR 0 Rail VCCBRAM Voltage: 0.858
+Board 0 Device 1 SLR 1 Temp: 58.981 C
+Board 0 Device 1 SLR 1 Rail VCCINT Voltage: 0.850
+Board 0 Device 1 SLR 1 Rail VCCAUX Voltage: 1.790
+Board 0 Device 1 SLR 1 Rail VCCBRAM Voltage: 0.858
+Board 0 Device 1 JungleCat Carrier: 0, Module A, LED RGBABCD: --B --CD
+SQRL JTAG Board 0 Device 0 specified voltage 0.00 is out of range
+Telemetry:
+Board 0 FPGA A TX 0 / RX 0 (49.53 C 0.855 V, 48.54 C 0.853 V, VRM 48 C, VRM 0.848 V, VRM 1.50 A, HBMVRM 1.234 V, HBMVRM 0.75 A)
+Board 0 FPGA B TX 0 / RX 0 (58.48 C 0.850 V, 58.48 C 0.850 V, VRM 56 C, VRM 0.848 V, VRM 2.75 A, HBMVRM 1.230 V, HBMVRM 1.38 A)
+Telemetry:
+Board 0 FPGA A TX 0 / RX 0 (49.53 C 0.853 V, 48.54 C 0.853 V, VRM 48 C, VRM 0.848 V, VRM 1.50 A, HBMVRM 1.234 V, HBMVRM 0.88 A)
