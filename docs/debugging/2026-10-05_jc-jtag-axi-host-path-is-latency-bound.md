@@ -581,3 +581,42 @@ Scan after A's load: 2 FPGAs; die A 49.5 / 49.0 C, die B 58.5 / 59.0 C. With
 
 Die B re-verified after A's load (range CRC over the whole image): `JCVERIFY_PASS 6750 pieces, 0 bad`.
 Both 27B images are resident and verified as of 18:10.
+
+## 17. UPDATE 2026-10-07: VCCINT stepped 0.85 -> 0.72 V on both dies, images survive; the BMC current reading cannot resolve the saving
+
+**Question (Oren).** Can VCCINT go to 0.72 V at idle, and how much power does it save?
+
+**Answer.** Both dies run at 0.72 V with the loader bitstream: both stayed on the chain, and both
+27B HBM images verified intact afterwards (`JCVERIFY_PASS 7170 pieces, 0 bad`, `JCVERIFY_PASS
+6750 pieces, 0 bad`). The saving is NOT measured: the BMC's VRM current is quantised to 0.25 A
+and noisier than the effect (die A read 3.00 A at 0.76 V, between 1.25 A and 1.50 A at its
+neighbours). Die temperature fell 0.8 C (A) and 1.3 C (B) over 12 minutes, a weak indicator
+that cannot be separated from ambient drift.
+
+**Procedure.** `tools/jc/jc_telemetry.py` scans every 20 s (`jc-telemetry` user service on the
+BC-250, CSV in `~/jc_telemetry/`). `~/jc_telemetry/vstep.sh` set 0.80, 0.76, 0.72 V with
+`sqrl_bridge C<bmc> skip <V>` under the CoE flock, held 180 s each, and stopped if either die
+was missing or SYSMON VCCINT was more than 20 mV off target. The setting persists after the
+bridge exits (SYSMON reads the new value on the logger's next scan).
+
+**Evidence** (BMC telemetry, mean of the last 3 samples per step; P = VRM V x VRM A):
+
+| die | set V | SYSMON V | die C | VRM C | VRM A | P (W) | HBM VRM A |
+|---|---|---|---|---|---|---|---|
+| A | 0.85 | 0.853 | 48.5 | 47.3 | 1.33 | 1.13 | 0.75 |
+| A | 0.80 | 0.799 | 48.0 | 47.3 | 1.25 | 0.99 | 0.84 |
+| A | 0.76 | 0.763 | 48.0 | 45.3 | 3.00 | 2.27 | 0.79 |
+| A | 0.72 | 0.724 | 47.7 | 46.3 | 1.50 | 1.08 | 0.79 |
+| B | 0.85 | 0.850 | 56.8 | 53.7 | 2.33 | 1.98 | 1.25 |
+| B | 0.80 | 0.794 | 56.2 | 53.3 | 2.25 | 1.78 | 1.25 |
+| B | 0.76 | 0.759 | 55.8 | 52.0 | 1.75 | 1.33 | 1.25 |
+| B | 0.72 | 0.719 | 55.5 | 52.0 | 2.50 | 1.80 | 1.25 |
+
+**Measurement traps.** (1) The BMC "VRM A" cannot be VCCINT output current: 1-2 W is far below
+any plausible VU35P static power at 50 C. It is more likely an input-side or partial reading;
+its definition is NOT determined. Do not quote these W as die power. (2) 0.25 A quantisation
+with a 3-minute window cannot resolve a sub-ampere change.
+
+**Not determined:** absolute die power and the 0.85 -> 0.72 V saving (needs a wall meter or a
+known VCCINT output current); whether the setting survives a power cycle (the FK33's pot does
+not); the 200 MHz engine at 0.72 V (the loader is a different, lightly clocked design).
