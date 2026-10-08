@@ -24,6 +24,7 @@ import fcntl
 import json
 import os
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -110,20 +111,21 @@ def csv_rows(ts, scan):
 def run_bridge(bridge, bmc, timeout):
     """Run the bridge until every found FPGA has a Telemetry line, or timeout."""
     p = subprocess.Popen([bridge, "C" + bmc, "skip", "skip"], cwd=os.path.dirname(bridge),
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          start_new_session=True)
-    os.set_blocking(p.stdout.fileno(), False)
-    out, deadline = [], time.monotonic() + timeout
+    fd, buf, deadline = p.stdout.fileno(), b"", time.monotonic() + timeout
     try:
-        while time.monotonic() < deadline and p.poll() is None:
-            chunk = p.stdout.read()
-            if chunk:
-                out.append(chunk)
-                s = parse_scan("".join(out), {})
-                if s["nfpga"] and len(s["bmc"]) >= s["nfpga"]:
-                    break
-            else:
-                time.sleep(0.2)
+        while time.monotonic() < deadline:
+            r, _, _ = select.select([fd], [], [], 0.5)
+            if not r:
+                continue
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            buf += chunk
+            s = parse_scan(buf.decode("utf-8", "replace"), {})
+            if s["nfpga"] and len(s["bmc"]) >= s["nfpga"]:
+                break
     finally:
         if p.poll() is None:
             os.killpg(p.pid, signal.SIGTERM)
@@ -132,10 +134,8 @@ def run_bridge(bridge, bmc, timeout):
             except subprocess.TimeoutExpired:
                 os.killpg(p.pid, signal.SIGKILL)
                 p.wait()
-        rest = p.stdout.read()
-        if rest:
-            out.append(rest)
-    return "".join(out)
+        p.stdout.close()
+    return buf.decode("utf-8", "replace")
 
 
 def cycle(a, dies):
