@@ -1,0 +1,22 @@
+JCOOC27_RUN root=/mnt/storage/fk33_builds/jcooc27_2 part=xcvu35p-fsvh2104-2L-e mem_high=20G swap_kill_bytes=4294967296 nonce=jcooc27_1791409168_3677445
+JCOOC27_MEMORY_BUDGET MemAvailable=24078974976 SwapFree=27686309888 requested_cap=20G swap_kill=4294967296 run_capped=/home/orencollaco/GitHub/llama.vhdl/hw/jc/loader/run_capped.sh vivado=/tools/Xilinx/2023.2/Vivado/2023.2/bin/vivado
++ git -C /mnt/storage/fk33_builds/jcooc27_2/src apply --check /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch
++ git -C /mnt/storage/fk33_builds/jcooc27_2/src apply /home/orencollaco/GitHub/llama.vhdl/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch
++ ( cd /mnt/storage/fk33_builds/jcooc27_2/src && env -u FK33_CARD -u FK33_CB_STYLE -u FK33_ENG -u FK33_ENG_CORE_MHZ -u FK33_ENG_FAST_MHZ -u FK33_ENG_SPLIT_CLK -u FK33_FLATTEN -u FK33_SYNTH_JOBS -u FK33_SYNTH_THREADS -u FK33_A_ROWS_IF FK33_C_KV_BLOCK=16 FK33_C_MAXPOS=16384 FK33_MODEL=QWEN38_27B python3 hw/fk33/gen_fk33_card.py ) > /mnt/storage/fk33_builds/jcooc27_2/gen_fk33_card.log 2>&1
++ python3 /mnt/storage/fk33_builds/jcooc27_2/src/hw/jc/card/gen_ooc27_top.py /mnt/storage/fk33_builds/jcooc27_2/src --haddr-w 15 --regmax 17408
+JCOOC27_LEVERS_PRE_CHECK_OK 6 patterns
++ bash /home/orencollaco/GitHub/llama.vhdl/hw/jc/loader/run_capped.sh jcooc27_1791409168_3677445 20G 4294967296 /mnt/storage/fk33_builds/jcooc27_2 /tools/Xilinx/2023.2/Vivado/2023.2/bin/vivado -mode batch -nojournal -log /mnt/storage/fk33_builds/jcooc27_2/build.log -source /mnt/storage/fk33_builds/jcooc27_2/src/hw/jc/card/ooc_card_200.tcl -tclargs /mnt/storage/fk33_builds/jcooc27_2/src /mnt/storage/fk33_builds/jcooc27_2/ooc xcvu35p-fsvh2104-2L-e -nonce jcooc27_1791409168_3677445
+Running as unit: jcooc27_1791409168_3677445.service
+unit=jcooc27_1791409168_3677445.service cgroup=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/jcooc27_1791409168_3677445.service requested_cap=20G swap_kill=4294967296
+readback MemoryHigh=21474836480
+readback memory.high=21474836480
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 3h 48min 20.548s
+CPU time consumed: 7h 51min 10.664s
+sampled_peak_current=21474684928 sampled_peak_swap=2184314880 last_memory.peak=21475696640 sys_min_MemAvailable=3955851264 sys_min_SwapFree=24469696512
+RC=0
+JCOOC27_LEVER NWIDE off (1 occurrence(s), all bound to 0/false)
+JCOOC27_LEVER SWEEP_PIPE off (1 occurrence(s), all bound to 0/false)
+JCOOC27_LEVER SCORE_EARLY off (1 occurrence(s), all bound to 0/false)
+JCOOC27_DONE
