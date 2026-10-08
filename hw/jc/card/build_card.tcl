@@ -309,10 +309,17 @@ if {[llength $total_bad] > 0} { jcc_fail "netlist: [llength $total_bad] module-r
 #     its own "no bind line" refusal then (correctly, but for the wrong reason)
 #     turned into a hard failure on every build, correct or not.
 source $here/jccard_levers.tcl
-set top [get_property top [current_fileset]]
-set synthlog [get_property DIRECTORY [get_runs synth_1]]/${top}.vds
-if {![file exists $synthlog]} { jcc_fail "levers: no synth_1 trace at $synthlog" }
-set logtxt [read [open $synthlog]]
+#  3. With the BD's module-reference cells synthesized OUT OF CONTEXT, the card's own
+#     elaboration (and so its bind lines) is in jcc_card_0_synth_1/jcc_card_0.vds, not in
+#     synth_1/<top>.vds (MEASURED, jccard5 2026-10-07). Gather every synthesis run's .vds.
+set synthlogs {}
+foreach r [get_runs -filter {IS_SYNTHESIS}] {
+  foreach f [glob -nocomplain -directory [get_property DIRECTORY $r] *.vds] { lappend synthlogs $f }
+}
+if {[llength $synthlogs] == 0} { jcc_fail "levers: no synthesis .vds trace in any synthesis run" }
+puts "JCCARD_LEVER_LOGS [llength $synthlogs]"
+set logtxt ""
+foreach f $synthlogs { set fh [open $f]; append logtxt [read $fh] "\n"; close $fh }
 set LEVERS_OFF {NWIDE SWEEP_PIPE SCORE_EARLY}
 set lever_bad {}
 foreach lv $LEVERS_OFF {

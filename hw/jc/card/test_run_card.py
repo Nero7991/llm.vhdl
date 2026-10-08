@@ -351,10 +351,13 @@ def test_lever_check_reads_the_synthesis_vds_not_runme_log():
     # test_jccard_levers.py's fixtures). "runme.log" is still named in the
     # explanatory comment (why NOT to read it); the actual log-path ASSIGNMENT
     # must build a `.vds` path and must not reference runme.log.
+    # (2026-10-07: gathered from every synthesis run's *.vds; see the test below.)
     text = _build_card_text()
-    assert re.search(r"set\s+synthlog\s+.*\.vds", text)
-    for line in text.splitlines():
-        if line.strip().startswith("set synthlog"):
+    i = text.index("source $here/jccard_levers.tcl")
+    j = text.index("JCCARD_LEVERS_OK", i)
+    assert re.search(r"glob -nocomplain -directory .* \*\.vds", text[i:j])
+    for line in text[i:j].splitlines():
+        if not line.strip().startswith("#"):
             assert "runme.log" not in line
 
 
@@ -495,3 +498,14 @@ def test_every_synth_run_gets_the_helper_cap_and_it_is_verified():
     assert "create_ip_run [get_files jcc.bd]" in t
     assert "maximum of 2 processes" in t[i_launch:]
     assert "JCCARD_SYNTH_HOOK" in t
+
+
+def test_lever_trace_is_gathered_from_every_synthesis_runs_vds():
+    # jccard5 (2026-10-07): with module-reference cells synthesized out of context, the
+    # card's bind lines are in jcc_card_0_synth_1/jcc_card_0.vds, not synth_1/<top>.vds.
+    t = _build_card_text()
+    i = t.index("source $here/jccard_levers.tcl")
+    seg = t[i:i + 1500]
+    assert "get_runs -filter {IS_SYNTHESIS}" in seg
+    assert "*.vds" in seg
+    assert "jcc_fail \"levers: no synthesis .vds" in seg
