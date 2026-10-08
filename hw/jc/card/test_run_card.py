@@ -363,21 +363,30 @@ def test_lever_check_reads_the_synthesis_vds_not_runme_log():
 
 # ---- build_card.tcl: CRITICAL C2, the BSCAN check ----------------------------------
 
+def _census_text():
+    """build_card.tcl gathers the census; jccard_post.tcl's jccard_census_eval judges it
+    (post-synth-audit fix round, 2026-10-07)."""
+    with open(os.path.join(HERE, "jccard_post.tcl")) as f:
+        return _build_card_text() + f.read()
+
+
 def test_bscan_check_present():
-    text = _build_card_text()
+    text = _census_text()
     assert "BSCANE2" in text
     assert "chain3" in text and "chain4" in text
     assert "get_debug_cores" in text
     assert "JCCARD_BSCAN_SUMMARY" in text
+    assert "source $here/jccard_post.tcl" in _build_card_text()
 
 
 def test_bscan_check_allows_exactly_one_hub_on_chain_1_only():
-    text = _build_card_text()
-    assert "nhub_chain1" in text
-    assert re.search(r"nhub\s*>\s*1", text)
-    assert re.search(r"nhub\s*==\s*1", text)
-    assert re.search(r"nhub_chain1\s*!=\s*1", text)
-    assert "&&" in text
+    # Revised 2026-10-07 (post-synth-audit.md WILL-FAIL 2): the debug cores are the hub
+    # AND the JTAG-AXI cores, counted apart; the set is exact (one dbg_hub on chain 1,
+    # one jtag_hbm). The behaviour is tested by test_jccard_post.py's census test, which
+    # runs build_card.tcl's own census procs; this only pins the shape of the rule.
+    text = _census_text()
+    assert re.search(r"\$nhub\s*==\s*1\s*&&\s*\$nhub_chain1\s*==\s*1", text)
+    assert re.search(r"\$njtagaxi\s*==\s*1\s*&&\s*\$njtag_hbm\s*==\s*1", text)
     # the old all-or-nothing refusal must be gone from the actual CHECK (it may
     # still be named in an explanatory comment about what was wrong with it)
     for line in text.splitlines():

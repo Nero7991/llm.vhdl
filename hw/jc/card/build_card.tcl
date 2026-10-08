@@ -43,8 +43,11 @@ set clk_mhz   [expr {$clk_idx >= 0 ? [lindex $argv [expr {$clk_idx + 1}]] : 200}
 set TCK_P 37.037
 set DNA_DIV 10
 set CORE_LOADER "*u_jc_core/"
-set CORE_CTL    "*ctl/inst/"
+# anchored: "*ctl/inst/" also prefixes u_bd/jcc_i/engctl/inst/ (a smartconnect)
+set CORE_CTL    "*/jcc_i/ctl/inst/"
 proc jcc_fail {msg} { puts "JCCARD_FAIL $msg"; exit 1 }
+# pure census / bus-skew / report_cdc evaluators (tested stand-alone: test_jccard_post.py)
+source $here/jccard_post.tcl
 # Task 9 fix round 1, IMPORTANT I3: the VERY FIRST thing this script prints (ahead
 # of JCCARD_PART, ahead of create_project) is this run's own nonce, so run_card.sh
 # can gate JCCARD_DONE on a log that actually carries THIS run's identity, not a
@@ -73,38 +76,38 @@ puts "JCCARD_CLK_CORE_MHZ $clk_mhz"
 # build, including a bitstream that is otherwise exactly right, for the same reason
 # the loader's own bitstream has one. One debug hub, and only on chain 1, is allowed;
 # more than one, or one anywhere else, is still refused.
+# Fix round 2026-10-07 (post-synth-audit.md WILL-FAIL 2): get_debug_cores returns the
+# debug HUB (dbg_hub, created inside opt_design, the only core with C_USER_SCAN_CHAIN)
+# AND every JTAG-AXI core (here u_bd/jcc_i/jtag_hbm). The previous census counted both
+# as hubs, read 2, and refused every correct card. They are now counted apart and the
+# set is exact: one hub, dbg_hub, on chain 1, and one JTAG-AXI core, jtag_hbm
+# (jccard_census_eval in jccard_post.tcl, tested by test_jccard_post.py).
 proc jccard_bscan_census {} {
-  set n3 0; set n3ours 0; set n4 0; set n4ours 0; set nall 0
+  set bscans {}
   foreach c [get_cells -hierarchical -filter {REF_NAME == BSCANE2}] {
     set ch [get_property JTAG_CHAIN $c]
     puts "JCCARD_BSCAN $c JTAG_CHAIN=$ch"
-    incr nall
-    if {$ch == 3} { incr n3; if {[string match "*u_jc_ctl_rx/u_jc_ctl_bscan" $c]} { incr n3ours } }
-    if {$ch == 4} { incr n4; if {[string match "*u_jc_frx/u_jc_bscan" $c]} { incr n4ours } }
+    lappend bscans [list [get_property NAME $c] $ch]
   }
-  set nhub 0; set nhub_chain1 0
+  set cores {}
   foreach d [get_debug_cores -quiet] {
-    incr nhub
     if {[llength [list_property $d C_USER_SCAN_CHAIN]]} {
       set chv [get_property C_USER_SCAN_CHAIN $d]
-      puts "JCCARD_DEBUGCORE $d C_USER_SCAN_CHAIN=$chv"
-      if {$chv == 1} { incr nhub_chain1 }
+      puts "JCCARD_DEBUGCORE hub $d C_USER_SCAN_CHAIN=$chv"
     } else {
-      puts "JCCARD_DEBUGCORE $d"
+      set chv ""
+      puts "JCCARD_DEBUGCORE jtag_axi $d"
     }
+    lappend cores [list [get_property NAME $d] $chv]
   }
-  puts "JCCARD_BSCAN_SUMMARY total=$nall chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub debug_hub_chain1=$nhub_chain1"
-  return [list $n3 $n3ours $n4 $n4ours $nhub $nhub_chain1]
+  lassign [jccard_census_eval $bscans $cores] ok summary
+  puts "JCCARD_BSCAN_SUMMARY $summary"
+  return [list $ok $summary]
 }
 
 proc jccard_bscan_check {stage} {
-  lassign [jccard_bscan_census] n3 n3ours n4 n4ours nhub nhub_chain1
-  # exactly one chain-3 (ctl, ours) and one chain-4 (loader, ours); AT MOST one
-  # debug hub, and if it exists it must be the chain-1 one jtag_hbm causes.
-  if {$n3 != 1 || $n3ours != 1 || $n4 != 1 || $n4ours != 1
-      || $nhub > 1 || ($nhub == 1 && $nhub_chain1 != 1)} {
-    jcc_fail "bscan census ($stage): chain3=$n3 chain3_ctl=$n3ours chain4=$n4 chain4_loader=$n4ours debug_hub=$nhub debug_hub_chain1=$nhub_chain1"
-  }
+  lassign [jccard_bscan_census] ok summary
+  if {!$ok} { jcc_fail "bscan census ($stage): $summary" }
   puts "JCCARD_BSCAN_OK $stage"
 }
 
@@ -367,6 +370,11 @@ if {[catch {
   jctl_cdc $CORE_CTL $aclk_clk [get_clocks tck_user3] $aclk_p $TCK_P
   jctl_tdi "*u_jc_ctl_rx/u_jc_ctl_bscan" [expr {$TCK_P / 2.0}]
   jctl_rram $CORE_CTL $aclk_clk [get_clocks tck_user3]
+  # synchroniser STRUCTURE on the linked synthesized netlist, before opt_design can
+  # replicate a flop (fix round 2026-10-07, post-synth-audit.md PASS-WRONGLY 5): the
+  # card's ctl is its own OOC synthesis, so ooc_ctl_core.tcl's JCCTL_SYNC_OK does not
+  # transfer; this is the same call that flow makes, with the card's prefix.
+  jctl_syncs $CORE_CTL
 
   # CATTRIP -> compute_halt: RULED asynchronous (task-8 report concern 1; no 2-FF
   # synchroniser module exists for it, and adding one is outside this task's file
@@ -374,9 +382,28 @@ if {[catch {
   # static level, false-pathed rather than timed against a meaningless edge
   # relationship. halt_or is the util_vector_logic OR cell gen_jc_card.py's I3 fix
   # added (fix round 1); its Res pin drives eng/compute_halt.
-  set halt_src [get_pins -quiet -hierarchical -filter {NAME =~ "*halt_or*/Res"}]
-  if {[llength $halt_src] != 1} { error "expected one halt_or/Res pin, got [llength $halt_src]" }
-  set_false_path -from $halt_src
+  #
+  # Fix round 2026-10-07 (post-synth-audit.md WILL-FAIL 1, PASS-WRONGLY 3). The OR's
+  # output is the bus pin Res[0] (C_SIZE 1), so `*halt_or*/Res` matched 0; a glob on
+  # `*/halt_or/Res*` with DIRECTION == OUT matches 2 (Res[0] and the inner LUT's
+  # Res[0]_INST_0/O). The output pins OF the hierarchical cell match exactly one.
+  # MEASURED (jccard5 synth_1): the pin is not a startpoint, and `set_false_path -from`
+  # on it is ERROR Constraints 18-513; the real paths through it start at the HBM APB
+  # PCLK (clk_out1) and end in eng/card on aclk. So the exception is -through, and it
+  # must be seen to land: every setup path through the pin must carry EXCEPTION
+  # "False Path", and there must be at least one such path.
+  set halt_cell [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/halt_or" && IS_PRIMITIVE == 0}]
+  if {[llength $halt_cell] != 1} { error "expected one halt_or cell, got [llength $halt_cell]" }
+  set halt_src [get_pins -quiet -of_objects $halt_cell -filter {DIRECTION == OUT}]
+  if {[llength $halt_src] != 1} { error "expected one halt_or output pin, got [llength $halt_src]" }
+  set_false_path -through $halt_src
+  set hp [get_timing_paths -quiet -setup -through $halt_src -max_paths 1000 -nworst 1]
+  set h_fp 0; set h_other {}
+  foreach p $hp {
+    if {[get_property EXCEPTION $p] eq "False Path"} { incr h_fp } else { lappend h_other "[get_property ENDPOINT_PIN $p]:[get_property EXCEPTION $p]" }
+  }
+  puts "JCCARD_CATTRIP_PATHS through=[llength $hp] false_path=$h_fp other=[llength $h_other]"
+  if {$h_fp == 0 || [llength $h_other] > 0} { error "halt_or false path did not land: false_path=$h_fp other={$h_other}" }
   puts "JCCARD_CATTRIP_FALSE_PATH $halt_src"
 } err]} { jcc_fail "constraints: $err" }
 
@@ -415,23 +442,40 @@ report_drc -file $rp/drc.rpt
 report_pulse_width -all -file $rp/pulse_width.rpt
 check_timing -file $rp/check_timing.rpt
 
-# report_cdc's own severity classification: no "Critical" row outside the named
-# synchronisers (loader's 6, ctl's 6, the CATTRIP false path). UNVERIFIED in Vivado
-# (report_cdc's exact column layout has not been read from a real run on this
-# design): this is a best-effort text scan, not a parsed table, and its false-negative
-# risk is why jctl_cdc_audit above is the hard gate and this is a second opinion.
-set cdc_txt [read [open $rp/cdc.rpt]]
-set OK_PAT {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg rak_s1_reg fifo/wp_g_s1_reg
-            fifo/rp_g_s1_reg trst_s1_reg trip_s1_reg halt_or rram dnar INTERNAL_TDI}
-set crit_bad 0
-foreach line [split $cdc_txt "\n"] {
-  if {![regexp -nocase {critical} $line]} { continue }
-  set known 0
-  foreach pat $OK_PAT { if {[string match "*$pat*" $line]} { set known 1; break } }
-  if {!$known} { incr crit_bad; puts "JCCARD_CDC_REPORT_UNKNOWN $line" }
+# report_bus_skew (fix round 2026-10-07, post-synth-audit.md PASS-WRONGLY 4): the gray
+# pointers' set_bus_skew (jcl_cdc, jctl_cdc) and the jtag_axi/dbg_hub XPM FIFOs are not
+# timing paths, so the WNS gate below never sees them. Every constraint row of the
+# summary must parse and none may have negative slack. Floor 4: the loader's two gray
+# buses and the ctl's two (jcl_cdc/jctl_cdc each call set_bus_skew twice).
+# A constraint with no paths ("NA") is refused too: it checks nothing.
+lassign [jccard_bus_skew_parse [report_bus_skew -return_string]] bs_ids bs_rows bs_neg bs_worst bs_na
+puts "JCCARD_BUS_SKEW constraints=$bs_ids rows=$bs_rows violated=$bs_neg worst=$bs_worst no_paths=$bs_na"
+if {$bs_ids < 4 || $bs_rows != $bs_ids || $bs_neg > 0} {
+  jcc_fail "bus skew: constraints=$bs_ids rows=$bs_rows violated=$bs_neg worst=$bs_worst no_paths=$bs_na"
 }
-puts "JCCARD_CDC_REPORT_CRITICAL_UNKNOWN $crit_bad"
-if {$crit_bad > 0} { jcc_fail "report_cdc: $crit_bad critical crossing(s) outside the named synchronisers" }
+
+# report_cdc's own severity classification (fix round 2026-10-07, post-synth-audit.md
+# PASS-WRONGLY 6): a Critical row is allowed ONLY when its DESTINATION is the first stage
+# of a named synchroniser (the loader's and the ctl's, anchored on their own hierarchy).
+# The previous scan whitelisted a line when a known name appeared anywhere in it, so a
+# Critical crossing FROM a synchroniser register TO an unsynchronised one passed on its
+# Source column (masked in practice: the report's own summary row `CDC-1 Critical <n>`
+# names no synchroniser, so that scan refused every Critical crossing, even the named
+# ones). The Critical rows parsed must also add up to the count the report's own
+# summary table states, so a row the parse missed is a refusal, not a pass
+# (jccard_cdc_scan in jccard_post.tcl, tested against the loader's real cdc.rpt).
+set fh [open $rp/cdc.rpt]; set cdc_txt [read $fh]; close $fh
+set CDC_DST_OK {}
+foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg fifo/rp_g_s1_reg
+           trst_s1_reg trip_s1_reg dnar/} { lappend CDC_DST_OK "${CORE_LOADER}${sy}*" }
+foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg rak_s1_reg fifo/wp_g_s1_reg
+           fifo/rp_g_s1_reg rram_reg} { lappend CDC_DST_OK "${CORE_CTL}${sy}*" }
+lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown
+foreach l $crit_unknown { puts "JCCARD_CDC_REPORT_UNKNOWN $l" }
+set crit_bad [llength $crit_unknown]
+puts "JCCARD_CDC_REPORT_CRITICAL summary=$crit_sum rows=$crit_rows unknown=$crit_bad"
+if {$crit_rows != $crit_sum} { jcc_fail "report_cdc: summary states $crit_sum critical, $crit_rows detail rows parsed" }
+if {$crit_bad > 0} { jcc_fail "report_cdc: $crit_bad critical crossing(s) whose destination is not a named synchroniser" }
 
 set rs [report_route_status -return_string]
 if {![regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcc_fail "route status" }

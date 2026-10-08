@@ -15,13 +15,16 @@ proc net_reset {} {
   foreach {c s} {rak_s1_reg 1 rak_s2_reg 1 rst_s1_reg 1 rst_s2_reg 1
                  ex/ack_prev_reg 1 ex/s_rvalid_i_1 0 ex/st_reg 1 ex/have_i_1 0
                  fifo/ob_rp_i_1 0 q_ready_INST_0 0 q_vx_INST_0 0 rx/ack_t_reg 1
-                 sync/st_r_reg 1 spare_reg 1 spare_lut 0} { set CELLS($c) $s }
+                 sync/st_r_reg 1 spare_reg 1 spare_lut 0
+                 ex/qv_reg 1 fifo/qr_reg 1} { set CELLS($c) $s }
   array set NETS {
     ack_t   {rx/ack_t_reg/Q rak_s1_reg/D}
     rak_s1  {rak_s1_reg/Q rak_s2_reg/D}
     rak_s2  {rak_s2_reg/Q ex/ack_prev_reg/D ex/s_rvalid_i_1/I1}
     rst_s1  {rst_s1_reg/Q rst_s2_reg/D}
     rst_s2  {rst_s2_reg/Q ex/st_reg/R ex/have_i_1/I0 q_ready_INST_0/I1 q_vx_INST_0/I1 fifo/ob_rp_i_1/I2}
+    qvx     {q_vx_INST_0/O ex/qv_reg/D}
+    qrdy    {q_ready_INST_0/O fifo/qr_reg/D}
   }
 }
 proc pin_dir {p} { expr {[lindex [split $p /] end] in {Q O} ? "OUT" : "IN"} }
@@ -99,17 +102,42 @@ proc get_property {prop obj} {
   error "mock: property $prop"
 }
 
+# all_fanout -endpoints_only: follow nets through combinational cells (their O pin) to
+# the input pins of sequential cells.
+proc all_fanout {args} {
+  global CELLS NETS
+  set pins [lindex $args end]
+  set r {}
+  foreach p $pins {
+    foreach n [array names NETS] {
+      if {$p ni $NETS($n)} continue
+      foreach q $NETS($n) {
+        if {[pin_dir $q] ne "IN"} continue
+        set c [pin_cell $q]
+        if {$CELLS($c)} { lappend r $q } else { lappend r {*}[all_fanout -endpoints_only -flat $c/O] }
+      }
+    }
+  }
+  return [lsort -unique $r]
+}
+
 source [file join [file dirname [file normalize [info script]]] jc_ctl_timing.tcl]
+
+set DRIVES ""
+set cont 0
+foreach l [split [info body jctl_syncs] "\n"] {
+  if {[regexp {^\s*jctl_drives } $l] || $cont} { append DRIVES $l "\n"; set cont [string match {*\\} [string trimright $l]] }
+}
+if {[regexp -all {jctl_drives } $DRIVES] != 2} { puts "TCLTEST cannot find the two jctl_drives calls in jctl_syncs"; exit 1 }
 
 set npass 0; set nfail 0
 proc case {name expect body} {
   global npass nfail
   net_reset
   uplevel #0 $body
-  set rc [catch {
-    jctl_drives rak_s1_reg rak_s2_reg "ex/*" [list "ex/*"] 0 ""
-    jctl_drives rst_s1_reg rst_s2_reg "ex/*" [list "ex/*" "fifo/*"] 1 ""
-  } msg]
+  # the jctl_drives calls exactly as jctl_syncs makes them (its own body, core ""), so the
+  # arguments under test are the real ones (fix round 2026-10-07: rak's top_comb is 1)
+  set rc [catch { apply [list {core} $::DRIVES] "" } msg]
   if {$expect eq "ok"} {
     set good [expr {$rc == 0}]
   } else {
@@ -129,8 +157,22 @@ case "ack second stage drives nothing" "rak_s2_reg/Q has no loads" { unset NETS(
 case "ack second stage drives outside ex" "outside" {
   lappend NETS(rak_s2) sync/st_r_reg/CE
 }
-case "ack into a top-level LUT (not allowed for the ack)" "outside" {
+case "ack into a top-level LUT that reaches nothing" "outside" {
   lappend NETS(rak_s2) spare_lut/I0
+}
+# fix round 2026-10-07: the card's netlist (jccard5 synth_1) has ex's s_rvalid LUT at the
+# core top; a top-level LUT is allowed only when every endpoint it reaches is under ex/
+case "card netlist: ack into a top-level LUT feeding only ex/ (jccard5)" ok {
+  set CELLS(s_rvalid_i_1) 0; set CELLS(ex/s_rvalid_reg) 1
+  set NETS(rak_s2) {rak_s2_reg/Q ex/ack_prev_reg/D s_rvalid_i_1/I1}
+  set NETS(srv) {s_rvalid_i_1/O ex/s_rvalid_reg/D}
+}
+case "ack into a top-level LUT that feeds a register outside ex/" "outside" {
+  lappend NETS(rak_s2) spare_lut/I0
+  set NETS(spl) {spare_lut/O spare_reg/D}
+}
+case "reset into a top-level LUT that feeds the frame core" "outside" {
+  set NETS(qvx) {q_vx_INST_0/O ex/qv_reg/D rx/ack_t_reg/D}
 }
 case "executor takes the first reset stage" "first stage rst_s1_reg/Q drives" {
   lappend NETS(rst_s1) ex/st_reg/R
@@ -143,4 +185,4 @@ case "reset into the frame core" "outside" { lappend NETS(rst_s2) rx/ack_t_reg/R
 case "reset second stage drives nothing" "rst_s2_reg/Q has no loads" { unset NETS(rst_s2) }
 
 puts "JCCTL_TCLTEST_PASS $npass FAIL $nfail"
-if {$nfail || $npass != 10} { exit 1 }
+if {$nfail || $npass != 13} { exit 1 }

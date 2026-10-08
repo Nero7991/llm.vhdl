@@ -83,13 +83,27 @@ proc jctl_cdc {core clk_a clk_t aclk_p tck_p} {
   set_bus_skew $gp -from [jctl_src $wpt $clk_t] -to $wpt
   set_max_delay -datapath_only $gp -from $clk_a -to $rpt
   set_bus_skew $gp -from [jctl_src $rpt $clk_a] -to $rpt
+  # fifo/clr_ack_r -> fifo/clr_a_s1 (aclk -> TCK, ASYNC_REG pair): the FIFO's clear
+  # acknowledge. jc_ctl_core ties clr to '0', so the source is constant, but synthesis
+  # keeps the chain (KEEP on the ASYNC_REG flops; MEASURED, jccard5
+  # jcc_ctl_0_sim_netlist.v: clr_r_s1_reg D=1'b0 -> clr_r_s2_reg -> clr_ack_r_reg (aclk)
+  # -> clr_a_s1_reg (tck)), so on a SYNTHESIZED netlist it is a real aclk -> TCK timing
+  # path. ooc_ctl_core.tcl audits after route, when opt_design has removed it (jcctl_ooc4:
+  # a2t 157, unexpected 0); build_card.tcl audits before opt_design, where it is present
+  # (jccard5: a2t 158, UNEXPECTED fifo/clr_a_s1_reg/D). Constrained only where it exists.
+  set ca [get_cells -quiet -hierarchical -filter "NAME =~ \"${core}fifo/clr_a_s1_reg\""]
+  if {[llength $ca]} {
+    puts "JCCTL_CONSTRAINT_MATCH cells [llength $ca] ${core}fifo/clr_a_s1_reg"
+    set_max_delay -datapath_only $aclk_p -from $clk_a -to $ca
+  }
 }
 
 # Every timing endpoint reached from one of the two clocks by the other that is NOT one of
 # the named synchroniser cells. Prints each as JCCTL_CDC_UNEXPECTED and returns the count;
 # the callers print "JCCTL_OOC_CDC unexpected <n>" and the gate requires 0.
 proc jctl_cdc_audit {core clk_a clk_t} {
-  set ok_at [list "${core}sync/st_r_reg*" "${core}sync/tgl_s1_reg" "${core}fifo/rp_g_s1_reg*"]
+  set ok_at [list "${core}sync/st_r_reg*" "${core}sync/tgl_s1_reg" "${core}fifo/rp_g_s1_reg*" \
+                 "${core}fifo/clr_a_s1_reg"]
   set ok_ta [list "${core}sync/ack_s1_reg" "${core}rak_s1_reg" "${core}fifo/wp_g_s1_reg*"]
   set bad 0
   foreach {from to oks dir} [list $clk_a $clk_t $ok_at a2t $clk_t $clk_a $ok_ta t2a] {
@@ -197,11 +211,30 @@ proc jctl_q_loads {cell} {
 }
 
 # Is load cell lc allowed? pats: glob patterns of allowed cells. top_comb 1 also allows a
-# combinational cell at the core's own level (directly under core, not in a sub-block).
+# combinational cell at the core's own level (directly under core, not in a sub-block),
+# but ONLY if every timing endpoint it reaches is itself in pats (fix round 2026-10-07:
+# a top-level LUT that fed anything outside pats would otherwise launder the load).
+# MEASURED (jccard5 synth_1, the card's own OOC synthesis of the ctl): synthesis moved
+# the executor's s_rvalid next-state LUT out of ex/ to the core's top, so rak_s2_reg/Q
+# drives u_bd/jcc_i/ctl/inst/s_rvalid_i_1/I1 (the standalone OOC run had it in ex/).
 proc jctl_load_ok {lc pats top_comb core} {
   foreach p $pats { if {[string match $p $lc]} { return 1 } }
   if {$top_comb && [string match "${core}*" $lc] && ![string match "${core}*/*" $lc]
-      && ![string is true -strict [get_property IS_SEQUENTIAL [get_cells $lc]]]} { return 1 }
+      && ![string is true -strict [get_property IS_SEQUENTIAL [get_cells $lc]]]} {
+    set outs [get_pins -quiet -of_objects [get_cells $lc] -filter {DIRECTION == OUT}]
+    if {[llength $outs] == 0} { return 0 }
+    set ep [all_fanout -quiet -endpoints_only -flat $outs]
+    if {[llength $ep] == 0} { return 0 }
+    foreach e $ep {
+      set ec [get_cells -quiet -of_objects $e]
+      if {[llength $ec] != 1} { return 0 }
+      set ecn [get_property NAME $ec]
+      set hit 0
+      foreach p $pats { if {[string match $p $ecn]} { set hit 1; break } }
+      if {!$hit} { return 0 }
+    }
+    return 1
+  }
   return 0
 }
 
@@ -236,7 +269,9 @@ proc jctl_drives {s1 s2 need pats top_comb core} {
 }
 
 # Every synchroniser of the core, structurally (call after synth_design).
-#   rak_s2: rtl/jc_ctl_core.vhd's only reader is ex.rsp_ack_tgl  -> loads only under ex/.
+#   rak_s2: rtl/jc_ctl_core.vhd's only reader is ex.rsp_ack_tgl  -> loads under ex/, or a
+#           top-level combinational cell whose every endpoint is under ex/ (the card's
+#           netlist: ex's s_rvalid_i_1 LUT is placed at the core top, see jctl_load_ok).
 #   rst_s2: its readers are ex.rst, and the reset gates q_vx (into ex.q_valid) and
 #           q_ready (into fifo.q_ready). Synthesis may place those LUTs at the top level,
 #           in ex/ or in fifo/      -> loads under ex/ or fifo/, or top-level combinational.
@@ -247,7 +282,11 @@ proc jctl_syncs {core} {
   jctl_sync_chain "${core}sync/ack_s1_reg"   "${core}sync/ack_s2_reg"
   jctl_sync_chain "${core}fifo/wp_g_s1_reg*" "${core}fifo/wp_g_s2_reg*"
   jctl_sync_chain "${core}fifo/rp_g_s1_reg*" "${core}fifo/rp_g_s2_reg*"
-  jctl_drives "${core}rak_s1_reg" "${core}rak_s2_reg" "${core}ex/*" [list "${core}ex/*"] 0 $core
+  # the FIFO clear acknowledge, where synthesis kept it (the card netlist; see jctl_cdc)
+  if {[llength [get_cells -quiet -hierarchical -filter "NAME =~ \"${core}fifo/clr_a_s1_reg\""]]} {
+    jctl_sync_chain "${core}fifo/clr_a_s1_reg" "${core}fifo/clr_a_s2_reg"
+  }
+  jctl_drives "${core}rak_s1_reg" "${core}rak_s2_reg" "${core}ex/*" [list "${core}ex/*"] 1 $core
   jctl_drives "${core}rst_s1_reg" "${core}rst_s2_reg" "${core}ex/*" \
     [list "${core}ex/*" "${core}fifo/*"] 1 $core
 }

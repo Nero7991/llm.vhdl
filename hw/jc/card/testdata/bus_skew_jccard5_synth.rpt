@@ -1,0 +1,582 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Wed Oct  7 21:32:03 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_bus_skew -file /mnt/storage/fk33_builds/jccard_postfix_val/val2_bus_skew_synth.rpt
+| Design            : jc_card_top
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Synthesized
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Bus Skew Report
+
+Table of Contents
+-----------------
+1. Bus Skew Report Summary
+2. Bus Skew Report Per Constraint
+
+1. Bus Skew Report Summary
+--------------------------
+
+Id  Position  From                            To                              Corner  Requirement(ns)  Actual(ns)  Slack(ns)
+--  --------  ------------------------------  ------------------------------  ------  ---------------  ----------  ---------
+1   148       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[7]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]]
+                                                                              NA                8.000          NA         NA
+2   150       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[7]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]]
+                                                                              NA                8.000          NA         NA
+3   152       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[7]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]]
+                                                                              NA                8.000          NA         NA
+4   154       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[7]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]]
+                                                                              NA                8.000          NA         NA
+5   156       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              NA                8.000          NA         NA
+6   158       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              NA                8.000          NA         NA
+7   160       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              NA                8.000          NA         NA
+8   162       [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              NA                8.000          NA         NA
+9   170       [get_pins [list {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[0]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[1]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[2]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[3]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[4]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[5]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[6]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "*u_jc_core/fifo/wp_g_s1_reg*"}]
+                                                                              Slow              8.000       0.420      7.580
+10  172       [get_pins [list {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[0]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[1]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[2]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[3]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[4]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[5]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[6]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "*u_jc_core/fifo/rp_g_s1_reg*"}]
+                                                                              Slow              8.000       0.420      7.580
+11  183       [get_pins [list {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[0]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[1]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[2]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[3]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[4]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[5]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[6]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/ctl/inst/fifo/wp_g_s1_reg*"}]
+                                                                              Slow              8.000       0.420      7.580
+12  185       [get_pins [list {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[0]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[1]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[2]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[3]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[4]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[5]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[6]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]/C}]]
+                                              [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/ctl/inst/fifo/rp_g_s1_reg*"}]
+                                                                              Slow              8.000       0.420      7.580
+
+
+2. Bus Skew Report Per Constraint
+---------------------------------
+
+Id: 1
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[7]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 2
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[7]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 3
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[7]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/tx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 4
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[7]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][4]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][5]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][6]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rx_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][7]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 5
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 6
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 7
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/wr_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 8
+set_bus_skew -from [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_bd/jcc_i/jtag_hbm/inst/jtag_axi_engine_u/rd_cmd_fifo_i/inst_fifo_gen/gconvfifo.rf/grf.rf/gntv_or_sync_fifo.gcx.clkx/wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 8.000
+Requirement: 8.000ns
+Endpoints: 0
+No bus skew paths found.
+
+
+Id: 9
+set_bus_skew -from [get_pins [list {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[0]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[1]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[2]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[3]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[4]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[5]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[6]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "*u_jc_core/fifo/wp_g_s1_reg*"}] 8.000
+Requirement: 8.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+tck_user4             clk_out3_jcc_clk_wiz_0_0
+                                            u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]/D
+                                                                            u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[0]/D
+                                                                                                            Slow         0.420      7.580
+
+
+Slack (MET) :             7.580ns  (requirement - actual skew)
+  Endpoint Source:        u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by tck_user4)
+  Endpoint Destination:   u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Reference Source:       u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by tck_user4)
+  Reference Destination:  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[0]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            8.000ns
+  Endpoint Relative Delay:    7.050ns
+  Reference Relative Delay:   0.970ns
+  Relative CRPR:              5.660ns
+  Actual Bus Skew:            0.420ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, unplaced)         2.553     8.453    u_bd/jcc_i/loader/inst/u_jc_frx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     8.481 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+                         net (fo=1346, unplaced)      2.584    11.065    u_bd/jcc_i/loader/inst/u_jc_core/fifo/tck_o
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg[7]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.077    11.142 r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg[7]/Q
+                         net (fo=4, unplaced)         0.197    11.339    u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_reg__0[7]
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     0.641 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.040     0.681    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.681 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.312     0.993    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                      0.630     1.623 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.178     1.801    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     1.825 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.439     4.264    u_bd/jcc_i/loader/inst/u_jc_core/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]/C
+                         clock pessimism              0.000     4.264    
+                         FDRE (Setup_FDRE_C_D)        0.025     4.289    u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[7]
+  -------------------------------------------------------------------
+                         data arrival                          11.339    
+                         clock arrival                          4.289    
+  -------------------------------------------------------------------
+                         relative delay                         7.050    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      0.465     0.465 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, unplaced)         1.757     2.222    u_bd/jcc_i/loader/inst/u_jc_frx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     2.246 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+                         net (fo=1346, unplaced)      2.439     4.685    u_bd/jcc_i/loader/inst/u_jc_core/fifo/tck_o
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.058     4.743 r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg[0]/Q
+                         net (fo=1, unplaced)         0.121     4.864    u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_reg_n_0_[0]
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.752 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.050     0.802    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.802 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.346     1.148    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                     -0.127     1.021 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.201     1.222    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     1.250 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.584     3.834    u_bd/jcc_i/loader/inst/u_jc_core/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[0]/C
+                         clock pessimism              0.000     3.834    
+                         FDRE (Hold_FDRE_C_D)         0.060     3.894    u_bd/jcc_i/loader/inst/u_jc_core/fifo/wp_g_s1_reg[0]
+  -------------------------------------------------------------------
+                         data arrival                           4.864    
+                         clock arrival                          3.894    
+  -------------------------------------------------------------------
+                         relative delay                         0.970    
+
+
+
+Id: 10
+set_bus_skew -from [get_pins [list {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[0]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[1]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[2]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[3]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[4]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[5]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[6]/C} {u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "*u_jc_core/fifo/rp_g_s1_reg*"}] 8.000
+Requirement: 8.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+clk_out3_jcc_clk_wiz_0_0
+                      tck_user4             u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]/D
+                                                                            u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[0]/D
+                                                                                                            Slow         0.420      7.580
+
+
+Slack (MET) :             7.580ns  (requirement - actual skew)
+  Endpoint Source:        u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Endpoint Destination:   u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4)
+  Reference Source:       u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Reference Destination:  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[0]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user4)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            8.000ns
+  Endpoint Relative Delay:   -0.602ns
+  Reference Relative Delay:  -6.682ns
+  Relative CRPR:              5.660ns
+  Actual Bus Skew:            0.420ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.752 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.050     0.802    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.802 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.346     1.148    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                     -0.127     1.021 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.201     1.222    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     1.250 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.584     3.834    u_bd/jcc_i/loader/inst/u_jc_core/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.077     3.911 r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]/Q
+                         net (fo=4, unplaced)         0.197     4.108    u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_reg[7]
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      0.465     0.465 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, unplaced)         1.757     2.222    u_bd/jcc_i/loader/inst/u_jc_frx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     2.246 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+                         net (fo=1346, unplaced)      2.439     4.685    u_bd/jcc_i/loader/inst/u_jc_core/fifo/tck_o
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]/C
+                         clock pessimism              0.000     4.685    
+                         FDRE (Setup_FDRE_C_D)        0.025     4.710    u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[7]
+  -------------------------------------------------------------------
+                         data arrival                           4.108    
+                         clock arrival                          4.710    
+  -------------------------------------------------------------------
+                         relative delay                        -0.602    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     0.641 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.040     0.681    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.681 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.312     0.993    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                      0.630     1.623 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.178     1.801    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     1.825 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.439     4.264    u_bd/jcc_i/loader/inst/u_jc_core/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.058     4.322 r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_reg[0]/Q
+                         net (fo=1, unplaced)         0.121     4.443    u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g[0]
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user4 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      5.900     5.900 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_bscan/TCK
+                         net (fo=1, unplaced)         2.553     8.453    u_bd/jcc_i/loader/inst/u_jc_frx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     8.481 r  u_bd/jcc_i/loader/inst/u_jc_frx/u_jc_tck_bufg/O
+                         net (fo=1346, unplaced)      2.584    11.065    u_bd/jcc_i/loader/inst/u_jc_core/fifo/tck_o
+                         FDRE                                         r  u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[0]/C
+                         clock pessimism              0.000    11.065    
+                         FDRE (Hold_FDRE_C_D)         0.060    11.125    u_bd/jcc_i/loader/inst/u_jc_core/fifo/rp_g_s1_reg[0]
+  -------------------------------------------------------------------
+                         data arrival                           4.443    
+                         clock arrival                         11.125    
+  -------------------------------------------------------------------
+                         relative delay                        -6.682    
+
+
+
+Id: 11
+set_bus_skew -from [get_pins [list {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[0]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[1]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[2]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[3]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[4]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[5]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[6]/C} {u_bd/jcc_i/ctl/inst/fifo/wp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/ctl/inst/fifo/wp_g_s1_reg*"}] 8.000
+Requirement: 8.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+tck_user3             clk_out3_jcc_clk_wiz_0_0
+                                            u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[7]/D
+                                                                            u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[0]/D
+                                                                                                            Slow         0.420      7.580
+
+
+Slack (MET) :             7.580ns  (requirement - actual skew)
+  Endpoint Source:        u_bd/jcc_i/ctl/inst/fifo/wp_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by tck_user3)
+  Endpoint Destination:   u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[7]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Reference Source:       u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by tck_user3)
+  Reference Destination:  u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[0]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            8.000ns
+  Endpoint Relative Delay:    5.450ns
+  Reference Relative Delay:   0.970ns
+  Relative CRPR:              4.060ns
+  Actual Bus Skew:            0.420ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck_user3 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_jc_ctl_rx/u_jc_ctl_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      4.300     4.300 r  u_jc_ctl_rx/u_jc_ctl_bscan/TCK
+                         net (fo=1, unplaced)         2.553     6.853    u_jc_ctl_rx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     6.881 r  u_jc_ctl_rx/u_jc_ctl_tck_bufg/O
+                         net (fo=1259, unplaced)      2.584     9.465    u_bd/jcc_i/ctl/inst/fifo/tck
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_reg[7]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.077     9.542 r  u_bd/jcc_i/ctl/inst/fifo/wp_reg[7]/Q
+                         net (fo=4, unplaced)         0.197     9.739    u_bd/jcc_i/ctl/inst/fifo/wp_reg__0[7]
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[7]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     0.641 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.040     0.681    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.681 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.312     0.993    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                      0.630     1.623 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.178     1.801    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     1.825 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.439     4.264    u_bd/jcc_i/ctl/inst/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[7]/C
+                         clock pessimism              0.000     4.264    
+                         FDRE (Setup_FDRE_C_D)        0.025     4.289    u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[7]
+  -------------------------------------------------------------------
+                         data arrival                           9.739    
+                         clock arrival                          4.289    
+  -------------------------------------------------------------------
+                         relative delay                         5.450    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock tck_user3 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_jc_ctl_rx/u_jc_ctl_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      0.465     0.465 r  u_jc_ctl_rx/u_jc_ctl_bscan/TCK
+                         net (fo=1, unplaced)         1.757     2.222    u_jc_ctl_rx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     2.246 r  u_jc_ctl_rx/u_jc_ctl_tck_bufg/O
+                         net (fo=1259, unplaced)      2.439     4.685    u_bd/jcc_i/ctl/inst/fifo/tck
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.058     4.743 r  u_bd/jcc_i/ctl/inst/fifo/wp_g_reg[0]/Q
+                         net (fo=1, unplaced)         0.121     4.864    u_bd/jcc_i/ctl/inst/fifo/wp_g[0]
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.752 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.050     0.802    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.802 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.346     1.148    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                     -0.127     1.021 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.201     1.222    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     1.250 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.584     3.834    u_bd/jcc_i/ctl/inst/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[0]/C
+                         clock pessimism              0.000     3.834    
+                         FDRE (Hold_FDRE_C_D)         0.060     3.894    u_bd/jcc_i/ctl/inst/fifo/wp_g_s1_reg[0]
+  -------------------------------------------------------------------
+                         data arrival                           4.864    
+                         clock arrival                          3.894    
+  -------------------------------------------------------------------
+                         relative delay                         0.970    
+
+
+
+Id: 12
+set_bus_skew -from [get_pins [list {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[0]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[1]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[2]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[3]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[4]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[5]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[6]/C} {u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]/C}]] -to [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/ctl/inst/fifo/rp_g_s1_reg*"}] 8.000
+Requirement: 8.000ns
+Endpoints: 8
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+clk_out3_jcc_clk_wiz_0_0
+                      tck_user3             u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[7]/D
+                                                                            u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[0]/D
+                                                                                                            Slow         0.420      7.580
+
+
+Slack (MET) :             7.580ns  (requirement - actual skew)
+  Endpoint Source:        u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Endpoint Destination:   u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[7]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user3)
+  Reference Source:       u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out3_jcc_clk_wiz_0_0)
+  Reference Destination:  u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[0]/D
+                            (rising edge-triggered cell FDRE clocked by tck_user3)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            8.000ns
+  Endpoint Relative Delay:   -0.602ns
+  Reference Relative Delay:  -5.082ns
+  Relative CRPR:              4.060ns
+  Actual Bus Skew:            0.420ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.752 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.050     0.802    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.802 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.346     1.148    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                     -0.127     1.021 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.201     1.222    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     1.250 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.584     3.834    u_bd/jcc_i/ctl/inst/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.077     3.911 r  u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]/Q
+                         net (fo=4, unplaced)         0.197     4.108    u_bd/jcc_i/ctl/inst/fifo/rp_reg[7]
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[7]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user3 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_jc_ctl_rx/u_jc_ctl_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      0.465     0.465 r  u_jc_ctl_rx/u_jc_ctl_bscan/TCK
+                         net (fo=1, unplaced)         1.757     2.222    u_jc_ctl_rx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     2.246 r  u_jc_ctl_rx/u_jc_ctl_tck_bufg/O
+                         net (fo=1259, unplaced)      2.439     4.685    u_bd/jcc_i/ctl/inst/fifo/tck
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[7]/C
+                         clock pessimism              0.000     4.685    
+                         FDRE (Setup_FDRE_C_D)        0.025     4.710    u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[7]
+  -------------------------------------------------------------------
+                         data arrival                           4.108    
+                         clock arrival                          4.710    
+  -------------------------------------------------------------------
+                         relative delay                        -0.602    
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out3_jcc_clk_wiz_0_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p (IN)
+                         net (fo=0)                   0.000     0.000    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     0.641 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, estimated)        0.040     0.681    u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.681 r  u_bd/jcc_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, unplaced)         0.312     0.993    u_bd/jcc_i/clk_wiz_0/inst/clk_in1
+                         MMCME4_ADV (Prop_MMCME4_ADV_CLKIN1_CLKOUT2)
+                                                      0.630     1.623 r  u_bd/jcc_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT2
+                         net (fo=1, unplaced)         0.178     1.801    u_bd/jcc_i/clk_wiz_0/inst/clk_out3_jcc_clk_wiz_0_0
+                         BUFGCE (Prop_BUFGCE_I_O)     0.024     1.825 r  u_bd/jcc_i/clk_wiz_0/inst/clkout3_buf/O
+                         net (fo=415418, unplaced)    2.439     4.264    u_bd/jcc_i/ctl/inst/fifo/aclk
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+                         FDRE (Prop_FDRE_C_Q)         0.058     4.322 r  u_bd/jcc_i/ctl/inst/fifo/rp_g_reg[0]/Q
+                         net (fo=1, unplaced)         0.121     4.443    u_bd/jcc_i/ctl/inst/fifo/rp_g[0]
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock tck_user3 rise edge)
+                                                      0.000     0.000 r  
+                         BSCANE2                      0.000     0.000 r  u_jc_ctl_rx/u_jc_ctl_bscan/INTERNAL_TCK
+                         BSCANE2 (Prop_BSCANE2_INTERNAL_TCK_TCK)
+                                                      4.300     4.300 r  u_jc_ctl_rx/u_jc_ctl_bscan/TCK
+                         net (fo=1, unplaced)         2.553     6.853    u_jc_ctl_rx/tck_raw
+                         BUFGCE (Prop_BUFGCE_I_O)     0.028     6.881 r  u_jc_ctl_rx/u_jc_ctl_tck_bufg/O
+                         net (fo=1259, unplaced)      2.584     9.465    u_bd/jcc_i/ctl/inst/fifo/tck
+                         FDRE                                         r  u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[0]/C
+                         clock pessimism              0.000     9.465    
+                         FDRE (Hold_FDRE_C_D)         0.060     9.525    u_bd/jcc_i/ctl/inst/fifo/rp_g_s1_reg[0]
+  -------------------------------------------------------------------
+                         data arrival                           4.443    
+                         clock arrival                          9.525    
+  -------------------------------------------------------------------
+                         relative delay                        -5.082    
+
+
+
