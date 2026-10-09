@@ -46,6 +46,10 @@ import sys
 # so none can move a statically folded index, which is the failure mode the
 # elaboration rows exist to catch.
 EXEMPT = {
+    'INIT_HI':
+        'TEST ONLY on a_util_ctr (rtl/a_util_ctr.vhd:21): starts counter 0 at 2**32 - 3 so '
+        'tb_a_util_ctr reaches the 32-bit wrap; only that bench sets it true, no top or '
+        'card build does, and the true arm only changes one reset constant.',
     'A_BEHAV':
         'behavioural stand-in for subsystem A; replaces real logic with a stub, '
         'so it elaborates strictly less than the arm the card builds.',
