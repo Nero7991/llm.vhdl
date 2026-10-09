@@ -8,7 +8,7 @@ MEASURED (Vivado 2023.2, routed design):
 
 | | value |
 |---|---|
-| WNS / WHS | +0.137 ns / +0.009 ns or better (JCCARD_WNS gate passed) |
+| WNS / TNS / WHS / THS | +0.137 ns / 0 / +0.009 ns / 0 (report_timing_summary; JCCARD_WNS gate passed) |
 | route_status | 656,939 nets fully routed, 0 routing errors |
 | bus skew | 16 constraints, 16 with paths, 0 violated, worst +7.256 ns |
 | CDC report | 0 critical crossings; ctl CDC audit 0 unexpected |
