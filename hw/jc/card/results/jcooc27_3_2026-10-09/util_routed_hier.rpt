@@ -1,0 +1,235 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date         : Fri Oct  9 15:07:25 2026
+| Host         : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command      : report_utilization -hierarchical -file /mnt/storage/fk33_builds/jcooc27_3/ooc/util_routed_hier.rpt
+| Design       : jc_ooc27_top
+| Device       : xcvu35p-fsvh2104-2L-e
+| Speed File   : -2L
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++---------------------------------------+--------------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+|                Instance               |             Module             | Total LUTs | Logic LUTs | LUTRAMs | SRLs |   FFs  | RAMB36 | RAMB18 | URAM | DSP Blocks |
++---------------------------------------+--------------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+| jc_ooc27_top                          |                          (top) |     363397 |     289584 |   73116 |  697 | 287873 |    502 |     45 |   50 |       2023 |
+|   (jc_ooc27_top)                      |                          (top) |          0 |          0 |       0 |    0 |    198 |      0 |      0 |    0 |          0 |
+|   u_card                              |                      fk33_card |     271407 |     216468 |   54656 |  283 | 210577 |    324 |     42 |   50 |        438 |
+|     u                                 |                 fk33_llama_top |     271407 |     216468 |   54656 |  283 | 210577 |    324 |     42 |   50 |        438 |
+|       (u)                             |                 fk33_llama_top |      44526 |       3482 |   41044 |    0 |   8263 |     10 |      3 |    0 |          1 |
+|       ga_desc.u_ad                    |                 a_desc_adapter |         41 |         41 |       0 |    0 |     47 |      0 |      0 |    0 |          0 |
+|       ga_desc.u_jc                    |                  a_job_counter |         15 |         15 |       0 |    0 |     11 |      0 |      0 |    0 |          0 |
+|       gb_real.gen_st_tier.u_jobseq    |                    gdn_job_seq |       2871 |       2871 |       0 |    0 |    435 |      0 |      0 |    0 |          0 |
+|       gb_real.gen_st_tier.u_state     |                gdn_state_store |       7671 |       4643 |    3028 |    0 |   7124 |     56 |      0 |   48 |          4 |
+|         (gb_real.gen_st_tier.u_state) |                gdn_state_store |        432 |        432 |       0 |    0 |   3658 |      0 |      0 |    0 |          0 |
+|         gconst.u_cw                   |                 gdn_conv_w_mem |         32 |         32 |       0 |    0 |      0 |     32 |      0 |    0 |          0 |
+|         gconst.u_kdma                 |  gdn_state_axi__parameterized2 |       1025 |       1025 |       0 |    0 |    678 |      0 |      0 |    0 |          1 |
+|         u_cdma                        |  gdn_state_axi__parameterized1 |        795 |        795 |       0 |    0 |   1167 |      0 |      0 |    0 |          1 |
+|         u_conv                        |               gdn_conv_tap_mem |        203 |        203 |       0 |    0 |     10 |     24 |      0 |    0 |          0 |
+|         u_dma                         |                  gdn_state_axi |        719 |        571 |     148 |    0 |    398 |      0 |      0 |    0 |          1 |
+|         u_edma                        |  gdn_state_axi__parameterized0 |        645 |        645 |       0 |    0 |   1183 |      0 |      0 |    0 |          1 |
+|         u_exp                         |                    gdn_exp_mem |       3501 |        621 |    2880 |    0 |      8 |      0 |      0 |    0 |          0 |
+|         u_mem                         |                  gdn_state_mem |        321 |        321 |       0 |    0 |     22 |      0 |      0 |   48 |          0 |
+|       gb_real.u_gdn                   |                      gdn_block |      60408 |      49681 |   10524 |  203 |  34252 |     15 |     14 |    2 |        141 |
+|         (gb_real.u_gdn)               |                      gdn_block |       8440 |       1728 |    6712 |    0 |   6939 |      0 |      0 |    0 |          0 |
+|         u_conv                        |                       gdn_conv |       6367 |       6367 |       0 |    0 |   1392 |      0 |      0 |    2 |         16 |
+|         u_emit                        |                 gdn_emit_chain |      21481 |      21373 |      36 |   72 |  14381 |     12 |      9 |    0 |         57 |
+|           (u_emit)                    |                 gdn_emit_chain |        568 |        568 |       0 |    0 |   6410 |      0 |      0 |    0 |          0 |
+|           u_head                      |                  gdn_head_emit |       1577 |       1562 |       8 |    7 |   2331 |      1 |      0 |    0 |          0 |
+|           u_rms                       |                     rmsnorm_bf |       8614 |       8614 |       0 |    0 |   4406 |      0 |      0 |    0 |         40 |
+|           u_silu                      |       gdn_silu__parameterized0 |       9622 |       9557 |       0 |   65 |    914 |      0 |      8 |    0 |         16 |
+|           u_y                         |                     gdn_y_emit |       1108 |       1080 |      28 |    0 |    320 |     11 |      1 |    0 |          1 |
+|         u_exp                         |                gdn_exp_capture |       1359 |       1119 |     240 |    0 |    549 |      0 |      0 |    0 |          0 |
+|         u_l2                          |                      l2norm_rs |       4756 |       4756 |       0 |    0 |   4877 |      0 |      0 |    0 |         36 |
+|         u_recur                       |                 gdn_recur_pipe |       9298 |       5668 |    3536 |   94 |   5170 |      3 |      1 |    0 |         17 |
+|         u_scal                        |                     gdn_scalar |       4671 |       4671 |       0 |    0 |    494 |      0 |      0 |    0 |          7 |
+|         u_silu_conv                   |                       gdn_silu |       4046 |       4009 |       0 |   37 |    450 |      0 |      4 |    0 |          8 |
+|       gcr.gkvaxi.u_kv                 |                    attn_kv_axi |      20182 |      20182 |       0 |    0 |  21105 |      0 |      0 |    0 |          5 |
+|       gcr.u_attn                      |                     attn_block |     106388 |     106298 |      60 |   30 | 131945 |      4 |     23 |    0 |        238 |
+|         (gcr.u_attn)                  |                     attn_block |       6552 |       6552 |       0 |    0 |  54088 |      4 |      1 |    0 |          0 |
+|         gen_head[0].u_sm              |                   attn_softmax |        320 |        319 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[0].u_sq              |                 attn_score_q12 |        756 |        756 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         gen_head[1].u_sm              |                attn_softmax_91 |        325 |        324 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[1].u_sq              |              attn_score_q12_92 |        759 |        759 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         gen_head[2].u_sm              |                attn_softmax_93 |        322 |        321 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[2].u_sq              |              attn_score_q12_94 |        763 |        763 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         gen_head[3].u_sm              |                attn_softmax_95 |        353 |        352 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[3].u_sq              |              attn_score_q12_96 |        759 |        759 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         gen_head[4].u_sm              |                attn_softmax_97 |        323 |        322 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[4].u_sq              |              attn_score_q12_98 |        765 |        765 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         gen_head[5].u_sm              |                attn_softmax_99 |        357 |        356 |       0 |    1 |    383 |      0 |      3 |    0 |          2 |
+|         gen_head[5].u_sq              |             attn_score_q12_100 |        758 |        758 |       0 |    0 |    560 |      0 |      0 |    0 |          0 |
+|         u_arr                         |                 attn_mac_array |      73229 |      73229 |       0 |    0 |  64306 |      0 |      0 |    0 |        192 |
+|         u_emit                        |                      attn_emit |        599 |        580 |       8 |   11 |    522 |      0 |      0 |    0 |          0 |
+|         u_gate                        |                      attn_gate |        782 |        782 |       0 |    0 |    889 |      0 |      2 |    0 |          4 |
+|         u_norm                        |                     rmsnorm_rs |       9150 |       9150 |       0 |    0 |   5299 |      0 |      0 |    0 |         22 |
+|         u_quant                       |                  attn_kv_quant |       7611 |       7591 |      12 |    8 |    450 |      0 |      0 |    0 |          0 |
+|         u_recip                       |                     attn_recip |        151 |        151 |       0 |    0 |    306 |      0 |      0 |    0 |          0 |
+|           (u_recip)                   |                     attn_recip |         74 |         74 |       0 |    0 |    156 |      0 |      0 |    0 |          0 |
+|           u_div                       |                     divider_rs |         78 |         78 |       0 |    0 |    150 |      0 |      0 |    0 |          0 |
+|         u_rope                        |                      attn_rope |       1678 |       1633 |      40 |    5 |    227 |      0 |      0 |    0 |          4 |
+|         u_tw                          |                   attn_twiddle |        104 |        104 |       0 |    0 |    200 |      0 |      2 |    0 |          4 |
+|       gen_vstub[0].gvr.u_rms          |                 rmsnorm_bf_mem |       5114 |       5114 |       0 |    0 |   2389 |     12 |      0 |    0 |         40 |
+|         (gen_vstub[0].gvr.u_rms)      |                 rmsnorm_bf_mem |       3960 |       3960 |       0 |    0 |   2389 |      0 |      0 |    0 |         40 |
+|         gbank[0].uo                   |                        vec_mem |        285 |        285 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[0].uw                   |                     vec_mem_80 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[0].ux                   |                     vec_mem_81 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[1].uo                   |                     vec_mem_82 |        301 |        301 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[1].uw                   |                     vec_mem_83 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[1].ux                   |                     vec_mem_84 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[2].uo                   |                     vec_mem_85 |        279 |        279 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[2].uw                   |                     vec_mem_86 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[2].ux                   |                     vec_mem_87 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[3].uo                   |                     vec_mem_88 |        281 |        281 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[3].uw                   |                     vec_mem_89 |          7 |          7 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|         gbank[3].ux                   |                     vec_mem_90 |          1 |          1 |       0 |    0 |      0 |      1 |      0 |    0 |          0 |
+|       gen_vstub[2].gsr.u_swg          |                     swiglu_mem |       1718 |       1684 |       0 |   34 |    406 |     43 |      2 |    0 |          9 |
+|         (gen_vstub[2].gsr.u_swg)      |                     swiglu_mem |        877 |        877 |       0 |    0 |    250 |      0 |      0 |    0 |          8 |
+|         gbank[0].ug                   |        vec_mem__parameterized0 |        305 |        305 |       0 |    0 |      0 |     16 |      0 |    0 |          0 |
+|         gbank[0].uo                   |     vec_mem__parameterized0_78 |         68 |         68 |       0 |    0 |      0 |     11 |      0 |    0 |          0 |
+|         gbank[0].uu                   |     vec_mem__parameterized0_79 |        290 |        290 |       0 |    0 |      0 |     16 |      0 |    0 |          0 |
+|         gen_sig[0].u_sig              |                 sigmoid_q_pipe |        183 |        149 |       0 |   34 |    156 |      0 |      2 |    0 |          1 |
+|       gsmp.u_smp                      |                 sampler_stream |         68 |         68 |       0 |    0 |    129 |      0 |      0 |    0 |          0 |
+|       u_fetch                         |                 seq_desc_fetch |      13107 |      13107 |       0 |    0 |    780 |      0 |      0 |    0 |          0 |
+|       u_lock                          |                seq_region_lock |        355 |        355 |       0 |    0 |    570 |      0 |      0 |    0 |          0 |
+|       u_opdec                         |                      seq_opdec |        111 |        111 |       0 |    0 |    104 |      0 |      0 |    0 |          0 |
+|       u_regmem                        |                     region_mem |       2169 |       2169 |       0 |    0 |     30 |    184 |      0 |    0 |          0 |
+|       u_vissue                        |                  seq_vec_issue |       1491 |       1491 |       0 |    0 |    124 |      0 |      0 |    0 |          0 |
+|       u_vres                          |                    seq_vec_res |       5226 |       5210 |       0 |   16 |   2863 |      0 |      0 |    0 |          0 |
+|   u_eng                               |                    fk33_engine |      90896 |      72274 |   18208 |  414 |  76236 |    166 |      1 |    0 |       1585 |
+|     (u_eng)                           |                    fk33_engine |         41 |         41 |       0 |    0 |     81 |      0 |      0 |    0 |          0 |
+|     eng                               |           matvec_int4_desc_axi |      90855 |      72233 |   18208 |  414 |  76155 |    166 |      1 |    0 |       1585 |
+|       (eng)                           |           matvec_int4_desc_axi |       1370 |       1370 |       0 |    0 |   2739 |     17 |      0 |    0 |          1 |
+|       dfetch                          |                    axi_rd_port |        390 |        242 |     148 |    0 |    206 |      4 |      0 |    0 |          0 |
+|         (dfetch)                      |                    axi_rd_port |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|         g_dc.fifo                     |                     async_fifo |        209 |         61 |     148 |    0 |     73 |      4 |      0 |    0 |          0 |
+|         g_dc.fsm                      |                     axi_rd_fsm |        182 |        182 |       0 |    0 |    124 |      0 |      0 |    0 |          0 |
+|       dut                             |                    matvec_int4 |      89080 |      70606 |   18060 |  414 |  73146 |    145 |      1 |    0 |       1584 |
+|         actmem                        |                act_mem_striped |          0 |          0 |       0 |    0 |      0 |     16 |      0 |    0 |          0 |
+|         core                          |                    matvec_core |      77300 |      62822 |   14064 |  414 |  65117 |     21 |      1 |    0 |       1584 |
+|         streamer                      |                weight_streamer |      11782 |       7786 |    3996 |    0 |   8029 |    108 |      0 |    0 |          0 |
+|           (streamer)                  |                weight_streamer |          0 |          0 |       0 |    0 |    769 |      0 |      0 |    0 |          0 |
+|           gen_s[0].scale_port         |    axi_rd_port__parameterized0 |        441 |        293 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_s[0].scale_port)     |    axi_rd_port__parameterized0 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_76 |        211 |         63 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_77 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_s[1].scale_port         |  axi_rd_port__parameterized0_0 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_s[1].scale_port)     |  axi_rd_port__parameterized0_0 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_74 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_75 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_s[2].scale_port         |  axi_rd_port__parameterized0_1 |        436 |        288 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_s[2].scale_port)     |  axi_rd_port__parameterized0_1 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_72 |        206 |         58 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_73 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[0].port_p             |  axi_rd_port__parameterized0_2 |        439 |        291 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[0].port_p)         |  axi_rd_port__parameterized0_2 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_70 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_71 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[10].port_p            |  axi_rd_port__parameterized0_3 |        442 |        294 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[10].port_p)        |  axi_rd_port__parameterized0_3 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_68 |        212 |         64 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_69 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[11].port_p            |  axi_rd_port__parameterized0_4 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[11].port_p)        |  axi_rd_port__parameterized0_4 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_66 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_67 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[12].port_p            |  axi_rd_port__parameterized0_5 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[12].port_p)        |  axi_rd_port__parameterized0_5 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_64 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_65 |        227 |        227 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[13].port_p            |  axi_rd_port__parameterized0_6 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[13].port_p)        |  axi_rd_port__parameterized0_6 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_62 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_63 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[14].port_p            |  axi_rd_port__parameterized0_7 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[14].port_p)        |  axi_rd_port__parameterized0_7 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_60 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_61 |        227 |        227 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[15].port_p            |  axi_rd_port__parameterized0_8 |        440 |        292 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[15].port_p)        |  axi_rd_port__parameterized0_8 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_58 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_59 |        229 |        229 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[16].port_p            |  axi_rd_port__parameterized0_9 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[16].port_p)        |  axi_rd_port__parameterized0_9 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_56 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_57 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[17].port_p            | axi_rd_port__parameterized0_10 |        436 |        288 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[17].port_p)        | axi_rd_port__parameterized0_10 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_54 |        207 |         59 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_55 |        227 |        227 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[18].port_p            | axi_rd_port__parameterized0_11 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[18].port_p)        | axi_rd_port__parameterized0_11 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_52 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_53 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[19].port_p            | axi_rd_port__parameterized0_12 |        441 |        293 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[19].port_p)        | axi_rd_port__parameterized0_12 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_50 |        210 |         62 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_51 |        229 |        229 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[1].port_p             | axi_rd_port__parameterized0_13 |        439 |        291 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[1].port_p)         | axi_rd_port__parameterized0_13 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_48 |        210 |         62 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_49 |        227 |        227 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[20].port_p            | axi_rd_port__parameterized0_14 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[20].port_p)        | axi_rd_port__parameterized0_14 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_46 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_47 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[21].port_p            | axi_rd_port__parameterized0_15 |        429 |        281 |     148 |    0 |    264 |      4 |      0 |    0 |          0 |
+|             (gen_w[21].port_p)        | axi_rd_port__parameterized0_15 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_44 |        211 |         63 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_45 |        216 |        216 |       0 |    0 |    155 |      0 |      0 |    0 |          0 |
+|           gen_w[22].port_p            | axi_rd_port__parameterized0_16 |        439 |        291 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[22].port_p)        | axi_rd_port__parameterized0_16 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_42 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_43 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[23].port_p            | axi_rd_port__parameterized0_17 |        440 |        292 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[23].port_p)        | axi_rd_port__parameterized0_17 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_40 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_41 |        229 |        229 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[2].port_p             | axi_rd_port__parameterized0_18 |        439 |        291 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[2].port_p)         | axi_rd_port__parameterized0_18 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_38 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_39 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[3].port_p             | axi_rd_port__parameterized0_19 |        439 |        291 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[3].port_p)         | axi_rd_port__parameterized0_19 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_36 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_37 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[4].port_p             | axi_rd_port__parameterized0_20 |        437 |        289 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[4].port_p)         | axi_rd_port__parameterized0_20 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_34 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_35 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|           gen_w[5].port_p             | axi_rd_port__parameterized0_21 |        426 |        278 |     148 |    0 |    264 |      4 |      0 |    0 |          0 |
+|             (gen_w[5].port_p)         | axi_rd_port__parameterized0_21 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_32 |        207 |         59 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_33 |        218 |        218 |       0 |    0 |    155 |      0 |      0 |    0 |          0 |
+|           gen_w[6].port_p             | axi_rd_port__parameterized0_22 |        427 |        279 |     148 |    0 |    264 |      4 |      0 |    0 |          0 |
+|             (gen_w[6].port_p)         | axi_rd_port__parameterized0_22 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_30 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_31 |        217 |        217 |       0 |    0 |    155 |      0 |      0 |    0 |          0 |
+|           gen_w[7].port_p             | axi_rd_port__parameterized0_23 |        427 |        279 |     148 |    0 |    264 |      4 |      0 |    0 |          0 |
+|             (gen_w[7].port_p)         | axi_rd_port__parameterized0_23 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_28 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_29 |        218 |        218 |       0 |    0 |    155 |      0 |      0 |    0 |          0 |
+|           gen_w[8].port_p             | axi_rd_port__parameterized0_24 |        427 |        279 |     148 |    0 |    264 |      4 |      0 |    0 |          0 |
+|             (gen_w[8].port_p)         | axi_rd_port__parameterized0_24 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |  async_fifo__parameterized0_26 |        209 |         61 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |  axi_rd_fsm__parameterized0_27 |        216 |        216 |       0 |    0 |    155 |      0 |      0 |    0 |          0 |
+|           gen_w[9].port_p             | axi_rd_port__parameterized0_25 |        438 |        290 |     148 |    0 |    270 |      4 |      0 |    0 |          0 |
+|             (gen_w[9].port_p)         | axi_rd_port__parameterized0_25 |          2 |          2 |       0 |    0 |      9 |      0 |      0 |    0 |          0 |
+|             g_dc.fifo                 |     async_fifo__parameterized0 |        208 |         60 |     148 |    0 |    100 |      4 |      0 |    0 |          0 |
+|             g_dc.fsm                  |     axi_rd_fsm__parameterized0 |        228 |        228 |       0 |    0 |    161 |      0 |      0 |    0 |          0 |
+|       gu.gdc.uctr                     |                     a_util_ctr |         15 |         15 |       0 |    0 |     64 |      0 |      0 |    0 |          0 |
+|   u_seam                              |                      fk33_seam |       1097 |        845 |     252 |    0 |    862 |     12 |      2 |    0 |          0 |
++---------------------------------------+--------------------------------+------------+------------+---------+------+--------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

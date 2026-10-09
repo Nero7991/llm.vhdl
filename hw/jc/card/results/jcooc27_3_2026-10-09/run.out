@@ -1,0 +1,9 @@
+JCOOC27_RUN root=/mnt/storage/fk33_builds/jcooc27_3 part=xcvu35p-fsvh2104-2L-e mem_high=20G swap_kill_bytes=4294967296 nonce=jcooc27_1791575694_3460508
+JCOOC27_MEMORY_BUDGET MemAvailable=28343353344 SwapFree=23360507904 requested_cap=20G swap_kill=4294967296 run_capped=/home/orencollaco/GitHub/llama.vhdl/hw/jc/loader/run_capped.sh vivado=/tools/Xilinx/2023.2/Vivado/2023.2/bin/vivado
+JCOOC27_LEVERS_PRE_CHECK_OK 6 patterns
+sampled_peak_current=21474713600 sampled_peak_swap=2531934208 last_memory.peak=21475332096 sys_min_MemAvailable=5727444992 sys_min_SwapFree=21351825408
+JCOOC27_LEVER NWIDE off (1 occurrence(s), all bound to 0/false)
+JCOOC27_LEVER SWEEP_PIPE off (1 occurrence(s), all bound to 0/false)
+JCOOC27_LEVER SCORE_EARLY off (1 occurrence(s), all bound to 0/false)
+JCOOC27_DONE
+LAUNCHOOC3_RC 0 2026-10-09T15:09:58-06:00
