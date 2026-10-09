@@ -161,7 +161,11 @@ entity attn_mac_array is
     Q        : natural  := 12;    -- site 5d's round_shift amount
     -- Simulation-only, gdn_emit_chain's convention.  Asserts the contracts a
     -- value check cannot see.  Synthesizes to nothing.
-    STRICT_PRODUCER : boolean := false
+    STRICT_PRODUCER : boolean := false;
+    -- Lanes served by ONE copy of the S2 write controls (see "CONTROL
+    -- REPLICATION" in the architecture).  A pure placement knob: every value
+    -- of it computes the same numbers on the same cycles.
+    CTL_GRP : positive := 4
   );
   port(
     clk : in std_logic;
@@ -257,6 +261,54 @@ architecture rtl of attn_mac_array is
   signal mode1, mode2 : mode_t := M_NONE;
   signal blk1, blk2   : integer range 0 to ACC_N-1 := 0;
 
+  -- ======================= CONTROL REPLICATION =======================
+  -- MEASURED 2026-10-08, routed card jccard7 (xcvu35p-2L, 125 MHz, Vivado
+  -- 2023.2): WNS -8.833 ns, 27,565 of 49,432 failing endpoints in THIS
+  -- entity, and the worst path is mode2_reg -> ONE LUT5 -> acc_reg/CE with
+  -- 15.5 ns of routing on a net of fanout 3,276.  The write enable of every
+  -- accumulator entry was a decode of the two shared registers mode2/blk2, so
+  -- 55,296 CE pins (QH_TILE=6, ACC_N=8, DIM_TILE=32, ACC_W=36) hung off a
+  -- handful of LUTs that the placer could put in only one place.
+  --
+  -- The fix is replication, not a pipeline stage.  Each group of CTL_GRP
+  -- lanes gets its OWN registered copy of:
+  --   wen2_g(g)(b) = (mode2 is PV or RS) and blk2 = b    the per-block CE
+  --   pv2_g(g)     = (mode2 = PV)                        the PV/RS data pick
+  --   fwd2_g(g)    = (mode2 is PV or RS) and blk2 = blk1 the read forward
+  --   blk1_g(g)    = blk1                                the S1 read select
+  -- Each is assigned on the SAME edge, from the SAME pre-edge values, as the
+  -- master register it decodes (wen2/pv2/fwd2 from mode1/blk1 exactly as
+  -- mode2/blk2 are; blk1_g exactly as blk1), so every copy equals the master
+  -- decode on every cycle.  dont_touch is what stops synthesis merging the
+  -- copies back into one register (equivalent-register removal), which would
+  -- rebuild the measured net.
+  --
+  -- THE READ IS MOVED TO S1, NOT DELAYED.  The PV accumulate used to read
+  -- acc(blk2) in S2 through an ACC_N:1 mux and add in the same stage, i.e.
+  -- acc[i] -> mux -> adder -> saturate -> acc[j] (3,342 failing endpoints).
+  -- rdq(l) now captures in S1 exactly the value S2 would have read: the file
+  -- as it stands after this edge's write, which is acc(blk1) unless S2 is
+  -- writing that same block on this edge (then the value being written, fwd2)
+  -- or the file is being cleared (then zero).  That is the definition of
+  -- "acc(blk2) at the start of the next cycle", so the PV result is the same
+  -- number on the same cycle; no port moves.  tb_attn_mac_array's FWD phase
+  -- issues back-to-back PVs and a PV right behind a rescale of the same block,
+  -- the only schedules where the forward is live, and fails without it.
+  constant NGRP : integer := (LANES + CTL_GRP - 1) / CTL_GRP;
+  type gblk_arr is array (0 to NGRP-1) of integer range 0 to ACC_N-1;
+  type gwen_arr is array (0 to NGRP-1) of std_logic_vector(ACC_N-1 downto 0);
+  type rdq_arr  is array (0 to LANES-1) of signed(ACC_W-1 downto 0);
+  signal blk1_g : gblk_arr := (others => 0);
+  signal wen2_g : gwen_arr := (others => (others => '0'));
+  signal pv2_g  : std_logic_vector(NGRP-1 downto 0) := (others => '0');
+  signal fwd2_g : std_logic_vector(NGRP-1 downto 0) := (others => '0');
+  signal rdq    : rdq_arr := (others => (others => '0'));
+  attribute dont_touch : string;
+  attribute dont_touch of blk1_g : signal is "true";
+  attribute dont_touch of wen2_g : signal is "true";
+  attribute dont_touch of pv2_g  : signal is "true";
+  attribute dont_touch of fwd2_g : signal is "true";
+
   signal pv_r  : std_logic := '0';
   signal pd_r  : std_logic_vector(QH_TILE*P_W-1 downto 0) := (others => '0');
   signal pb_r  : integer range 0 to ACC_N-1 := 0;
@@ -335,11 +387,19 @@ begin
     variable ovf  : boolean;
     variable rsh  : signed(PR_W-1 downto 0);
     variable tl, th : signed(T_W-1 downto 0);
+    variable b1n  : integer range 0 to ACC_N-1;
+    variable g    : integer;
+    variable wv   : signed(ACC_W-1 downto 0);
+    variable ovf_any : boolean;
   begin
     if rising_edge(clk) then
       if rst = '1' then
         mode1 <= M_NONE; mode2 <= M_NONE;
         blk1 <= 0; blk2 <= 0; pb_r <= 0;
+        blk1_g <= (others => 0);
+        wen2_g <= (others => (others => '0'));
+        pv2_g  <= (others => '0');
+        fwd2_g <= (others => '0');
         sv3 <= '0'; blk3 <= 0;
         pv_r <= '0'; ov_r <= '0'; er_r <= '0'; ov_r2 <= '0';
         acc  <= (others => (others => '0'));
@@ -394,6 +454,7 @@ begin
 
         -- ---------------- S0: the operand mux, REGISTERED ----------------
         md := M_NONE;
+        b1n := blk1;
         av := (others => (others => '0'));
         bv := (others => (others => '0'));
 
@@ -408,7 +469,7 @@ begin
                  sc_k((t2+1)*K_W-1 downto t2*K_W)), B_W);
             end loop;
           end loop;
-          blk1 <= to_integer(sc_blk);
+          b1n := to_integer(sc_blk);
         elsif pv_valid = '1' then
           md := M_PV;
           for h in 0 to QH_TILE-1 loop
@@ -422,7 +483,7 @@ begin
                  pv_v((t2+1)*K_W-1 downto t2*K_W)), B_W);
             end loop;
           end loop;
-          blk1 <= to_integer(pv_blk);
+          b1n := to_integer(pv_blk);
         elsif rs_valid = '1' then
           md := M_RS;
           for h in 0 to QH_TILE-1 loop
@@ -433,12 +494,17 @@ begin
                  unsigned(rs_f((h+1)*E_W-1 downto h*E_W))), B_W);
             end loop;
           end loop;
-          blk1 <= to_integer(rs_blk);
+          b1n := to_integer(rs_blk);
         end if;
 
         a_reg <= av;
         b_reg <= bv;
         mode1 <= md;
+        -- blk1 and its copies load on the same condition: a mode offered.
+        if md /= M_NONE then
+          blk1   <= b1n;
+          blk1_g <= (others => b1n);
+        end if;
 
         -- ---------------- S1: the multiply, alone in its stage ------------
         for l in 0 to LANES-1 loop
@@ -446,6 +512,24 @@ begin
         end loop;
         mode2 <= mode1;
         blk2  <= blk1;
+        -- The replicated S2 controls, decoded from the same mode1/blk1 that
+        -- mode2/blk2 copy on this edge.  b1n is blk1's value after this edge
+        -- (it defaults to blk1), so fwd2 is "S2 writes the block S1 reads".
+        for gg in 0 to NGRP-1 loop
+          for b in 0 to ACC_N-1 loop
+            if (mode1 = M_PV or mode1 = M_RS) and blk1 = b then
+              wen2_g(gg)(b) <= '1';
+            else
+              wen2_g(gg)(b) <= '0';
+            end if;
+          end loop;
+          if mode1 = M_PV then pv2_g(gg) <= '1'; else pv2_g(gg) <= '0'; end if;
+          if (mode1 = M_PV or mode1 = M_RS) and blk1 = b1n then
+            fwd2_g(gg) <= '1';
+          else
+            fwd2_g(gg) <= '0';
+          end if;
+        end loop;
 
         -- ---------------- S2: tree / accumulate ---------------------------
         pv_r  <= '0';
@@ -485,37 +569,48 @@ begin
             sv3  <= '1';
             blk3 <= blk2;
 
-          when M_PV =>
-            -- ONE shared adder per lane; see the header's MEASURED note.
-            for h in 0 to QH_TILE-1 loop
-              for t2 in 0 to DIM_TILE-1 loop
-                idx := (h*ACC_N + blk2)*DIM_TILE + t2;
-                sum := resize(acc(idx), ACC_W+1)
-                     + resize(p_reg(h*DIM_TILE + t2), ACC_W+1);
-                sat_acc(sum, acv, ovf);
-                if ovf then ov_r <= '1'; end if;
-                acc(idx) <= acv;
-              end loop;
-            end loop;
-
-          when M_RS =>
-            -- Site 5d: round half toward +infinity by Q, then saturate.  The
-            -- bias is added in this stage and the shift is the same stage's
-            -- wiring, which is one add and one constant shift, not two levels
-            -- of arithmetic.
-            for h in 0 to QH_TILE-1 loop
-              for t2 in 0 to DIM_TILE-1 loop
-                idx := (h*ACC_N + blk2)*DIM_TILE + t2;
-                rsh := shift_right(p_reg(h*DIM_TILE + t2)
-                                   + shift_left(to_signed(1, PR_W), Q-1), Q);
-                sat_acc(rsh, acv, ovf);
-                if ovf then ov_r <= '1'; end if;
-                acc(idx) <= acv;
-              end loop;
-            end loop;
-
           when others => null;
         end case;
+
+        -- ---------------- S2: PV / rescale write-back --------------------
+        -- ONE shared adder per lane; see the header's MEASURED note.  The
+        -- value is computed once per lane (wv) and written to the one entry
+        -- whose replicated enable is set, so this is still one adder plus a
+        -- write demux, now with a registered one-hot demux select.
+        --   PV : sat(acc(blk2) + prod), acc(blk2) taken from rdq (S1 read)
+        --   RS : site 5d, round half toward +infinity by Q, then saturate
+        ovf_any := false;
+        for h in 0 to QH_TILE-1 loop
+          for t2 in 0 to DIM_TILE-1 loop
+            g := (h*DIM_TILE + t2) / CTL_GRP;
+            if pv2_g(g) = '1' then
+              sum := resize(rdq(h*DIM_TILE + t2), ACC_W+1)
+                   + resize(p_reg(h*DIM_TILE + t2), ACC_W+1);
+              sat_acc(sum, acv, ovf);
+            else
+              rsh := shift_right(p_reg(h*DIM_TILE + t2)
+                                 + shift_left(to_signed(1, PR_W), Q-1), Q);
+              sat_acc(rsh, acv, ovf);
+            end if;
+            wv := acv;
+            if ovf then ovf_any := true; end if;
+            for b in 0 to ACC_N-1 loop
+              if wen2_g(g)(b) = '1' then
+                acc((h*ACC_N + b)*DIM_TILE + t2) <= wv;
+              end if;
+            end loop;
+            -- S1 read for the op now in S1, as the file will stand after
+            -- this edge: the value being written when S2 writes that block.
+            if fwd2_g(g) = '1' then
+              rdq(h*DIM_TILE + t2) <= wv;
+            else
+              rdq(h*DIM_TILE + t2) <= acc((h*ACC_N + blk1_g(g))*DIM_TILE + t2);
+            end if;
+          end loop;
+        end loop;
+        if (mode2 = M_PV or mode2 = M_RS) and ovf_any then
+          ov_r <= '1';
+        end if;
 
         -- ---------------- readback, one cycle -----------------------------
         if rd_valid = '1' then
@@ -530,6 +625,8 @@ begin
         -- nothing is in flight, and STRICT_PRODUCER says so.
         if acc_clr = '1' then
           acc  <= (others => (others => '0'));
+          -- rdq mirrors "the file after this edge", and a clear wins.
+          rdq  <= (others => (others => '0'));
           ov_r <= '0';
           er_r <= '0';
           if STRICT_PRODUCER then

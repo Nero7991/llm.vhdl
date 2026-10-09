@@ -49,7 +49,10 @@ entity tb_attn_mac_array is
     -- the partial.  3 before the 2026-09-26 S2 split, 4 after it.
     P_LAT    : positive := 4;
     VECS     : string   := "attn_mac_array_vec.txt";
-    HEARTBEAT_US : integer := 0
+    HEARTBEAT_US : integer := 0;
+    -- attn_mac_array's lanes-per-control-copy.  4 at QH_TILE=2/DIM_TILE=8
+    -- gives four groups, so a lane mapped to the wrong group's copy shows.
+    CTL_GRP  : positive := 4
   );
 end entity;
 
@@ -122,7 +125,8 @@ begin
   dut : entity work.attn_mac_array
     generic map ( QH_TILE => QH_TILE, DIM_TILE => DIM_TILE, ACC_N => ACC_N,
                   Q_W => Q_W, K_W => K_W, E_W => E_W, ACC_W => ACC_W,
-                  P_W => P_W, Q => QS, STRICT_PRODUCER => true )
+                  P_W => P_W, Q => QS, STRICT_PRODUCER => true,
+                  CTL_GRP => CTL_GRP )
     port map ( clk => clk, rst => rst, acc_clr => acc_clr,
                sc_valid => sc_valid, sc_blk => sc_blk, sc_k => sc_k,
                sc_q => sc_q,
@@ -188,6 +192,13 @@ begin
     variable ag : real;
     variable dors : integer;
     variable got : real;
+    -- FWD phase (see below).  Golden accumulators as integers: every value
+    -- in that phase is far inside the 32-bit range.
+    variable fx    : int_arr(0 to QH_TILE*N-1);
+    variable fe, fv1, fv2, fv3, fv4, fv5 : integer;
+    variable fchk  : integer := 0;
+    variable ferr  : integer := 0;
+    constant FF    : integer := 3000;     -- rescale factor, u13, below 2^Q
   begin
     file_open(fh, VECS, read_mode);
     readline(fh, ln);
@@ -344,6 +355,91 @@ begin
 
     file_close(fh);
 
+    -- ==================== FWD: the read-forward schedules ====================
+    -- attn_mac_array reads the accumulator for a PV in S1 (rdq) and writes it
+    -- in S2.  The S1 read must see the S2 write of the SAME block on the same
+    -- edge, which only happens when two writes to one block are ADJACENT: a
+    -- PV right behind a PV, or a PV right behind a rescale.  The vector
+    -- schedule above never does that (blocks step 0..ACC_N-1), so this phase
+    -- does, against goldens computed here:
+    --   c0 PV b1 v1   c1 PV b1 v2  (PV -> PV forward)
+    --   c2,c3 idle    (the rescale hazard assertion needs b1 out of S1/S2)
+    --   c4 RS b1 f    c5 PV b1 v3  (RS -> PV forward)
+    --   c6 PV b0 v5   c7 PV b1 v4  (adjacent, DIFFERENT blocks: no forward)
+    -- Without the forward, c1 reads acc(b1) before c0's write and the c0
+    -- contribution is lost; the c5 PV adds to the pre-rescale value.
+    acc_clr <= '1';
+    wait until rising_edge(clk);
+    acc_clr <= '0';
+    wait until rising_edge(clk);
+    for h in 0 to QH_TILE-1 loop
+      pv_e((h+1)*E_W-1 downto h*E_W) <= std_logic_vector(to_unsigned(100 + 7*h, E_W));
+      rs_f((h+1)*E_W-1 downto h*E_W) <= std_logic_vector(to_unsigned(FF, E_W));
+    end loop;
+    for cyc in 0 to 7 loop
+      pv_valid <= '0'; rs_valid <= '0';
+      for t in 0 to DIM_TILE-1 loop
+        case cyc is
+          when 0 => fv1 := (t mod 5) + 1;  pv_v((t+1)*K_W-1 downto t*K_W) <= std_logic_vector(to_signed(fv1, K_W));
+          when 1 => fv2 := (t mod 3) + 2;  pv_v((t+1)*K_W-1 downto t*K_W) <= std_logic_vector(to_signed(fv2, K_W));
+          when 5 => fv3 := (t mod 4) - 2;  pv_v((t+1)*K_W-1 downto t*K_W) <= std_logic_vector(to_signed(fv3, K_W));
+          when 6 => fv5 := 3;              pv_v((t+1)*K_W-1 downto t*K_W) <= std_logic_vector(to_signed(fv5, K_W));
+          when 7 => fv4 := (t mod 2) + 1;  pv_v((t+1)*K_W-1 downto t*K_W) <= std_logic_vector(to_signed(fv4, K_W));
+          when others => null;
+        end case;
+      end loop;
+      case cyc is
+        when 0 | 1 | 5 | 7 => pv_valid <= '1'; pv_blk <= to_unsigned(1, clog2(ACC_N));
+        when 6             => pv_valid <= '1'; pv_blk <= to_unsigned(0, clog2(ACC_N));
+        when 4             => rs_valid <= '1'; rs_blk <= to_unsigned(1, clog2(ACC_N));
+        when others        => null;
+      end case;
+      wait until rising_edge(clk);
+    end loop;
+    pv_valid <= '0'; rs_valid <= '0';
+    for i in 1 to 6 loop wait until rising_edge(clk); end loop;
+
+    -- goldens.  Site 5d: (x*f + 2^(Q-1)) >> Q, floor; every x*f here is >= 0
+    -- before the c5 add, so integer division IS the floor.
+    for h in 0 to QH_TILE-1 loop
+      fe := 100 + 7*h;
+      for i in 0 to N-1 loop fx(h*N + i) := 0; end loop;
+      for t in 0 to DIM_TILE-1 loop
+        fv1 := (t mod 5) + 1; fv2 := (t mod 3) + 2; fv3 := (t mod 4) - 2;
+        fv4 := (t mod 2) + 1; fv5 := 3;
+        fx(h*N + 1*DIM_TILE + t) :=
+          (fe*(fv1 + fv2)*FF + 2**(QS-1)) / 2**QS + fe*fv3 + fe*fv4;
+        fx(h*N + 0*DIM_TILE + t) := fe*fv5;
+      end loop;
+    end loop;
+
+    for h in 0 to QH_TILE-1 loop
+      for i in 0 to N-1 loop
+        rd_head  <= to_unsigned(h, clog2(QH_TILE));
+        rd_idx   <= to_unsigned(i, clog2(ACC_N*DIM_TILE));
+        rd_valid <= '1';
+        wait until rising_edge(clk);
+        rd_valid <= '0';
+        wait for 1 ns;
+        fchk := fchk + 1;
+        if o_valid /= '1' or to_real_s(o_data) /= real(fx(h*N + i)) then
+          ferr := ferr + 1;
+          report "tb_attn_mac_array: FWD head " & integer'image(h)
+               & " elem " & integer'image(i) & " got "
+               & real'image(to_real_s(o_data)) & " want "
+               & integer'image(fx(h*N + i)) severity error;
+        end if;
+        wait until rising_edge(clk);
+      end loop;
+    end loop;
+    assert fchk = QH_TILE*N
+      report "tb_attn_mac_array: FWD phase ran " & integer'image(fchk)
+           & " checks, expected " & integer'image(QH_TILE*N) severity failure;
+    if ferr /= 0 then
+      nerr <= nerr + ferr;
+      wait for 0 ns;
+    end if;
+
     assert err = '0'
       report "tb_attn_mac_array: the partial overflowed s32, so the premise "
            & "attn_score_q12's own width argument rests on is violated"
@@ -355,6 +451,8 @@ begin
            & " DIM_TILE=" & integer'image(DIM_TILE)
            & " ACC_N=" & integer'image(ACC_N)
            & " GAP=" & integer'image(GAP)
+           & " CTL_GRP=" & integer'image(CTL_GRP)
+           & ", FWD " & integer'image(fchk) & " checks"
            & ", every partial and every accumulator bit-exact, ovr="
            & std_logic'image(ovr);
     else
