@@ -2362,3 +2362,119 @@ def test_coe_transport_refuses_another_user_before_dialing(user):
     with pytest.raises(ValueError):
         L.CoeTransport(None, "A", "AB", client=coe.CoE(None, sock=sock), user=user)
     assert sock.wire == []
+
+# ---------------------------------------------------------------- load --append (2026-10-09)
+# A second plan (the side image) onto a die that already holds an earlier plan's frames:
+# the writer commits only seq == last + 1, so the appended plan's frames go on the wire
+# numbered from the die's last + 1. The Loader works in plan space; the wire is offset.
+
+APPEND_HBM = 0x100000        # P2 lives clear of P1's addresses
+
+def two_plans(tmp_path, p1_sizes=(5000, 64, 4096), p2_bytes=20_000):
+    (tmp_path / "p1").mkdir()
+    (tmp_path / "p2").mkdir()
+    f1, s1 = L.plan_frames(make_manifest(tmp_path / "p1", list(p1_sizes)))
+    f2, s2 = L.plan_frames(make_single_piece_manifest(tmp_path / "p2", APPEND_HBM, p2_bytes))
+    return (f1, s1), (f2, s2)
+
+def wire_seqs(t):
+    """Seqs of the real frames (data or range) a FakeTransport accepted, in order."""
+    return list(t.accepted_seqs)
+
+def test_append_loads_a_second_plan_after_the_first(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "ck1.json")).run_load()
+    base = m.last + 1
+    assert m.last == f1[-1].seq
+    err0 = (m.seq_err, m.dup, m.crc_fail)
+    t = L.FakeTransport(m, lead=1)
+    ld = Ld(t, f2, s2, str(tmp_path / "ck2.json"), append=True)
+    st = ld.run_load()
+    assert ld.seq_base == base
+    assert st["last"] == f2[-1].seq                       # plan space
+    assert m.last == base + f2[-1].seq                    # wire space
+    assert t.first_seq_sent == base
+    assert wire_seqs(t)[0] == base
+    assert (m.seq_err, m.dup, m.crc_fail) == err0         # no frame refused
+    assert_die_holds_the_plan(m, f1)
+    assert_die_holds_the_plan(m, f2)
+    assert len(ld.range_results) == 1 and not ld._mismatches()
+    ck = json.loads((tmp_path / "ck2.json").read_text())
+    assert ck["append"] is True and ck["seq_base"] == base and ck["last"] == f2[-1].seq
+
+def test_append_survives_a_crc_failure_and_a_reconnect_with_the_same_base(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path, p2_bytes=100_000)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "ck1.json")).run_load()
+    base = m.last + 1
+    d = Dialer(m, life=25, first_kw=dict(fail_seqs={base + 2}))
+    ld, lines = reconnecting(d, f2, s2, str(tmp_path / "ck2.json"), append=True)
+    st = ld.run_load()
+    assert st["last"] == f2[-1].seq and m.last == base + f2[-1].seq
+    assert ld.seq_base == base
+    assert ld.reconnects >= 2 and ld.resyncs >= 1 and m.crc_fail >= 1
+    assert all(q >= base for t in d.made for q in t.accepted_seqs)
+    assert_die_holds_the_plan(m, f1)
+    assert_die_holds_the_plan(m, f2)
+    assert not ld._mismatches()
+
+def test_append_on_an_empty_die_is_a_fresh_load(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path)
+    m = LoaderModel()
+    t = L.FakeTransport(m, lead=1)
+    ld = Ld(t, f2, s2, str(tmp_path / "ck.json"), append=True)
+    st = ld.run_load()
+    assert ld.seq_base == 0 and t.first_seq_sent == 0
+    assert st["last"] == m.last == f2[-1].seq
+    assert_die_holds_the_plan(m, f2)
+
+def test_append_with_resume_is_refused(tmp_path):
+    (f1, s1), _ = two_plans(tmp_path)
+    with pytest.raises(ValueError, match="append.*resume|resume.*append"):
+        Ld(L.FakeTransport(LoaderModel(), lead=1), f1, s1, str(tmp_path / "ck.json"),
+           append=True, resume=True)
+
+def test_cli_append_with_resume_aborts_before_the_board(tmp_path, monkeypatch, capsys):
+    mp = make_manifest(tmp_path, [64])
+    monkeypatch.setattr(L, "CoeTransport", lambda *a, **k: pytest.fail("touched the board"))
+    rc = L.main(["load", mp, "--bmc", "192.0.2.1", "--die", "A", "--chain", "AB",
+                 "--dies", dies_file(tmp_path, {"A": DNA_A}), "--ckpt", str(tmp_path / "ck.json"),
+                 "--append", "--resume"])
+    out = capsys.readouterr().out
+    assert rc == 2 and re_match_line(out, r"^JCLOAD_ABORT .*--append.*--resume")
+
+def test_plain_load_on_a_die_holding_another_plan_is_still_refused(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "ck1.json")).run_load()
+    last = m.last
+    with pytest.raises(L.LoadAborted, match="already holds"):
+        Ld(L.FakeTransport(m, lead=1), f2, s2, str(tmp_path / "ck2.json")).run_load()
+    assert m.last == last
+
+def test_a_plain_resume_refuses_an_append_checkpoint(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path, p2_bytes=100_000)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "ck1.json")).run_load()
+    ck = str(tmp_path / "ck2.json")
+    with pytest.raises(ConnectionError):
+        Ld(L.FakeTransport(m, lead=1, drop_after=16), f2, s2, ck, append=True).run_load()
+    last = m.last
+    t = L.FakeTransport(m, lead=1)
+    with pytest.raises(L.LoadAborted, match="--append"):
+        Ld(t, f2, s2, ck, resume=True).run_load()
+    assert t.sent == 0 and m.last == last
+
+def test_verify_after_append_passes_and_catches_a_corrupted_p2_byte(tmp_path):
+    (f1, s1), (f2, s2) = two_plans(tmp_path)
+    m = LoaderModel()
+    Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "ck1.json")).run_load()
+    Ld(L.FakeTransport(m, lead=1), f2, s2, str(tmp_path / "ck2.json"), append=True).run_load()
+    assert Ld(L.FakeTransport(m, lead=1), f2, s2, str(tmp_path / "v2.json")).run_verify() == []
+    assert Ld(L.FakeTransport(m, lead=1), f1, s1, str(tmp_path / "v1.json")).run_verify() == []
+    w = bytearray(m.mem[APPEND_HBM + 0x40])
+    w[3] ^= 0x10
+    m.mem[APPEND_HBM + 0x40] = bytes(w)
+    bad = Ld(L.FakeTransport(m, lead=1), f2, s2, str(tmp_path / "v3.json")).run_verify()
+    assert len(bad) == 1 and bad[0][0].addr == APPEND_HBM and bad[0][1] != bad[0][2]

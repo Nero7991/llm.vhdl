@@ -42,6 +42,12 @@ def test_rezero_dry_run_order_and_flags():
     assert tail == ["stop_broker", "zero_die 0 A", "zero_die 1 B", "start_broker"], tail
     assert 'tools/jc/coe_load.py load "$s"' in r and 'tools/jc/coe_load.py verify "$s"' in r
     assert '$W/card$1/side_gdn.json' in r
+    # the die already holds the image: the zero is an append, and the default checkpoint
+    # dir does not exist on the BC-250 (both MEASURED 2026-10-09)
+    load = re.search(r'coe_load\.py load "\$s".*?\n.*?\n', r).group(0)
+    assert "--append" in load and '--ckpt "$W/ckpt/' in load, load
+    ver = re.search(r'coe_load\.py verify "\$s".*?\n.*?\n', r).group(0)
+    assert "--append" not in ver and '--ckpt "$W/ckpt/' in ver, ver
     assert "--manifest A=/home/user/jc_models/qwen38-27b-card0-b0-32/manifest.json" in r
     assert "--manifest B=/home/user/jc_models/qwen38-27b-card1-b33-63/manifest.json" in r
     assert "--allow-image-read" not in r

@@ -92,12 +92,16 @@ start_broker() {
 zero_die() {   # \$1 = card number, \$2 = die
   local s="\$W/card\$1/side_gdn.json"
   [[ -f "\$s" ]] || { echo "JCLANE_FAIL missing \$s (hw/jc/host/jc_side_image.py, runbook 3.2)"; exit 1; }
+  # --append: the die already holds the image (and earlier side loads), so this plan's
+  # frames go on the wire after the die's last seq; --ckpt: the default checkpoint dir
+  # (/mnt/storage/fk33_builds/jc_load) does not exist on the BC-250 (PermissionError,
+  # 2026-10-09)
   python3 tools/jc/coe_load.py load "\$s" --bmc "\$BMC" --chain \$CHAIN --die \$2 --dies "\$DIES" \\
-      > "\$W/rezero_load_\$2.log" 2>&1
+      --append --ckpt "\$W/ckpt/rezero_\$2.json" > "\$W/rezero_load_\$2.log" 2>&1
   grep -hE '^(JCLOAD_DONE|JCLOAD_ABORT)' "\$W/rezero_load_\$2.log"
   grep -qE '^JCLOAD_DONE ' "\$W/rezero_load_\$2.log" || { echo "JCLANE_FAIL GDN zero load on die \$2 (see \$W/rezero_load_\$2.log)"; exit 1; }
   python3 tools/jc/coe_load.py verify "\$s" --bmc "\$BMC" --chain \$CHAIN --die \$2 --dies "\$DIES" \\
-      > "\$W/rezero_verify_\$2.log" 2>&1
+      --ckpt "\$W/ckpt/rezero_verify_\$2.json" > "\$W/rezero_verify_\$2.log" 2>&1
   grep -hE '^JCVERIFY_(PASS|FAIL)' "\$W/rezero_verify_\$2.log"
   grep -qE '^JCVERIFY_PASS [0-9]+ pieces, 0 bad' "\$W/rezero_verify_\$2.log" || { echo "JCLANE_FAIL GDN zero verify on die \$2 (see \$W/rezero_verify_\$2.log)"; exit 1; }
 }

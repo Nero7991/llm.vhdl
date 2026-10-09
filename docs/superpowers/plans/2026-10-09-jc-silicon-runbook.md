@@ -192,14 +192,28 @@ cd /home/orencollaco/GitHub/llama.vhdl
 for c in 0:A 1:B; do
   d=\${c#*:}; n=\${c%%:*}
   python3 tools/jc/coe_load.py load $BCW/card\$n/side.json --bmc $BMC --chain AB --die \$d \
-      --dies \$HOME/jc_dies.json > $BCW/side_load_\$d.log 2>&1
+      --dies \$HOME/jc_dies.json --append --ckpt $BCW/ckpt/side_\$d.json \
+      > $BCW/side_load_\$d.log 2>&1
   python3 tools/jc/coe_load.py verify $BCW/card\$n/side.json --bmc $BMC --chain AB --die \$d \
-      --dies \$HOME/jc_dies.json > $BCW/side_verify_\$d.log 2>&1
+      --dies \$HOME/jc_dies.json --ckpt $BCW/ckpt/side_verify_\$d.json \
+      > $BCW/side_verify_\$d.log 2>&1
   grep -hE '^(JCLOAD_|JCVERIFY_)' $BCW/side_load_\$d.log $BCW/side_verify_\$d.log
 done
 EOF
 ```
 
+- `--append` is REQUIRED (MEASURED 2026-10-09): the die already holds the 7 GB image's
+  frames (last ~3.6M), the writer commits only seq == last + 1 (`rtl/jc_hbm_writer.vhd`
+  S_DECIDE), and a plain `load` refuses a die that holds frames ("use --resume ... or
+  reload the bitstream"); `--resume` would take every side frame as already committed.
+  `load --append` numbers this plan's frames on the wire from the die's last + 1 and
+  prints `JCLOAD_APPEND seq_base=N`. It is not combinable with `--resume`; after a dropped
+  connection, rerun the same `load --append` (it re-sends the whole side image).
+  `verify` needs no flag: its range frames already use fresh seqs after the die's last.
+- `--ckpt` is REQUIRED on the BC-250 for both commands (MEASURED 2026-10-09:
+  `PermissionError`): the default checkpoint dir `/mnt/storage/fk33_builds/jc_load` does
+  not exist there, and `coe_load.py` creates the checkpoint's directory for `verify` too.
+  `$BCW/ckpt/` is created on first use.
 - Flags: `load`/`verify MANIFEST --bmc --die --chain --dies` (`tools/jc/coe_load.py:3-7`,
   parser `coe_load.py:1486-1533`); `--hz` defaults to 27 MHz (`coe_load.py:1439`). The side
   manifest is a `files` list of flat entries, which `coe_load._entries` and
@@ -208,10 +222,11 @@ EOF
 - Gate, per die: `^JCLOAD_DONE ` then `^JCVERIFY_PASS 3 pieces, 0 bad`
   (`coe_load.py:1595`, `coe_load.py:1621`).
 - Duration, ESTIMATE: 78.9 MB at the MEASURED ~2.6 MB/s = ~31 s per die plus identify and
-  range CRCs, about 45 s per die; under the BMC's ~290 s connection life, so no `--resume`.
+  range CRCs, about 45 s per die; under the BMC's ~290 s connection life (and `load`
+  reconnects on its own past it).
 - Failure: `^JCLOAD_ABORT ` (`coe_load.py:1563-1613`; a DNA mismatch names the die record),
-  or `^JCVERIFY_FAIL`. A connection drop prints `JCLOAD_ABORT connection lost`; rerun with
-  `--resume`.
+  or `^JCVERIFY_FAIL`. A connection drop prints `JCLOAD_ABORT connection lost`; rerun the
+  same `load --append` (never `--resume`: the loader refuses it on an append checkpoint).
 
 ### 3.4 [BC, BOARD] start the broker; [WS] forward its socket
 
@@ -399,7 +414,8 @@ grep -E '^CTXTEST_(PASS|FAIL)' $W/ctxtest/n500/ctxtest.log
 
 - Before EVERY run the script re-zeroes the GDN state, as the FK33 flow does (section 0
   item 8): `JC_PREP` defaults to `bash $REPO/hw/jc/host/jc_bc_lane.sh rezero`, which stops
-  the broker, runs `coe_load.py load` then `verify` of `$BCW/cardN/side_gdn.json` on die A
+  the broker, runs `coe_load.py load --append` then `verify` (both with `--ckpt` under
+  `$BCW/ckpt/`) of `$BCW/cardN/side_gdn.json` on die A
   (card 0) and die B (card 1), gating on `^JCLOAD_DONE ` and
   `^JCVERIFY_PASS [0-9]+ pieces, 0 bad`, and restarts the broker. A failed zero stops before
   the restart, and the run fails `CTXTEST_FAIL ...: JC_PREP failed`. It reads the

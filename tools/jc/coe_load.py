@@ -3,6 +3,7 @@
 
     coe_load.py identify --bmc 192.0.2.1 --chain AB|BA --die A|B --dies DIES.json [--force]
     coe_load.py load   MANIFEST.json --bmc 192.0.2.1 --die A|B --chain AB|BA --dies DIES.json [--resume]
+                [--append]
                 [--reconnect-secs 270] [--max-reconnects 50]
     coe_load.py verify MANIFEST.json --bmc 192.0.2.1 --die A|B --chain AB|BA --dies DIES.json
 
@@ -757,6 +758,7 @@ class _Session:
         s.t, s.dna, s.dna_label, s.health = t, dna, dna_label, health
         s.identified = False
         s.st = None
+        s.seq_base = 0            # load --append: wire seq = plan seq + seq_base (2026-10-09)
         s.max_piece = 0           # bytes; the Loader sets its largest range piece
         s.max_committed = 0       # highest "committed" any status has shown (fix round 3 item 3)
 
@@ -766,6 +768,31 @@ class _Session:
         return ("die identity mismatch: the die at this chain position reports DNA %s, "
                 "but %s says it is %s (%s): check --chain and --die"
                 % (dna_mask(got), s.dna_label, dna_mask(s.dna), when))
+
+    def _wire(s, seq):
+        """A plan seq as it goes on the wire (load --append offsets it by seq_base)."""
+        return (seq + s.seq_base) & M32
+
+    def _to_plan(s, st):
+        """The die's status with every seq field (last, range_seq) moved from wire space
+        into plan space: the ONE place the Loader's view of a seq is made, so its index
+        arithmetic, range phase and checkpoints never see the offset. With seq_base 0
+        this is the identity. A wire last of seq_base - 1 (the earlier plan's final
+        frame) means none of this plan: NONE. A wire last below that (or the die's own
+        NONE) means the die lost the earlier plan's frames under the run."""
+        b = s.seq_base
+        if b == 0:
+            return st
+        raw = st["last"]
+        if raw == NONE or raw < b - 1:
+            raise LoadAborted("the die's last committed seq went to %s, below this append's "
+                              "base %d: the die was reset or reconfigured mid-run; reload "
+                              "the bitstream and load every image again"
+                              % ("none" if raw == NONE else raw, b))
+        st = dict(st)
+        st["last"] = NONE if raw == b - 1 else raw - b
+        st["range_seq"] = (st["range_seq"] - b) & M32
+        return st
 
     def _take(s):
         """Read the oldest outstanding TDO. None if it carries no status word.
@@ -777,6 +804,7 @@ class _Session:
         st = status_of(s.t.recv(), s.t.status_offset)
         if st["magic"] != F.MAGIC_STAT:
             return None
+        st = s._to_plan(st)
         if st["committed"] > s.max_committed:
             s.max_committed = st["committed"]
         if s.dna is not None:
@@ -880,7 +908,7 @@ class Loader(_Session):
     again with a fresh seq. A load is done only when every piece matched; any
     mismatch aborts naming the pieces. The die's status, never the checkpoint, says
     how far a load got; the checkpoint only binds a resume to the plan's sha."""
-    def __init__(s, t, frames, plan_sha, ckpt_path, resume=False, *, dna,
+    def __init__(s, t, frames, plan_sha, ckpt_path, resume=False, *, dna, append=False,
                  dna_label="the die record", max_resyncs=MAX_RESYNCS, corrupt_seq=None,
                  connect=None, reconnect_secs=0, max_reconnects=MAX_RECONNECTS,
                  clock=None, sleep=None, log=None):
@@ -890,6 +918,8 @@ class Loader(_Session):
         the reactive ones. `clock`, `sleep` and `log` are injectable for tests."""
         if dna is None:
             raise ValueError("the Loader needs the die's expected DNA (from --dies)")
+        if append and resume:
+            raise ValueError(APPEND_RESUME_REFUSED)
         if max_resyncs < 1:
             raise ValueError("max_resyncs must be >= 1, got %r" % (max_resyncs,))
         if not (reconnect_secs == 0 or RECONNECT_SECS_MIN <= reconnect_secs <= RECONNECT_SECS_MAX):
@@ -911,6 +941,7 @@ class Loader(_Session):
         if not frames or [f.seq for f in frames] != list(range(len(frames))):
             raise ValueError("frames must be plan_frames() output: seq 0..n-1 in order")
         s.frames, s.sha, s.ckpt, s.resume = frames, plan_sha, ckpt_path, resume
+        s.append = append
         s.max_resyncs = max_resyncs
         s.ranges = [f for f in frames if f.kind == "range"]
         s.nd = len(frames) - len(s.ranges)
@@ -933,8 +964,8 @@ class Loader(_Session):
 
     def _slot(s, fr):
         if fr.kind == "range":
-            return F.range_crc_slot(fr.seq, fr.addr, fr.n)
-        slot = F.build_slot(fr.seq, fr.addr, read_payload(fr))
+            return F.range_crc_slot(s._wire(fr.seq), fr.addr, fr.n)
+        slot = F.build_slot(s._wire(fr.seq), fr.addr, read_payload(fr))
         if fr.seq == s.corrupt_seq:
             s.corrupt_seq = None                   # first send only
             b = bytearray(slot)
@@ -1122,6 +1153,11 @@ class Loader(_Session):
                 raise LoadAborted("the checkpoint %s is for a different plan (%s): reload the "
                                   "bitstream to start over, or %s"
                                   % (s.ckpt, ck["plan_sha"][:12], how))
+            if s.resume and (ck.get("append") or ck.get("seq_base")):
+                raise LoadAborted("the checkpoint %s was written by a load --append (seq base "
+                                  "%s): a resumed append is not supported; run load --append "
+                                  "again, which sends the whole plan after the die's last "
+                                  "frame" % (s.ckpt, ck.get("seq_base")))
             if ck.get("dna") != dna_hex(s.dna):
                 got = ck.get("dna")
                 got = (dna_mask(int(got, 16)) if isinstance(got, str) and _DNA_HEX.fullmatch(got)
@@ -1137,7 +1173,8 @@ class Loader(_Session):
         tmp = s.ckpt + ".tmp"
         with open(tmp, "w") as f:
             json.dump(dict(plan_sha=s.sha, dna=dna_hex(s.dna),
-                           last=None if last == NONE else last), f)
+                           last=None if last == NONE else last,
+                           append=s.append, seq_base=s.seq_base), f)
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, s.ckpt)
@@ -1283,7 +1320,7 @@ class Loader(_Session):
                 i = next(k for k in range(len(s.ranges)) if k not in s.range_results)
             fr = s.ranges[i]
             try:
-                s.t.send(F.range_crc_slot(seq, fr.addr, fr.n))
+                s.t.send(F.range_crc_slot(s._wire(seq), fr.addr, fr.n))
                 s._take()
                 how, x = s._wait_range(seq, fr.n, base)
                 if how == "ok":
@@ -1315,9 +1352,20 @@ class Loader(_Session):
     def _run_load(s):
         s._check_ckpt()
         st = s._open()
+        if s.append and st["last"] != NONE:
+            # fixed once, for the life of the run (every reconnect keeps it): this plan's
+            # seq 0 goes on the wire as the die's last + 1
+            if st["last"] + len(s.frames) >= NONE:
+                raise LoadAborted("the die's last seq %d leaves no room for %d more frames "
+                                  "before the 32-bit seq wraps: reload the bitstream"
+                                  % (st["last"], len(s.frames)))
+            s.seq_base = st["last"] + 1
+            st = s._to_plan(st)
+            s.st = st
         if st["last"] != NONE and not s.resume:
             raise LoadAborted("the die already holds frames up to seq %d; use --resume with "
-                              "the same plan, or reload the bitstream" % st["last"])
+                              "the same plan, --append to load this plan after them (a "
+                              "second image), or reload the bitstream" % st["last"])
         s._save_ckpt(st["last"])
         final = s.frames[-1].seq
         if st["last"] != NONE and st["last"] >= final:
@@ -1368,6 +1416,11 @@ class Loader(_Session):
         return s._mismatches()
 
 CKPT_DIR = "/mnt/storage/fk33_builds/jc_load"
+
+APPEND_RESUME_REFUSED = ("--append with --resume is refused: a resumed append would need "
+                         "the original run's seq base, which is out of scope; run load "
+                         "--append again (it re-sends the whole plan after the die's last "
+                         "frame)")
 
 def default_ckpt(sha, die):
     return os.path.join(CKPT_DIR, "%s_%s.json" % (sha[:12], die))
@@ -1504,6 +1557,13 @@ def main(argv=None):
         common(p)
         p.add_argument("--resume", action="store_true")
         p.add_argument("--ckpt", default=None)
+        if name == "load":
+            p.add_argument("--append", action="store_true",
+                           help="load this plan onto a die that already holds an earlier "
+                           "plan's frames (a second image in the same bitstream session): "
+                           "its frames go on the wire numbered from the die's last + 1. "
+                           "On a die holding nothing it is an ordinary load. Not with "
+                           "--resume")
         p.add_argument("--max-resyncs", type=_max_resyncs_type, default=MAX_RESYNCS,
                        help=("resyncs/recoveries/tail-resends allowed before giving up "
                        "(default: %(default)s); must be >= 1. The budget refills: an "
@@ -1553,6 +1613,10 @@ def main(argv=None):
                                    dna_hex(dna_bitrev(dna))))
         return 0
     t_start = time.time()
+    append = getattr(a, "append", False)
+    if append and a.resume:
+        print("JCLOAD_ABORT %s" % APPEND_RESUME_REFUSED)
+        return 2
     try:
         dna = dna_for(a.dies, a.die)
         label = "the die record %s (die %s)" % (a.dies, a.die)
@@ -1576,6 +1640,7 @@ def main(argv=None):
     try:
         t = connect()
         ld = Loader(t, frames, sha, ck, resume=a.resume, dna=dna, dna_label=label,
+                   append=append,
                    max_resyncs=a.max_resyncs,
                    corrupt_seq=a.corrupt_seq if a.cmd == "load" else None,
                    connect=connect, reconnect_secs=a.reconnect_secs,
@@ -1587,6 +1652,9 @@ def main(argv=None):
             dt = max(now - t0, 1e-9)        # on the link: first connection to done
             wall = now - t_start            # planning included
             conns = "connections=%d reconnects=%d" % (ld.connections, ld.reconnects)
+            if ld.seq_base:
+                print("JCLOAD_APPEND seq_base=%d (plan seq 0 went on the wire as %d)"
+                      % (ld.seq_base, ld.seq_base))
             if ld.already_complete:
                 print("JCLOAD_DONE already complete: %d pieces re-checked by range CRC, "
                       "last=%d resyncs=%d, wall %.0f s (planning %.0f s), %s"
