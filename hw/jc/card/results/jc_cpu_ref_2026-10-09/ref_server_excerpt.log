@@ -1,0 +1,2 @@
+0.00.134.422 I system_info: n_threads = 24 (n_threads_batch = 24) / 24 | CUDA : ARCHS = 860 | USE_GRAPHS = 1 | PEER_MAX_BATCH_SIZE = 128 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX_VNNI = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | LLAMAFILE = 1 | OPENMP = 1 | REPACK = 1 | 
+0.44.706.190 I slot print_timing: id  0 | task 0 | prompt eval time =   16565.73 ms /    23 tokens (  720.25 ms per token,     1.39 tokens per second)
