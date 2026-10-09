@@ -79,11 +79,56 @@ int pl_embed_synthetic(void *user, int token_id,
 
 /* ------------------------------------------------------------- register IO */
 
-static int rd(pl_ctx *c, uint32_t off, uint32_t *v)
+/* A READ THE TRANSPORT COULD NOT CONFIRM IS READ AGAIN (2026-10-09).  On the
+ * Jungle Cat, a BMC link drop with a read frame in flight can leave the broker
+ * unable to tell whether the frame reached the die; it answers ok:false
+ * (WindowUnknown) and the transport returns -EIO (silicon 2026-10-09: two 27B
+ * prefills ended "prefill returned -2" on op 3 at 0xe060).  Reading again is
+ * safe for every seam register except WIN_DATA: in rtl/fk33_seam.vhd's READ
+ * CHANNEL the only state a read changes is r_win_addr (and xr_addr with it),
+ * and only on a WIN_DATA read.  So rd() retries any other offset as it is,
+ * and WIN_DATA reads go through rd_win(), which writes WIN_SEL and WIN_ADDR
+ * again (absolute, whatever the lost read did) before each retry.  Only -EIO
+ * is retried: a timeout or a broken connection is not a lost answer.  Writes
+ * are NEVER retried here: a GO or a window write is not idempotent. */
+#define PL_RD_RETRIES 2
+
+static int rd_once(pl_ctx *c, uint32_t off, uint32_t *v)
 { return c->t->reg_read32(c->t->ctx, c->base + off, v); }
+
+static int rd(pl_ctx *c, uint32_t off, uint32_t *v)
+{
+    int k, rc = rd_once(c, off, v);
+    for (k = 1; rc == -EIO && off != FK33_SEAM_WIN_DATA && k <= PL_RD_RETRIES; k++) {
+        fprintf(stderr, "[pl_backend] read of seam +0x%02X was not confirmed; "
+                "retrying (%d of %d): a read there has no side effect\n",
+                off, k, PL_RD_RETRIES);
+        rc = rd_once(c, off, v);
+    }
+    return rc;
+}
 
 static int wr(pl_ctx *c, uint32_t off, uint32_t v)
 { return c->t->reg_write32(c->t->ctx, c->base + off, v); }
+
+/* WIN_DATA element `idx` of window `sel`, the window already seeked there.
+ * A read that was not confirmed may or may not have advanced WIN_ADDR, so
+ * the retry seeks it back to `idx` first (see rd() above).  XOUT is a plain
+ * register-file read (region_mem's host port), so reading an element twice
+ * changes nothing on the card. */
+static int rd_win(pl_ctx *c, uint32_t sel, uint32_t idx, uint32_t *v)
+{
+    int k, rc = rd_once(c, FK33_SEAM_WIN_DATA, v);
+    for (k = 1; rc == -EIO && k <= PL_RD_RETRIES; k++) {
+        fprintf(stderr, "[pl_backend] read of window %u element %u was not "
+                "confirmed; re-seeking WIN_ADDR and retrying (%d of %d)\n",
+                sel, idx, k, PL_RD_RETRIES);
+        if (wr(c, FK33_SEAM_WIN_SEL, sel) || wr(c, FK33_SEAM_WIN_ADDR, idx))
+            return rc;
+        rc = rd_once(c, FK33_SEAM_WIN_DATA, v);
+    }
+    return rc;
+}
 
 static int wr64(pl_ctx *c, uint32_t lo, uint32_t hi, uint64_t v)
 {
@@ -1473,7 +1518,7 @@ int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp)
     if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XOUT)) return -2;
     if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
     for (i = 0; i < c->n_embd; i++) {
-        if (rd(c, FK33_SEAM_WIN_DATA, &v)) return -2;
+        if (rd_win(c, FK33_WIN_XOUT, (uint32_t)i, &v)) return -2;
         mant[i] = (int16_t)(uint16_t)(v & 0xFFFFu);
     }
     if (rd(c, FK33_SEAM_XEXP_OUT, &v)) return -2;

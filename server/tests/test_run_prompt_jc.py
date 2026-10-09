@@ -62,10 +62,11 @@ def work():
 
 
 class Broker:
-    def __init__(s, d, dies="A,B"):
+    def __init__(s, d, dies="A,B", extra=()):
         s.sock = os.path.join(d, "b.sock")
         s.log = os.path.join(d, "broker.log")
-        s.p = subprocess.Popen([BROKER, s.sock, s.log, "--kv-maxpos", KV_MAXPOS, "--dies", dies],
+        s.p = subprocess.Popen([BROKER, s.sock, s.log, "--kv-maxpos", KV_MAXPOS, "--dies", dies]
+                               + list(extra),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         line = s.p.stdout.readline()
         assert line.startswith("JCSIMBROKER_READY"), line + s.p.stderr.read()
@@ -203,3 +204,48 @@ def test_dump_xout2_reads_the_second_die(work):
     # the XEXP_OUT read (seam 0xA4) is the last thing each die is asked, after its last GO
     xe = [l.split()[0] for l in log if re.match(r"^[AB] rd32 0xe0a4 ", l)]
     assert xe[-2:] == ["A", "B"], log[-20:]
+
+
+# ---- 2026-10-09 silicon: a read the broker cannot confirm after a BMC link drop
+# (WindowUnknown, op 3 at 0xe060, "verdict NOTFAILED") must not end the run. Every seam read
+# except WIN_DATA is side-effect free, so it is re-read; a WIN_DATA read advances WIN_ADDR
+# (rtl/fk33_seam.vhd READ CHANNEL), so it is retried only after WIN_SEL/WIN_ADDR are written
+# again. `ran` is the case where the lost read DID advance WIN_ADDR: a retry without the
+# re-seek would skip an element there.
+
+PL_RD_RETRIES = 2      # server/pl_backend.c
+
+
+def _faulted_pair(work, spec):
+    ref = rp(work, *(pair_args(work, "sim.ids") + ["--sim-kv-maxpos", KV_MAXPOS]))
+    assert ref.returncode == 0, ref.stdout + ref.stderr
+    b = Broker(work, extra=["--fail-rd", spec])
+    p = rp(work, *(["--jc", b.sock, "--jc-die", "A", "--jc-die2", "B"] + pair_args(work, "jc.ids")))
+    return ref, p, b.stop()
+
+
+@pytest.mark.parametrize("mode", ["ran", "lost"])
+def test_an_unconfirmed_xout_read_is_reseeked_and_retried(work, mode):
+    ref, p, log = _faulted_pair(work, "A:0xe060:7:%s" % mode)
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert ids_of(os.path.join(work, "jc.ids")) == ids_of(os.path.join(work, "sim.ids"))
+    k = log.index("A rd32 0xe060 1 FAILED %s" % mode)
+    # the retry re-selects XOUT and re-seeks WIN_ADDR before it reads WIN_DATA again
+    assert log[k + 1:k + 4] == ["A wr32 0xe058 1", "A wr32 0xe05c 1", "A rd32 0xe060 1"], \
+        log[k - 2:k + 6]
+    assert "WindowUnknown: injected" in p.stderr
+    assert re.search(r"retrying \(1 of %d\)" % PL_RD_RETRIES, p.stderr), p.stderr
+
+
+def test_an_unconfirmed_status_read_is_retried(work):
+    ref, p, log = _faulted_pair(work, "B:0xe018:2:ran")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert ids_of(os.path.join(work, "jc.ids")) == ids_of(os.path.join(work, "sim.ids"))
+    k = log.index("B rd32 0xe018 1 FAILED ran")
+    assert log[k + 1] == "B rd32 0xe018 1", log[k - 2:k + 4]
+
+
+def test_a_read_that_keeps_failing_is_given_up_after_the_bound(work):
+    ref, p, log = _faulted_pair(work, "A:0xe060:7:lost:100")
+    assert p.returncode != 0, p.stdout
+    assert len([l for l in log if l.endswith("FAILED lost")]) == 1 + PL_RD_RETRIES, log[-12:]

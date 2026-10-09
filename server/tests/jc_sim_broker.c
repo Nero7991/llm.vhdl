@@ -2,6 +2,7 @@
  * the simulated seam (server/fk33_sim.c), for testing run_prompt's --jc path.
  *
  *   jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]
+ *                 [--fail-rd DIE:OFF:NTH:MODE[:TIMES]]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
  * sends: rd32, wr32, wrn with "fix":true, memrd) on a Unix socket.  Each die
@@ -17,6 +18,15 @@
  * request reached.  It proves the --jc plumbing (option parsing, transport
  * selection, die routing, coalescing, the v2 flow needing no HBM write); it
  * proves nothing about the card's numbers, exactly like the sim itself.
+ *
+ * FAULT INJECTION (--fail-rd, 2026-10-09).  The real broker answers a read
+ * whose frame was in flight when the BMC dropped the link, and whose fate it
+ * then cannot prove, with {"ok":false,"err":"WindowUnknown: ..."} (silicon,
+ * 2026-10-09, op 3 at 0xe060).  --fail-rd answers the NTH (1-based) rd32 at
+ * byte offset OFF on DIE, and the TIMES-1 matching rd32s after it, that way.
+ * MODE says what the card saw: `lost` (the read never ran: WIN_ADDR did not
+ * move) or `ran` (it ran and advanced WIN_ADDR, and only the answer is lost),
+ * the two fates the host cannot tell apart.
  *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
@@ -42,6 +52,9 @@ static fk33_transport *g_t[MAX_DIES];
 static char g_name[MAX_DIES][16];
 static int g_ndies;
 static FILE *g_log;
+static char g_fail_die[16];
+static unsigned long g_fail_off, g_fail_nth, g_fail_times = 1, g_fail_seen;
+static int g_fail_ran = -1;          /* -1: no injection */
 
 static int find_die(const char *line, int *idx)
 {
@@ -93,7 +106,7 @@ static void handle(int fd, const char *line)
 {
     int d;
     unsigned long long off = 0, val = 0, addr = 0, n = 0;
-    char buf[128];
+    char buf[256];
     if (find_die(line, &d)) {
         reply(fd, "{\"ok\":false,\"err\":\"KeyError: unknown die\"}\n");
         fprintf(g_log, "? refused %s\n", line);
@@ -101,7 +114,20 @@ static void handle(int fd, const char *line)
     }
     if (has_op(line, "rd32") && !get_num(line, "off", &off)) {
         uint32_t v = 0;
-        int rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
+        int rc;
+        if (g_fail_ran >= 0 && !strcmp(g_name[d], g_fail_die) && off == g_fail_off
+            && ++g_fail_seen >= g_fail_nth && g_fail_seen < g_fail_nth + g_fail_times) {
+            if (g_fail_ran) (void)g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
+            fprintf(g_log, "%s rd32 0x%llx 1 FAILED %s\n", g_name[d], off,
+                    g_fail_ran ? "ran" : "lost");
+            fflush(g_log);
+            snprintf(buf, sizeof buf, "{\"ok\":false,\"err\":\"WindowUnknown: injected: "
+                     "die %s rd32 at %#llx; die %s window state is UNKNOWN\"}\n",
+                     g_name[d], off, g_name[d]);
+            reply(fd, buf);
+            return;
+        }
+        rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
         fprintf(g_log, "%s rd32 0x%llx 1\n", g_name[d], off);
         if (rc) { reply(fd, "{\"ok\":false,\"err\":\"AxiError: sim read\"}\n"); return; }
         snprintf(buf, sizeof buf, "{\"ok\":true,\"val\":%u}\n", v);
@@ -168,6 +194,17 @@ int main(int argc, char **argv)
     for (i = 3; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--kv-maxpos")) kv_maxpos = strtoul(argv[i + 1], NULL, 10);
         else if (!strcmp(argv[i], "--dies")) dies = argv[i + 1];
+        else if (!strcmp(argv[i], "--fail-rd")) {
+            char mode[8] = "";
+            int k = sscanf(argv[i + 1], "%15[^:]:%li:%lu:%7[^:]:%lu", g_fail_die,
+                           (long *)&g_fail_off, &g_fail_nth, mode, &g_fail_times);
+            if (k < 4 || g_fail_nth < 1 || g_fail_times < 1
+                || (strcmp(mode, "ran") && strcmp(mode, "lost"))) {
+                fprintf(stderr, "jc_sim_broker: --fail-rd DIE:OFF:NTH:ran|lost[:TIMES]\n");
+                return 2;
+            }
+            g_fail_ran = !strcmp(mode, "ran");
+        }
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }
     {
