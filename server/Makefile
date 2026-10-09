@@ -155,21 +155,32 @@ chat_batch: tests/chat_batch.c qwen35_chat.c qwen35_tok.c qwen35_unicode_data.c
 check:
 	$(CC) $(CBACK) -fsyntax-only $(CSRC) tests/seam_selftest.c tests/chat_batch.c \
 	      tests/embed_dump.c tests/embed_e2e.c tests/embed_bf16_dump.c \
-	      tests/run_prompt.c tests/imglock_selftest.c test_transport_jc.c
+	      tests/run_prompt.c tests/imglock_selftest.c test_transport_jc.c tests/jc_sim_broker.c
 	$(ARM_CC) $(CBACK) -fsyntax-only fk33_manifest.c fk33_imglock.c embed_mv4i.c embed_bf16.c 2>/dev/null \
 	  || echo "  (no aarch64 toolchain; the SBC-side syntax check was skipped)" 
 	$(CXX) $(CXXFLAGS) $(INC) -fsyntax-only llama_server.cpp
 	@echo "SERVER_COMPILE OK"
 
-test: seam_selftest test_transport_jc
+test: seam_selftest test_transport_jc run_prompt jc_sim_broker
 	./seam_selftest
 	./test_transport_jc
+	python3 -m pytest -q tests/test_run_prompt_jc.py
 
 # The JC transport's own teeth (server/test_transport_jc.c): a fake broker on
 # a Unix socket under ~/regress_scratch/, scripted per case.  No hardware, no
 # tools/jc/jc_broker.py, no coe.py, nothing under /dev.
 test_transport_jc: test_transport_jc.c fk33_transport_jc.c fk33_transport.h
 	$(CC) $(CBACK) -o $@ test_transport_jc.c fk33_transport_jc.c -lpthread
+
+# run_prompt's --jc path end to end (server/tests/test_run_prompt_jc.py): a
+# fake broker whose dies are the simulated seam (tests/jc_sim_broker.c), the
+# real fk33_transport_jc.c on the run_prompt side, ids compared against the
+# same sim driven directly.  No hardware, no tools/jc/jc_broker.py, no BMC.
+jc_sim_broker: tests/jc_sim_broker.c fk33_sim.c fk33_transport.c fk33_transport.h fk33_seam.h
+	$(CC) $(CBACK) -I. -o $@ tests/jc_sim_broker.c fk33_sim.c fk33_transport.c -lm
+
+test_run_prompt_jc: run_prompt jc_sim_broker
+	python3 -m pytest -q tests/test_run_prompt_jc.py
 
 # THE IMAGE INTERLOCK, both halves in one command so it can be a single gate
 # row (sim/regress.sh runs a row's command unquoted and not through a shell,
@@ -236,11 +247,11 @@ qwen35_unicode_data_arm.o: qwen35_unicode_data.c qwen35_unicode_data.h
 clean:
 	rm -f llama_server llama_server_arm seam_selftest imglock_selftest chat_batch \
 	      embed_dump embed_ref_oracle embed_e2e embed_bf16_dump run_prompt libqwen35chat.so \
-	      test_transport_jc \
+	      test_transport_jc jc_sim_broker \
 	      run_fx_lib.o run_fx_lib_arm.o $(COBJ) $(CARM) \
 	      qwen35_tok_arm.o qwen35_unicode_data_arm.o pl_backend_arm.o
 
-.PHONY: board clean tok tok-board check test test-e2e test-stories embed-check \
+.PHONY: board clean tok tok-board check test test_run_prompt_jc test-e2e test-stories embed-check \
         imglock-check
 
 # THE IMAGE INTERLOCK's teeth.  Today's incident reconstructed against the

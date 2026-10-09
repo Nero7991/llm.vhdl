@@ -120,6 +120,18 @@
  *              [--v2 --dtbl <token.dtbl> --rel <token.rel>]
  *              [--teeth-argmax N]
  *              [--allow-hardware <TOKEN>] [--open-only] [--go-timeout-ms N]
+ *              [--jc <broker.sock> --jc-die <D> [--jc-die2 <D2>]]
+ *
+ * --jc: THE JUNGLE CAT (2026-10-09, runbook gap 1).  Selects PL_TRANSPORT_JC
+ * (server/fk33_transport_jc.c): every register access goes as a JSON line to
+ * tools/jc/jc_broker.py's Unix socket, naming the die.  `--jc-die` is card 0's
+ * die, `--jc-die2` card 1's (the second card of --dtbl2/--rel2/--manifest2);
+ * both share the broker's one connection.  It is the live board, like
+ * --allow-hardware, and is mutually exclusive with it and with --dev/--dev2:
+ * one run drives one kind of card.  It needs --v2, because the JC transport
+ * refuses every HBM write and only the v2 window seam moves X without one.
+ * Tested against a fake broker backed by the sim (tests/jc_sim_broker.c,
+ * tests/test_run_prompt_jc.py); never against a board by an agent.
  *
  * An id file is whitespace-separated decimal integers; # to end of line is a
  * comment, so the committed artefacts can carry their own provenance.
@@ -246,7 +258,11 @@ static void usage(void)
       "                  [--go-timeout-ms N]  per-GO wait (default 60000)\n"
       "                  [--resume]           start at the card's SEQ_POS\n"
       "                  [--seq-reset]        clear the SEAM's position first\n"
-      "Simulated transport unless --allow-hardware is given by a human.\n");
+      "                  [--jc <broker.sock> --jc-die <D>]  the Jungle Cat: card 0 is die D\n"
+      "                        behind tools/jc/jc_broker.py's socket (needs --v2; not\n"
+      "                        with --allow-hardware, --dev, --dev2 or --teeth-argmax)\n"
+      "                  [--jc-die2 <D2>]     the second card's die (with --dtbl2)\n"
+      "Simulated transport unless --allow-hardware or --jc is given by a human.\n");
 }
 
 /* ------------------------------------------------------- the token-0 dump
@@ -321,6 +337,9 @@ int main(int argc, char **argv)
     const char *dtbl2_path = NULL, *rel2_path = NULL, *manifest2_path = NULL;
     const char *dev2_prefix = "/dev/xdma1";
     const char *dev_prefix  = NULL;        /* --dev: the FIRST card's prefix (default /dev/xdma0) */
+    int dev2_given = 0;
+    /* --jc: the Jungle Cat broker's socket and the two cards' dies. */
+    const char *jc_sock = NULL, *jc_die = NULL, *jc_die2 = NULL;
     char dev_user[64], dev_h2c[64], dev_c2h[64];
     uint32_t *dprog2 = NULL, *drel2 = NULL;
     int n_dprog2 = 0, n_drel2 = 0;
@@ -365,7 +384,10 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--dtbl2"))        NEXT(dtbl2_path);
         else if (!strcmp(a, "--rel2"))         NEXT(rel2_path);
         else if (!strcmp(a, "--manifest2"))    NEXT(manifest2_path);
-        else if (!strcmp(a, "--dev2"))         NEXT(dev2_prefix);
+        else if (!strcmp(a, "--dev2"))       { NEXT(dev2_prefix); dev2_given = 1; }
+        else if (!strcmp(a, "--jc"))           NEXT(jc_sock);
+        else if (!strcmp(a, "--jc-die"))       NEXT(jc_die);
+        else if (!strcmp(a, "--jc-die2"))      NEXT(jc_die2);
         else if (!strcmp(a, "--dev"))          NEXT(dev_prefix);
         else if (!strcmp(a, "--v2"))           want_v2 = 1;
         else if (!strcmp(a, "--max-new"))    { const char *s; NEXT(s); max_new = atoi(s); }
@@ -392,6 +414,46 @@ int main(int argc, char **argv)
     }
     if (!prompt_path && !text) { usage(); return 2; }
     if (text && !qtk_path) { fprintf(stderr, "run_prompt: --text needs --qtk\n"); return 2; }
+    /* THE JC OPTIONS, refused here, before any file is read or any socket is
+     * opened, so a wrong combination never reaches the broker. */
+    if (!jc_sock && (jc_die || jc_die2)) {
+        fprintf(stderr, "run_prompt: %s needs --jc <broker.sock>\n",
+                jc_die ? "--jc-die" : "--jc-die2");
+        return 2;
+    }
+    if (jc_sock) {
+        if (!jc_die || !*jc_die) {
+            fprintf(stderr, "run_prompt: --jc needs --jc-die <D> (card 0's die on the broker's chain)\n");
+            return 2;
+        }
+        if (hw_token || dev_prefix || dev2_given || teeth_bias) {
+            fprintf(stderr, "run_prompt: --jc cannot be combined with %s: one run drives one"
+                            " kind of card\n",
+                    hw_token ? "--allow-hardware" : dev_prefix ? "--dev"
+                    : dev2_given ? "--dev2" : "--teeth-argmax (a sim self-test)");
+            return 2;
+        }
+        if (!want_v2) {
+            fprintf(stderr, "run_prompt: --jc needs --v2: the JC transport refuses HBM writes"
+                            " (fk33_transport_jc.c mem_write is -EPERM), and only the v2"
+                            " window seam moves X without one\n");
+            return 2;
+        }
+        if (jc_die2 && !dtbl2_path) {
+            fprintf(stderr, "run_prompt: --jc-die2 needs a second card (--dtbl2, --rel2,"
+                            " --manifest2)\n");
+            return 2;
+        }
+        if (dtbl2_path && !jc_die2) {
+            fprintf(stderr, "run_prompt: a second card on --jc needs --jc-die2 <D2>\n");
+            return 2;
+        }
+        if (jc_die2 && !strcmp(jc_die, jc_die2)) {
+            fprintf(stderr, "run_prompt: --jc-die and --jc-die2 must name different dies"
+                            " (both are %s)\n", jc_die);
+            return 2;
+        }
+    }
 
     if (text) {
         /* ONE user message, add_generation_prompt = 1, enable_thinking = 0:
@@ -537,6 +599,12 @@ int main(int argc, char **argv)
         printf("transport  %s_user + h2c_0/c2h_0 (LIVE CARD, operator"
                " token supplied)\n", dev_prefix ? dev_prefix : "/dev/xdma0");
     }
+    if (jc_sock) {
+        o.transport = PL_TRANSPORT_JC;
+        o.jc_sock = jc_sock;
+        o.jc_die = jc_die;
+        printf("transport  JC broker %s die %s\n", jc_sock, jc_die);
+    }
     if (go_timeout_ms > 0) o.go_timeout_ms = go_timeout_ms;
     if (want_v2) {
         sim.version = 2;
@@ -582,6 +650,10 @@ int main(int argc, char **argv)
             snprintf(dev2_c2h,  sizeof dev2_c2h,  "%s_c2h_0", dev2_prefix);
             o2.dev_user = dev2_user; o2.dev_h2c = dev2_h2c; o2.dev_c2h = dev2_c2h;
             printf("transport2 %s_user + h2c_0/c2h_0 (LIVE CARD 1)\n", dev2_prefix);
+        }
+        if (jc_sock) {
+            o2.jc_die = jc_die2;   /* same socket: the transport shares one connection */
+            printf("transport2 JC broker %s die %s\n", jc_sock, jc_die2);
         }
         if (pl_open(&o2, &c2) != 0 || !c2) {
             fprintf(stderr, "run_prompt: pl_open refused card 1\n");
