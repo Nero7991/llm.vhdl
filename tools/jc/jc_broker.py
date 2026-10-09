@@ -127,7 +127,8 @@ that touches any of its pieces is Refused unless --allow-image-read; the image r
 allowed, because pl_open reads it there. A die with no --manifest has no known image,
 so every memrd on it is Refused unless --allow-image-read.
 """
-import argparse, collections, json, os, secrets, selectors, socket, stat, struct, sys, time
+import argparse, collections, json, os, secrets, selectors, signal, socket, stat, struct, sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
@@ -1101,6 +1102,12 @@ def _manifest_arg(v):
 
 
 def main(argv=None):
+    # SIGINT must stop the broker however it was started (2026-10-09: it ignored SIGINT on
+    # the BC-250). A non-interactive shell starts `cmd &` with SIGINT set to SIG_IGN
+    # (hw/jc/host/jc_bc_lane.sh: `nohup python3 ... &`), and Python installs its
+    # KeyboardInterrupt handler only when SIGINT is SIG_DFL at startup, so the broker
+    # inherited SIG_IGN and only SIGTERM (no clean close) could end it.
+    signal.signal(signal.SIGINT, signal.default_int_handler)
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("serve", help="hold the BMC and serve the Unix socket")

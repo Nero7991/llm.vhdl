@@ -314,6 +314,14 @@ class CtlChainSock(ChainSock):
                 h = C.parse_header(b[12:12 + 32])
                 if h["magic"] == C.MAGIC and h["op"] == s.board.drop_after_op:
                     s.board.drop_after_op, s.board.drop_next = None, True
+            if s.board.drop_on_op is not None and len(b) >= 8 + 4 + 32:
+                # die A only (lead 0: the slot starts at payload bit 0)
+                h = C.parse_header(b[12:12 + 32])
+                if h["magic"] == C.MAGIC and h["op"] == s.board.drop_on_op[0]:
+                    kind, s.board.drop_on_op = s.board.drop_on_op[1], None
+                    if kind == "unsent":           # reset before a bit is shifted
+                        raise ConnectionResetError("fake BMC: connection reset")
+                    s.board.drop_reply[s.board.nconn] = s.ntdi_conn   # shifted, reply lost
             lr = s.board.drop_reply.get(s.board.nconn)
             lose_reply = lr is not None and s.ntdi_conn >= lr
             s.ntdi_conn += 1
@@ -341,6 +349,7 @@ class Board:
         s.flip_nops = set()
         s.flip_magic, s.nhdr = set(), 0     # op frames (by header order) with a bad magic
         s.drop_after_op, s.drop_next = None, False   # reset the command after that op's frame
+        s.drop_on_op = None     # (op, "unsent" | "reply_lost"): the link dies ON that frame
         s.nframes, s.nconn, s.nacknops, s.nnops = 0, 0, 0, 0
         s.wire_ops = []
         s.socks, s.clients = [], []
@@ -1433,3 +1442,78 @@ def test_a_fresh_executor_at_startup_is_warned_about_not_marked():
     assert ("executor reset or fresh bitstream; queued frames from a previous host may "
             "still execute") in log.getvalue()
     assert _wstate(b) == "ok"
+
+
+
+# ---------------------------------------------------------------- 2026-10-09 silicon
+# Two 27B prefills failed "WindowUnknown: die A seq N (op 3 at 0xe060): not done after 64
+# polls, verdict NOTFAILED", each right after the BMC dropped the connection. 0xe060 is
+# the seam's WIN_DATA (a read advances WIN_ADDR: modelled here as a FIFO window, every
+# execution pops). These pin the mechanism: on die A (lead 0) NOTFAILED means the link
+# died on the read frame's OWN command (_xfer sets e[3] = lead == 0 once its recv returns);
+# the filler's single desync is the whole rise D, so the frame failed no complete slot;
+# and if the frame had reached the die it would execute and stay presented until acked.
+
+def _win_read_with_drop(kind):
+    src = [0x5EED0000 + i for i in range(8)]
+    b, board, _ = make(Board(fifos={0xE060: src}))
+    die = board.ctl[0]
+    assert ok(b.handle({"die": "A", "op": "rd32", "off": 0xE060}))["val"] == src[0]
+    board.drop_on_op = (C.OP_RD_INC, kind)
+    r = b.handle({"die": "A", "op": "rd32", "off": 0xE060})
+    return r, b, board, die, src
+
+def test_silicon_2026_10_09_a_read_frame_that_never_reached_die_a_is_unknown():
+    r, b, board, die, src = _win_read_with_drop("unsent")
+    assert r["ok"] is False, r
+    assert r["err"].startswith("WindowUnknown:") and "op 3 at 0xe060" in r["err"], r
+    assert "verdict NOTFAILED" in r["err"], r
+    assert board.nconn == 2                                # it waited across the reconnect
+    assert [op for _, op in die.frames] == [C.OP_RD_INC]  # only the first read ever ran
+    assert die.fifos[0xE060] == src[1:]                    # the window did not move
+    assert _wstate(b).startswith("UNKNOWN")
+
+def test_silicon_2026_10_09_a_read_frame_whose_reply_was_lost_resumes():
+    """The contrast: the same drop, but the frame was shifted before the link died. Its
+    verdict is the same NOTFAILED, yet it executed, its response is presented on the new
+    connection, and the read completes, once."""
+    r, b, board, die, src = _win_read_with_drop("reply_lost")
+    assert ok(r)["val"] == src[1]
+    assert b.verdict[die.frames[1][0]] == "NOTFAILED"     # indistinguishable on the ledger
+    assert board.nconn == 2
+    assert [op for _, op in die.frames] == [C.OP_RD_INC, C.OP_RD_INC]
+    assert die.fifos[0xE060] == src[2:]
+    assert _wstate(b) == "ok"
+
+
+
+# The broker ignored SIGINT on silicon (2026-10-09). hw/jc/host/jc_bc_lane.sh starts it as
+# `nohup python3 ... &` from a non-interactive bash, which starts an asynchronous command
+# with SIGINT set to SIG_IGN, and Python installs its KeyboardInterrupt handler only when
+# SIGINT is SIG_DFL at startup. main() now installs it whatever it inherited.
+
+_SIGINT_PROBE = r"""
+import os, signal, sys
+sys.path.insert(0, sys.argv[1])
+from jc import jc_broker as B
+try:
+    B.main([])                       # argparse refuses (no subcommand): nothing is served
+except SystemExit:
+    pass
+try:
+    os.kill(os.getpid(), signal.SIGINT)
+    for _ in range(10 ** 6):
+        pass
+except KeyboardInterrupt:
+    print("INTERRUPTED")
+    sys.exit(0)
+print("IGNORED")
+"""
+
+def test_main_takes_sigint_even_when_started_with_it_ignored():
+    import signal, subprocess
+    tools = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    p = subprocess.run([sys.executable, "-c", _SIGINT_PROBE, tools], capture_output=True,
+                       text=True, timeout=60,
+                       preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))
+    assert p.stdout.strip().splitlines()[-1:] == ["INTERRUPTED"], p.stdout + p.stderr
