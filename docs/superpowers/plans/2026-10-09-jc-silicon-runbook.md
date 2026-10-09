@@ -10,24 +10,39 @@ below that reaches the BMC is for the main session or Oren only.
 
 ## 0. What this runbook found before it could be written (read first)
 
-These change Task 12 as written. Each is cited; the gaps are restated in section 7.
+These change Task 12 as written. Each is cited; what is still open is in section 7.
 
-1. **No host program selects `PL_TRANSPORT_JC` yet.** `server/pl_backend.c:490-492` has the
-   case, but `server/tests/run_prompt.c:517-538` sets `PL_TRANSPORT_CHARDEV` whenever
-   `--allow-hardware` is given and has no option for the JC socket or die
-   (`run_prompt.c:355-389` is the whole option list; `run_prompt --help | grep -c -- --jc`
-   prints 0, MEASURED 2026-10-09). Steps 4 and 5 below are written against three flags
-   that do not exist yet: `--jc SOCK --jc-die D --jc-die2 D2`. The patch is small: set
-   `o.transport = PL_TRANSPORT_JC; o.jc_sock; o.jc_die` (and `o2.jc_die`) from those flags
-   (`server/pl_backend.h:115-120` already has the fields). Until it lands, step 4 cannot run.
-2. **The JC transport refuses every HBM write** (`server/fk33_transport_jc.c:845-865`,
-   `mem_write` returns `-EPERM`). The FK33 flow writes three things by DMA before a
-   question (`hw/fk33/host/fk33_chat2.sh:128-136`): the token program's descriptor arena,
-   the GDN state zero, and (at load time) the image record. On the JC they go in through
-   `coe_load.py load` of a small "side image" built by `hw/jc/host/jc_side_image.py`
-   (step 3.2), with the broker stopped. Activations are NOT affected: a v2 seam takes X
-   through window 2 and returns R_X through window 3 (`pl_backend.c:1275-1290`,
-   `pl_backend.c:1467-1483`).
+1. **CLOSED 2026-10-09: `run_prompt --jc SOCK --jc-die D [--jc-die2 D2]`.** The flags set
+   `o.transport = PL_TRANSPORT_JC`, `o.jc_sock`, `o.jc_die` and the second card's
+   `o2.jc_die` (`server/pl_backend.h:115-120`); both cards share the broker's one
+   connection (`fk33_transport_jc.c`, I3). They are refused, before any socket is opened,
+   without `--jc-die`, without `--v2`, with `--allow-hardware`/`--dev`/`--dev2`/
+   `--teeth-argmax`, with `--jc-die2` but no second card, with a second card but no
+   `--jc-die2`, and with the same die twice. Tested against a fake broker whose dies are
+   the simulated seam (`server/tests/jc_sim_broker.c`, `server/tests/test_run_prompt_jc.py`,
+   `make -C server test_run_prompt_jc`): the ids over `--jc` equal the ids from the same
+   sim driven directly, and the broker's log shows card 0's program on `--jc-die` and
+   card 1's on `--jc-die2` (a mutant routing card 1 to card 0's die fails 3 cases).
+2. **The JC transport refuses every HBM write, and that stays (DECIDED 2026-10-09).**
+   `mem_write` returns `-EPERM` (`server/fk33_transport_jc.c`). The spec forbids the
+   alternative: "HBM writes stay with the USER4 loader alone; the C transport's
+   `mem_write` returns `-EPERM`" (`docs/superpowers/specs/2026-10-07-jc-engine-composition-design.md`,
+   "CORRECTION 2026-10-07 (second): the control core needs a read-only HBM master"; and
+   section 4: "The broker and `coe_load.py` are separate lanes and never hold the BMC at
+   once"). The RTL agrees, so it is not only policy: the control core's `WR_INC`/`WR_FIX`
+   ops are AXI-Lite (`m_axil_*`) register writes, and its HBM master `m_axi_*` is AXI4
+   READ-ONLY, AR and R channels only, op `MEM_RD` (`hw/jc/ctl/README.md:38-41`,
+   `rtl/jc_ctl_pkg.vhd:19-24`; no `m_axi_aw*`/`m_axi_w*` in `rtl/jc_ctl_exec.vhd`).
+   So the three things the FK33 writes by DMA (`hw/fk33/host/fk33_chat2.sh:128-136`: the
+   descriptor arena, the GDN state zero, and at load time the image record) go in through
+   `coe_load.py load` with the broker stopped:
+   - once per session, all three: the side image `side.json` from
+     `hw/jc/host/jc_side_image.py` (3.2, 3.3);
+   - before every later sequence, the GDN zero alone: `side_gdn.json`, through
+     `hw/jc/host/jc_bc_lane.sh rezero` (item 8, section 6).
+   Activations are NOT affected: a v2 seam takes X through window 2 and returns R_X
+   through window 3 (`pl_backend.c:1275-1290`, `pl_backend.c:1467-1483`), and the
+   `--jc` test above runs a whole v2 prefill and decode with no `mem_write` call.
 3. **There is no seam window 4.** `rtl/fk33_seam.vhd:609` declares `r_win_sel` 2 bits wide
    (windows 0..3; `server/fk33_seam.h:381-384`). The utilisation counters landed in the
    ENGINE's AXI-Lite map instead (commit `6ed5f193`, "read through the engine's AXI-Lite
@@ -39,7 +54,18 @@ These change Task 12 as written. Each is cited; the gaps are restated in section
    image record with `mem_read` (`pl_backend.c:607`) and the broker refuses every `memrd`
    on a die with no manifest unless `--allow-image-read` (`tools/jc/jc_broker.py:124-128`,
    `ImageFence.check` at `jc_broker.py:242-251`). `load_fence` reads only the manifest JSON
-   (`jc_broker.py:254-268`), so the JSON alone is enough on the BC-250.
+   (`jc_broker.py:254-268`), so the JSON alone is enough on the BC-250. The invocation
+   (3.4 runs it through `hw/jc/host/jc_bc_lane.sh start`):
+
+   ```
+   python3 tools/jc/jc_broker.py serve --bmc $BMC --chain AB --dies ~/jc_dies.json \
+       --sock $BCW/broker.sock \
+       --manifest A=~/jc_models/qwen38-27b-card0-b0-32/manifest.json \
+       --manifest B=~/jc_models/qwen38-27b-card1-b33-63/manifest.json
+   ```
+
+   `--manifest` takes `DIE=PATH`, once per die (`jc_broker.py:1096-1100, 1113-1114`).
+   They must be the manifests `coe_load.py load` used for the resident images.
 5. **Where `pl_pipeline` runs.** `run_prompt` links `pl_pipeline.c` and `pl_backend.c`, and
    the transport is `connect()` on an `AF_UNIX` socket (`fk33_transport_jc.c:969`): it must
    run where the broker's socket file is. The broker must run on the BC-250 (it reaches the
@@ -51,6 +77,21 @@ These change Task 12 as written. Each is cited; the gaps are restated in section
    for its whole run; `jc_seam.py` runs only before or after it, never during.
 7. **jccard8 is timed at 0.85 V VCCINT only** (`hw/jc/card/results/jccard8_2026-10-09/README.md`,
    last paragraph). Confirm the rail before step 4; changing it is Oren's call.
+8. **The GDN state is re-zeroed before every sequence, as on the FK33 (gap 4, 2026-10-09).**
+   The FK33 host zeroes the whole `hbm.gdn_state_bytes` at `hbm.gdn_state_base` before EVERY
+   question: `hw/fk33/host/fk33_chat.sh:168-173` ("Zero the GDN recurrent state (every
+   layer), so this question starts clean") and `fk33_chat2.sh:131-135` on both cards.
+   `fk33_ctxtest.sh` runs one `fk33_chat2.sh` per run (`fk33_ctxtest.sh:53`) and
+   `server/llmvhdl_server.py` one per question (`llmvhdl_server.py:64`), so every FK33
+   sequence starts from a zeroed region. That region holds the recurrent mantissas, their
+   exponents and the conv-tap reservation (`tools/hbm_map.py:437-439`). `run_prompt
+   --seq-reset` clears only the seam's and engine's positions, and `server/pl_pipeline.c`
+   does no state handling at all. The JC now does the same as the FK33:
+   `hw/jc/host/jc_ctxtest.sh` runs `hw/jc/host/jc_bc_lane.sh rezero` before every run by
+   default (`JC_NO_REZERO=1` is the only way to skip it), and section 6 says so. Whether the
+   zero is NEEDED (B masks the recurrent read at `tk0`, `rtl/gdn_recur_pipe.vhd:592`;
+   `gdn_conv` zeroes invalid taps, `rtl/gdn_conv.vhd:307-314`) does not decide it: the FK33
+   flow that passed its context tests zeroed, so the JC zeroes.
 
 ## 1. Variables (set once per shell; never committed)
 
@@ -65,8 +106,10 @@ export BCW=/home/orencollaco/jc27b_run  # an absolute, non-/tmp work dir on the 
 export M=/mnt/storage/llama-models
 export MAN0=$M/qwen38-27b-card0-b0-32/manifest.json   # die A: blocks 0..32, no LM head
 export MAN1=$M/qwen38-27b-card1-b33-63/manifest.json  # die B: blocks 33..63 + LM head
-export BC_MAN0='<the manifest path coe_load.py load used for die A on the BC-250>'
-export BC_MAN1='<the manifest path coe_load.py load used for die B on the BC-250>'
+export BC_MAN0='~/jc_models/qwen38-27b-card0-b0-32/manifest.json'   # on the BC-250; die A
+export BC_MAN1='~/jc_models/qwen38-27b-card1-b33-63/manifest.json'  # on the BC-250; die B
+# hw/jc/host/jc_bc_lane.sh (3.4, section 6) reads these names; a leading ~/ is the BC-250's $HOME
+export JC_BC=$BC JC_BMC=$BMC JC_BCW=$BCW JC_BC_MAN0=$BC_MAN0 JC_BC_MAN1=$BC_MAN1
 export EMB=$M/qwen38-27b-mv4i/token_embd.weight.mv4i
 export QTK=$REPO/build_artifacts_tok/qwen35_9b.qtk
 export PROMPT=$REPO/hw/fk33/results/goal_dcdc_2026-09-17/prompt_tokens.txt
@@ -95,7 +138,9 @@ both manifests' `source_gguf` and `hbm.gdn_const_source_gguf` name it.
 | P1 | BC | Task 12 steps 1-2 done: jccard8 on both dies, both 27B images `JCVERIFY_PASS` | the main session's own step-2 log |
 | P2 | BC | nothing else holds the BMC: no `sqrl_bridge`, `coe_load.py`, `coe_soak.py`, `jc_telemetry.py`, other broker | identify by `/proc/PID/exe` + `cwd`, never `pgrep -f` (CLAUDE.md) |
 | P3 | WS | `make -C $REPO/server run_prompt` | exit 0 (MEASURED 2026-10-09: builds) |
-| P4 | WS | `$REPO/server/run_prompt --help 2>&1 \| grep -qE -- '--jc[ ]'` | exit 0. **Fails today (gap 1).** |
+| P4 | WS | `$REPO/server/run_prompt --help 2>&1 \| grep -qE -- '--jc[ ]'` | exit 0 (MEASURED 2026-10-09, after the `--jc` patch) |
+| P6 | WS | `make -C $REPO/server test_run_prompt_jc` | `16 passed` (no board: fake broker over the sim) |
+| P7 | BC | `ls ~/jc_models/qwen38-27b-card0-b0-32/manifest.json ~/jc_models/qwen38-27b-card1-b33-63/manifest.json ~/jc_dies.json` | all three exist (not verified from the WS) |
 | P5 | WS+BC | `bash ~/GitHub/DevOps/bc250-sync-llama-vhdl.sh` | `done` |
 
 ## 3. Step 3: broker, bring-up, seam ID, CAPS, image record
@@ -171,24 +216,24 @@ EOF
 ### 3.4 [BC, BOARD] start the broker; [WS] forward its socket
 
 ```bash
-ssh "$BC" 'bash -s' <<EOF
-set -uo pipefail
-cd /home/orencollaco/GitHub/llama.vhdl
-nohup python3 tools/jc/jc_broker.py serve --bmc $BMC --chain AB --dies \$HOME/jc_dies.json \
-    --sock $BCW/broker.sock --manifest A=$BC_MAN0 --manifest B=$BC_MAN1 \
-    > $BCW/broker.out 2> $BCW/broker.err < /dev/null &
-echo \$! > $BCW/broker.pid
-for i in \$(seq 1 30); do grep -qE '^JCBROKER_(READY|ABORT)' $BCW/broker.out && break; sleep 1; done
-cat $BCW/broker.out
-EOF
+bash $REPO/hw/jc/host/jc_bc_lane.sh start --dry-run    # prints the remote script, runs nothing
+bash $REPO/hw/jc/host/jc_bc_lane.sh start | tee $W/lane_start.log
+grep -qE '^JCLANE_DONE start$' $W/lane_start.log && echo LANE_OK
 ssh -f -N -M -S $W/fwd.ctl -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=yes \
     -L $SOCK:$BCW/broker.sock "$BC" && test -S $SOCK && echo FWD_OK
 ```
 
+- `jc_bc_lane.sh start` runs, on the BC-250 under `bash -s`, section 0 item 4's `serve`
+  line with `--manifest A=$BC_MAN0 --manifest B=$BC_MAN1` (dies from `JC_DIE0/1`, default
+  A/B), writes `$BCW/broker.pid`, and waits for `^JCBROKER_(READY|ABORT)` in
+  `$BCW/broker.out`. It refuses to start a second broker (the pid file is checked by
+  `/proc/PID/exe` and `/proc/PID/cwd`, never by command line). Tested dry and against
+  stubs, no ssh: `hw/jc/host/test_jc_bc_lane.py`.
 - Flags: `serve --bmc --chain --dies --sock [--hz] [--reconnect-secs] [--manifest DIE=PATH]
-  [--allow-image-read]` (`tools/jc/jc_broker.py:1106-1115`). Do NOT pass
+  [--allow-image-read]` (`tools/jc/jc_broker.py:1106-1115`). It never passes
   `--allow-image-read`: the fence is what keeps a stray `memrd` off the weights.
-- Gate: `^JCBROKER_READY ` in `broker.out` (`jc_broker.py:1131`), then `FWD_OK`.
+- Gate: `LANE_OK` (`^JCLANE_DONE start`, printed only after `^JCBROKER_READY ` appeared in
+  `broker.out`, `jc_broker.py:1131`), then `FWD_OK`.
   READY means the socket is bound; it does NOT mean the dies were identified: identity
   runs at the first request to each die (`jc_broker.py:456-462`), i.e. in 3.5.
 - Duration: ~1-2 s to READY (no board traffic before the first request).
@@ -199,8 +244,8 @@ ssh -f -N -M -S $W/fwd.ctl -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=
   (`jc_broker.py:428`: a window's state is unknown), `JCBROKER_RECONNECT` (normal, every
   ~270 s, `jc_broker.py:407`).
 - Stop (end of session): `ssh -S $W/fwd.ctl -O exit "$BC"`, then
-  `ssh "$BC" 'bash -s' <<< "kill -INT \$(cat $BCW/broker.pid)"` (SIGINT runs the clean
-  close, `jc_broker.py:1132-1141`; never `pkill -f`).
+  `bash $REPO/hw/jc/host/jc_bc_lane.sh stop` (SIGINT to the pid in `$BCW/broker.pid`, which
+  runs the clean close, `jc_broker.py:1132-1141`; gate `^JCLANE_DONE stop`).
 
 ### 3.5 [WS, BOARD] seam ID, CAPS and the image record on both dies
 
@@ -235,7 +280,7 @@ grep -HE '^seam id    0x4c4c4d32|^caps |^cap flags|^status .* err=0|^ +MATCH ' $
 
 ## 4. Step 4: first token for the reference prompt
 
-### 4.1 [WS, BOARD] clear A's counters, then the token (needs gap 1 fixed)
+### 4.1 [WS, BOARD] clear the counters, then the token
 
 ```bash
 for d in A B; do python3 $REPO/hw/jc/host/jc_seam.py util-clear --sock $SOCK --die $d; done
@@ -244,14 +289,16 @@ for d in A B; do python3 $REPO/hw/jc/host/jc_seam.py util-clear --sock $SOCK --d
     --dtbl2 $W/card1/token.dtbl --rel2 $W/card1/token.rel \
     --manifest $MAN0 --manifest2 $MAN1 --prompt $PROMPT --qtk $QTK --mv4i $EMB \
     --max-new 1 --ids-out $W/first_token.ids > $W/first_token.out 2> $W/first_token.err
-echo rc=$?; grep -E '^(transport|card|card2|pipeline|seq-reset|prefill|decode|timing) ' $W/first_token.out
+echo rc=$?; grep -E '^(transport|transport2|card|card2|pipeline|seq-reset|prefill|decode|timing) ' $W/first_token.out
 grep -E 'image lock OK' $W/first_token.err
 ```
 
-- Flags: everything except `--jc/--jc-die/--jc-die2` is `run_prompt`'s today
-  (`server/tests/run_prompt.c:355-389`), in the order `fk33_chat2.sh:143-148` passes them.
-  `--max-new 1` makes the run prefill only: 23 GOs per die, one argmax.
-- Gate: `rc=0`; `^seq-reset  seam AND engine positions cleared` (`run_prompt.c:608`);
+- Flags: `--jc/--jc-die/--jc-die2` select the JC transport (section 0 item 1); the rest
+  are passed in the order `fk33_chat2.sh:143-148` passes them. `--max-new 1` makes the run
+  prefill only: 23 GOs per die, one argmax. The GDN state is the zero 3.3 loaded: nothing
+  between 3.3 and here runs a GO (3.5 only reads).
+- Gate: `rc=0`; `^transport  JC broker <SOCK> die A` and `^transport2 JC broker <SOCK> die B`;
+  `^seq-reset  seam AND engine positions cleared`;
   `^prefill +23 ids, pos 23, first argmax [0-9]+` (`run_prompt.c:704`); `image lock OK`
   twice on stderr (`pl_backend.c:641`). The first-token argmax is the number after
   `first argmax`; it must equal `REF_ARGMAX` from 4.2.
@@ -343,15 +390,23 @@ grep -E '^timing ' $W/first_token.out
 ```bash
 JC_SOCK=$SOCK JC_RUN0=$W/card0 JC_RUN1=$W/card1 JC_MAN0=$MAN0 JC_MAN1=$MAN1 \
   bash $REPO/hw/jc/host/jc_ctxtest.sh pair $W/ctxtest/n500 500 --dry-run     # prints, touches nothing
-JC_SOCK=$SOCK JC_RUN0=$W/card0 JC_RUN1=$W/card1 JC_MAN0=$MAN0 JC_MAN1=$MAN1 JC_PREP="$W/rezero.sh" \
+bash $REPO/hw/jc/host/jc_bc_lane.sh rezero --dry-run > $W/rezero_dry.txt  # the prep, printed only
+JC_SOCK=$SOCK JC_RUN0=$W/card0 JC_RUN1=$W/card1 JC_MAN0=$MAN0 JC_MAN1=$MAN1 \
   bash $REPO/hw/jc/host/jc_ctxtest.sh pair $W/ctxtest/n500 500
 grep -E '^CTXTEST_(PASS|FAIL)' $W/ctxtest/n500/ctxtest.log
 ```
 
-- `JC_PREP` runs before every run. `$W/rezero.sh` (write it by hand, not in the repo) should
-  stop the broker (3.4 stop), `coe_load.py load $BCW/cardN/side_gdn.json` on both dies, and
-  restart the broker (3.4); the ssh forward survives a broker restart because it connects
-  to the remote path per connection. Whether the zero is NEEDED is open (section 7).
+- Before EVERY run the script re-zeroes the GDN state, as the FK33 flow does (section 0
+  item 8): `JC_PREP` defaults to `bash $REPO/hw/jc/host/jc_bc_lane.sh rezero`, which stops
+  the broker, runs `coe_load.py load` then `verify` of `$BCW/cardN/side_gdn.json` on die A
+  (card 0) and die B (card 1), gating on `^JCLOAD_DONE ` and
+  `^JCVERIFY_PASS [0-9]+ pieces, 0 bad`, and restarts the broker. A failed zero stops before
+  the restart, and the run fails `CTXTEST_FAIL ...: JC_PREP failed`. It reads the
+  `JC_BC/JC_BMC/JC_BCW/JC_BC_MAN0/JC_BC_MAN1` exported in section 1. The ssh forward
+  survives the restart because it connects to the remote path per connection.
+  `JC_NO_REZERO=1` turns it off (the log then says so); not for the gate run.
+- Prep duration, ESTIMATE: 78.7 MB per die at ~2.6 MB/s = ~30 s load plus the range-CRC
+  verify, for both dies, plus broker stop and start: about 1.5-2 min per run.
 - `single` mode needs a whole-model image on one die, which neither 27B image is.
 - Gate: `^CTXTEST_PASS` only. Duration, ESTIMATE: 4 runs x 500 positions x ~15 s = ~8 h,
   plus ~2 min of `JC_PREP` per run. Measure the per-position wall time in 4.1 first and
@@ -359,16 +414,22 @@ grep -E '^CTXTEST_(PASS|FAIL)' $W/ctxtest/n500/ctxtest.log
 
 ## 7. Gaps this runbook could not close
 
-1. `run_prompt` has no JC transport flags (section 0 item 1). Blocks 4.1 and 6.
+Closed 2026-10-09 (section 0): the `run_prompt --jc` flags (item 1); HBM writes stay with
+`coe_load.py`, per the spec and the RTL (item 2); the broker's `--manifest` paths (item 4);
+the GDN re-zero before every sequence (item 8). Still open:
+
+1. Nothing in steps 3-6 has run against the board. The `--jc` path is tested only against
+   the simulated seam behind a fake broker; its first real use with `jc_broker.py` and the
+   USER3 core is 3.5, then 4.1.
 2. Window 4 does not exist; the counters are at the engine map (section 0 item 3). The plan
    text for Task 1/Task 12 step 6 is stale on this point.
-3. The BC-250's manifest paths (`BC_MAN0/1`) are not known from the workstation; the broker
-   needs them (JSON only).
+3. The BC-250's manifest paths are now named (`~/jc_models/...`, section 1), but their
+   presence there is not verified from the workstation: P7.
 4. Per-read broker latency is not measured. Every duration above that depends on it is an
    ESTIMATE from the unpipelined BMC shift time; 4.1's `timing` line is the first
    measurement.
-5. Whether the GDN conv state must be zeroed between sequences is not determined: B masks
-   the recurrent state read at `tok_pos = 0` (`rtl/gdn_recur_pipe.vhd:592`, TK0_ED), but this
-   runbook did not trace the conv-state path. 3.3 zeroes it once; the context test's
-   repeat comparison will show a dependence if there is one.
+5. Whether the GDN zero is NEEDED between sequences is still not determined (the RTL masks
+   the recurrent read at `tk0` and zeroes invalid conv taps, section 0 item 8). It no longer
+   blocks these steps: the JC zeroes before every sequence, as the FK33 did. One run with
+   `JC_NO_REZERO=1` compared with the gated run would answer it; that is optional.
 6. `fk33ctl.py seam`'s CAPS check is hardcoded to the 9B (expected MISMATCH lines).
