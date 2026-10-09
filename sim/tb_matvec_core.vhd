@@ -44,7 +44,12 @@ entity tb_matvec_core is
     -- "distributed" is one table per LANE, the LUTRAM shape.  The DEFAULT IS
     -- THE SHIPPING VALUE on purpose: this bench is a gate row, and a gate row
     -- must measure what is on the card.  Drive the other value explicitly.
-    CB_STYLE : string := "regs"
+    CB_STYLE : string := "regs";
+    -- matvec_core's rows per accept-control copy.  The card runs
+    -- ROWS_IF=48 at CTL_ROWS=8, i.e. SIX copies; at RI=4 only CTL_ROWS < 4
+    -- gives more than one, so the default is 1 (four copies) to make this
+    -- gate row exercise the replicated form the card builds.
+    CTL_ROWS : positive := 1
   );
 end entity;
 
@@ -200,7 +205,7 @@ begin
 
   dut : entity work.matvec_core
     generic map(BLK => BLK, ROWS_IF => RI, MAXCOLS => 17408, MAXROWS_BFP => MAXR,
-                CB_STYLE => CB_STYLE)
+                CB_STYLE => CB_STYLE, CTL_ROWS => CTL_ROWS)
     port map(clk => clk, rst => rst, start => start,
              n_rows => n_rows, n_cols => n_cols, out_shift => out_shift,
              w_exp => w_exp, x_exp => x_exp, out_mode => out_mode,

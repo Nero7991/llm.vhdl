@@ -63,7 +63,12 @@ entity matvec_core is
     -- with.  "distributed" collapses the granularity to ONE COPY PER LANE so
     -- the table can be inferred as LUTRAM and the mux disappears.  See the cb
     -- declaration for the arithmetic and for what is and is not measured.
-    CB_STYLE : string := "regs"
+    CB_STYLE : string := "regs";
+    -- Rows served by ONE copy of the accept controls (st = S_RUN, xq_cnt > 0,
+    -- xq_rd) and of x_r.  A placement knob only: see "ACCEPT FAN-OUT" at
+    -- the copies' declaration.  Every value computes the same numbers on the
+    -- same cycles.
+    CTL_ROWS : positive := 8
   );
   port(
     clk, rst  : in  std_logic;
@@ -622,6 +627,41 @@ architecture rtl of matvec_core is
 
   signal accept  : std_logic;
   signal inflight: std_logic;
+
+  -- ============================ ACCEPT FAN-OUT ============================
+  -- MEASURED 2026-10-08, routed card jccard7 (xcvu35p-2L, 125 MHz): 10,233
+  -- failing endpoints inside this core, with st_reg (3,989), xq_rd_reg
+  -- (1,208) among the sources.  `accept` (st = S_RUN, both streams valid, a
+  -- prefetched x in hand) is the load enable of w_r (ROWS_IF*BLK*4 bits),
+  -- x_r, and the scale stage scp(0), and x_r feeds every multiplier of every
+  -- row, so the decode of two shared registers spread over the whole array.
+  --
+  -- Each group of CTL_ROWS rows now has its own registered copy of the two
+  -- state terms and of the queue read pointer, and its own copy of x_r:
+  --   run_c(k)  = (st = S_RUN)        set/cleared on exactly the edges st
+  --                                   enters/leaves S_RUN (start; last-tile
+  --                                   issue -> S_DRAIN; rst).  Nothing else
+  --                                   moves st while it is S_RUN.
+  --   xnz_c(k)  = (xq_cnt > 0)        assigned beside every xq_cnt assignment,
+  --                                   in the same order, so last-wins agrees.
+  --   xrd_c(k)  = xq_rd               assigned beside every xq_rd assignment.
+  --   x_rc(k)   = x_r                 loaded from xq(xrd_c(k)) on acc_c(k).
+  --   acc_c(k)  = run_c(k) and w_valid and s_valid and xnz_c(k)  = accept.
+  -- All equal the master on every cycle, so w_r/x_r/scp(0) load on the same
+  -- cycles with the same data.  dont_touch stops equivalent-register merging
+  -- folding the copies back into one.  `accept` itself is unchanged and still
+  -- drives the handshake outputs and the issue bookkeeping (small fan-out).
+  constant NCP : integer := (ROWS_IF + CTL_ROWS - 1) / CTL_ROWS;
+  type xrd_arr is array(0 to NCP-1) of integer range 0 to 1;
+  type xrc_arr is array(0 to NCP-1) of std_logic_vector(BLK*16-1 downto 0);
+  signal run_c : std_logic_vector(NCP-1 downto 0) := (others => '0');
+  signal xnz_c : std_logic_vector(NCP-1 downto 0) := (others => '0');
+  signal xrd_c : xrd_arr := (others => 0);
+  signal x_rc  : xrc_arr := (others => (others => '0'));
+  signal acc_c : std_logic_vector(NCP-1 downto 0);
+  attribute dont_touch of run_c : signal is "true";
+  attribute dont_touch of xnz_c : signal is "true";
+  attribute dont_touch of xrd_c : signal is "true";
 begin
 
   -- LEVER C IS SILENT WHEN IT IS OFF AND LOUD WHEN IT IS ON.
@@ -857,8 +897,33 @@ begin
     end if;
   end process;
 
+  -- THE REPLICATION INVARIANT, every cycle, simulation only.  Each copy must
+  -- equal the master it replaces on EVERY cycle: a copy that drifts while
+  -- w_valid is low is invisible to every value check until the cycle it is
+  -- used.  Synthesis never sees this process.
+  -- pragma translate_off
+  p_ctl_inv : process(clk)
+  begin
+    if rising_edge(clk) and rst = '0' then
+      for kc in 0 to NCP-1 loop
+        assert (run_c(kc) = '1') = (st = S_RUN)
+           and (xnz_c(kc) = '1') = (xq_cnt > 0)
+           and xrd_c(kc) = xq_rd
+           and acc_c(kc) = accept
+           and x_rc(kc) = x_r
+          report "matvec_core: accept-control copy " & integer'image(kc)
+               & " differs from the master (st/xq_cnt/xq_rd/accept/x_r)"
+          severity failure;
+      end loop;
+    end if;
+  end process;
+  -- pragma translate_on
+
   accept <= '1' when st = S_RUN and w_valid = '1' and s_valid = '1'
                      and xq_cnt > 0 else '0';
+  gen_acc_c : for kc in 0 to NCP-1 generate
+    acc_c(kc) <= run_c(kc) and w_valid and s_valid and xnz_c(kc);
+  end generate;
   w_ready  <= accept;
   s_ready  <= accept;
   x_rbaddr <= std_logic_vector(to_unsigned(b_pf, 16));
@@ -906,6 +971,8 @@ begin
         tg <= (others => TAG0);
         fold_v <= (others => '0');
         xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0'; b_pf <= 0;
+        run_c <= (others => '0'); xnz_c <= (others => '0');
+        xrd_c <= (others => 0);
 
       elsif cb_we = '1' and st = S_IDLE then
         -- The BRANCH stays even though its body has moved to P_CB below, and
@@ -930,7 +997,16 @@ begin
           xq_rd <= (xq_rd + 1) mod 2;
           occ   := occ - 1;
         end if;
+        -- The per-row-group copies; see ACCEPT FAN-OUT.
+        for kc in 0 to NCP-1 loop
+          if acc_c(kc) = '1' then
+            x_rc(kc)  <= xq(xrd_c(kc));
+            xrd_c(kc) <= (xrd_c(kc) + 1) mod 2;
+          end if;
+        end loop;
         xq_cnt <= occ;
+        if occ > 0 then xnz_c <= (others => '1');
+        else            xnz_c <= (others => '0'); end if;
         if st = S_RUN and occ < 2 then
           pf_out <= '1';
           if b_pf = nb_r - 1 then b_pf <= 0; else b_pf <= b_pf + 1; end if;
@@ -947,11 +1023,15 @@ begin
           nsc(i) := scp(i-1);
         end loop;
         nxt(0) := TAG0;
-        if accept = '1' then
-          w_r <= w_data;
-          for rr in 0 to ROWS_IF-1 loop
+        -- w_r and scp(0) load per row group, on that group's copy of accept.
+        for rr in 0 to ROWS_IF-1 loop
+          if acc_c(rr / CTL_ROWS) = '1' then
+            w_r((rr+1)*BLK*4-1 downto rr*BLK*4)
+              <= w_data((rr+1)*BLK*4-1 downto rr*BLK*4);
             nsc(0)(rr) := unsigned(s_data(rr*16+15 downto rr*16));
-          end loop;
+          end if;
+        end loop;
+        if accept = '1' then
           nxt(0).v    := '1';
           nxt(0).tile := t_iss;
           nxt(0).blk  := b_iss;
@@ -971,6 +1051,7 @@ begin
             -- S_IDLE has already checked.  The old test `t_iss = tiles_r - 1`
             -- said the same thing about the divided value.
             if rows_left <= ROWS_IF then st <= S_DRAIN;
+                 run_c <= (others => '0');
             else rows_left <= rows_left - ROWS_IF;
                  t_iss     <= t_iss + 1; end if;
           else
@@ -989,7 +1070,7 @@ begin
           for j in 0 to BLK-1 loop
             idx := to_integer(unsigned(
                      w_r((rr*BLK + j)*4 + 3 downto (rr*BLK + j)*4)));
-            xw  := signed(x_r(j*16+15 downto j*16));
+            xw  := signed(x_rc(rr / CTL_ROWS)(j*16+15 downto j*16));
             k   := tg(0).blk * BLK + j;
             if k < n_cols then
               -- The replica this LANE owns.  Both the numerator and the
@@ -1255,10 +1336,12 @@ begin
                 lastvalid <= n_cols - ((n_cols - 1) / BLK) * BLK;
                 t_iss <= 0; b_iss <= 0; b_pf <= 0;
                 xq_cnt <= 0; xq_wr <= 0; xq_rd <= 0; pf_out <= '0';
+                xnz_c <= (others => '0'); xrd_c <= (others => 0);
                 amax <= (others => '0');
                 os_r      <= out_shift;      -- checked 0..40 immediately above
                 sat_r <= '0'; err_r <= '0';
                 st <= S_RUN;
+                run_c <= (others => '1');
               end if;
             end if;
 
