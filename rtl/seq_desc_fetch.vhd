@@ -200,6 +200,13 @@ entity seq_desc_fetch is
     job_cmp       : out std_logic;   -- 1-cycle: the live job completed cleanly
     job_epoch     : out unsigned(EPOCH_W-1 downto 0);
     job_unit      : out unsigned(2 downto 0);
+    -- job_issue already decoded by unit: bit u = (job_issue and job_unit = u),
+    -- on every cycle, as its OWN register.  A consumer that only wants "was I
+    -- just issued" reads one bit here instead of a 3-bit compare of job_unit
+    -- (MEASURED 2026-10-08, routed jccard7: cur_unit_reg was the source of
+    -- 2,053 failing endpoints, through exactly that compare into B's z
+    -- buffer).  Optional: leaving it open changes nothing.
+    job_issue_oh  : out std_logic_vector(NUNIT-1 downto 0);
     job_opcode    : out unsigned(3 downto 0);
     job_flags     : out std_logic_vector(7 downto 0);
     job_src       : out unsigned(7 downto 0);
@@ -320,6 +327,14 @@ architecture rtl of seq_desc_fetch is
   signal err_step_r : unsigned(STEP_W-1 downto 0) := (others => '0');
   signal wdog       : unsigned(31 downto 0) := (others => '0');
   signal issue_r    : std_logic := '0';
+  -- issue_r decoded by cur_unit, registered.  issue_r is set in exactly one
+  -- place (S_ISSUE's accept arm) and cur_unit cannot change on that edge
+  -- (only S_CHECK writes it), so iss_oh(u) = issue_r and cur_unit = u on
+  -- every cycle.  max_fanout lets synthesis replicate each bit for its own
+  -- consumer group.
+  signal iss_oh     : std_logic_vector(NUNIT-1 downto 0) := (others => '0');
+  attribute max_fanout : integer;
+  attribute max_fanout of iss_oh : signal is 32;
   signal cmp_r      : std_logic := '0';
   signal jvalid_r   : std_logic := '0';
 
@@ -695,12 +710,14 @@ begin
         fetch_en   <= '0';
         pf_take    <= '0';
         issue_r    <= '0';
+        iss_oh     <= (others => '0');
         cmp_r      <= '0';
         jvalid_r   <= '0';
         start_acc  <= '0';
       else
         pf_take   <= '0';
         issue_r   <= '0';
+        iss_oh    <= (others => '0');
         cmp_r     <= '0';
         start_acc <= '0';
 
@@ -790,6 +807,7 @@ begin
               epoch_r   <= epoch_r + 1;
               pf_take   <= '1';
               issue_r   <= '1';
+              iss_oh(cur_unit) <= '1';
               jvalid_r  <= '1';
               start_acc <= '1';
               state     <= S_WAIT;
@@ -931,6 +949,7 @@ begin
   job_cmp        <= cmp_r;
   job_epoch      <= epoch_r;
   job_unit       <= to_unsigned(cur_unit, 3);
+  job_issue_oh   <= iss_oh;
   job_opcode     <= f_opcode(lv_w);
   job_flags      <= f_flags(lv_w);
   job_src        <= f_src(lv_w);
@@ -955,6 +974,21 @@ begin
   chk_dst     <= f_dst(pf_w);
   chk_dst_off <= f_dstoff(pf_w);
   chk_n_rows  <= f_nrows(pf_w);
+
+  -- iss_oh's stated identity, checked every cycle (simulation only).
+  -- pragma translate_off
+  p_iss_oh_inv : process(clk)
+  begin
+    if rising_edge(clk) then
+      for u in 0 to NUNIT-1 loop
+        assert (iss_oh(u) = '1') = (issue_r = '1' and cur_unit = u)
+          report "seq_desc_fetch: iss_oh(" & integer'image(u)
+               & ") is not issue_r and cur_unit = u"
+          severity failure;
+      end loop;
+    end if;
+  end process;
+  -- pragma translate_on
 
   gen_hs : for u in 0 to NUNIT-1 generate
     -- Held while in S_ISSUE, not pulsed: a `start` into a unit that is not

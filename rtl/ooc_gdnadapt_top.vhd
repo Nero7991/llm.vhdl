@@ -245,7 +245,12 @@ architecture rtl of ooc_gdnadapt is
   signal u_y_exp      : std_logic_vector(NUNIT*EXP_W-1 downto 0)
                       := (others => '0');
   signal qkv_exp      : qexp_t := (others => (others => '0'));
+  -- llama_top's block reads seq_desc_fetch's `job_issue_oh(U_B)`, which is
+  -- `job_issue and job_unit = U_B` held in its own register there.  The
+  -- harness keeps the job_issue/job_unit ports and decodes them here.
+  signal job_issue_oh : std_logic_vector(NUNIT-1 downto 0);
 begin
+  job_issue_oh(U_B) <= job_issue when to_integer(job_unit) = U_B else '0';
   -- ==== the flattening, OUTSIDE the verbatim block ====================
   -- Only slot U_B crosses the boundary because the block drives no other. A
   -- wider port would be tied to constants at every other index and Vivado
@@ -995,7 +1000,7 @@ begin
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0'; z_valid <= '0';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_B then
+          if job_issue_oh(U_B) = '1' then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
             j_lay  := to_integer(job_ordinal);

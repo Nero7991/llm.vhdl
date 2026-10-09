@@ -1454,6 +1454,7 @@ architecture rtl of fk33_llama_top is
   signal job_valid, job_issue, job_cmp : std_logic;
   signal job_epoch  : unsigned(EPOCH_W-1 downto 0);
   signal job_unit   : unsigned(2 downto 0);
+  signal job_issue_oh : std_logic_vector(NUNIT-1 downto 0);
   signal job_opcode : unsigned(3 downto 0);
   signal job_flags  : std_logic_vector(7 downto 0);
   signal job_src, job_src2, job_dst : unsigned(7 downto 0);
@@ -2377,7 +2378,8 @@ begin
       d_raddr => d_raddr, d_ren => d_ren_i, d_rdata => d_rdata,
       d_rvalid => d_rvalid,
       job_valid => job_valid, job_issue => job_issue, job_cmp => job_cmp,
-      job_epoch => job_epoch, job_unit => job_unit, job_opcode => job_opcode,
+      job_epoch => job_epoch, job_unit => job_unit,
+      job_issue_oh => job_issue_oh, job_opcode => job_opcode,
       job_flags => job_flags, job_src => job_src, job_src2 => job_src2,
       job_dst => job_dst, job_dst_off => job_dst_off,
       job_n_rows => job_n_rows, job_n_cols => job_n_cols,
@@ -4758,7 +4760,7 @@ begin
           if go = '1' then smp_base <= (others => '0'); end if;
           -- Latch at job_issue.  NOT at u_start: u_start leads job_issue by
           -- one cycle and job_* still decodes the previous live bank there.
-          if job_issue = '1' and to_integer(job_unit) = U_A then
+          if job_issue_oh(U_A) = '1' then
             j_src   := to_integer(job_src(6 downto 0));
             j_dst   := to_integer(job_dst(6 downto 0));
             j_off   := to_integer(job_dst_off(15 downto 0));
@@ -5181,7 +5183,7 @@ begin
         else
           if go = '1' then smp_base <= (others => '0'); end if;
 
-          if job_issue = '1' and to_integer(job_unit) = U_A then
+          if job_issue_oh(U_A) = '1' then
             j_src  := to_integer(job_src(6 downto 0));
             j_dst  := to_integer(job_dst(6 downto 0));
             j_off  := to_integer(job_dst_off(15 downto 0));
@@ -5622,7 +5624,7 @@ begin
           -- The vocabulary index space is per TOKEN.  `go` is the only
           -- instant at which the machine is idle and a new one begins.
           if go = '1' then smp_base <= (others => '0'); end if;
-          if job_issue = '1' and to_integer(job_unit) = U_A then
+          if job_issue_oh(U_A) = '1' then
             j_src   := to_integer(job_src(6 downto 0));
             j_dst   := to_integer(job_dst(6 downto 0));
             j_off   := to_integer(job_dst_off(15 downto 0));
@@ -5951,7 +5953,7 @@ begin
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_B then
+          if job_issue_oh(U_B) = '1' then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
             j_ord  := to_integer(job_ordinal);
@@ -6798,7 +6800,7 @@ begin
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0'; z_valid <= '0';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_B then
+          if job_issue_oh(U_B) = '1' then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
             j_lay  := to_integer(job_ordinal);
@@ -7172,7 +7174,7 @@ begin
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_C then
+          if job_issue_oh(U_C) = '1' then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
             ep     <= job_epoch;
@@ -7986,7 +7988,7 @@ begin
         if rst = '1' then
           st := S_IDLE; rdy <= '1'; dn <= '0'; uerr <= '0';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_C then
+          if job_issue_oh(U_C) = '1' then
             j_dst  := to_integer(job_dst(6 downto 0));
             j_rows := to_integer(job_n_rows(15 downto 0));
             j_lay  := to_integer(job_ordinal);
@@ -8202,7 +8204,7 @@ begin
         if rst = '1' then
           dn <= '0'; rdy <= '1';
         else
-          if job_issue = '1' and to_integer(job_unit) = U_E then
+          if job_issue_oh(U_E) = '1' then
             ep     <= job_epoch;
             rdy    <= '0';
             dn     <= '1';

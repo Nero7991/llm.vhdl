@@ -31,7 +31,7 @@
 --   a_eng    fk33_engine      866 ports, 863 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
 --   c_attn   attn_block        70 ports,  68 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
---   d_fetch  seq_desc_fetch    50 ports,  48 exported   (defaults)
+--   d_fetch  seq_desc_fetch    51 ports,  49 exported   (defaults)
 --   d_opdec  seq_opdec         43 ports,  41 exported   (defaults)
 --   d_lock   seq_region_lock   35 ports,  33 exported   (defaults)
 --   d_viss   seq_vec_issue     41 ports,  39 exported   (defaults)
@@ -1082,6 +1082,7 @@ entity compose4_top is
     d_fetch_job_cmp        : out   std_logic;
     d_fetch_job_epoch      : out   unsigned((4)-1 downto 0);
     d_fetch_job_unit       : out   unsigned(2 downto 0);
+    d_fetch_job_issue_oh   : out   std_logic_vector((5)-1 downto 0);
     d_fetch_job_opcode     : out   unsigned(3 downto 0);
     d_fetch_job_flags      : out   std_logic_vector(7 downto 0);
     d_fetch_job_src        : out   unsigned(7 downto 0);
@@ -2339,6 +2340,7 @@ begin
       job_cmp => d_fetch_job_cmp,
       job_epoch => d_fetch_job_epoch,
       job_unit => d_fetch_job_unit,
+      job_issue_oh => d_fetch_job_issue_oh,
       job_opcode => d_fetch_job_opcode,
       job_flags => d_fetch_job_flags,
       job_src => d_fetch_job_src,

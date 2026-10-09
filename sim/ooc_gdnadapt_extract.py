@@ -335,7 +335,12 @@ architecture rtl of {ent} is
   signal u_y_exp      : std_logic_vector(NUNIT*EXP_W-1 downto 0)
                       := (others => '0');
   signal qkv_exp      : qexp_t := (others => (others => '0'));
+  -- llama_top's block reads seq_desc_fetch's `job_issue_oh(U_B)`, which is
+  -- `job_issue and job_unit = U_B` held in its own register there.  The
+  -- harness keeps the job_issue/job_unit ports and decodes them here.
+  signal job_issue_oh : std_logic_vector(NUNIT-1 downto 0);
 begin
+  job_issue_oh(U_B) <= job_issue when to_integer(job_unit) = U_B else '0';
   -- ==== the flattening, OUTSIDE the verbatim block ====================
   -- Only slot U_B crosses the boundary because the block drives no other. A
   -- wider port would be tied to constants at every other index and Vivado
