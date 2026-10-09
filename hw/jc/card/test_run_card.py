@@ -518,3 +518,36 @@ def test_lever_trace_is_gathered_from_every_synthesis_runs_vds():
     assert "get_runs -filter {IS_SYNTHESIS}" in seg
     assert "*.vds" in seg
     assert "jcc_fail \"levers: no synthesis .vds" in seg
+
+
+# ---- 2026-10-09: --impl congestion (jccard7 failed 125 MHz on routing congestion) ----
+
+def test_dry_run_default_impl_reaches_tclargs():
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        r = _dry_run(os.path.join(d, "root"))
+        assert re.search(r"-tclargs\b.*\s-impl default\b", r.stdout), r.stdout
+
+
+def test_dry_run_impl_congestion_reaches_tclargs(tmp_path):
+    r = _dry_run(str(tmp_path / "root"), flags=["--impl", "congestion"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"-tclargs\b.*\s-impl congestion\b", r.stdout), r.stdout
+
+
+def test_unknown_impl_is_refused(tmp_path):
+    r = _dry_run(str(tmp_path / "root"), flags=["--impl", "fast"])
+    assert r.returncode != 0
+    assert not os.path.exists(str(tmp_path / "root"))
+
+
+def test_build_card_congestion_strategy_directives():
+    t = _build_card_text()
+    assert re.search(r"lsearch -exact \$argv -impl", t)
+    assert 'puts "JCCARD_IMPL $impl"' in t
+    for line in ("opt_design -directive ExploreWithRemap",
+                 "place_design -directive AltSpreadLogic_high",
+                 "phys_opt_design -directive AggressiveExplore",
+                 "route_design -directive AggressiveExplore"):
+        assert line in t, line
+    assert re.search(r"if \{\$impl eq \"congestion\" && \$post_wns < 0\} \{\s*phys_opt_design -directive AggressiveExplore", t)

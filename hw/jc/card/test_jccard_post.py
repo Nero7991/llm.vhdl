@@ -330,7 +330,8 @@ def test_jctl_syncs_runs_in_the_card_flow_before_opt_design():
     code = "\n".join(_code_lines(text))
     assert re.search(r"^\s*jctl_syncs \$CORE_CTL\s*$", code, re.M)
     i = code.index("jctl_syncs $CORE_CTL")
-    assert code.index("open_run synth_1") < i < code.index("\nopt_design")
+    first_opt = re.search(r"^\s*opt_design\b", code, re.M).start()
+    assert code.index("open_run synth_1") < i < first_opt
     # inside the constraints catch, so a JCCTL_SYNC error becomes JCCARD_FAIL
     block = _seg(code, "if {[catch {", '} err]} { jcc_fail "constraints: $err" }')
     assert "jctl_syncs $CORE_CTL" in block

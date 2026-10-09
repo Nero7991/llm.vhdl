@@ -47,7 +47,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 
-USAGE="usage: $0 [--dry-run] [--allow-scratch-root] [--allow-llama-server] [--allow-other-part] [--clk-mhz N] <root> [part] [allow_neg]"
+USAGE="usage: $0 [--dry-run] [--allow-scratch-root] [--allow-llama-server] [--allow-other-part] [--clk-mhz N] [--impl default|congestion] <root> [part] [allow_neg]"
 
 DRY_RUN=0
 ALLOW_SCRATCH_ROOT=0
@@ -58,6 +58,9 @@ ALLOW_OTHER_PART=0
 # composition routed at 134.6 MHz (jcooc27_2, 2026-10-07), so card builds pass
 # a lower value explicitly until timing is fixed.
 CLK_CORE_MHZ=200
+# implementation strategy: default, or congestion (spread placement, aggressive route and
+# phys_opt; jccard7, 2026-10-08, failed 125 MHz on routing congestion)
+IMPL=default
 while true; do
   case "${1:-}" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -65,6 +68,7 @@ while true; do
     --allow-llama-server) ALLOW_LLAMA_SERVER=1; shift ;;
     --allow-other-part) ALLOW_OTHER_PART=1; shift ;;
     --clk-mhz) CLK_CORE_MHZ=${2-}; shift 2 || { echo "$USAGE" >&2; exit 2; } ;;
+    --impl) IMPL=${2-}; shift 2 || { echo "$USAGE" >&2; exit 2; } ;;
     *) break ;;
   esac
 done
@@ -72,6 +76,7 @@ if [ $# -lt 1 ]; then
   echo "$USAGE" >&2
   exit 2
 fi
+case "$IMPL" in default|congestion) ;; *) echo "JCCARD_FAIL --impl '$IMPL' must be default or congestion"; exit 2 ;; esac
 if ! [[ "$CLK_CORE_MHZ" =~ ^[0-9]+$ ]] || [ "$CLK_CORE_MHZ" -lt 50 ] || [ "$CLK_CORE_MHZ" -gt 250 ]; then
   echo "JCCARD_FAIL --clk-mhz '$CLK_CORE_MHZ' must be an integer in 50..250" 
   exit 2
@@ -300,6 +305,7 @@ BUILD_CARD_TCL="$SRC/hw/jc/card/build_card.tcl"
 VIVADO_ARGS=("$PROJDIR" "$PART")
 if [ -n "$ALLOW_NEG" ]; then VIVADO_ARGS+=(allow_neg); fi
 VIVADO_ARGS+=(-clk_mhz "$CLK_CORE_MHZ")
+VIVADO_ARGS+=(-impl "$IMPL")
 VIVADO_ARGS+=(-nonce "$NONCE")
 # I3: delete (never append to) any stale log before this run's Vivado writes one.
 # The non-empty-root refusal above already makes this unreachable in the normal

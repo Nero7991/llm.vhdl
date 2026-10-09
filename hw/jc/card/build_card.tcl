@@ -40,6 +40,9 @@ set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : 
 # already emitted the clk_wiz and HBM AXI frequencies from the same value.
 set clk_idx   [lsearch -exact $argv -clk_mhz]
 set clk_mhz   [expr {$clk_idx >= 0 ? [lindex $argv [expr {$clk_idx + 1}]] : 200}]
+# implementation strategy from run_card.sh --impl (default | congestion)
+set impl_idx  [lsearch -exact $argv -impl]
+set impl      [expr {$impl_idx >= 0 ? [lindex $argv [expr {$impl_idx + 1}]] : "default"}]
 set TCK_P 37.037
 set DNA_DIV 10
 set CORE_LOADER "*u_jc_core/"
@@ -60,6 +63,8 @@ puts "JCCARD_NONCE $nonce"
 puts "JCCARD_PART $part"
 if {![string is integer -strict $clk_mhz] || $clk_mhz < 50 || $clk_mhz > 250} { jcc_fail "-clk_mhz $clk_mhz is not an integer in 50..250" }
 puts "JCCARD_CLK_CORE_MHZ $clk_mhz"
+if {$impl ni {default congestion}} { jcc_fail "-impl $impl is not default or congestion" }
+puts "JCCARD_IMPL $impl"
 
 # BSCAN census, as a proc so it can be run twice (Task 9 fix round 1, CRITICAL C2):
 # once right after opt_design (cheap: the design is not yet placed or routed) and
@@ -417,11 +422,30 @@ set cdc_bad [jctl_cdc_audit $CORE_CTL $aclk_clk [get_clocks tck_user3]]
 puts "JCCARD_CDC_UNEXPECTED $cdc_bad"
 if {$cdc_bad != 0} { jcc_fail "cdc audit: $cdc_bad unexpected ctl crossing(s)" }
 
-opt_design
+# -impl congestion (jccard7, 2026-10-08): 125 MHz placed at WNS +0.513 but routed at -8.833,
+# 49k endpoints, one-LUT paths with ~16 ns of routing in u_arr and A's core: congestion
+# detours, not logic depth. Spread placement and aggressive route/phys_opt for that case.
+if {$impl eq "congestion"} {
+  opt_design -directive ExploreWithRemap
+} else {
+  opt_design
+}
 jccard_bscan_check post_opt_design
-place_design
-phys_opt_design
-route_design
+if {$impl eq "congestion"} {
+  place_design -directive AltSpreadLogic_high
+  phys_opt_design -directive AggressiveExplore
+  route_design -directive AggressiveExplore
+} else {
+  place_design
+  phys_opt_design
+  route_design
+}
+set post_wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
+puts "JCCARD_POST_ROUTE_WNS $post_wns"
+if {$impl eq "congestion" && $post_wns < 0} {
+  phys_opt_design -directive AggressiveExplore
+  puts "JCCARD_POST_ROUTE_PHYSOPT_WNS [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]"
+}
 write_checkpoint -force $bd/jc_card_routed.dcp
 
 set rp $bd/reports
