@@ -321,7 +321,8 @@ Binary: `~/GitHub/llama.cpp.upstream/build/bin/llama-server` (build of 2026-06-2
 (`hw/fk33/results/goal_dcdc_2026-09-17/README.md`); `--device none -ngl 0` keeps it on the CPU.
 
 ```bash
-cd ~/GitHub/llama.cpp.upstream/build/bin
+cd ~/GitHub/llama.cpp.upstream/build/bin   # cd FIRST, as its own line: with `cd dir && ./llama-server &`, $! is the
+                                            # subshell and the kill below misses the 25 GB server (2026-10-09)
 ./llama-server -m /mnt/storage/llama-models/Qwen3.8-27B-Q4_K_M.gguf --device none -ngl 0 \
     -c 512 -np 1 -t 24 --no-warmup --host 127.0.0.1 --port 18087 > $W/ref_server.log 2>&1 &
 echo $! > $W/ref_server.pid
