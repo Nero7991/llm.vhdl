@@ -232,6 +232,7 @@ static void usage(void)
       "                  [--dump-xout <file>]  after the LAST GO, the residual R_X\n"
       "                        (window 3 mantissas + XEXP_OUT) as text: `exp E`, then\n"
       "                        n_embd int16 one per line; needs FK33_CAP_XEXP_OUT\n"
+      "                  [--dump-xout2 <file>] the same for card 1 (pair runs only)\n"
       "                        the shared exponent), LOGIT_EXP and the card's\n"
       "                        own TOKEN, in the tools/ref9b stream format.\n"
       "                        A v2 card publishes no logits row, so there the\n"
@@ -315,6 +316,31 @@ static int embed_biased(void *user, int tok, int16_t *mant, int n_embd, int32_t 
     return rc;
 }
 
+/* --dump-xout / --dump-xout2: `exp E`, then n_embd int16 one per line.
+ * Returns 0, or nonzero having said why on stderr. */
+static int dump_xout(pl_ctx *c, const char *path, const char *tag, const char *who)
+{
+    int n = pl_n_embd(c), rc = 0, i;
+    int16_t *m = (int16_t *)calloc((size_t)n, sizeof(int16_t));
+    int32_t xe = 0;
+    int rc2 = m ? pl_read_xout(c, m, &xe) : -1;
+    if (rc2 == 0) {
+        FILE *xf = fopen(path, "w");
+        if (xf) {
+            fprintf(xf, "exp %d\n", (int)xe);
+            for (i = 0; i < n; i++) fprintf(xf, "%d\n", (int)m[i]);
+            fclose(xf);
+            printf("%s      %sR_X after the last GO: exp %d, %d mantissas -> %s\n", tag, who, (int)xe, n, path);
+        } else { fprintf(stderr, "run_prompt: cannot write %s\n", path); rc = 2; }
+    } else {
+        fprintf(stderr, "run_prompt: --dump-%s: pl_read_xout returned %d (%s)\n", tag[4] == '2' ? "xout2" : "xout", rc2,
+                rc2 == -1 ? "no FK33_CAP_XEXP_OUT on this card, or a GO is pending" : "transport");
+        rc = 2;
+    }
+    free(m);
+    return rc;
+}
+
 int main(int argc, char **argv)
 {
     t_start = pl_now_wall();
@@ -323,6 +349,7 @@ int main(int argc, char **argv)
     int stream = 0;
     int serial_prefill = 0;
     const char *xout_path = NULL;
+    const char *xout2_path = NULL;
     const char *ids_path  = NULL;   /* --ids-out: the generated ids, one per line */
     const char *ids_stream_path = NULL; /* --ids-stream: each generated id, flushed as it arrives */
     FILE *ids_stream = NULL;
@@ -396,6 +423,7 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--check-argmax")) check_argmax = 1;
         else if (!strcmp(a, "--dump-logits"))  NEXT(dump_path);
         else if (!strcmp(a, "--dump-xout"))    NEXT(xout_path);
+        else if (!strcmp(a, "--dump-xout2"))   NEXT(xout2_path);
         else if (!strcmp(a, "--ids-out"))      NEXT(ids_path);
         else if (!strcmp(a, "--ids-stream"))   NEXT(ids_stream_path);
         else if (!strcmp(a, "--x-row"))        NEXT(x_row_path);
@@ -414,6 +442,10 @@ int main(int argc, char **argv)
     }
     if (!prompt_path && !text) { usage(); return 2; }
     if (text && !qtk_path) { fprintf(stderr, "run_prompt: --text needs --qtk\n"); return 2; }
+    if (xout2_path && !dtbl2_path) {
+        fprintf(stderr, "run_prompt: --dump-xout2 needs a second card (--dtbl2)\n");
+        return 2;
+    }
     /* THE JC OPTIONS, refused here, before any file is read or any socket is
      * opened, so a wrong combination never reaches the broker. */
     if (!jc_sock && (jc_die || jc_die2)) {
@@ -841,25 +873,13 @@ int main(int argc, char **argv)
          * card this is the row the two-card hop would carry, and it can be
          * checked against the reference stream's R_X-<last block> record
          * (mantissas AND exponent) with no second card present. */
-        int n = pl_n_embd(c);
-        int16_t *m = (int16_t *)calloc((size_t)n, sizeof(int16_t));
-        int32_t xe = 0;
-        int rc2 = m ? pl_read_xout(pp ? c : c, m, &xe) : -1;
-        if (rc2 == 0) {
-            FILE *xf = fopen(xout_path, "w");
-            if (xf) {
-                int i;
-                fprintf(xf, "exp %d\n", (int)xe);
-                for (i = 0; i < n; i++) fprintf(xf, "%d\n", (int)m[i]);
-                fclose(xf);
-                printf("xout       R_X after the last GO: exp %d, %d mantissas -> %s\n", (int)xe, n, xout_path);
-            } else { fprintf(stderr, "run_prompt: cannot write %s\n", xout_path); status = 2; }
-        } else {
-            fprintf(stderr, "run_prompt: --dump-xout: pl_read_xout returned %d (%s)\n", rc2,
-                    rc2 == -1 ? "no FK33_CAP_XEXP_OUT on this card, or a GO is pending" : "transport");
-            status = 2;
-        }
-        free(m);
+        if (dump_xout(c, xout_path, "xout ", "")) status = 2;
+    }
+    if (xout2_path) {
+        /* Card 1's R_X after ITS last GO: the last block's residual, the row
+         * a CPU reference's final hidden state is compared against
+         * (2026-10-09, the JC 27B first-token check). */
+        if (dump_xout(c2, xout2_path, "xout2", "card 1 ")) status = 2;
     }
     if (pp) {
         double hr = 0, hw = 0; unsigned long hops = 0;

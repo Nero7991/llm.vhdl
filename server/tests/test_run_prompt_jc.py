@@ -117,6 +117,7 @@ def test_help_lists_the_jc_options():
     (["--jc", "S", "--jc-die", "A", "--jc-die2", "A", "--dtbl2", "b.dtbl", "--rel2", "b.rel",
       "--manifest2", MAN_B], "must name different dies"),
     (["--jc", "S", "--jc-die", "A"], "--jc needs --v2"),
+    (["--jc", "S", "--jc-die", "A", "--dump-xout2", "b.x"], "--dump-xout2 needs a second card"),
 ])
 def test_refusals_happen_before_any_connection(work, args, why):
     base = ["--prompt", "p.txt"]
@@ -183,3 +184,22 @@ def test_a_die_the_broker_does_not_have_fails_the_open(work):
     assert p.returncode != 0, p.stdout
     assert re.search(r"pl_open refused card 1", p.stderr), p.stderr
     assert any(l.startswith("? refused") and '"die":"B"' in l for l in log), log
+
+
+def test_dump_xout2_reads_the_second_die(work):
+    # --dump-xout reads card 0 (the hop row); --dump-xout2 reads card 1, the LAST block's R_X,
+    # which is the row the CPU reference's final residual is compared against
+    b = Broker(work)
+    p = rp(work, *(["--jc", b.sock, "--jc-die", "A", "--jc-die2", "B"] + pair_args(work, "jc.ids")
+                   + ["--dump-xout", "a.x", "--dump-xout2", "b.x"]))
+    log = b.stop()
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert re.search(r"^xout  +R_X after the last GO: exp -?\d+, \d+ mantissas -> a\.x$", p.stdout, re.M)
+    assert re.search(r"^xout2 +card 1 R_X after the last GO: exp -?\d+, \d+ mantissas -> b\.x$",
+                     p.stdout, re.M), p.stdout
+    for f in ("a.x", "b.x"):
+        t = open(os.path.join(work, f)).read().split()
+        assert t[0] == "exp" and len(t) > 3, (f, t[:4])
+    # the XEXP_OUT read (seam 0xA4) is the last thing each die is asked, after its last GO
+    xe = [l.split()[0] for l in log if re.match(r"^[AB] rd32 0xe0a4 ", l)]
+    assert xe[-2:] == ["A", "B"], log[-20:]
