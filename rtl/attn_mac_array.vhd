@@ -368,6 +368,45 @@ begin
   assert ACC_N >= 2
     report "attn_mac_array: ACC_N = 1 gives a zero-width block index" severity failure;
 
+  -- THE REPLICATION INVARIANT, checked every cycle in simulation.  Every copy
+  -- must equal the master decode it replaces, and rdq must equal the S2 read
+  -- it replaces, on EVERY cycle and not only on the cycles a value check
+  -- happens to look at: a copy that drifts while no write is in flight is
+  -- invisible to the accumulator goldens until the cycle it matters.
+  -- Synthesis never sees this process.
+  -- pragma translate_off
+  inv : process(clk)
+    variable bad : boolean;
+  begin
+    if rising_edge(clk) and rst = '0' then
+      for gg in 0 to NGRP-1 loop
+        bad := blk1_g(gg) /= blk1;
+        for b in 0 to ACC_N-1 loop
+          if (wen2_g(gg)(b) = '1') /= ((mode2 = M_PV or mode2 = M_RS) and blk2 = b) then
+            bad := true;
+          end if;
+        end loop;
+        if (pv2_g(gg) = '1') /= (mode2 = M_PV) then bad := true; end if;
+        if (fwd2_g(gg) = '1') /= ((mode2 = M_PV or mode2 = M_RS) and blk2 = blk1) then
+          bad := true;
+        end if;
+        assert not bad
+          report "attn_mac_array: replicated S2 control group "
+               & integer'image(gg) & " differs from the master decode"
+          severity failure;
+      end loop;
+      if mode2 = M_PV then
+        for l in 0 to LANES-1 loop
+          assert rdq(l) = acc(((l / DIM_TILE)*ACC_N + blk2)*DIM_TILE + l mod DIM_TILE)
+            report "attn_mac_array: rdq lane " & integer'image(l)
+                 & " is not the accumulator S2 would have read"
+            severity failure;
+        end loop;
+      end if;
+    end if;
+  end process;
+  -- pragma translate_on
+
   p_valid <= pv_r;
   p_data  <= pd_r;
   p_blk   <= to_unsigned(pb_r, clog2(ACC_N));
