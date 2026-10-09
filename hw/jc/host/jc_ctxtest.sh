@@ -25,13 +25,17 @@
 #     server/fk33_transport_jc.c) and only coe_load.py writes HBM, on the BMC the broker
 #     holds.  So the token programs are generated beforehand (JC_RUN0/JC_RUN1 hold
 #     token.dtbl and token.rel) and the arena is loaded by coe_load.py beforehand
-#     (docs/superpowers/plans/2026-10-09-jc-silicon-runbook.md).  JC_PREP, if set, is run
-#     before EVERY run (e.g. stop the broker, zero the GDN state with coe_load.py, restart
-#     it); unset, the GDN state is NOT re-zeroed between runs and the script says so.
-#   - run_prompt is invoked directly with `--jc SOCK --jc-die D [--jc-die2 D2]`.
-#     THOSE FLAGS DO NOT EXIST in server/tests/run_prompt.c as of 2026-10-09 (it hardcodes
-#     PL_TRANSPORT_CHARDEV under --allow-hardware).  A real run refuses with CTXTEST_FAIL
-#     until `run_prompt --help` lists `--jc`; --dry-run does not need the binary.
+#     (docs/superpowers/plans/2026-10-09-jc-silicon-runbook.md).
+#   - THE GDN STATE IS RE-ZEROED BEFORE EVERY RUN, as the FK33 does: fk33_ctxtest.sh runs
+#     one fk33_chat2.sh per run, and chat2 zeroes hbm.gdn_state_bytes at gdn_state_base on
+#     both cards before run_prompt (fk33_chat2.sh:131-135; fk33_chat.sh:168-173).  JC_PREP
+#     is run before EVERY run and defaults to `bash hw/jc/host/jc_bc_lane.sh rezero` (stop
+#     the broker, coe_load.py side_gdn.json on both dies, verify, restart the broker), which
+#     needs that script's environment (JC_BC, JC_BMC, JC_BCW, JC_BC_MAN0/1).  JC_NO_REZERO=1
+#     skips it, and the script then says the state is NOT re-zeroed.
+#   - run_prompt is invoked directly with `--jc SOCK --jc-die D [--jc-die2 D2]` (added
+#     2026-10-09, server/tests/test_run_prompt_jc.py).  A real run still refuses unless
+#     `run_prompt --help` lists `--jc`; --dry-run does not need the binary.
 #   - The broker serves ONE client: run_prompt and jc_seam.py take turns, never overlap.
 #
 # ENVIRONMENT
@@ -42,7 +46,9 @@
 #   JC_EMBED             token embedding (default the 27B mv4i)
 #   JC_QTK               tokenizer (default build_artifacts_tok/qwen35_9b.qtk: the 27B GGUF's
 #                        tokens and merges hash identical to the 9B's, checked 2026-10-09)
-#   JC_PREP              optional shell command run before every run
+#   JC_PREP              shell command run before every run (default: the GDN re-zero,
+#                        `bash <repo>/hw/jc/host/jc_bc_lane.sh rezero`)
+#   JC_NO_REZERO=1       run no JC_PREP at all (the GDN state carries over between runs)
 #   RUN_PROMPT           default <repo>/server/run_prompt
 #   REPEATS (2), TESTS ("input output")
 #
@@ -70,6 +76,11 @@ EMB="${JC_EMBED:-/mnt/storage/llama-models/qwen38-27b-mv4i/token_embd.weight.mv4
 SOCK="${JC_SOCK:-}"
 OUTPROMPT=16
 LOG="$OUT/ctxtest.log"
+if [[ "${JC_NO_REZERO:-0}" == 1 ]]; then
+  JC_PREP=""
+else
+  JC_PREP="${JC_PREP:-bash $REPO/hw/jc/host/jc_bc_lane.sh rezero}"
+fi
 
 case "$MODE" in
   pair)   DIES="${JC_DIE0:-A} ${JC_DIE1:-B}" ;;
@@ -172,7 +183,7 @@ else
 fi
 
 seams pre || fail_early "a die already holds a sticky error before the test (see $OUT/pre_seam_*.txt); clear or reload it first"
-[[ -n "${JC_PREP:-}" ]] || say "NOTE JC_PREP is unset: the GDN state is NOT re-zeroed between runs (SEQ_RESET only)"
+[[ -n "${JC_PREP:-}" ]] || say "NOTE JC_NO_REZERO=1: the GDN state is NOT re-zeroed between runs (SEQ_RESET only), unlike the FK33 flow"
 
 # The run_prompt command for one run: $1 = test, $2 = max-new, $3 = tag
 rp_cmd() {

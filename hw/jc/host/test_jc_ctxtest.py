@@ -20,7 +20,7 @@ SOCK = "/nonexistent/jc_broker.sock"
 def run(args, tmp_path, **env_over):
     env = dict(os.environ)
     for k in list(env):
-        if k.startswith("JC_") or k in ("REPEATS", "TESTS", "RUN_PROMPT"):
+        if k.startswith("JC_") or k in ("REPEATS", "TESTS", "RUN_PROMPT", "JC_NO_REZERO"):
             del env[k]
     env.update(JC_SOCK=SOCK,
                JC_RUN0="/nonexistent/run/card0", JC_RUN1="/nonexistent/run/card1",
@@ -95,6 +95,27 @@ def test_prep_hook_runs_before_every_run(tmp_path):
     preps = [i for i, l in enumerate(lines) if l == "DRYRUN prep echo zero-gdn"]
     rps = [i for i, l in enumerate(lines) if l in rp_lines(p.stdout)]
     assert len(preps) == 4 and all(a < b for a, b in zip(preps, rps))
+
+
+def test_gdn_rezero_is_the_default_prep(tmp_path):
+    """Gap 4: the FK33 flow zeroes the GDN state before EVERY sequence (fk33_chat2.sh:131-135,
+    one chat2 per ctxtest run).  Unset JC_PREP must mean the same on the JC: the BC-250 lane's
+    rezero (stop broker, coe_load side_gdn.json on both dies, start broker) before every run."""
+    p = run(["pair", str(tmp_path / "c"), "100", "--dry-run"], tmp_path)
+    assert p.returncode == 0, p.stdout + p.stderr
+    lines = p.stdout.splitlines()
+    preps = [i for i, l in enumerate(lines)
+             if re.match(r"^DRYRUN prep bash \S*/hw/jc/host/jc_bc_lane\.sh rezero$", l)]
+    rps = [i for i, l in enumerate(lines) if l in rp_lines(p.stdout)]
+    assert len(preps) == 4 and all(a < b for a, b in zip(preps, rps)), lines
+    assert "GDN state is NOT re-zeroed" not in p.stdout
+
+
+def test_no_rezero_only_when_asked(tmp_path):
+    p = run(["pair", str(tmp_path / "c"), "100", "--dry-run"], tmp_path, JC_NO_REZERO="1")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert not any(l.startswith("DRYRUN prep") for l in p.stdout.splitlines())
+    assert "GDN state is NOT re-zeroed" in p.stdout
 
 
 def test_refusals(tmp_path):
