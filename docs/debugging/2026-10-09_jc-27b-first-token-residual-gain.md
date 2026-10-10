@@ -188,3 +188,47 @@ elaboration on the assert, and after the fix it needs a value check. Fix
 - At later positions the pow2 model matches the card less tightly (rel 0.10 at l_out-32
   and 0.30 at l_out-63, position 22). The non-A stages in run9b are float, not the card's
   fixed point, and that gap has not been separated from any second defect.
+
+## 2026-10-09 addendum 2: the RTL fix (simulation only, not yet built or run on silicon)
+
+**Answer.** `rtl/rmsnorm_bf_mem.vhd` now multiplies S by an elaboration-time reciprocal when N
+is not a power of two: `S/N = (S * RN) * 2^-(LOG2N+RK)`, `RK = 31 - LOG2N`,
+`RN = round(2^(LOG2N+RK) / N)` (RK 18, RN 419430 at N = 5120). The product is exact in s64
+(S <= 2^(30+LOG2N), so S*RN < 2^62). It is one registered multiply (free-running MREG/PREG
+pair) and three new FSM states, S_NRM1..3, entered only when N is not a power of two. At a
+power of two the FSM skips them, RK = 0, and the unit is unchanged. The ignored
+`assert 2**LOG2N = N` is gone. In its place, `bad_npow2_n_above_32768` (a non-power-of-two
+N must be <= 2^15) and two LANES shape pins are `natural` constants that go negative on an
+illegal shape. `ref/rmsnorm_bf_vec.c` now takes LOG2N as clog2 (it was floor(log2 N)) and
+applies the same RN.
+
+**Procedure and evidence** (MEASURED, GHDL 1.0.0 mcode; full record in
+`~/regress_scratch/rmsnorm_npow2/REPORT.md`):
+1. New gate row `sim/tb_rmsnorm_bf_mem_vec.vhd` at N = 5120, LANES 4, 40 cases from
+   `ref/rmsnorm_bf_vec_n5120.c`. It checks bit-exactness against the C, and accuracy
+   against an in-bench double oracle (mean = sum x^2 / N) including a least-squares gain fit.
+2. RED. The unfixed RTL fails elaboration on its own assert. With the assert removed (what
+   synthesis built), the per-case fit is 1.26489 to 1.26491 wherever the mean dominates eps,
+   and the pooled fit is 1.0569 (eps-dominated cases are correctly less affected).
+3. GREEN. Bit-exact with the C on 40 x 5120 elements. Oracle worst 1.32 LSB, mean 0.211 LSB,
+   pooled fit 0.99999937, worst per-case fit 1.0000324. The done latency moves 3894 -> 3897
+   cycles at N = 5120.
+4. N = 4096: `tb_rmsnorm_bf_mem -gN=4096` (identity against the unchanged rmsnorm_bf,
+   including the done cycle) passes with 0 BAD. The C regenerates the committed
+   `sim/rmsnorm_bf_vec.txt` byte-identically (N = 128) and is byte-identical to HEAD's at
+   N = 4096 and N = 256.
+5. Teeth. A 1% RN error applied to BOTH the RTL and the C leaves check 1 green (0 mismatches)
+   and is caught only by the oracle (pooled fit 0.99846). That is the attribution control.
+   Dropping RK from e_mean, or skipping the write-back, is caught by both checks.
+
+**Measured and REJECTED, do not retry.**
+- "Fix the C to clog2 alone." It would make the C agree with the broken RTL at 5120, so the
+  bit-exact check would bless the defect. Only the real-valued oracle can see a shared
+  wrong divisor.
+
+**Open, not determined.**
+- The card build: resources, the inferred DSP count for the 44x19 multiply, and routed timing.
+  None of this has been measured (no Vivado was run).
+- That Vivado refuses the negative-`natural` pins is the house idiom
+  (`gdn_conv_w_mem.vhd` and others), not something re-checked on this unit.
+- Silicon behaviour: the 500-token ctxtest and the residual metrics against l_out.
