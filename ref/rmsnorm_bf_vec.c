@@ -199,7 +199,23 @@ static const char *cov_name[COV_NCOV] = {
 static void rmsnorm_bf_int(const int16_t *xm, int xe,
                            const int16_t *wm, int we, bf_out *r)
 {
-    int lg = 0; { int t = N; while (t >>= 1) lg++; }        /* LOG2N */
+    /* LOG2N = clog2(N), the RTL's constant.  This line USED to be
+     * floor(log2 N) (`while (t >>= 1) lg++`), which agrees with clog2 only at
+     * a power of two; at N = 5120 it gave 12 against the RTL's 13, so the
+     * "bit-exact" model, the RTL and the algorithm all disagreed there
+     * (docs/debugging/2026-10-09_jc-27b-first-token-residual-gain.md). */
+    int lg = 0; while ((1L << lg) < N) lg++;
+
+    /* THE MEAN RECIPROCAL (2026-10-09), mirroring the RTL's NPOW2 / RK / RN.
+     * At a power of two the mean is a pure exponent (S * 2^-lg) and nothing
+     * below changes.  Otherwise S/N = S * (2^lg / N) * 2^-lg, and 2^lg / N is
+     * applied as an exact integer multiply by RN = round(2^(lg+RK) / N) with
+     * RK more bits of exponent.  RK = 31 - lg makes S * RN < 2^62 for every
+     * S the bound below admits, so the product is exact in int64 and the
+     * 63-bit msb scan still covers it. */
+    int     npow2 = ((1L << lg) == N);
+    int     rk    = npow2 ? 0 : 31 - lg;
+    int64_t rn    = npow2 ? 1 : (int64_t)llround(ldexp(1.0, lg + rk) / (double)N);
 
     /* ---- S_ACC: the exact sum of squares.  Lane order is irrelevant: this
      * is an exact integer sum, which is the whole reason the RTL's
@@ -220,15 +236,17 @@ static void rmsnorm_bf_int(const int16_t *xm, int xe,
     /* ---- S_INV1 / S_INV2: renormalise S to a 31-bit mantissa and carry the
      * exponent with it.  mean = S * 2^-lg * 2^-2xe, so in (m, e) form m = S
      * and e = lg + 2xe; shifting the mantissa by shs shifts e with it. */
-    int s_msb  = vmsb63(S);
+    /* ---- S_NRM1..3 (non-power-of-two N only): Ss = S * RN, exact. */
+    int64_t Ss = npow2 ? S : S * rn;
+    int s_msb  = vmsb63(Ss);
     int shs    = 30 - s_msb;
-    int e_mean = lg + 2 * xe + shs;
+    int e_mean = lg + rk + 2 * xe + shs;
 
     /* ---- S_INV3 */
     int64_t m_mean;
-    if (S == 0)      { m_mean = 0; cov[COV_S0]++; }
-    else if (shs >= 0) { m_mean = vsll64(S, shs);  cov[COV_SHS_UP]++; }
-    else               { m_mean = vsrl_a(S, -shs); cov[COV_SHS_DN]++; }
+    if (Ss == 0)     { m_mean = 0; cov[COV_S0]++; }
+    else if (shs >= 0) { m_mean = vsll64(Ss, shs);  cov[COV_SHS_UP]++; }
+    else               { m_mean = vsrl_a(Ss, -shs); cov[COV_SHS_DN]++; }
 
     /* ---- S_INV4: align to the LARGER value, i.e. the SMALLER e.  A larger e
      * is a finer grid and so a smaller value at equal mantissa.  Note the

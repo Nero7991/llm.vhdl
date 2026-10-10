@@ -255,6 +255,64 @@ architecture rtl of rmsnorm_bf_mem is
   constant LOG2N : natural := clog2(N);
   constant NB    : natural := N / LANES;          -- beats per element pass
 
+  -- ---- THE MEAN RECIPROCAL, for an N that is not a power of two ----------
+  -- 2026-10-09.  The mean used to be S * 2^-LOG2N with LOG2N = clog2(N),
+  -- which is S/N only when N is a power of two.  At the Qwen3.8-27B hidden
+  -- size, N = 5120, it divided by 8192 and every hidden-length norm on the
+  -- card came out sqrt(8192/5120) = 1.2649x too large; the only guard was an
+  -- `assert 2**LOG2N = N`, which synthesis ignores
+  -- (docs/debugging/2026-10-09_jc-27b-first-token-residual-gain.md).
+  --
+  -- The fix keeps the shift and supplies the missing factor 2^LOG2N / N, which
+  -- lies in (1, 2) for a non-power-of-two N (1.6 at 5120), as one exact
+  -- integer multiply by an elaboration-time constant:
+  --
+  --     S/N = (S * RN) * 2^-(LOG2N + RK),   RN = round(2^(LOG2N+RK) / N)
+  --
+  -- RK = 31 - LOG2N is the most precision s64 allows: the S_ACC bound is
+  -- S <= 2^(30+LOG2N) and RN < 2^(32-LOG2N), so S*RN < 2^62, still inside the
+  -- S_INV1 63-bit msb scan.  At 5120: RK = 18, RN = 419430 (2^31/5120 =
+  -- 419430.4), so the mean carries a relative error of 9.5e-7 and the gain
+  -- 4.8e-7, which is 0.008 LSB at the top of the int16 output (DERIVED).
+  --
+  -- AT A POWER OF TWO NOTHING CHANGES: NPOW2 is true, S_ACC goes straight to
+  -- S_INV1 exactly as before, RK = 0, and the multiplier below is dead logic
+  -- that synthesis removes.  The 9B's N = 4096 is bit-identical and done fires
+  -- on the same cycle.  A non-power-of-two N costs three more cycles
+  -- (S_NRM1..3, the DSP's MREG/PREG hop and the write-back), against a
+  -- 3N/LANES element loop of 3840 cycles at 5120.
+  constant NPOW2 : boolean := (2**LOG2N = N);
+  function f_rk(p : boolean; lg : natural) return natural is
+  begin
+    if p then return 0; else return 31 - lg; end if;
+  end function;
+  function f_rn(p : boolean; lg, rk, nn : natural) return natural is
+  begin
+    if p then return 1;
+    else return natural(round(2.0**real(lg + rk) / real(nn))); end if;
+  end function;
+  constant RK  : natural := f_rk(NPOW2, LOG2N);
+  constant RN  : natural := f_rn(NPOW2, LOG2N, RK, N);
+  constant SW  : natural := 31 + LOG2N;           -- holds S <= 2^(30+LOG2N)
+  constant RNW : natural := 32 - LOG2N;           -- holds RN < 2^(32-LOG2N)
+  -- SYNTHESIS-ENFORCED: a negative value in a `natural` constant fails
+  -- elaboration in Vivado and GHDL alike (the `assert` it replaces did not
+  -- stop synthesis).  The reciprocal path needs RK >= 16 so that RN's
+  -- rounding stays under 0.06 output LSB: a non-power-of-two N must be at
+  -- most 2^15.  A power of two is unrestricted, as before.
+  function f_pin(p : boolean; lg : natural) return integer is
+  begin
+    if p then return 0; else return 15 - lg; end if;
+  end function;
+  constant bad_npow2_n_above_32768 : natural := f_pin(NPOW2, LOG2N);
+  -- The two shape rules the asserts in the architecture body state, made
+  -- binding for the same reason.  With N no longer a power of two, "LANES
+  -- divides N" no longer implies "LANES is a power of two", and a
+  -- non-power-of-two LANES would silently drop lanes from the max tree and
+  -- mis-decode the bank index.
+  constant bad_lanes_not_dividing_n : natural := 0 - (N mod LANES);
+  constant bad_lanes_not_pow2       : natural := LANES - 2**clog2(LANES);
+
   constant THREE_Q30   : signed(33 downto 0) := shift_left(to_signed(3, 34), 30);
   constant INV_SQRT2_C : signed(31 downto 0) := to_signed(759250125, 32);
 
@@ -267,6 +325,7 @@ architecture rtl of rmsnorm_bf_mem is
   -- 40 logic levels with 16 CARRY8, none of it a multiply.  Chasing MREG on
   -- the Newton stage would never have found it.
   type state_t is (S_IDLE, S_ACC,
+                   S_NRM1, S_NRM2, S_NRM3,
                    S_INV1, S_INV2, S_INV3, S_INV4, S_INV5, S_INV6,
                    S_SEED1, S_SEED2,
                    S_RQ, S_RQ_RT1, S_RQ_RT2, S_RQ_FOLD, S_RQ_FIN1, S_RQ_FIN2, S_RQ_FIN3, S_RQ_CLAMP,
@@ -388,6 +447,11 @@ architecture rtl of rmsnorm_bf_mem is
   -- broken twice over, and it is the same shape the three pairs above were
   -- created to fix; this multiply was simply never given one.
   signal mr_m_rt, mr_p_rt : signed(63 downto 0) := (others => '0');  -- y * 1/sqrt2
+  -- The mean reciprocal's MREG/PREG pair, the same shape as the four above:
+  -- free-running, no logic between the multiply and either register.  Read
+  -- only at S_NRM3 and only when NPOW2 is false; at a power of two it drives
+  -- nothing and is removed.  SW + RNW = 63 bits, the exact product width.
+  signal mr_m_n, mr_p_n : unsigned(SW+RNW-1 downto 0) := (others => '0');
 
   -- ---- element pipeline
   type s17a is array(0 to LANES-1) of signed(16 downto 0);
@@ -454,8 +518,9 @@ architecture rtl of rmsnorm_bf_mem is
 
   -- ---- max|raw| reduction, PIPELINED.  See the long note at S_RAW.
   -- TLEV is the number of comparison levels in the balanced tree; LANES is a
-  -- power of two because it divides N and N is asserted to be one, so the
-  -- halving is exact and TLEV = log2(LANES).  At LANES = 1 it is 0 and the
+  -- power of two (bad_lanes_not_pow2 below; it no longer follows from N,
+  -- which need not be one since 2026-10-09), so the halving is exact and
+  -- TLEV = log2(LANES).  At LANES = 1 it is 0 and the
   -- tree degenerates to the abs stage alone, which is what that configuration
   -- should cost.
   constant TLEV : natural := clog2(LANES);
@@ -575,12 +640,22 @@ begin
 
   assert N mod LANES = 0
     report "rmsnorm_bf_mem: LANES must divide N" severity failure;
-  assert 2**LOG2N = N
-    report "rmsnorm_bf_mem: N must be a power of two (the mean divide is a shift)"
-    severity failure;
+  -- The old `assert 2**LOG2N = N` lived here.  A non-power-of-two N is now
+  -- SUPPORTED (the mean reciprocal above), and the limit it does have is
+  -- enforced by bad_npow2_n_above_32768, which synthesis cannot skip.
   assert 2**LB = LANES
     report "rmsnorm_bf_mem: LANES must be a power of two -- the bank index "
          & "is the low bits of the word index" severity failure;
+
+  -- The mean reciprocal multiply.  S is stable from the S_ACC exit edge to
+  -- the S_NRM3 write-back, so the product latched two edges later is
+  -- S * RN for the final S.
+  p_nrm : process(clk) begin
+    if rising_edge(clk) then
+      mr_m_n <= unsigned(S(SW-1 downto 0)) * to_unsigned(RN, RNW);
+      mr_p_n <= mr_m_n;
+    end if;
+  end process;
 
   process(clk)
     variable xm_j, wm_j : signed(15 downto 0);
@@ -647,8 +722,27 @@ begin
               S <= S + sq_sum;
             end if;
             if idx = NB and va = '0' and vb = '0' then
-              idx <= 0; state <= S_INV1;
+              -- S is final on this edge.  The sum-of-squares bound (the note
+              -- at S_INV1) is asserted HERE, on the raw S, because at a
+              -- non-power-of-two N S_NRM3 replaces S with S * RN.
+              assert S >= 0 and S <= shift_left(to_signed(1, 64), 30 + LOG2N)
+                report "rmsnorm_bf_mem: sum of squares out of the assumed range"
+                severity failure;
+              idx <= 0;
+              if NPOW2 then state <= S_INV1;
+              else          state <= S_NRM1; end if;
             end if;
+
+          -- ---- the mean reciprocal: non-power-of-two N only --------------
+          -- S_NRM1: mr_m_n latches S * RN.  S_NRM2: mr_p_n latches mr_m_n.
+          -- S_NRM3: S takes the product, and from here on S is the mean's
+          -- mantissa on the 2^-(LOG2N+RK) grid (S_INV2 adds RK).  S = 0 iff
+          -- S * RN = 0, so every S = 0 branch below keeps its meaning.
+          when S_NRM1 => state <= S_NRM2;
+          when S_NRM2 => state <= S_NRM3;
+          when S_NRM3 =>
+            S     <= signed(resize(mr_p_n, 64));
+            state <= S_INV1;
 
           -- ---- mean_sq_q and the seed, ONE operation per state ------------
           -- The rule this chain follows, arrived at by measurement rather than
@@ -676,9 +770,8 @@ begin
             -- 2^37 fits, and the renormalisation handles it.  Only the check
             -- was.  tb_rmsnorm_rs.vhd already drove -32768 for the same
             -- reason, against the looser 2^46 bound that hid it.
-            assert S >= 0 and S <= shift_left(to_signed(1, 64), 30 + LOG2N)
-              report "rmsnorm_bf_mem: sum of squares out of the assumed range"
-              severity failure;
+            -- (2026-10-09) The assert this note describes now sits at the
+            -- S_ACC exit, on the raw S; see there.
             p := 0;                                          -- one wide scan
             for i in 0 to 62 loop
               if S(i) = '1' then p := i; end if;
@@ -689,8 +782,10 @@ begin
           when S_INV2 =>                       -- narrow exponent arithmetic only
             -- mean = S * 2^-(log2 N) * 2^-2xe, so in (m, e) form m = S and
             -- e = log2 N + 2xe.  Renormalising S by shs shifts e with it.
+            -- At a non-power-of-two N, S is S * RN here and the grid is RK
+            -- bits finer (RK = 0 at a power of two, so this is unchanged).
             shs_r  <= 30 - s_msb;
-            e_mean <= LOG2N + 2 * xe + (30 - s_msb);
+            e_mean <= LOG2N + RK + 2 * xe + (30 - s_msb);
             state  <= S_INV3;
 
           when S_INV3 =>                                     -- one barrel shift
