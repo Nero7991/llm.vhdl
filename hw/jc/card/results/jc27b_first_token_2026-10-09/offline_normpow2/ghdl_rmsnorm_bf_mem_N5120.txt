@@ -1,0 +1,5 @@
+/home/orencollaco/GitHub/llama.vhdl/rtl/rmsnorm_bf_mem.vhd:578:3:@0ms:(assertion failure): rmsnorm_bf_mem: N must be a power of two (the mean divide is a shift)
+/usr/bin/ghdl-mcode:error: assertion failed
+in process .rmsnorm_bf_mem(rtl).P7
+  from: process work.rmsnorm_bf_mem(rtl).P7 at rmsnorm_bf_mem.vhd:578
+/usr/bin/ghdl-mcode:error: simulation failed

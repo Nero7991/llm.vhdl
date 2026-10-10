@@ -1,0 +1,10 @@
+l_out-32 pos  0  ok vs llama.cpp corr 0.99926 rel_rms 0.0877 fit 0.9199 | p2 vs llama.cpp corr 0.99897 rel_rms 0.1832 fit 1.1753
+l_out-32 pos  3  ok vs llama.cpp corr 0.99589 rel_rms 0.0914 fit 0.9800 | p2 vs llama.cpp corr 0.96627 rel_rms 0.3524 fit 1.1661
+l_out-32 pos 22  ok vs llama.cpp corr 0.99584 rel_rms 0.0925 fit 0.9757 | p2 vs llama.cpp corr 0.95398 rel_rms 0.3346 fit 1.0517
+l_out-32 pos 22  card vs llama.cpp corr 0.94470 rel_rms 0.3544 fit 1.0192
+l_out-32 pos 22  p2 vs card corr 0.99529 rel_rms 0.1006 fit 1.0170 | ok vs card corr 0.94678 rel_rms 0.3243 fit 0.8598
+l_out-63 pos  0  ok vs llama.cpp corr 0.99665 rel_rms 0.0831 fit 1.0064 | p2 vs llama.cpp corr 0.98727 rel_rms 0.6713 fit 1.6185
+l_out-63 pos  3  ok vs llama.cpp corr 0.99629 rel_rms 0.0904 fit 0.9655 | p2 vs llama.cpp corr 0.97716 rel_rms 0.4745 fit 1.3694
+l_out-63 pos 22  ok vs llama.cpp corr 0.98473 rel_rms 0.1856 fit 0.9066 | p2 vs llama.cpp corr 0.91025 rel_rms 0.5527 fit 1.1619
+l_out-63 pos 22  card vs llama.cpp corr 0.87032 rel_rms 0.5852 fit 1.0325
+l_out-63 pos 22  p2 vs card corr 0.96012 rel_rms 0.3028 fit 1.0330 | ok vs card corr 0.89526 rel_rms 0.4612 fit 0.6948

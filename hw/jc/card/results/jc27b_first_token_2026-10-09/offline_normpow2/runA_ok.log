@@ -1,0 +1,8 @@
+X_IN emb_248045.txt  (blocks 0..32)
+TOKEN 0 id=248045  (partial, 33 layers)  48.77 s
+wrote A_ok.r9bs: 505 records
+wrote xA_ok.txt
+
+real	0m48.832s
+user	0m46.999s
+sys	0m0.818s

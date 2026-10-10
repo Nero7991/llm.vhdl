@@ -1,0 +1,25 @@
+X_IN emb_prompt23.txt  (blocks 0..32)
+TOKEN 0 id=248045  (partial, 33 layers)  47.13 s
+TOKEN 1 id=846  (partial, 33 layers)  46.80 s
+TOKEN 2 id=198  (partial, 33 layers)  46.88 s
+TOKEN 3 id=623  (partial, 33 layers)  46.85 s
+TOKEN 4 id=1092  (partial, 33 layers)  46.78 s
+TOKEN 5 id=4886  (partial, 33 layers)  46.78 s
+TOKEN 6 id=369  (partial, 33 layers)  46.84 s
+TOKEN 7 id=10603  (partial, 33 layers)  46.79 s
+TOKEN 8 id=12  (partial, 33 layers)  46.75 s
+TOKEN 9 id=5449  (partial, 33 layers)  46.75 s
+TOKEN 10 id=85831  (partial, 33 layers)  46.79 s
+TOKEN 11 id=2577  (partial, 33 layers)  46.77 s
+TOKEN 12 id=1056  (partial, 33 layers)  46.75 s
+TOKEN 13 id=83871  (partial, 33 layers)  46.80 s
+TOKEN 14 id=248046  (partial, 33 layers)  46.78 s
+TOKEN 15 id=198  (partial, 33 layers)  46.79 s
+TOKEN 16 id=248045  (partial, 33 layers)  46.79 s
+TOKEN 17 id=74455  (partial, 33 layers)  46.80 s
+TOKEN 18 id=198  (partial, 33 layers)  46.81 s
+TOKEN 19 id=248068  (partial, 33 layers)  46.81 s
+TOKEN 20 id=271  (partial, 33 layers)  46.82 s
+TOKEN 21 id=248069  (partial, 33 layers)  46.80 s
+TOKEN 22 id=271  (partial, 33 layers)  46.82 s
+wrote x23A_ok.txt

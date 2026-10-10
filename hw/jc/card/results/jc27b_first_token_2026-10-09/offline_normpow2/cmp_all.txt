@@ -1,0 +1,13 @@
+xA_ok.txt                          vs ref_l_out-32_t0.txt                corr 0.99926 rel_rms 0.0877 fit_scale 0.9199
+xA_p2.txt                          vs ref_l_out-32_t0.txt                corr 0.99897 rel_rms 0.1832 fit_scale 1.1753
+card_A_k1.txt                      vs ref_l_out-32_t0.txt                corr 0.99885 rel_rms 0.1833 fit_scale 1.1744
+xA_p2.txt                          vs card_A_k1.txt                      corr 0.99986 rel_rms 0.0170 fit_scale 1.0004
+xA_ok.txt                          vs card_A_k1.txt                      corr 0.99902 rel_rms 0.2206 fit_scale 0.7821
+xB_ok.txt                          vs ref_l_out-63_t0.txt                corr 0.98987 rel_rms 0.2228 fit_scale 0.8100
+xB_p2.txt                          vs ref_l_out-63_t0.txt                corr 0.97706 rel_rms 0.4533 fit_scale 1.3456
+card_Balone_ref.txt                vs ref_l_out-63_t0.txt                corr 0.97622 rel_rms 0.4253 fit_scale 1.3101
+xB_p2.txt                          vs card_Balone_ref.txt                corr 0.99854 rel_rms 0.0607 fit_scale 1.0247
+xB_ok.txt                          vs card_Balone_ref.txt                corr 0.96357 rel_rms 0.4435 fit_scale 0.5875
+xBc_p2.txt                         vs card_B_k1.txt                      corr 0.99956 rel_rms 0.0298 fit_scale 1.0004
+card_B_k1.txt                      vs ref_l_out-63_t0.txt                corr 0.98671 rel_rms 0.6749 fit_scale 1.6199
+xAB_ok.txt                         vs ref_l_out-63_t0.txt                corr 0.99665 rel_rms 0.0831 fit_scale 1.0064

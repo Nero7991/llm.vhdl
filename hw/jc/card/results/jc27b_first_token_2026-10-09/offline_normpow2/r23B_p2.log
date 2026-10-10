@@ -1,0 +1,36 @@
+NORM_POW2 on: HIDDEN-length rmsnorm divides by 8192, not 5120 (card-defect model)
+X_IN x23A_p2.txt  (blocks 33..63)
+TOKEN 0 id=248045  argmax=8678 logit=26.519165  48.66 s
+TOKEN 1 id=846  argmax=198 logit=27.904236  48.32 s
+TOKEN 2 id=198  argmax=26583 logit=13.980347  48.35 s
+TOKEN 3 id=623  argmax=264 logit=16.131714  48.31 s
+TOKEN 4 id=1092  argmax=1007 logit=18.965698  48.36 s
+TOKEN 5 id=4886  argmax=248046 logit=26.765747  48.35 s
+TOKEN 6 id=369  argmax=248046 logit=15.604370  48.20 s
+TOKEN 7 id=10603  argmax=248046 logit=16.615540  48.32 s
+TOKEN 8 id=12  argmax=248046 logit=19.669067  48.32 s
+TOKEN 9 id=5449  argmax=248046 logit=23.100952  48.27 s
+TOKEN 10 id=85831  argmax=248046 logit=24.944153  48.30 s
+TOKEN 11 id=2577  argmax=248046 logit=26.705139  48.29 s
+TOKEN 12 id=1056  argmax=248046 logit=23.257446  48.31 s
+TOKEN 13 id=83871  argmax=248046 logit=32.407288  48.35 s
+TOKEN 14 id=248046  argmax=198 logit=32.961548  48.30 s
+TOKEN 15 id=198  argmax=248045 logit=48.929565  48.31 s
+TOKEN 16 id=248045  argmax=248045 logit=26.887512  48.36 s
+TOKEN 17 id=74455  argmax=198 logit=16.720551  48.31 s
+TOKEN 18 id=198  argmax=248068 logit=47.403442  48.30 s
+TOKEN 19 id=248068  argmax=198 logit=24.550537  48.31 s
+TOKEN 20 id=271  argmax=248069 logit=21.442780  48.31 s
+TOKEN 21 id=248069  argmax=271 logit=28.650391  48.24 s
+TOKEN 22 id=271  argmax=1206 logit=27.962280  48.33 s
+  TOP0 id=1206 logit=27.962280
+  TOP1 id=2064 logit=26.069458
+  TOP2 id=7732 logit=25.549072
+  TOP3 id=89454 logit=25.199707
+  TOP4 id=16619 logit=23.732544
+  TOP5 id=4350 logit=23.622192
+  TOP6 id=5170 logit=23.059326
+  TOP7 id=91763 logit=22.974121
+  TOP8 id=50821 logit=22.552246
+  TOP9 id=5449 logit=22.493042
+wrote x23B_p2.txt

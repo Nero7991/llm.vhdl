@@ -1,0 +1,8 @@
+X_IN /home/orencollaco/GitHub/llama.vhdl/hw/jc/card/results/jc27b_first_token_2026-10-09/xrow_ref_l32_t0.txt  (blocks 33..63)
+TOKEN 0 id=248045  argmax=8678 logit=25.237915  50.42 s
+  TOP0 id=8678 logit=25.237915
+  TOP1 id=846 logit=24.848022
+  TOP2 id=1156 logit=11.996094
+  TOP3 id=1785 logit=10.755249
+  TOP4 id=96746 logit=8.047363
+wrote xB_ok.txt

@@ -1,0 +1,9 @@
+NORM_POW2 on: HIDDEN-length rmsnorm divides by 8192, not 5120 (card-defect model)
+X_IN /home/orencollaco/GitHub/llama.vhdl/hw/jc/card/results/jc27b_first_token_2026-10-09/xout_A_k1.txt  (blocks 33..63)
+TOKEN 0 id=248045  argmax=8678 logit=26.515137  49.17 s
+  TOP0 id=8678 logit=26.515137
+  TOP1 id=846 logit=25.793579
+  TOP2 id=1156 logit=11.834595
+  TOP3 id=1785 logit=10.873657
+  TOP4 id=2244 logit=8.312622
+wrote xBc_p2.txt

@@ -1,0 +1,8 @@
+X_IN xA_ok.txt  (blocks 33..63)
+TOKEN 0 id=248045  argmax=8678 logit=23.896118  49.17 s
+  TOP0 id=8678 logit=23.896118
+  TOP1 id=846 logit=23.412598
+  TOP2 id=1156 logit=11.432007
+  TOP3 id=1785 logit=10.334839
+  TOP4 id=96746 logit=7.731567
+wrote xAB_ok.txt

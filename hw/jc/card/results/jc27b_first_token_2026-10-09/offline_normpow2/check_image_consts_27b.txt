@@ -1,0 +1,27 @@
+conv         worst |err| 7.629e-06 at blk.0 seg 0                half-quantum 7.629e-06  ok
+k_norm       worst |err| 1.221e-04 at blk.3                      half-quantum 1.221e-04  ok
+norm_row     worst |err| 1.221e-04 at blk.0.attn_norm            half-quantum 1.221e-04  ok
+q_norm       worst |err| 1.221e-04 at blk.3                      half-quantum 1.221e-04  ok
+ssm_a        worst |err| 7.557e-06 at blk.0                      half-quantum 7.629e-06  ok
+ssm_dt.bias  worst |err| 1.221e-04 at blk.5                      half-quantum 1.221e-04  ok
+ssm_norm     worst |err| 0.000e+00 at blk.0                      half-quantum 1.526e-05  ok
+CONSTS_27B: OK /mnt/storage/llama-models/qwen38-27b-card0-b0-32
+exit 0
+conv         worst |err| 7.629e-06 at blk.0 seg 0                half-quantum 7.629e-06  ok
+k_norm       worst |err| 1.221e-04 at blk.3                      half-quantum 1.221e-04  ok
+norm_row     worst |err| 1.221e-04 at blk.0.attn_norm            half-quantum 1.221e-04  ok
+q_norm       worst |err| 1.221e-04 at blk.3                      half-quantum 1.221e-04  ok
+ssm_a        worst |err| 7.557e-06 at blk.0                      half-quantum 7.629e-06  ok
+ssm_dt.bias  worst |err| 1.221e-04 at blk.5                      half-quantum 1.221e-04  ok
+ssm_norm     worst |err| 0.000e+00 at blk.0                      half-quantum 1.526e-05  ok
+CONSTS_27B: OK /mnt/storage/llama-models/qwen38-27b-card1-b33-63
+exit 0
+conv         worst |err| 7.629e-06 at blk.0 seg 0                half-quantum 7.629e-06  ok
+k_norm       worst |err| 1.221e-04 at blk.3                      half-quantum 1.221e-04  ok
+norm_row     worst |err| 1.432e-02 at blk.5.attn_norm            half-quantum 1.221e-04  BAD
+q_norm       worst |err| 1.527e-02 at blk.11                     half-quantum 1.221e-04  BAD
+ssm_a        worst |err| 7.557e-06 at blk.0                      half-quantum 7.629e-06  ok
+ssm_dt.bias  worst |err| 1.221e-04 at blk.5                      half-quantum 1.221e-04  ok
+ssm_norm     worst |err| 1.000e-02 at blk.6                      half-quantum 3.052e-05  BAD
+CONSTS_27B: BAD /mnt/storage/llama-models/qwen38-27b-card0-b0-32
+exit 1

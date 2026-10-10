@@ -1,0 +1,35 @@
+X_IN x23A_ok.txt  (blocks 33..63)
+TOKEN 0 id=248045  argmax=8678 logit=23.896118  48.66 s
+TOKEN 1 id=846  argmax=198 logit=26.709839  48.32 s
+TOKEN 2 id=198  argmax=2523 logit=12.214966  48.38 s
+TOKEN 3 id=623  argmax=264 logit=13.949829  48.35 s
+TOKEN 4 id=1092  argmax=1007 logit=17.326660  48.33 s
+TOKEN 5 id=4886  argmax=248046 logit=21.750854  48.32 s
+TOKEN 6 id=369  argmax=248046 logit=13.746643  48.20 s
+TOKEN 7 id=10603  argmax=248046 logit=15.654358  48.32 s
+TOKEN 8 id=12  argmax=248046 logit=17.050659  48.32 s
+TOKEN 9 id=5449  argmax=248046 logit=20.838501  48.27 s
+TOKEN 10 id=85831  argmax=248046 logit=23.685913  48.30 s
+TOKEN 11 id=2577  argmax=248046 logit=23.973389  48.29 s
+TOKEN 12 id=1056  argmax=248046 logit=19.880493  48.31 s
+TOKEN 13 id=83871  argmax=248046 logit=27.980469  48.34 s
+TOKEN 14 id=248046  argmax=198 logit=32.682739  48.30 s
+TOKEN 15 id=198  argmax=248045 logit=44.007080  48.31 s
+TOKEN 16 id=248045  argmax=248068 logit=21.800934  48.36 s
+TOKEN 17 id=74455  argmax=198 logit=16.003113  48.34 s
+TOKEN 18 id=198  argmax=248068 logit=40.015076  48.32 s
+TOKEN 19 id=248068  argmax=198 logit=28.308472  48.34 s
+TOKEN 20 id=271  argmax=248069 logit=31.607803  48.31 s
+TOKEN 21 id=248069  argmax=271 logit=24.347839  48.33 s
+TOKEN 22 id=271  argmax=1206 logit=22.838013  48.35 s
+  TOP0 id=1206 logit=22.838013
+  TOP1 id=7732 logit=22.722046
+  TOP2 id=2064 logit=21.997498
+  TOP3 id=5449 logit=21.768555
+  TOP4 id=89454 logit=20.581909
+  TOP5 id=760 logit=19.833313
+  TOP6 id=4350 logit=19.735413
+  TOP7 id=73923 logit=19.514404
+  TOP8 id=16619 logit=19.512878
+  TOP9 id=50821 logit=19.380371
+wrote x23B_ok.txt

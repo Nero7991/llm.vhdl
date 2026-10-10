@@ -1,0 +1,9 @@
+NORM_POW2 on: HIDDEN-length rmsnorm divides by 8192, not 5120 (card-defect model)
+X_IN emb_248045.txt  (blocks 0..32)
+TOKEN 0 id=248045  (partial, 33 layers)  48.77 s
+wrote A_p2.r9bs: 505 records
+wrote xA_p2.txt
+
+real	0m48.850s
+user	0m46.970s
+sys	0m0.868s
