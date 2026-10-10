@@ -99,6 +99,12 @@
  *
  * Build:  cc -O2 -Wall -Wextra -I ref -o ref/run9b ref/run9b.c -lm
  *         (assertions must stay ON; ref/matvec_int4.c refuses -DNDEBUG)
+ *         27B shape: add -DREF27B.  A 27B card image holds one die's blocks,
+ *         so run one die per process: --first/--layers pick the blocks and
+ *         --x-in/--x-out carry the residual across the die boundary.  The
+ *         27B GGUF has no BF16 embedding; give block 0 its rows via --x-in
+ *         (gguf-py dequantised token_embd rows, one float per line).
+ *         MEASURED 2026-10-09: 48.8 s per token per 33-block die, bfp mode.
  */
 
 #define MV4I_LIB
@@ -119,6 +125,23 @@
  * section 2); identical to rtl/model_cfg_pkg.vhd's QWEN35_9B record, which
  * until now had never been checked against a 9B checkpoint at all because
  * there was none on this machine. */
+/* REF27B (2026-10-09): the Qwen3.8-27B shape, compile with -DREF27B.  MEASURED
+ * against Qwen3.8-27B-Q4_K_M.gguf's metadata (block_count 64, embedding_length
+ * 5120, feed_forward_length 17408, ssm.time_step_rank 48, head_count 24) and
+ * identical to rtl/model_cfg_pkg.vhd's QWEN38_27B record.  Two 9B coincidences
+ * this file used to lean on do not hold at 27B and are now spelled out:
+ * ATT_QH*ATT_HD (6144) and VAL_DIM (6144) are NOT HIDDEN (5120). */
+#ifdef REF27B
+enum {
+    N_LAYER   = 64,
+    ATTN_INT  = 4,
+    HIDDEN    = 5120,
+    FFN       = 17408,
+    VOCAB     = 248320,
+
+    LIN_KH    = 16,
+    LIN_VH    = 48,
+#else
 enum {
     N_LAYER   = 32,
     ATTN_INT  = 4,        /* attention when (il+1) % ATTN_INT == 0 */
@@ -128,13 +151,18 @@ enum {
 
     LIN_KH    = 16,       /* GDN key heads   = ssm.group_count      */
     LIN_VH    = 32,       /* GDN value heads = ssm.time_step_rank   */
+#endif
     LIN_HD    = 128,      /* GDN head dim    = ssm.state_size       */
     KCONV     = 4,
     KEY_DIM   = LIN_KH * LIN_HD,   /* 2048 */
     VAL_DIM   = LIN_VH * LIN_HD,   /* 4096 */
     CONV_DIM  = 2 * KEY_DIM + VAL_DIM, /* 8192 */
 
+#ifdef REF27B
+    ATT_QH    = 24,
+#else
     ATT_QH    = 16,
+#endif
     ATT_KVH   = 4,
     ATT_HD    = 256,
     N_ROT     = 64,
@@ -516,13 +544,24 @@ static void lm_head(const reg_t *x, double *logits)
  * subsystem B or C track lands a composed fixed-point recipe at the 9B shape,
  * it replaces the body here and the write-up gains one more measured gap. */
 
+/* --norm-pow2 (2026-10-09): a MODEL OF A SUSPECTED CARD DEFECT, not of the
+ * algorithm.  rtl/rmsnorm_bf_mem.vhd divides the sum of squares by
+ * 2^clog2(N), a shift, and only asserts (severity failure, which synthesis
+ * ignores) that N is a power of two.  At N = HIDDEN = 5120 that is 8192.  With
+ * the flag set, every HIDDEN-length norm (attn_norm, post_attention_norm,
+ * output_norm: the ones that unit serves) uses that divisor; the head-dim
+ * norms (128, 256) are powers of two and unaffected either way. */
+static int g_norm_pow2 = 0;
+static int pow2_ceil(int n) { int p = 1; while (p < n) p <<= 1; return p; }
+
 static void rmsnorm(const double *x, const float *w, int n, double *o)
 {
     double s = 0; for (int i = 0; i < n; i++) s += x[i] * x[i];
+    double dn = (g_norm_pow2 && n == HIDDEN) ? (double)pow2_ceil(n) : (double)n;
 #if REF9B_MUT == 7
-    double inv = 1.0 / (sqrt(s / n) + RMS_EPS);   /* MUTANT 7 */
+    double inv = 1.0 / (sqrt(s / dn) + RMS_EPS);   /* MUTANT 7 */
 #else
-    double inv = 1.0 / sqrt(s / n + RMS_EPS);
+    double inv = 1.0 / sqrt(s / dn + RMS_EPS);
 #endif
     for (int i = 0; i < n; i++) o[i] = x[i] * inv * (double)w[i];
 }
@@ -567,7 +606,7 @@ static void layer_gdn(int il, state_t *S, reg_t *RX, int pos)
     static reg_t RXN, RQ, RK, RV, RZ, RB, RA, RY, RER, RG, RU, RH;
     if (!RXN.n) {
         RXN = reg_new(HIDDEN); RQ = reg_new(KEY_DIM); RK = reg_new(KEY_DIM);
-        RV  = reg_new(VAL_DIM); RZ = reg_new(HIDDEN); RB = reg_new(LIN_VH);
+        RV  = reg_new(VAL_DIM); RZ = reg_new(VAL_DIM); RB = reg_new(LIN_VH);
         RA  = reg_new(LIN_VH);  RY = reg_new(VAL_DIM); RER = reg_new(HIDDEN);
         RG  = reg_new(FFN); RU = reg_new(FFN); RH = reg_new(FFN);
     }
@@ -723,7 +762,7 @@ static void layer_attn(int il, state_t *S, reg_t *RX, int pos)
     if (!RXN.n) {
         RXN = reg_new(HIDDEN); RQG = reg_new(2 * ATT_QH * ATT_HD);
         RKIN = reg_new(ATT_KVH * ATT_HD); RVIN = reg_new(ATT_KVH * ATT_HD);
-        RY = reg_new(HIDDEN); RER = reg_new(HIDDEN);
+        RY = reg_new(ATT_QH * ATT_HD); RER = reg_new(HIDDEN);
         RG = reg_new(FFN); RU = reg_new(FFN); RH = reg_new(FFN);
     }
     double *t = malloc(sizeof(double) * (size_t)FFN);
@@ -818,7 +857,7 @@ static void layer_attn(int il, state_t *S, reg_t *RX, int pos)
         }
     }
     /* the gate is the RAW projection: not q-normed, not roped */
-    for (int i = 0; i < HIDDEN; i++) t[i] *= sigmoidd(g[i]);
+    for (int i = 0; i < ATT_QH * ATT_HD; i++) t[i] *= sigmoidd(g[i]);
     reg_put(&RY, t);
     snprintf(nm, sizeof nm, "R_Y-%d", il); seam(nm, il, &RY);
 
@@ -974,13 +1013,22 @@ static void usage(void)
       "  --gguf PATH      the BF16 checkpoint --embed gguf reads\n"
       "  --layers N       stop after N layers (a cheap partial run)\n"
       "  --selftest       check a_job against MV4I_MODE_BFP and exit\n"
-      "  --top K          print the top-K logits of the last token\n");
+      "  --top K          print the top-K logits of the last token\n"
+      "  --first L        start at block L (default 0); the residual then\n"
+      "                   comes from --x-in, not from the embedding\n"
+      "  --x-in F         the starting residual R_X, one token only: either\n"
+      "                   run_prompt --dump-xout format (`exp E` then int16\n"
+      "                   mantissas) or one float per line\n"
+      "  --x-out F        write R_X after the last layer run (`exp E` then\n"
+      "                   int16 mantissas in bfp mode; floats in f32 mode)\n"
+      "  --norm-pow2      CARD-DEFECT MODEL: HIDDEN-length rmsnorms divide\n"
+      "                   by 2^clog2(HIDDEN) (rtl/rmsnorm_bf_mem.vhd's shift)\n");
 }
 
 int main(int argc, char **argv)
 {
-    const char *packed = NULL, *out = NULL;
-    int toks[64], ntok = 0, nlayer = N_LAYER, do_self = 0, topk = 5;
+    const char *packed = NULL, *out = NULL, *x_in = NULL, *x_out = NULL;
+    int toks[64], ntok = 0, nlayer = N_LAYER, do_self = 0, topk = 5, first = 0;
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         #define NEXT() (i + 1 < argc ? argv[++i] : (usage(), exit(1), ""))
@@ -989,6 +1037,10 @@ int main(int argc, char **argv)
         else if (!strcmp(a, "--layers"))   nlayer = atoi(NEXT());
         else if (!strcmp(a, "--top"))      topk = atoi(NEXT());
         else if (!strcmp(a, "--selftest")) do_self = 1;
+        else if (!strcmp(a, "--first"))    first = atoi(NEXT());
+        else if (!strcmp(a, "--x-in"))     x_in = NEXT();
+        else if (!strcmp(a, "--x-out"))    x_out = NEXT();
+        else if (!strcmp(a, "--norm-pow2")) g_norm_pow2 = 1;
         else if (!strcmp(a, "--acts"))     g_bfp = strcmp(NEXT(), "f32") != 0;
         else if (!strcmp(a, "--gguf"))     g_gguf = NEXT();
         else if (!strcmp(a, "--embed")) {
@@ -1007,12 +1059,23 @@ int main(int argc, char **argv)
     if (!ntok) { int d[] = {760,6511,314,9338,369}; ntok = 5; memcpy(toks, d, sizeof d); }
 
     load_index(packed);
+    if (first < 0 || first >= N_LAYER || nlayer <= first || nlayer > N_LAYER)
+        die("--first / --layers out of range (--layers is the END block, exclusive)");
+    if (first > 0 && !x_in) die("--first > 0 needs --x-in: the embedding is block 0's input");
+    FILE *fx = NULL, *fo = NULL;
+    if (x_in) { fx = fopen(x_in, "r"); if (!fx) { perror(x_in); return 1; } }
+    if (x_out) { fo = fopen(x_out, "w"); if (!fo) { perror(x_out); return 1; } }
+    if (g_norm_pow2) printf("NORM_POW2 on: HIDDEN-length rmsnorm divides by %d, not %d "
+                            "(card-defect model)\n", pow2_ceil(HIDDEN), HIDDEN);
+    if (x_in) g_embed_src = -1;      /* no embedding is gathered at all */
 
     /* Open the embedding source NOW, not lazily inside the first token: a bad
      * --gguf path should cost a second, not thirty.  And PRINT which copy is in
      * use on every run, because the whole hazard this flag guards against is a
      * number quoted without its basis. */
-    if (g_embed_src == EMBED_SRC_GGUF) {
+    if (g_embed_src < 0) {
+        printf("X_IN %s  (blocks %d..%d)\n", x_in, first, nlayer - 1);
+    } else if (g_embed_src == EMBED_SRC_GGUF) {
         reg_t probe = reg_new(HIDDEN);
         embed(0, &probe);
         printf("EMBED gguf  %s\n", emb_bf16_describe(g_eb));
@@ -1052,17 +1115,45 @@ int main(int argc, char **argv)
     reg_t RX = reg_new(HIDDEN), RXN = reg_new(HIDDEN);
     double *logits = malloc(sizeof(double) * VOCAB);
     double *t = malloc(sizeof(double) * HIDDEN);
-    const float *on = f32t("output_norm.weight", NULL);
+    const float *on = (nlayer == N_LAYER) ? f32t("output_norm.weight", NULL) : NULL;
 
     struct timespec t0, t1;
     for (int p = 0; p < ntok; p++) {
         g_tok = p;
         clock_gettime(CLOCK_MONOTONIC, &t0);
-        embed(toks[p], &RX);
-        seam("R_X.embed", -1, &RX);
-        for (int il = 0; il < nlayer; il++) {
+        if (x_in) {
+            /* `exp E` + HIDDEN int16 (one token), or ntok x HIDDEN floats in
+             * token order.  Anything but exactly that many values is refused. */
+            char w0[64]; int e = 0, n = 0, intfmt = 0;
+            if (fscanf(fx, "%63s", w0) != 1) die("--x-in holds fewer tokens than --tokens");
+            if (!strcmp(w0, "exp")) {
+                if (ntok > 1) die("--x-in in `exp E` form carries one token only");
+                if (fscanf(fx, "%d", &e) != 1) die("--x-in: bad exp");
+                intfmt = 1;
+            } else { t[n++] = atof(w0); }
+            double v;
+            while (n < HIDDEN && fscanf(fx, "%lf", &v) == 1) t[n++] = intfmt ? ldexp(v, -e) : v;
+            if (n != HIDDEN) die("--x-in ended inside a token's residual");
+            if (p == ntok - 1 && fscanf(fx, "%lf", &v) == 1)
+                die("--x-in holds more values than --tokens x HIDDEN");
+            reg_put(&RX, t);
+            seam("R_X.in", first - 1, &RX);
+        } else {
+            embed(toks[p], &RX);
+            seam("R_X.embed", -1, &RX);
+        }
+        for (int il = first; il < nlayer; il++) {
             if (is_attn(il)) layer_attn(il, &S, &RX, p);
             else             layer_gdn (il, &S, &RX, p);
+        }
+        if (fo) {
+            /* one token: `exp E` + int16 in bfp mode (run_prompt --dump-xout
+             * form); otherwise floats, which in bfp mode are the exact
+             * dequantised mantissas, ntok x HIDDEN in token order. */
+            if (g_bfp && ntok == 1) {
+                fprintf(fo, "exp %d\n", RX.exp);
+                for (int i = 0; i < HIDDEN; i++) fprintf(fo, "%d\n", RX.m[i]);
+            } else for (int i = 0; i < HIDDEN; i++) fprintf(fo, "%.17g\n", RX.v[i]);
         }
         if (nlayer == N_LAYER) {
             rmsnorm(reg_get(&RX), on, HIDDEN, t);
@@ -1091,6 +1182,8 @@ int main(int argc, char **argv)
         }
         fflush(stdout);
     }
+    if (fx) fclose(fx);
+    if (fo) { fclose(fo); printf("wrote %s\n", x_out); }
     if (g_seam) { fclose(g_seam); fprintf(stderr, "wrote %s: %ld records\n", out, g_recs); }
     return 0;
 }
