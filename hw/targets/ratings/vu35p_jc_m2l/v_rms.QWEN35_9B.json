@@ -1,5 +1,5 @@
 {
-  "achieved_mhz": 214.27040925648168,
+  "achieved_mhz": 208.89910173386255,
   "ceiling_mhz": 510.2040816326531,
   "deps": [
     "rtl/fixed_luts_pkg.vhd",
@@ -11,26 +11,26 @@
   "device": "vu35p_jc_m2l",
   "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
   "fmax_is_lower_bound": false,
-  "key": "d0e301c522815048356317e45573adfcdb2e235f7151924ccc28cf926e6e473c",
+  "key": "0128b7d9205e9f2a4978e4e6162e9cfd7bd3aec3903db352e91cf08c72cceb5a",
   "levers": [],
   "limited_by": "routing",
   "mem": {
     "cap": "11G",
     "lane": "bc250",
-    "peak": 4850221056,
+    "peak": 6531547136,
     "swap_peak": 0
   },
   "model": "QWEN35_9B",
   "part": "xcvu35p-fsvh2104-2LV-e",
   "route": {
-    "end": "u_dut/ARG__7/DSP_OUTPUT_INST/ALU_OUT[0]",
+    "end": "u_dut/ARG__17/DSP_OUTPUT_INST/ALU_OUT[0]",
     "levels": 7,
-    "start": "u_dut/gbank[2].ux/ram_reg_bram_0/CLKBWRCLK",
+    "start": "u_dut/gbank[0].ux/ram_reg_bram_0/CLKBWRCLK",
     "unrouted": 0,
     "whs": 0.055,
-    "wns": -3.197
+    "wns": -3.317
   },
-  "route_mhz": 214.27040925648168,
+  "route_mhz": 208.89910173386255,
   "row": "v_rms",
   "synth": {
     "levels": 8,
@@ -41,8 +41,8 @@
   "util": {
     "BRAM": 6,
     "DSP": 40,
-    "FF": 2938,
-    "LUT": 5350,
+    "FF": 3007,
+    "LUT": 5370,
     "URAM": 0
   },
   "vivado": "2023.2"
