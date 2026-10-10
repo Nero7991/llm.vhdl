@@ -1,0 +1,22 @@
+embedding  mv4i /mnt/storage/llama-models/qwen38-27b-mv4i/token_embd.weight.mv4i M=248320 K=5120 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=160 tiles=5174 w_exp=7 recipe=wide read=5120B x2
+program    $W/card0/token.dtbl: 8080 32-bit halves (505 descriptors of 8 64-bit words)
+release    $W/card0/token.rel: 505 entries
+program2   $W/card1/token.dtbl: 8896 32-bit halves (556 descriptors)
+release2   $W/card1/token.rel: 556 entries
+transport  JC broker $W/broker.sock die A
+card       seam v2 @BAR+0xE000 vocab=248320 embd=5120 layer=64 ctx=16384 chunk=1 x_stride=10304 l_stride=993344 | jc sock=$W/broker.sock die=A win=0xe060
+transport2 JC broker $W/broker.sock die B
+card2      seam v2 @BAR+0xE000 vocab=248320 embd=5120 layer=64 ctx=16384 chunk=1 x_stride=10304 l_stride=993344 | jc sock=$W/broker.sock die=B win=0xe060
+pipeline   card 0 -> host (R_X + exponent) -> card 1; card 1's argmax decides
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    1 ids, pos 1, first argmax 8678, exp 0
+decode     1 ids generated, pos 1, stopped at --max-new
+timing     1 GOs: run_chunk 0.763 s (of which STATUS wait 0.729 s over 71 polls), X pushes 0.227 s, wall since start 60.949 s
+xout       R_X after the last GO: exp 6, 5120 mantissas -> $W/xout_A_k1.txt
+xout2      card 1 R_X after the last GO: exp 4, 5120 mantissas -> $W/xout_B_k1.txt
+hop        1 hops: read R_X 56.915 s, push+GO card 1 0.535 s; card 1 at pos 1; prefill overlapped
+bytes      h2c 20480, c2h 40960, go 1 (argmax fast path)
+ids        1 generated ids -> $W/k1.ids
+---- generated ----
+system
+-------------------

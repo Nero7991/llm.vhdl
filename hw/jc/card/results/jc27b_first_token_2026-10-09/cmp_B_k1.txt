@@ -1,0 +1,11 @@
+card exp 4 n 5120  nonzero 5097  rms 17.37
+ref  last tok 0  n 5120  rms(l_out-63) 10.58
+l_out-61 tok  0  corr 0.51083  rel_rms 4.4350  fit_scale 2.4835
+l_out-61 tok  1  corr 0.15035  rel_rms 4.7171  fit_scale 0.7163
+l_out-62 tok  0  corr 0.73535  rel_rms 2.8111  fit_scale 2.5469
+l_out-62 tok  1  corr 0.10230  rel_rms 3.5818  fit_scale 0.3627
+l_out-63 tok  0  corr 0.98671  rel_rms 0.6749  fit_scale 1.6199  <- target
+l_out-63 tok  1  corr 0.08757  rel_rms 3.0817  fit_scale 0.2631
+BEST l_out-63 tok 0 corr 0.98671
+largest |card-ref| elements: 3994: card 1.05e+03 ref 623, 3281: card 72.8 ref 37.4, 3090: card 48.6 ref 26, 474: card 40.5 ref 20.1, 4406: card 36.2 ref 20, 2574: card 6.19 ref -9.49, 4316: card 52.9 ref 37.4, 4538: card -45.9 ref -30.5
+XOUT_VS_LOUT layer 63 tok 0 corr 0.98671 rel_rms 0.6749 aligned YES

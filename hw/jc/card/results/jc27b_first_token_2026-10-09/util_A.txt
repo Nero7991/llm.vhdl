@@ -1,0 +1,30 @@
+JCUTIL die A nports_w 24 nports_s 3 jobcyc 575797849 seam_cycles_last_go 45482738
+JCUTIL die A port 00 w beats 188418208 ratio 0.3272
+JCUTIL die A port 01 w beats 188418208 ratio 0.3272
+JCUTIL die A port 02 w beats 188418208 ratio 0.3272
+JCUTIL die A port 03 w beats 188418208 ratio 0.3272
+JCUTIL die A port 04 w beats 188418208 ratio 0.3272
+JCUTIL die A port 05 w beats 188418208 ratio 0.3272
+JCUTIL die A port 06 w beats 188418208 ratio 0.3272
+JCUTIL die A port 07 w beats 188418208 ratio 0.3272
+JCUTIL die A port 08 w beats 188418208 ratio 0.3272
+JCUTIL die A port 09 w beats 188418208 ratio 0.3272
+JCUTIL die A port 10 w beats 188418208 ratio 0.3272
+JCUTIL die A port 11 w beats 188418208 ratio 0.3272
+JCUTIL die A port 12 w beats 188418208 ratio 0.3272
+JCUTIL die A port 13 w beats 188418208 ratio 0.3272
+JCUTIL die A port 14 w beats 188418208 ratio 0.3272
+JCUTIL die A port 15 w beats 188418208 ratio 0.3272
+JCUTIL die A port 16 w beats 188418208 ratio 0.3272
+JCUTIL die A port 17 w beats 188418208 ratio 0.3272
+JCUTIL die A port 18 w beats 188418208 ratio 0.3272
+JCUTIL die A port 19 w beats 188418208 ratio 0.3272
+JCUTIL die A port 20 w beats 188418208 ratio 0.3272
+JCUTIL die A port 21 w beats 188418208 ratio 0.3272
+JCUTIL die A port 22 w beats 188418208 ratio 0.3272
+JCUTIL die A port 23 w beats 188418208 ratio 0.3272
+JCUTIL die A port 24 s beats 188418208 ratio 0.3272
+JCUTIL die A port 25 s beats 188418208 ratio 0.3272
+JCUTIL die A port 26 s beats 188418208 ratio 0.3272
+JCUTIL_SUMMARY die A weight ports 24  min 0.3272 (port 0)  mean 0.3272  max 0.3272 (port 23)
+JCUTIL_DONE die A

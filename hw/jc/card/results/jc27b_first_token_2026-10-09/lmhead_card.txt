@@ -1,0 +1,17 @@
+source card $W/xout_B.txt | n_vocab 248320 | eps 9.999999974752427e-07
+top1    1206 logit   22.3189 logprob  -0.3880
+top2    2064 logit   20.4589 logprob  -2.2480
+top3   89454 logit   19.4901 logprob  -3.2167
+top4   16619 logit   19.3408 logprob  -3.3660
+top5    7732 logit   19.3300 logprob  -3.3769
+top6   91763 logit   19.1921 logprob  -3.5147
+top7    4350 logit   18.8529 logprob  -3.8540
+top8     760 logit   18.2926 logprob  -4.4143
+top9    5170 logit   17.5837 logprob  -5.1231
+top10   5449 logit   17.3777 logprob  -5.3291
+id   7732 rank 5 logit   19.3300 logprob  -3.3769
+id   5449 rank 10 logit   17.3777 logprob  -5.3291
+id   1206 rank 1 logit   22.3189 logprob  -0.3880
+id   2064 rank 2 logit   20.4589 logprob  -2.2480
+id  89454 rank 3 logit   19.4901 logprob  -3.2167
+LMHEAD_ARGMAX 1206

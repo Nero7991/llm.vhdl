@@ -1,0 +1,3 @@
+wrote $W/ref27_lout.r9bs: 1472 records, 7536640 values
+SELFCHECK argmax_nocb=7732 argmax_cb=7732 ndiff=0/248320 worst_abs=0 at=-1
+SELFCHECK VERDICT: bit-identical with and without the callback.

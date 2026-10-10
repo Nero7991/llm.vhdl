@@ -1,0 +1,15 @@
+card exp 9 n 5120  nonzero 5116  rms 1.144
+ref  last tok 22  n 5120  rms(l_out-32) 1.06
+l_out-30 tok 21  corr 0.47284  rel_rms 1.2974  fit_scale 0.6727
+l_out-30 tok 22  corr 0.88771  rel_rms 0.5268  fit_scale 1.0149
+l_out-31 tok 21  corr 0.45165  rel_rms 1.2844  fit_scale 0.6205
+l_out-31 tok 22  corr 0.90984  rel_rms 0.4639  fit_scale 1.0162
+l_out-32 tok 21  corr 0.48107  rel_rms 1.2276  fit_scale 0.6440
+l_out-32 tok 22  corr 0.94470  rel_rms 0.3544  fit_scale 1.0192  <- target
+l_out-33 tok 21  corr 0.52638  rel_rms 1.1538  fit_scale 0.6870
+l_out-33 tok 22  corr 0.90667  rel_rms 0.4493  fit_scale 0.9624
+l_out-34 tok 21  corr 0.46000  rel_rms 1.3147  fit_scale 0.6573
+l_out-34 tok 22  corr 0.88123  rel_rms 0.4761  fit_scale 0.8262
+BEST l_out-32 tok 22 corr 0.94470
+largest |card-ref| elements: 3994: card 59.1 ref 56.8, 253: card -12.7 ref -11.2, 3281: card -5.53 ref -4, 1599: card 2.85 ref 4.34, 993: card 1.3 ref -0.156, 1593: card -0.154 ref 1.21, 1548: card 0.863 ref -0.465, 3842: card -3.73 ref -2.41
+XOUT_VS_LOUT layer 32 tok 22 corr 0.94470 rel_rms 0.3544 aligned YES

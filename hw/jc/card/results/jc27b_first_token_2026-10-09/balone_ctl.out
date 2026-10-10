@@ -1,0 +1,16 @@
+embedding  mv4i /mnt/storage/llama-models/qwen38-27b-mv4i/token_embd.weight.mv4i M=248320 K=5120 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=160 tiles=5174 w_exp=7 recipe=wide read=5120B x2
+program    $W/card1/token.dtbl: 8896 32-bit halves (556 descriptors of 8 64-bit words)
+release    $W/card1/token.rel: 556 entries
+transport  JC broker $W/broker.sock die B
+card       seam v2 @BAR+0xE000 vocab=248320 embd=5120 layer=64 ctx=16384 chunk=1 x_stride=10304 l_stride=993344 | jc sock=$W/broker.sock die=B win=0xe060
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+x-row      $W/xout_A_k1.txt: exp 6, 5120 mantissas pushed as position 0's X (no embedding)
+prefill    1 ids, pos 1, first argmax 8678, exp 13
+decode     1 ids generated, pos 1, stopped at --max-new
+timing     1 GOs: run_chunk 0.466 s (of which STATUS wait 0.359 s over 37 polls), X pushes 0.000 s, wall since start 1.696 s
+xout       R_X after the last GO: exp 4, 5120 mantissas -> $W/xout_Balone_ctl.txt
+bytes      h2c 20480, c2h 20480, go 1 (argmax fast path)
+ids        1 generated ids -> $W/balone_ctl.ids
+---- generated ----
+system
+-------------------
