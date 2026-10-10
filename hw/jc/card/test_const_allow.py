@@ -41,3 +41,14 @@ def test_other_bits_polarity_ports_and_cells_are_refused():
         ("u_bd/jcc_i/ctl/m_axi_rdata[0]", "GROUND"),    # cell with no entries
     ]
     assert _check(cases) == [0] * len(cases)
+
+
+def test_kv_write_address_beat_alignment_bits_are_allowed():
+    # jccard9 (2026-10-10): attn_kv_axi aligns every KV write burst to a 32-byte beat, so
+    # c_awaddr[4:0] is 0 by construction; bit 5 is a real address bit and must still refuse.
+    ok = [("u_bd/jcc_i/bcgrant/c_awaddr[%d]" % b, "GROUND") for b in range(5)]
+    assert _check(ok) == [1] * 5
+    bad = [("u_bd/jcc_i/bcgrant/c_awaddr[5]", "GROUND"),
+           ("u_bd/jcc_i/bcgrant/c_awaddr[0]", "POWER"),
+           ("u_bd/jcc_i/bcgrant/c0_araddr[0]", "GROUND")]
+    assert _check(bad) == [0] * 3

@@ -5,7 +5,8 @@
 #   <cell> is the short BD cell name (loader ctl eng fk33_seam_0 card bcgrant).
 #   A scalar port (pin name carries no [n]) is written with bit-lo = bit-hi = -1.
 # Any constant bit NOT covered here (other port, other bit, or the other polarity)
-# must still be refused. 729 bits total: 64 driver-constant, 655 unused, 10 dropped-resp.
+# must still be refused. 729 bits total: 64 driver-constant, 655 unused, 10 dropped-resp;
+# plus 5 driver-constant bits seen first on jccard9 (2026-10-10, c_awaddr[4:0]).
 set JCC_CONST_ALLOW {
   {bcgrant/b_awlen        0   3 POWER  "B state write burst awlen = MAXB-1 = 15 (gdn_state_axi.vhd:353)"}
   {bcgrant/b_awlen        4   7 GROUND "AXI3 awlen <= 15 (gdn_state_axi.vhd:353)"}
@@ -15,6 +16,7 @@ set JCC_CONST_ALLOW {
   {bcgrant/c0_rready     -1  -1 POWER  "KV r_rready tied high by design (attn_kv_axi.vhd:569)"}
   {bcgrant/c1_rready     -1  -1 POWER  "KV r_rready tied high by design (attn_kv_axi.vhd:569)"}
   {bcgrant/c_bready      -1  -1 POWER  "KV w_bready tied high by design (attn_kv_axi.vhd:570)"}
+  {bcgrant/c_awaddr       0   4 GROUND "KV write bursts start beat-aligned: astart = a0 - low_bits(a0, BEAT_LW), then astart + bi*BEAT_B (attn_kv_axi.vhd:1066-1067,1107); seen first on jccard9"}
   {card/a_y_addr          0   3 GROUND "y_addr = tile*48, multiple of 16 (matvec_core.vhd:1106,1300; fk33_engine.vhd:1115)"}
   {card/hw_reg            0   3 GROUND "seam drives XREG = 0 = R_X; only host-written region at 27B (fk33_seam.vhd:198,751)"}
   {card/hr_reg            0   3 GROUND "seam drives XREG = 0 = R_X (fk33_seam.vhd:754); HOST_WINDOW false"}
