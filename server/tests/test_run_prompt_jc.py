@@ -211,7 +211,8 @@ def test_dump_xout2_reads_the_second_die(work):
 # except WIN_DATA is side-effect free, so it is re-read; a WIN_DATA read advances WIN_ADDR
 # (rtl/fk33_seam.vhd READ CHANNEL), so it is retried only after WIN_SEL/WIN_ADDR are written
 # again. `ran` is the case where the lost read DID advance WIN_ADDR: a retry without the
-# re-seek would skip an element there.
+# re-seek would skip an element there. (Since 2026-10-16 the WIN_DATA reads are one rdn per
+# window, so their fault cases are in the rdn section below.)
 
 PL_RD_RETRIES = 2      # server/pl_backend.c
 
@@ -224,19 +225,6 @@ def _faulted_pair(work, spec):
     return ref, p, b.stop()
 
 
-@pytest.mark.parametrize("mode", ["ran", "lost"])
-def test_an_unconfirmed_xout_read_is_reseeked_and_retried(work, mode):
-    ref, p, log = _faulted_pair(work, "A:0xe060:7:%s" % mode)
-    assert p.returncode == 0, p.stdout + p.stderr
-    assert ids_of(os.path.join(work, "jc.ids")) == ids_of(os.path.join(work, "sim.ids"))
-    k = log.index("A rd32 0xe060 1 FAILED %s" % mode)
-    # the retry re-selects XOUT and re-seeks WIN_ADDR before it reads WIN_DATA again
-    assert log[k + 1:k + 4] == ["A wr32 0xe058 1", "A wr32 0xe05c 1", "A rd32 0xe060 1"], \
-        log[k - 2:k + 6]
-    assert "WindowUnknown: injected" in p.stderr
-    assert re.search(r"retrying \(1 of %d\)" % PL_RD_RETRIES, p.stderr), p.stderr
-
-
 def test_an_unconfirmed_status_read_is_retried(work):
     ref, p, log = _faulted_pair(work, "B:0xe018:2:ran")
     assert p.returncode == 0, p.stdout + p.stderr
@@ -246,6 +234,96 @@ def test_an_unconfirmed_status_read_is_retried(work):
 
 
 def test_a_read_that_keeps_failing_is_given_up_after_the_bound(work):
-    ref, p, log = _faulted_pair(work, "A:0xe060:7:lost:100")
+    # was the WIN_DATA rd32 at 0xe060 until 2026-10-16; WIN_DATA is now read by rdn (below), so
+    # the plain-register bound is held on STATUS instead
+    ref, p, log = _faulted_pair(work, "B:0xe018:2:lost:100")
     assert p.returncode != 0, p.stdout
     assert len([l for l in log if l.endswith("FAILED lost")]) == 1 + PL_RD_RETRIES, log[-12:]
+
+
+# ---- 2026-10-16: the hop reads R_X with ONE bulk `rdn` per window, not n_embd rd32s.
+# Silicon 2026-10-09/10: a 23-position 27B prefill spent 1235 s of 1255 s in "hop read R_X",
+# one CoE round trip per WIN_DATA word. The broker already serves
+# {"op":"rdn","off":WIN_DATA,"fix":true,"n":K}; WIN_DATA auto-increments WIN_ADDR on every read
+# (rtl/fk33_seam.vhd READ CHANNEL), so a fixed-offset rdn is exactly the old loop.
+#
+# The oracle is the same simulated card driven directly: ids AND both --dump-xout files must be
+# byte-identical to the sim reference.
+
+N_EMBD = 4096          # fk33_sim_opts_default's n_embd: one XOUT window
+WIN_DATA = "0xe060"    # FK33_SEAM_BASE + FK33_SEAM_WIN_DATA
+
+
+def _pair_with_dumps(work, extra_broker=()):
+    ref = rp(work, *(pair_args(work, "sim.ids") + ["--sim-kv-maxpos", KV_MAXPOS,
+                                                   "--dump-xout", "sim.a.x",
+                                                   "--dump-xout2", "sim.b.x"]))
+    assert ref.returncode == 0, ref.stdout + ref.stderr
+    b = Broker(work, extra=list(extra_broker))
+    p = rp(work, *(["--jc", b.sock, "--jc-die", "A", "--jc-die2", "B"] + pair_args(work, "jc.ids")
+                   + ["--dump-xout", "a.x", "--dump-xout2", "b.x"]))
+    return ref, p, b.stop()
+
+
+def _same_as_sim(work):
+    assert ids_of(os.path.join(work, "jc.ids")) == ids_of(os.path.join(work, "sim.ids"))
+    for jc, sim in (("a.x", "sim.a.x"), ("b.x", "sim.b.x")):
+        a = open(os.path.join(work, jc), "rb").read()
+        r = open(os.path.join(work, sim), "rb").read()
+        assert a == r, (jc, len(a), len(r))
+        assert len(a.split()) == 2 + N_EMBD, (jc, a[:40])
+
+
+def _rdns(log, die):
+    return [l for l in log if re.match(r"^%s rdn %s " % (die, WIN_DATA), l)]
+
+
+def test_the_hop_reads_r_x_with_one_rdn_per_window(work):
+    ref, p, log = _pair_with_dumps(work)
+    assert p.returncode == 0, p.stdout + p.stderr
+    _same_as_sim(work)
+    hops = int(re.search(r"^hop +(\d+) hops:", p.stdout, re.M).group(1))
+    assert hops >= 1, p.stdout
+    # not one WIN_DATA word goes out as its own rd32 any more
+    assert not [l for l in log if re.match(r"^[AB] rd32 %s " % WIN_DATA, l)], \
+        [l for l in log if WIN_DATA in l][:5]
+    # one rdn of the whole window per hop on card 0, plus --dump-xout; one on card 1 (--dump-xout2)
+    assert _rdns(log, "A") == ["A rdn %s %d" % (WIN_DATA, N_EMBD)] * (hops + 1), _rdns(log, "A")
+    assert _rdns(log, "B") == ["B rdn %s %d" % (WIN_DATA, N_EMBD)], _rdns(log, "B")
+    # every rdn is preceded by the absolute seek: WIN_SEL then WIN_ADDR
+    for k, l in enumerate(log):
+        if " rdn " in l:
+            d = l.split()[0]
+            assert log[k - 2:k] == ["%s wr32 0xe058 1" % d, "%s wr32 0xe05c 1" % d], log[k - 3:k + 1]
+
+
+# Fault injection on the rdn itself. done_items is the frames (496 items, jc_ctl.MAX_ITEMS)
+# before the failing one; `ran` means the failing frame executed too. In every case below except
+# (lost, 0) WIN_ADDR has MOVED, so a retry without the re-seek reads a shifted window: those
+# cases are the teeth for the re-seek (the no-re-seek mutant must fail them).
+@pytest.mark.parametrize("mode,at", [("lost", 0), ("ran", 0), ("lost", 1000), ("ran", 3000)])
+def test_an_unconfirmed_rdn_is_reseeked_and_reissued(work, mode, at):
+    ref, p, log = _pair_with_dumps(work, ["--fail-rdn", "A:%s:2:%s:%d" % (WIN_DATA, mode, at)])
+    assert p.returncode == 0, p.stdout + p.stderr
+    _same_as_sim(work)
+    k = [i for i, l in enumerate(log) if " FAILED " in l]
+    assert len(k) == 1, log
+    k = k[0]
+    assert log[k].startswith("A rdn %s %d FAILED %s done=%d " % (WIN_DATA, N_EMBD, mode,
+                                                               at // 496 * 496)), log[k]
+    # the retry re-selects XOUT and re-seeks WIN_ADDR, then re-issues the WHOLE window
+    assert log[k + 1:k + 4] == ["A wr32 0xe058 1", "A wr32 0xe05c 1",
+                                "A rdn %s %d" % (WIN_DATA, N_EMBD)], log[k - 2:k + 6]
+    assert "WindowUnknown: injected" in p.stderr
+    assert "done_items=%d" % (at // 496 * 496) in p.stderr, p.stderr
+    assert re.search(r"retrying \(1 of %d\)" % PL_RD_RETRIES, p.stderr), p.stderr
+
+
+def test_an_rdn_that_keeps_failing_is_given_up_after_the_bound(work):
+    ref, p, log = _pair_with_dumps(work, ["--fail-rdn", "A:%s:1:lost:0:100" % WIN_DATA])
+    assert p.returncode != 0, p.stdout
+    assert len([l for l in log if " FAILED lost" in l]) == 1 + PL_RD_RETRIES, log[-12:]
+    # writes are never retried: exactly one re-seek pair per retry, nothing more
+    k = [i for i, l in enumerate(log) if " FAILED " in l]
+    for a, b in zip(k, k[1:]):
+        assert log[a + 1:b] == ["A wr32 0xe058 1", "A wr32 0xe05c 1"], log[a:b + 1]

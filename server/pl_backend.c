@@ -87,7 +87,7 @@ int pl_embed_synthetic(void *user, int token_id,
  * safe for every seam register except WIN_DATA: in rtl/fk33_seam.vhd's READ
  * CHANNEL the only state a read changes is r_win_addr (and xr_addr with it),
  * and only on a WIN_DATA read.  So rd() retries any other offset as it is,
- * and WIN_DATA reads go through rd_win(), which writes WIN_SEL and WIN_ADDR
+ * and WIN_DATA reads go through rd_win_n(), which writes WIN_SEL and WIN_ADDR
  * again (absolute, whatever the lost read did) before each retry.  Only -EIO
  * is retried: a timeout or a broken connection is not a lost answer.  Writes
  * are NEVER retried here: a GO or a window write is not idempotent. */
@@ -111,21 +111,32 @@ static int rd(pl_ctx *c, uint32_t off, uint32_t *v)
 static int wr(pl_ctx *c, uint32_t off, uint32_t v)
 { return c->t->reg_write32(c->t->ctx, c->base + off, v); }
 
-/* WIN_DATA element `idx` of window `sel`, the window already seeked there.
- * A read that was not confirmed may or may not have advanced WIN_ADDR, so
- * the retry seeks it back to `idx` first (see rd() above).  XOUT is a plain
- * register-file read (region_mem's host port), so reading an element twice
- * changes nothing on the card. */
-static int rd_win(pl_ctx *c, uint32_t sel, uint32_t idx, uint32_t *v)
+/* WIN_DATA elements idx..idx+n-1 of window `sel`, the window already
+ * seeked to `idx`, as ONE transport bulk read (fk33_reg_read32n: on the JC
+ * transport one broker `rdn` with "fix":true, elsewhere n reg_read32 calls).
+ *
+ * 2026-10-16: this replaces rd_win(), which read one element per call.  On
+ * the Jungle Cat each call was a CoE round trip (~10 ms), and a 23-position
+ * 27B prefill spent 1235 s of 1255 s in "hop read R_X" (silicon 2026-10-09/10).
+ *
+ * The retry rule of 2026-10-09 is unchanged in kind: a bulk read that was not
+ * confirmed (-EIO) may have advanced WIN_ADDR by any amount from 0 to n (the
+ * broker's done_items counts only frames it PROVED done, and their values
+ * are not in the reply), so before every retry WIN_SEL and WIN_ADDR are
+ * written again, ABSOLUTE, back to `idx`, and the WHOLE range is read again.
+ * XOUT is a plain register-file read (region_mem's host port), so reading an
+ * element twice changes nothing on the card.  Writes are never retried: a
+ * failed re-seek ends the call. */
+static int rd_win_n(pl_ctx *c, uint32_t sel, uint32_t idx, uint32_t *v, uint32_t n)
 {
-    int k, rc = rd_once(c, FK33_SEAM_WIN_DATA, v);
+    int k, rc = fk33_reg_read32n(c->t, c->base + FK33_SEAM_WIN_DATA, v, n);
     for (k = 1; rc == -EIO && k <= PL_RD_RETRIES; k++) {
-        fprintf(stderr, "[pl_backend] read of window %u element %u was not "
-                "confirmed; re-seeking WIN_ADDR and retrying (%d of %d)\n",
-                sel, idx, k, PL_RD_RETRIES);
+        fprintf(stderr, "[pl_backend] read of window %u elements %u..%u was not "
+                "confirmed; re-seeking WIN_ADDR to %u and retrying (%d of %d)\n",
+                sel, idx, idx + n - 1, idx, k, PL_RD_RETRIES);
         if (wr(c, FK33_SEAM_WIN_SEL, sel) || wr(c, FK33_SEAM_WIN_ADDR, idx))
             return rc;
-        rc = rd_once(c, FK33_SEAM_WIN_DATA, v);
+        rc = fk33_reg_read32n(c->t, c->base + FK33_SEAM_WIN_DATA, v, n);
     }
     return rc;
 }
@@ -1511,16 +1522,21 @@ static int run_chunk_inner(pl_ctx *c, int n, int want_logits,
  * 2026-09-21, two-card pipeline.  See pl_backend.h. */
 int pl_read_xout(pl_ctx *c, int16_t *mant, int32_t *exp)
 {
-    uint32_t v = 0; int i;
+    uint32_t v = 0, *w; int i;
     if (!c || !mant || !exp) return -1;
     if (c->version < 2 || !(c->caps & FK33_CAP_XEXP_OUT)) return -1;
     if (c->pending) return -7;      /* R_X is not there until the GO ends */
-    if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XOUT)) return -2;
-    if (wr(c, FK33_SEAM_WIN_ADDR, 0)) return -2;
-    for (i = 0; i < c->n_embd; i++) {
-        if (rd_win(c, FK33_WIN_XOUT, (uint32_t)i, &v)) return -2;
-        mant[i] = (int16_t)(uint16_t)(v & 0xFFFFu);
+    if (c->n_embd <= 0) return -1;
+    w = (uint32_t *)malloc((size_t)c->n_embd * sizeof *w);
+    if (!w) return -1;
+    if (wr(c, FK33_SEAM_WIN_SEL, FK33_WIN_XOUT) || wr(c, FK33_SEAM_WIN_ADDR, 0)
+        || rd_win_n(c, FK33_WIN_XOUT, 0, w, (uint32_t)c->n_embd)) {
+        free(w);
+        return -2;
     }
+    for (i = 0; i < c->n_embd; i++)
+        mant[i] = (int16_t)(uint16_t)(w[i] & 0xFFFFu);
+    free(w);
     if (rd(c, FK33_SEAM_XEXP_OUT, &v)) return -2;
     *exp = (int32_t)v;
     c->from_card += (uint64_t)c->n_embd * 4u;

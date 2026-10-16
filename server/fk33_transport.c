@@ -182,6 +182,17 @@ static double now_s(void)
     return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+int fk33_reg_read32n(fk33_transport *t, uint32_t off, uint32_t *vals, uint32_t n)
+{
+    uint32_t i;
+    if (t->reg_read32n) return t->reg_read32n(t->ctx, off, vals, n);
+    for (i = 0; i < n; i++) {
+        int rc = t->reg_read32(t->ctx, off, &vals[i]);
+        if (rc) return rc;
+    }
+    return 0;
+}
+
 int fk33_poll32(fk33_transport *t, uint32_t off, uint32_t mask, uint32_t want,
                 int timeout_ms, uint32_t *out)
 {

@@ -10,6 +10,7 @@
  *   {"die":D,"op":"rd32","off":N}                  -> {"ok":true,"val":V}
  *   {"die":D,"op":"wr32","off":N,"val":V}          -> {"ok":true}
  *   {"die":D,"op":"wrn","off":N,"fix":true,"vals":[...]} -> {"ok":true}
+ *   {"die":D,"op":"rdn","off":N,"fix":true,"n":K}   -> {"ok":true,"vals":[...]}
  *   {"die":D,"op":"memrd","addr":A,"n":K}           -> {"ok":true,"hex":".."}
  *   anything else                                   -> {"ok":false,"err":".."
  *                                                        [,"done_items":I,
@@ -82,17 +83,30 @@
  * reading element k+1 before the caller has asked for it is reading a
  * register that has not been "asked for" yet, and speculative reads of a
  * stateful window are exactly the shape of bug this project keeps finding.
- * Every reg_read32() issues its own `rd32`, full stop -- an n_embd read-out
- * run costs n_embd round trips here, the same as if no transport existed.
- * That cost is accepted on purpose.
+ * Every reg_read32() issues its own `rd32`, full stop.
  *
- * ERROR CODES.  All four struct functions return 0 or a negative
+ * BULK READS ARE ASKED FOR, NOT INFERRED (2026-10-16).  The paragraph above
+ * used to end "an n_embd read-out run costs n_embd round trips here ... That
+ * cost is accepted on purpose."  On silicon it was 1235 s of a 1255 s
+ * 23-position 27B prefill (one CoE round trip, ~10 ms, per WIN_DATA word), so
+ * it is no longer accepted.  The fix keeps the rule: nothing is speculated.
+ * reg_read32n() is a separate entry point where the CALLER states the count
+ * (pl_read_xout: n_embd), and it goes out as one `rdn` with "fix":true per
+ * JC_RDN_MAX items (the broker's MAX_N), which the broker cuts into 496-item
+ * frames itself.  A well-formed {"ok":false,...} reply to an rdn (with or
+ * without done_items) is -EIO and does NOT mark the connection broken: unlike
+ * a failed flush, the caller here has a resynchronization -- it re-seeks
+ * WIN_ADDR, absolute, before it reads again (pl_backend.c, rd_win_n()).  A
+ * "vals" of the wrong length is -EIO too, as a short memrd "hex" is.
+ *
+ * ERROR CODES.  All the struct functions return 0 or a negative
  * errno-like code:
  *   -EPERM          mem_write(), always.
  *   -EPROTO         a malformed/schema-violating reply, or a line over the
  *                   JC_LINE_MAX bound.
  *   -EIO            a reply that parsed and said {"ok":false,...}, or a
- *                   memrd whose "hex" was the wrong length.
+ *                   memrd whose "hex" (an rdn whose "vals") was the wrong
+ *                   length.
  *   -ETIMEDOUT      no reply within the configured deadline.
  *   -ECONNABORTED   the connection is already marked broken; nothing was
  *                   sent for this call.
@@ -124,6 +138,7 @@
 #define JC_WRN_MAX      8192u        /* values per coalesced wrn; see header */
 #define JC_LINE_MAX     (8u << 20)   /* bytes of one reply line we will buffer */
 #define JC_MEMRD_CHUNK  (1u << 20)   /* bytes per memrd request we issue */
+#define JC_RDN_MAX      65536u       /* items per rdn: jc_broker.py MAX_N */
 #define JC_MAX_FIELDS   8            /* top-level keys a reply may have */
 #define JC_MAX_KEY      24           /* bytes, including NUL, per key: must
                                       * hold "done_items_exact" (17 with the
@@ -139,10 +154,11 @@
 #define JC_ERR_BROKEN   (-ECONNABORTED) /* the connection is already dead */
 
 /* --------------------------------------------------------- the minimal JSON
- * scanner.  Flat objects only: no value here is ever an array or a nested
- * object, because no reply this file reads needs one. */
+ * scanner.  Flat objects only: no value is ever a nested object.  The one
+ * array it accepts is a flat list of integers 0..2^32-1 (rdn's "vals");
+ * anything else inside brackets is malformed. */
 
-typedef enum { JVT_NULL, JVT_BOOL, JVT_NUM, JVT_STR } jv_type;
+typedef enum { JVT_NULL, JVT_BOOL, JVT_NUM, JVT_STR, JVT_ARR } jv_type;
 
 typedef struct {
     char    key[JC_MAX_KEY];
@@ -151,6 +167,8 @@ typedef struct {
     double  nval;
     char   *sval;   /* malloc'd, NUL-terminated; only when type == JVT_STR */
     size_t  slen;
+    uint32_t *aval; /* malloc'd; only when type == JVT_ARR */
+    size_t  alen;
 } jv_field;
 
 typedef struct {
@@ -167,8 +185,10 @@ typedef struct {
 static void jv_obj_free(jv_obj *o)
 {
     int i;
-    for (i = 0; i < o->n; i++)
+    for (i = 0; i < o->n; i++) {
         if (o->f[i].type == JVT_STR) free(o->f[i].sval);
+        if (o->f[i].type == JVT_ARR) free(o->f[i].aval);
+    }
     o->n = 0;
 }
 
@@ -329,6 +349,40 @@ static int jv_parse_number(jscan *c, double *out)
     return 0;
 }
 
+/* '[' integer (',' integer)* ']' or '[]', each integer 0..2^32-1.  Frees
+ * its own buffer on any failure, so a failed value never leaks. */
+static int jv_parse_u32_array(jscan *c, uint32_t **out, size_t *outlen)
+{
+    size_t cap = 256, len = 0;
+    uint32_t *a;
+
+    if (sk_ch(c) != '[') return -1;
+    c->i++;
+    a = (uint32_t *)malloc(cap * sizeof *a);
+    if (!a) return -1;
+    sk_ws(c);
+    if (sk_ch(c) == ']') { c->i++; *out = a; *outlen = 0; return 0; }
+    for (;;) {
+        double v;
+        sk_ws(c);
+        if (jv_parse_number(c, &v) || v < 0.0 || v > 4294967295.0
+            || (double)(uint32_t)v != v) { free(a); return -1; }
+        if (len == cap) {
+            uint32_t *na = (uint32_t *)realloc(a, cap * 2 * sizeof *a);
+            if (!na) { free(a); return -1; }
+            a = na; cap *= 2;
+        }
+        a[len++] = (uint32_t)v;
+        sk_ws(c);
+        if (sk_ch(c) == ',') { c->i++; continue; }
+        if (sk_ch(c) == ']') { c->i++; break; }
+        free(a);
+        return -1;
+    }
+    *out = a; *outlen = len;
+    return 0;
+}
+
 static int jv_parse_value(jscan *c, jv_field *f)
 {
     int ch;
@@ -364,7 +418,13 @@ static int jv_parse_value(jscan *c, jv_field *f)
         f->type = JVT_NUM; f->nval = v;
         return 0;
     }
-    return -1;   /* '{', '[', or garbage: not a value this file accepts */
+    if (ch == '[') {
+        uint32_t *a; size_t l;
+        if (jv_parse_u32_array(c, &a, &l)) return -1;
+        f->type = JVT_ARR; f->aval = a; f->alen = l;
+        return 0;
+    }
+    return -1;   /* '{' or garbage: not a value this file accepts */
 }
 
 /* Parses one flat {"key":value, ...} object filling `out`, and requires the
@@ -473,6 +533,25 @@ static int jc_reply_val(const jv_obj *o, const char *die, uint32_t *val)
     v = o->f[i_val].nval;
     if (v < 0.0 || v > 4294967295.0 || (double)(uint32_t)v != v) return JC_ERR_PROTO;
     *val = (uint32_t)v;
+    return 0;
+}
+
+/* {"ok":true,"vals":[...]} with exactly n integers, or the false shape.
+ * rdn.  A wrong count is JC_ERR_FALSE (-EIO), as a short memrd hex is. */
+static int jc_reply_vals(const jv_obj *o, const char *die, uint32_t *vals, uint32_t n)
+{
+    int i_ok = jv_find(o, "ok"), i_v;
+    if (i_ok < 0 || o->f[i_ok].type != JVT_BOOL) return JC_ERR_PROTO;
+    if (!o->f[i_ok].bval) return jc_check_false(o, die);
+    if (o->n != 2) return JC_ERR_PROTO;
+    i_v = jv_find(o, "vals");
+    if (i_v < 0 || o->f[i_v].type != JVT_ARR) return JC_ERR_PROTO;
+    if (o->f[i_v].alen != n) {
+        fprintf(stderr, "fk33_transport_jc: die %s: rdn answered %zu items, asked for %u\n",
+                die, o->f[i_v].alen, n);
+        return JC_ERR_FALSE;
+    }
+    memcpy(vals, o->f[i_v].aval, (size_t)n * sizeof *vals);
     return 0;
 }
 
@@ -651,6 +730,17 @@ static int jc_recv_hex(jc_conn *conn, const char *die, void *buf, size_t len)
     return rc;
 }
 
+static int jc_recv_vals(jc_conn *conn, const char *die, uint32_t *vals, uint32_t n)
+{
+    char *line; size_t llen; jv_obj o; int rc;
+    rc = jc_recv_line(conn, &line, &llen);
+    if (rc) return rc;
+    if (jc_parse_line(line, llen, &o)) { jv_obj_free(&o); return JC_ERR_PROTO; }
+    rc = jc_reply_vals(&o, die, vals, n);
+    jv_obj_free(&o);
+    return rc;
+}
+
 /* ------------------------------------------------------- request encoding.
  * By-hand snprintf building: the only strings sent are the fixed op
  * literals and `die`, and `die` was validated by jc_die_ok() to need no
@@ -669,6 +759,15 @@ static long jc_build_wr32(jc_conn *conn, const char *die, uint32_t off, uint32_t
     int w = snprintf(conn->sbuf, conn->sbuf_cap,
                      "{\"die\":\"%s\",\"op\":\"wr32\",\"off\":%u,\"val\":%u}\n",
                      die, off, val);
+    if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
+    return w;
+}
+
+static long jc_build_rdn(jc_conn *conn, const char *die, uint32_t off, uint32_t n)
+{
+    int w = snprintf(conn->sbuf, conn->sbuf_cap,
+                     "{\"die\":\"%s\",\"op\":\"rdn\",\"off\":%u,\"fix\":true,\"n\":%u}\n",
+                     die, off, n);
     if (w < 0 || (size_t)w >= conn->sbuf_cap) return -1;
     return w;
 }
@@ -733,6 +832,17 @@ static int jc_do_rd32(jc_conn *conn, jc_ctx *x, uint32_t off, uint32_t *val)
     rc = jc_send_all(conn, conn->sbuf, (size_t)len);
     if (rc) return jc_mark_if_bad(conn, rc);
     rc = jc_recv_val(conn, x->die, val);
+    return jc_mark_if_bad(conn, rc);
+}
+
+static int jc_do_rdn(jc_conn *conn, jc_ctx *x, uint32_t off, uint32_t *vals, uint32_t n)
+{
+    long len = jc_build_rdn(conn, x->die, off, n);
+    int rc;
+    if (len < 0) return jc_mark_if_bad(conn, JC_ERR_PROTO);
+    rc = jc_send_all(conn, conn->sbuf, (size_t)len);
+    if (rc) return jc_mark_if_bad(conn, rc);
+    rc = jc_recv_vals(conn, x->die, vals, n);
     return jc_mark_if_bad(conn, rc);
 }
 
@@ -818,6 +928,31 @@ static int jc_reg_read32(void *ctx, uint32_t off, uint32_t *val)
     rc = jc_do_rd32(conn, x, off, val);
     pthread_mutex_unlock(&conn->lock);
     return rc;
+}
+
+/* n reads of `off`, as one rdn per JC_RDN_MAX items (see "BULK READS" in
+ * the file header).  The first failing request ends the call; the caller
+ * owns the window's resynchronization. */
+static int jc_reg_read32n(void *ctx, uint32_t off, uint32_t *vals, uint32_t n)
+{
+    jc_ctx *x = (jc_ctx *)ctx;
+    jc_conn *conn = x->conn;
+    uint32_t done = 0;
+    int rc;
+
+    pthread_mutex_lock(&conn->lock);
+    if (conn->broken) { pthread_mutex_unlock(&conn->lock); return JC_ERR_BROKEN; }
+    rc = jc_flush_locked(conn, x);
+    if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
+    while (done < n) {
+        uint32_t k = n - done;
+        if (k > JC_RDN_MAX) k = JC_RDN_MAX;
+        rc = jc_do_rdn(conn, x, off, vals + done, k);
+        if (rc) { pthread_mutex_unlock(&conn->lock); return rc; }
+        done += k;
+    }
+    pthread_mutex_unlock(&conn->lock);
+    return 0;
 }
 
 static int jc_mem_read(void *ctx, uint64_t addr, void *buf, size_t len)
@@ -1055,6 +1190,7 @@ fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die,
     if (!t) { free(x); jc_conn_release(conn); return NULL; }
     t->reg_read32  = jc_reg_read32;
     t->reg_write32 = jc_reg_write32;
+    t->reg_read32n = jc_reg_read32n;
     t->mem_read    = jc_mem_read;
     t->mem_write   = jc_mem_write;
     t->close       = jc_close;

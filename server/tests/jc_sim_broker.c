@@ -3,9 +3,10 @@
  *
  *   jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]
  *                 [--fail-rd DIE:OFF:NTH:MODE[:TIMES]]
+ *                 [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
- * sends: rd32, wr32, wrn with "fix":true, memrd) on a Unix socket.  Each die
+ * sends: rd32, wr32, wrn with "fix":true, rdn, memrd) on a Unix socket.  Each die
  * named in --dies (default A,B) is its OWN fk33_transport_open_sim() instance
  * with the options run_prompt gives its simulated card under --v2 (version 2,
  * KV_MAXPOS from --kv-maxpos).  A request for any other die is answered
@@ -27,6 +28,25 @@
  * MODE says what the card saw: `lost` (the read never ran: WIN_ADDR did not
  * move) or `ran` (it ran and advanced WIN_ADDR, and only the answer is lost),
  * the two fates the host cannot tell apart.
+ *
+ * BULK READS (rdn, 2026-10-16).  {"die":D,"op":"rdn","off":N,"fix":B,"n":K}
+ * reads K items at N (fix:true, every item at N: the WIN_DATA window) or at
+ * N, N+4, ... (fix:false), and answers {"ok":true,"vals":[...]}, exactly as
+ * tools/jc/jc_broker.py's Broker.rdn().  K outside 1..65536 (its MAX_N) is a
+ * ValueError, as there.  The log line is `die rdn off K`.
+ *
+ * --fail-rdn answers the NTH (1-based) rdn at OFF on DIE, and the TIMES-1
+ * matching rdns after it, the way the real broker answers a link drop with
+ * a frame in flight: the request is cut into frames of 496 items
+ * (jc_ctl.MAX_ITEMS), the frames before the one holding item AT (0-based)
+ * are done, and that frame's fate is unproven.  The reply is the real
+ * broker's _partial() shape for a WindowUnknown on a fixed window:
+ *   {"ok":false,"err":"WindowUnknown: ...","done_items":D,"done_items_exact":false}
+ * with D = the items of the frames before it.  MODE `lost`: the failing
+ * frame never ran (WIN_ADDR moved by D); `ran`: it ran too (WIN_ADDR moved by
+ * the end of that frame).  Either way the window moved and only a re-seek
+ * makes the next read correct.  The log line is
+ * `die rdn off K FAILED mode done=D ran=R` (R = items the sim executed).
  *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
@@ -55,6 +75,12 @@ static FILE *g_log;
 static char g_fail_die[16];
 static unsigned long g_fail_off, g_fail_nth, g_fail_times = 1, g_fail_seen;
 static int g_fail_ran = -1;          /* -1: no injection */
+static char g_failn_die[16];
+static unsigned long g_failn_off, g_failn_nth, g_failn_at, g_failn_times = 1, g_failn_seen;
+static int g_failn_ran = -1;         /* -1: no rdn injection */
+
+#define SIM_MAX_N     65536ul        /* jc_broker.py MAX_N */
+#define SIM_MAX_ITEMS 496ul          /* jc_ctl.MAX_ITEMS: items per frame */
 
 static int find_die(const char *line, int *idx)
 {
@@ -154,6 +180,62 @@ static void handle(int fd, const char *line)
         }
         fprintf(g_log, "%s wrn 0x%llx %lu\n", g_name[d], off, cnt);
         reply(fd, rc ? "{\"ok\":false,\"err\":\"AxiError: sim wrn\"}\n" : "{\"ok\":true}\n");
+    } else if (has_op(line, "rdn") && !get_num(line, "off", &off) && !get_num(line, "n", &n)) {
+        int fix = strstr(line, "\"fix\":true") != NULL;
+        unsigned long long i, run_n = n, done = 0;
+        uint32_t *vals;
+        char *h;
+        size_t k;
+        int rc = 0, inject = 0;
+        if (!fix && !strstr(line, "\"fix\":false")) {
+            reply(fd, "{\"ok\":false,\"err\":\"ValueError: fix must be true or false\"}\n");
+            return;
+        }
+        if (n < 1 || n > SIM_MAX_N) {
+            snprintf(buf, sizeof buf, "{\"ok\":false,\"err\":\"ValueError: n must be 1..%lu, "
+                     "got %llu\"}\n", SIM_MAX_N, n);
+            reply(fd, buf);
+            return;
+        }
+        if (g_failn_ran >= 0 && !strcmp(g_name[d], g_failn_die) && off == g_failn_off
+            && ++g_failn_seen >= g_failn_nth && g_failn_seen < g_failn_nth + g_failn_times) {
+            unsigned long long at = g_failn_at < n ? g_failn_at : n - 1;
+            done = at / SIM_MAX_ITEMS * SIM_MAX_ITEMS;
+            run_n = g_failn_ran ? (done + SIM_MAX_ITEMS < n ? done + SIM_MAX_ITEMS : n) : done;
+            inject = 1;
+        }
+        vals = (uint32_t *)malloc((size_t)n * sizeof *vals);
+        h = (char *)malloc((size_t)n * 11 + 64);
+        if (!vals || !h) { free(vals); free(h); reply(fd, "{\"ok\":false,\"err\":\"MemoryError\"}\n"); return; }
+        for (i = 0; i < run_n; i++) {
+            rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)(fix ? off : off + 4 * i), &vals[i]);
+            if (rc) { done = i / SIM_MAX_ITEMS * SIM_MAX_ITEMS; break; }
+        }
+        if (inject) {
+            fprintf(g_log, "%s rdn 0x%llx %llu FAILED %s done=%llu ran=%llu\n", g_name[d], off, n,
+                    g_failn_ran ? "ran" : "lost", done, run_n);
+            fflush(g_log);
+            snprintf(buf, sizeof buf, "{\"ok\":false,\"err\":\"WindowUnknown: injected: die %s "
+                     "rdn at %#llx; die %s window state is UNKNOWN\",\"done_items\":%llu,"
+                     "\"done_items_exact\":false}\n", g_name[d], off, g_name[d], done);
+            reply(fd, buf);
+            free(vals); free(h);
+            return;
+        }
+        fprintf(g_log, "%s rdn 0x%llx %llu\n", g_name[d], off, n);
+        if (rc) {
+            snprintf(buf, sizeof buf, "{\"ok\":false,\"err\":\"WindowUnknown: sim read; die %s "
+                     "window state is UNKNOWN\",\"done_items\":%llu,\"done_items_exact\":false}\n",
+                     g_name[d], done);
+            reply(fd, buf);
+            free(vals); free(h);
+            return;
+        }
+        k = (size_t)sprintf(h, "{\"ok\":true,\"vals\":[");
+        for (i = 0; i < n; i++) k += (size_t)sprintf(h + k, "%s%u", i ? "," : "", vals[i]);
+        k += (size_t)sprintf(h + k, "]}\n");
+        send_all(fd, h, k);
+        free(vals); free(h);
     } else if (has_op(line, "memrd") && !get_num(line, "addr", &addr) && !get_num(line, "n", &n)) {
         unsigned char *b = (unsigned char *)malloc(n ? n : 1);
         char *h = (char *)malloc(2 * n + 32);
@@ -187,7 +269,8 @@ int main(int argc, char **argv)
     struct sigaction sa;
     int ls, i;
     if (argc < 3) {
-        fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]\n");
+        fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B] "
+                "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]\n");
         return 2;
     }
     sock = argv[1]; logp = argv[2];
@@ -204,6 +287,18 @@ int main(int argc, char **argv)
                 return 2;
             }
             g_fail_ran = !strcmp(mode, "ran");
+        }
+        else if (!strcmp(argv[i], "--fail-rdn")) {
+            char mode[8] = "";
+            int k = sscanf(argv[i + 1], "%15[^:]:%li:%lu:%7[^:]:%lu:%lu", g_failn_die,
+                           (long *)&g_failn_off, &g_failn_nth, mode, &g_failn_at,
+                           &g_failn_times);
+            if (k < 5 || g_failn_nth < 1 || g_failn_times < 1
+                || (strcmp(mode, "ran") && strcmp(mode, "lost"))) {
+                fprintf(stderr, "jc_sim_broker: --fail-rdn DIE:OFF:NTH:ran|lost:AT[:TIMES]\n");
+                return 2;
+            }
+            g_failn_ran = !strcmp(mode, "ran");
         }
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }

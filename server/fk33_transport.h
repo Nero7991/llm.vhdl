@@ -94,6 +94,22 @@ struct fk33_transport {
     void (*close)      (void *ctx);
     const char *(*describe)(void *ctx);
     void *ctx;
+
+    /* OPTIONAL (2026-10-16): `n` reads of the SAME offset `off`, in order,
+     * into vals[0..n-1] -- the WIN_DATA window, which advances WIN_ADDR on
+     * every read (rtl/fk33_seam.vhd READ CHANNEL), read out in one request
+     * instead of n.  NULL means "not provided": callers go through
+     * fk33_reg_read32n() below, which then loops reg_read32, so a transport
+     * that does not set this (chardev, file, sim) behaves exactly as before.
+     * The JC transport sets it (one broker `rdn` with "fix":true).
+     *
+     * On failure the contents of vals are undefined AND so is how many of
+     * the n reads reached the device: a caller reading a window must seek it
+     * again (absolute) before retrying.  There is no bulk-write field: the
+     * JC transport already coalesces WIN_DATA writes inside reg_write32
+     * (see fk33_transport_jc.c), invisibly to the caller.  Reads cannot be
+     * done that way, because only the caller knows how many it wants. */
+    int  (*reg_read32n)(void *ctx, uint32_t off, uint32_t *vals, uint32_t n);
 };
 
 /* ------------------------------------------------------------------------
@@ -131,9 +147,9 @@ fk33_transport *fk33_transport_open_sim(const void *opts);
  * client so the loader (USER4) and this host never fight it for the chain.
  * server/fk33_transport_jc.c talks that broker's JSON-lines-over-a-Unix-
  * socket protocol (docs/superpowers/plans/2026-10-07-jc-engine-composition.md,
- * Task 6):  reg_read32/reg_write32 map to rd32/wr32, mem_read maps to memrd,
- * and mem_write is refused with -EPERM because the loader is the only HBM
- * writer.  Consecutive reg_write32 calls to the exact same offset (the
+ * Task 6):  reg_read32/reg_write32 map to rd32/wr32, reg_read32n to one
+ * `rdn` with "fix":true, mem_read maps to memrd, and mem_write is refused
+ * with -EPERM because the loader is the only HBM writer.  Consecutive reg_write32 calls to the exact same offset (the
  * FK33_SEAM_WIN_DATA loops in pl_backend.c) are coalesced into one `wrn`;
  * see the header comment in fk33_transport_jc.c for the flush rule.
  *
@@ -164,6 +180,11 @@ fk33_transport *fk33_transport_open_jc(const char *sock_path, const char *die,
 /* ------------------------------------------------------------------------
  * Small helpers every caller wants, written once.
  * ------------------------------------------------------------------------ */
+
+/* n reads of `off` into vals (see reg_read32n above): the transport's own
+ * bulk read when it has one, otherwise n reg_read32 calls, stopping at the
+ * first failure.  Returns 0 or the transport's error. */
+int fk33_reg_read32n(fk33_transport *t, uint32_t off, uint32_t *vals, uint32_t n);
 
 /* Poll `off` until (value & mask) == want, or `timeout_ms` elapses.
  * Returns 0, -1 on timeout, or the transport's error.  `out` gets the last

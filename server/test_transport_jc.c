@@ -922,6 +922,191 @@ static void test_shared_connection_interleaved(void)
 
 /* ================================================================== main */
 
+/* ===================================================== bulk reads (rdn)
+ * 2026-10-16.  reg_read32n is the one entry point where the caller states a
+ * read count; it must go out as {"op":"rdn","off":N,"fix":true,"n":K}, after
+ * any pending coalesced write run (order), and its reply's "vals" must land
+ * in order, the full 32-bit range included. */
+
+static void send_vals(int cfd, uint32_t (*fn)(uint32_t), uint32_t base, uint32_t n)
+{
+    char *b = (char *)malloc((size_t)n * 11 + 64);
+    size_t k;
+    uint32_t i;
+    if (!b) _exit(1);
+    k = (size_t)sprintf(b, "{\"ok\":true,\"vals\":[");
+    for (i = 0; i < n; i++) k += (size_t)sprintf(b + k, "%s%u", i ? "," : "", fn(base + i));
+    k += (size_t)sprintf(b + k, "]}");
+    send_line(cfd, b);
+    free(b);
+}
+
+static uint32_t v_top(uint32_t i) { return 4294967295u - i; }
+static uint32_t v_id(uint32_t i)  { return i; }
+
+static int is_rdn(const char *line, uint32_t off, uint32_t n)
+{
+    char needle[48];
+    if (!strstr(line, "\"op\":\"rdn\"") || !has_off(line, off) || !has_die(line, "A")
+        || !strstr(line, "\"fix\":true")) return 0;
+    snprintf(needle, sizeof needle, "\"n\":%u}", n);
+    return strstr(line, needle) != NULL;
+}
+
+/* Case 16 (NEW 2026-10-16): a pending wrn is flushed first, then ONE rdn of
+ * 5,120 items, values in order up to 2^32-1; the connection stays usable. */
+static void broker_rdn_5120(int cfd)
+{
+    linebuf lb; char *line; size_t llen;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the pending wrn first");
+    BCK(strstr(line, "\"op\":\"wrn\"") != NULL, "not a wrn: %.80s", line);
+    BCK(check_vals_seq(line, 7, 3), "wrn vals not 7,8,9: %.80s", line);
+    send_line(cfd, "{\"ok\":true}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rdn");
+    BCK(is_rdn(line, T_WIN, 5120), "not rdn off=T_WIN fix=true n=5120: %s", line);
+    send_vals(cfd, v_top, 0, 5120);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rd32 after");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
+    send_line(cfd, "{\"ok\":true,\"val\":5}");
+    _exit(0);
+}
+
+static void test_rdn_5120(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t v = 0, *vals; int rc, bad = 0;
+    unsigned i;
+
+    sock_path(path, sizeof path, "rdn5120");
+    if (start_broker(path, broker_rdn_5120, &pid) != 0) {
+        CK(0, "rdn_5120: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "rdn_5120: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+    CK(t->reg_read32n != NULL, "rdn_5120: the JC transport does not set reg_read32n");
+    vals = (uint32_t *)calloc(5120, sizeof *vals);
+    if (!vals || !t->reg_read32n) { t->close(t->ctx); free(t); free(vals); wait_broker(pid, &ec); return; }
+
+    for (i = 7; i < 10; i++) rc = t->reg_write32(t->ctx, T_WIN, i);
+    rc = t->reg_read32n(t->ctx, T_WIN, vals, 5120);
+    CK(rc == 0, "rdn_5120: reg_read32n rc=%d, expected 0", rc);
+    for (i = 0; i < 5120; i++) if (vals[i] != 4294967295u - i) bad++;
+    CK(bad == 0, "rdn_5120: %d of 5120 values wrong (vals[0]=%u)", bad, vals[0]);
+    rc = t->reg_read32(t->ctx, 0x40, &v);
+    CK(rc == 0 && v == 5, "rdn_5120: rd32 after rc=%d val=%u", rc, v);
+
+    t->close(t->ctx); free(t); free(vals);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0,
+       "rdn_5120: broker script exit=%d (wire format or order was wrong)", ec);
+}
+
+/* Case 17 (NEW 2026-10-16): more than the broker's MAX_N (65,536) items
+ * splits into two rdns at the same offset, in order. */
+static void broker_rdn_split(int cfd)
+{
+    linebuf lb; char *line; size_t llen;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rdn 1");
+    BCK(is_rdn(line, T_WIN, 65536), "rdn 1 not n=65536: %s", line);
+    send_vals(cfd, v_id, 0, 65536);
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rdn 2");
+    BCK(is_rdn(line, T_WIN, 4464), "rdn 2 not n=4464: %s", line);
+    send_vals(cfd, v_id, 65536, 4464);
+    _exit(0);
+}
+
+static void test_rdn_split(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t *vals; int rc, bad = 0;
+    unsigned i;
+
+    sock_path(path, sizeof path, "rdnsplit");
+    if (start_broker(path, broker_rdn_split, &pid) != 0) {
+        CK(0, "rdn_split: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "rdn_split: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+    vals = (uint32_t *)calloc(70000, sizeof *vals);
+    if (!vals || !t->reg_read32n) { t->close(t->ctx); free(t); free(vals); wait_broker(pid, &ec); return; }
+
+    rc = t->reg_read32n(t->ctx, T_WIN, vals, 70000);
+    CK(rc == 0, "rdn_split: reg_read32n rc=%d, expected 0", rc);
+    for (i = 0; i < 70000; i++) if (vals[i] != i) bad++;
+    CK(bad == 0, "rdn_split: %d of 70000 values wrong", bad);
+
+    t->close(t->ctx); free(t); free(vals);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0, "rdn_split: broker script exit=%d", ec);
+}
+
+/* Case 18 (NEW 2026-10-16): the failure shapes.  The real broker's rdn
+ * failure (done_items present) and a wrong-length "vals" are -EIO and do
+ * NOT break the connection (the caller re-seeks; pl_backend.c rd_win_n);
+ * a malformed array is -EPROTO and does, so the next call sends nothing. */
+static void broker_rdn_fail(int cfd)
+{
+    linebuf lb; char *line; size_t llen;
+    lb_init(&lb, cfd);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rdn 1");
+    BCK(is_rdn(line, T_WIN, 5120), "rdn 1: %s", line);
+    send_line(cfd, "{\"ok\":false,\"err\":\"WindowUnknown: seq 9 in flight; die A window "
+                   "state is UNKNOWN\",\"done_items\":496,\"done_items_exact\":false}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected the rd32 (connection still up)");
+    BCK(strstr(line, "\"op\":\"rd32\"") != NULL, "not a rd32: %s", line);
+    send_line(cfd, "{\"ok\":true,\"val\":3}");
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rdn 2");
+    BCK(is_rdn(line, T_WIN, 5120), "rdn 2: %s", line);
+    send_vals(cfd, v_id, 0, 5119);
+
+    BCK(lb_getline(&lb, &line, &llen) == 0, "expected rdn 3");
+    BCK(is_rdn(line, T_WIN, 3), "rdn 3: %s", line);
+    send_line(cfd, "{\"ok\":true,\"vals\":[1,2,\"x\"]}");
+
+    BCK(lb_getline(&lb, &line, &llen) == -2,
+        "expected nothing more (connection broken), got: %.80s", line);
+    _exit(0);
+}
+
+static void test_rdn_fail(void)
+{
+    char path[600]; pid_t pid; int ec = -1;
+    fk33_transport *t; uint32_t v = 0, *vals; int rc;
+
+    sock_path(path, sizeof path, "rdnfail");
+    if (start_broker(path, broker_rdn_fail, &pid) != 0) {
+        CK(0, "rdn_fail: could not start the fake broker"); return;
+    }
+    t = fk33_transport_open_jc(path, "A", T_WIN);
+    CK(t != NULL, "rdn_fail: fk33_transport_open_jc failed");
+    if (!t) { wait_broker(pid, &ec); return; }
+    vals = (uint32_t *)calloc(5120, sizeof *vals);
+    if (!vals || !t->reg_read32n) { t->close(t->ctx); free(t); free(vals); wait_broker(pid, &ec); return; }
+
+    rc = t->reg_read32n(t->ctx, T_WIN, vals, 5120);
+    CK(rc == -EIO, "rdn_fail: done_items failure rc=%d, expected -EIO", rc);
+    rc = t->reg_read32(t->ctx, 0x40, &v);
+    CK(rc == 0 && v == 3, "rdn_fail: rd32 after an rdn failure rc=%d (connection broken?)", rc);
+    rc = t->reg_read32n(t->ctx, T_WIN, vals, 5120);
+    CK(rc == -EIO, "rdn_fail: 5119 vals for 5120 rc=%d, expected -EIO", rc);
+    rc = t->reg_read32n(t->ctx, T_WIN, vals, 3);
+    CK(rc == -EPROTO, "rdn_fail: malformed vals rc=%d, expected -EPROTO", rc);
+    rc = t->reg_read32(t->ctx, 0x40, &v);
+    CK(rc == -ECONNABORTED, "rdn_fail: call after -EPROTO rc=%d, expected -ECONNABORTED", rc);
+
+    t->close(t->ctx); free(t); free(vals);
+    CK(wait_broker(pid, &ec) == 0 && ec == 0, "rdn_fail: broker script exit=%d", ec);
+}
+
 static int mkdir_ignore(const char *p)
 {
     if (mkdir(p, 0700) < 0 && errno != EEXIST) return -1;
@@ -958,6 +1143,9 @@ int main(void)
     test_flush_fail_blocks_next_write();
     test_flush_fail_done_items();
     test_shared_connection_interleaved();
+    test_rdn_5120();
+    test_rdn_split();
+    test_rdn_fail();
 
     /* best-effort cleanup of this run's own scratch directory */
     {
@@ -968,7 +1156,7 @@ int main(void)
             "malformed_extra_field.sock",
             "closemid.sock", "memread.sock", "closeflush.sock",
             "timeout.sock", "flushfailwr.sock", "flushfaildi.sock",
-            "shared.sock"
+            "shared.sock", "rdn5120.sock", "rdnsplit.sock", "rdnfail.sock"
         };
         size_t i;
         char p[700];
