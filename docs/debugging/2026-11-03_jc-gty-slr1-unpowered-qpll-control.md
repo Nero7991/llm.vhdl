@@ -127,3 +127,18 @@ Traps: the lock-high fraction (in41-45) shares the torn-read problem of the edge
 
 Open: die 1 (AC36) not yet tested on a pin-fed QPLL; site 1's outputs still not located; the
 fabric (GTGREFCLK) path's margin for a real link is unknown and should not be relied on.
+
+### CORRECTION 2026-11-04 (later the same day): the cap swap did not cure it
+
+The addendum's "after the swap the pin-fed QPLL locks 8/8" was true for one read and is
+WITHDRAWN as a fix. About an hour later, with no board change reported:
+
+- b7 (both QPLLs pin-fed: AD38 on GTREFCLK00, AC36 on GTREFCLK01, sel 001): die 0 lock0=0
+  lock1=0 8/8; drop0=1 drop1=1 before the reset pulse (each locked once after configuration,
+  then lost lock); no re-lock after the pulse. Counts still 13.50-13.52M, lost0=lost1=0.
+- b6 reloaded as the control, same session: QPLL0 (via MMCM) locked 8/8; QPLL1 (AD38 pin) lock1=0
+  8/8 with drop1=1 before the pulse, the pre-swap pattern.
+
+So the same bitstream that locked 8/8 now fails: the variable is the board clock, which is
+marginal (locks some of the time, holds only through the low-bandwidth MMCM). Still open: what
+on site 2 makes the jitter marginal (joint, cap value or count, layout, temperature).
