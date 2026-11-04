@@ -156,3 +156,15 @@ counts 13.41M but its QPLL does not re-lock after the pulse.
 So the site-2 clock degrades within minutes of a rework: consistent with an intermittent joint
 or a part that fails as it warms. Not yet separated. Any single "locked 8/8" read after a board
 change is not evidence of a fix; gate on a soak of at least 15 min with sticky drop flags.
+
+### 2026-11-04 15:05: die 0 holds lock for 15 min after the LMK VCC contact fix; die 1 does not lock
+
+Oren found the LMK1D1204 VCC contact suspect and reworked it. b7 loaded at 14:47, reset pulsed
+on read 1, then 28 reads with no pulse to 15:03 (drop flags sticky):
+- die 0: QPLL0 (AD38) and QPLL1 (AC36) lock=1 in every sample, drop0=drop1=0 at the end. First
+  pin-fed lock that held through a soak. Counts 13.42-13.60M with a few torn samples.
+- die 1: AC36 counts a steady 13.38-13.43M (ratio to its own BC26 ~0.7812), but its QPLL1 locked
+  once before the pulse (drop1=1 on read 1), then lock=0 in every sample after it.
+The cold start at 14:15, before this fix, had erratic counts on every pin: the earlier failures
+were the VCC contact, not heat. Die 1's own path (its cap pair, trace, connector) is now the open
+item.
