@@ -168,3 +168,22 @@ on read 1, then 28 reads with no pulse to 15:03 (drop flags sticky):
 The cold start at 14:15, before this fix, had erratic counts on every pin: the earlier failures
 were the VCC contact, not heat. Die 1's own path (its cap pair, trace, connector) is now the open
 item.
+
+### 2026-11-04 15:50: first die-to-die IBERT run, and the clock fails again when the dies are warm
+
+- 15:21-15:37, b7 soak after Oren's die-1 path rework: 116/116 samples locked on every clocked
+  pin of both dies (die 0 AD38+AC36, die 1 AC36), drop=0. Die temps at load 36.6 / 39.1 C.
+- 15:38 IBERT A (`/mnt/storage/fk33_builds/jc_ibert/A/out/jc_ibert_a.bit`, quads 124-127, 16 lanes,
+  10.3125 Gb/s, QPLL0 refclk AC36 for every quad via GTREFCLK1 / GTSOUTH / GTNORTH) loaded on both.
+  `run_link.tcl map` (raw: ~/regress_scratch/jc_ibert/map_2026-11-04.txt): die 1 lanes of quads
+  124-125 ran (3.9e11 bits each); lanes 1,2,5,7 had 0 errors (RX_BER < 2.6e-12), lanes 0,3,4,6
+  ~0.5; die 0 and die 1 quads 126-127 never left reset. 0/31 RXPRBSLOCKED. Not yet interpretable
+  as a die-to-die result: die 0's TX was in reset during that window.
+- IBERT QPLL0 DRP values equal the census b7 values (CFG0 331C, CFG1 D038, CFG2 0FC0, CFG3 0120,
+  CFG4 0002, CP 0FF, LPF 23F, LOCK_CFG 25E8, FBDIV 0x40 = 66). After a QPLL+GT reset pulse only
+  die 0 COMMON_X0Y3 held lock in 10 samples over 10 s.
+- 15:49 b7 reloaded as the control: no lock on either die, die 1 AC36 erratic (1.6-16.8M), die 0
+  drop1=1. Die temps at load 50.0 / 58.0 C (after ~25 min of all-GT IBERT).
+So the clock that held 15 min at ~37 C failed at ~50-58 C. Correlation, one point: the cold start
+earlier (14:15) failed while cold, but that was before the LMK VCC fix. Thermal dependence of
+the site-2 joints or parts is now the leading hypothesis, not yet separated.
