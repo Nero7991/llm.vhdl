@@ -57,12 +57,22 @@
 -- variant exists, and UG578 names no attribute that GTGREFCLK requires (it
 -- documents GTGREFCLK as a test/internal path, not for production jitter).
 -- Extra VIO: in38 = edge count of the MMCM output (expect 156.25/200 of
--- BC26's count), in39 = mmcm_locked, in40 = ctl_lock (= lock bit 14).
+-- BC26's count), in39 = mmcm_locked, in40 = ctl_lock (= lock bit 2*CTL_Q;
+-- 14 for CTL_Q 7).
+-- 2026-11-04: CTL_Q is a generic.  Build b4 uses CTL_Q = 2 (GTYE4_COMMON_X0Y2,
+-- bank 126, SLR0; jc_sysmon_probe read this quad's AVCC 0.926 V and AVTT
+-- 1.243 V, while every SLR1 GT rail it tried read ~0), with u_mmcm LOCed at MMCM_X0Y2 (clock region X4Y2, the same
+-- row as the quad's X0Y2) by the build script.  For CTL_Q = 2 the control
+-- quad's REFCLK0 pin is index 4 (AD38) and LED_C (lock bit 4) shows the
+-- control's QPLL0 lock instead of AD38's.
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 library unisim; use unisim.vcomponents.all;
 
 entity jc_qpll_census is
-  generic ( GATE_LOG2 : positive := 22; POR_LOG2 : positive := 8 );
+  -- CTL_Q: the positive-control quad (0..7 = bank 124+q, 8..15 = bank 224+q-8).
+  -- 7 = bank 131 (build b3), 2 = bank 126 (build b4, SLR0).
+  generic ( GATE_LOG2 : positive := 22; POR_LOG2 : positive := 8;
+            CTL_Q : natural range 0 to 15 := 7 );
   port (
     refclk_p, refclk_n : in  std_logic_vector(31 downto 0);
     sysclk_clk_p, sysclk_clk_n : in std_logic;
@@ -74,7 +84,6 @@ end entity;
 architecture rtl of jc_qpll_census is
   constant NREF : positive := 32;
   constant NC   : positive := NREF + 2;   -- + BC26, + the MMCM output
-  constant CTL_Q : natural := 7;
   signal cfgmclk, mclk, sys_i, sclk : std_logic;
   signal clk_v : std_logic_vector(NC-1 downto 0);
   signal refo  : std_logic_vector(NREF-1 downto 0);
@@ -380,6 +389,6 @@ begin
 
   LED_A <= blink(25);                  -- CFGMCLK alive: the bitstream is running
   LED_B <= '1' when cnt(NREF) > 1000 else '0';   -- sysclk (BC26) alive
-  LED_C <= lock_s2(4);                 -- QPLL0 of quad 126 (AD38, the Aurora refclk) locked
+  LED_C <= lock_s2(4);                 -- QPLL0 of quad 126 locked (AD38 refclk; the control if CTL_Q = 2)
   LED_D <= not err_vccint;             -- the PMIC's fault line (open collector, low = fault)
 end architecture;

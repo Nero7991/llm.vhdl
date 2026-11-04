@@ -1,14 +1,25 @@
 # hw/jc/census/build_qpll_census.tcl -- vivado -mode batch -source build_qpll_census.tcl
-#   -tclargs <build_dir> [part]
+#   -tclargs <build_dir> [part] [ctl_q (default 7)] [mmcm_loc (default none)]
 # Builds jc_qpll_census.vhd (GTY QPLL-lock census, all 16 quads).  Default part
 # is -1, which loads on any grade.  Prints QPLLC_DONE <bit> or QPLLC_FAIL <why>.
 set bd   [lindex $argv 0]
 set part [expr {[llength $argv] > 1 ? [lindex $argv 1] : "xcvu35p-fsvh2104-1-e"}]
+set ctlq [expr {[llength $argv] > 2 ? [lindex $argv 2] : 7}]
+set mmloc [expr {[llength $argv] > 3 ? [lindex $argv 3] : ""}]
 set here [file dirname [file normalize [info script]]]
+puts "QPLLC_PARAMS ctl_q=$ctlq mmcm_loc=[expr {$mmloc eq "" ? "none" : $mmloc}]"
 create_project -force qpllc $bd -part $part
 add_files $here/jc_qpll_census.vhd
 set_property file_type {VHDL 2008} [get_files jc_qpll_census.vhd]
 add_files -fileset constrs_1 $here/jc_qpll_census.xdc
+if {$mmloc ne ""} {
+  # the XDC reader has no ifs, so the optional MMCM LOC is a generated file
+  set fh [open $bd/mmcm_loc.xdc w]
+  puts $fh "set_property LOC $mmloc \[get_cells u_mmcm\]"
+  close $fh
+  add_files -fileset constrs_1 $bd/mmcm_loc.xdc
+  set_property used_in_synthesis false [get_files $bd/mmcm_loc.xdc]
+}
 create_ip -name vio -vendor xilinx.com -library ip -module_name vio_qpll
 set cfg [list CONFIG.C_NUM_PROBE_IN 41 CONFIG.C_NUM_PROBE_OUT 1 CONFIG.C_PROBE_OUT0_WIDTH 1 \
   CONFIG.C_PROBE_IN33_WIDTH 16 CONFIG.C_PROBE_IN37_WIDTH 2]
@@ -18,6 +29,7 @@ foreach i {0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 2
 set_property -dict $cfg [get_ips vio_qpll]
 generate_target all [get_ips vio_qpll]
 set_property top jc_qpll_census [current_fileset]
+set_property generic "CTL_Q=$ctlq" [current_fileset]
 launch_runs synth_1 -jobs 4
 wait_on_run synth_1
 if {[get_property PROGRESS [get_runs synth_1]] ne "100%"} { puts "QPLLC_FAIL synth"; exit 1 }
@@ -39,7 +51,7 @@ for {set q 0} {$q < 16} {incr q} {
   set c [get_cells "gen_q\[$q\].u_com"]
   set line "QPLLC_QUAD $q site=[get_property LOC $c]"
   set refs {GTREFCLK00 0 GTREFCLK11 1}
-  if {$q == 7} {
+  if {$q == $ctlq} {
     # the positive control: QPLL0 from GTGREFCLK0 <- BUFG <- MMCM, REFCLK0 not used
     set refs {GTREFCLK11 1}
     set n0 [get_nets -quiet -of_objects [get_pins $c/GTREFCLK00]]
@@ -60,7 +72,8 @@ for {set q 0} {$q < 16} {incr q} {
     append line " CTL GTGREFCLK0<-[get_property REF_NAME $bg]:$bg<-[get_property REF_NAME $mm]:$mm@[get_property LOC $mm] GTREFCLK00_driver=$d0 refclk_buffers=$l0"
     if {[get_property REF_NAME $mm] ne "MMCME4_ADV" || $l0 != 0} { incr bad }
     set mmlk [get_nets -quiet -of_objects [get_pins $mm/LOCKED]]
-    append line " MMCM_LOCKED_net=$mmlk"
+    append line " MMCM_LOCKED_net=$mmlk MMCM_SLR=[get_slrs -of_objects $mm] COMMON_SLR=[get_slrs -of_objects $c]"
+    if {$mmloc ne "" && [get_property LOC $mm] ne $mmloc} { incr bad }
   }
   foreach {pn r} $refs {
     set net [get_nets -of_objects [get_pins $c/$pn]]
