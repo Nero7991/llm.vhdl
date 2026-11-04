@@ -101,3 +101,29 @@ all other quads, both dies: lock0=0 lock1=0
   shows lost0=0 in 8/8 samples with counts 4.5M-17.6M and no lock; die 1 bank 127 REFCLK0 (AB38)
   shows lost0=0 with a stuck count. Neither locks.
 - Whether the bank-129 AVTT 1.27 V reading is real (AVTT present without AVCC).
+
+## ADDENDUM 2026-11-04: first board refclk lock (site 2, bank 126, die 0)
+
+**Answer:** with clock site 2 populated, the board clock reaches bank 126 (die 0: AD38 and AC36;
+die 1: AC36 only) at 156.2487 MHz (ratio to BC26 0.781243-0.781244, steady to 1 ppm, no extra
+edges). It did not hold a QPLL lock until Oren replaced the LMK1D1204's VDD bypass cap (it
+looked discoloured); after the swap the pin-fed QPLL locks 8/8 with no drops.
+
+Procedure and evidence (MEASURED, VIO over XVC, raw in ~/regress_scratch/jc_qpll/):
+
+| build | quad 126 QPLL0 | quad 126 QPLL1 | die 0 result |
+|---|---|---|---|
+| b2 (site 2 fitted) | AD38 pin, GTREFCLK00 sel 001 | AC36 pin, GTREFCLK11 sel 010 | no lock 8/8 |
+| b5 | AD38 ODIV2 -> BUFG_GT -> GTGREFCLK0 sel 111 | AD38 pin, GTREFCLK01 sel 001 | QPLL0 never; QPLL1 drop=1 before reset (locked once, lost), no lock 8/8 |
+| b6 | AD38 -> MMCM (BANDWIDTH LOW) -> GTGREFCLK0 | as b5 | QPLL0 locked 8/8, rise=0; QPLL1 no lock 8/8 |
+| b6 after bypass-cap swap | as b6 | as b5 | QPLL0 and QPLL1 locked 8/8, rise=0, drop=0, before and after reset |
+
+The b5/b6 pair isolates jitter: the same clock locks only after the low-bandwidth MMCM, on the
+same GTGREFCLK path that the clean MMCM control locked on. The cap swap is the one board change
+between the last two rows.
+
+Traps: the lock-high fraction (in41-45) shares the torn-read problem of the edge counters; frac
+0.15-0.62 rows coincide with torn samples and are not lock loss (rise=0 in the same rows).
+
+Open: die 1 (AC36) not yet tested on a pin-fed QPLL; site 1's outputs still not located; the
+fabric (GTGREFCLK) path's margin for a real link is unknown and should not be relied on.
