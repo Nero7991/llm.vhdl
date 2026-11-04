@@ -142,3 +142,17 @@ WITHDRAWN as a fix. About an hour later, with no board change reported:
 So the same bitstream that locked 8/8 now fails: the variable is the board clock, which is
 marginal (locks some of the time, holds only through the low-bandwidth MMCM). Still open: what
 on site 2 makes the jitter marginal (joint, cap value or count, layout, temperature).
+
+### CORRECTION 2026-11-04 13:50: the oscillator rework also did not hold
+
+After Oren added oscillator decoupling and resoldered its GND pad, b7 at 13:27 locked both
+die-0 QPLLs (AD38, AC36) and die 1's AC36 QPLL 8/8 with no drops. A read-only soak (no reset
+pulse, drop flags sticky from the 13:27 pulse) at 13:28, 13:34, 13:39, 13:45 showed every one
+of those QPLLs unlocked with drop=1 and rise=0 in every window: lock was lost within about a
+minute and never re-acquired. At 13:50, with a reset pulse: die 0's AD38/AC36 counts are erratic
+(1.1M-58M per window, the undriven-pin signature; they were 13.51M at 13:27), die 1's AC36 still
+counts 13.41M but its QPLL does not re-lock after the pulse.
+
+So the site-2 clock degrades within minutes of a rework: consistent with an intermittent joint
+or a part that fails as it warms. Not yet separated. Any single "locked 8/8" read after a board
+change is not evidence of a fix; gate on a soak of at least 15 min with sticky drop flags.
