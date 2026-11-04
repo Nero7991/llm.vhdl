@@ -106,7 +106,8 @@ create_clock -name ref31 -period 3.100 [get_ports {refclk_p[31]}]
 # the 2.5 ns bound jc_census used fails a pulse-width check here.
 create_clock -name sys0 -period 5.000 [get_ports sysclk_clk_p]
 create_clock -name cfgm -period 15.000 [get_pins u_start/CFGMCLK]
-set_clock_groups -asynchronous -group ref0 -group ref1 -group ref2 -group ref3 -group ref4 -group ref5 -group ref6 -group ref7 -group ref8 -group ref9 -group ref10 -group ref11 -group ref12 -group ref13 -group ref14 -group ref15 -group ref16 -group ref17 -group ref18 -group ref19 -group ref20 -group ref21 -group ref22 -group ref23 -group ref24 -group ref25 -group ref26 -group ref27 -group ref28 -group ref29 -group ref30 -group ref31 -group sys0 -group cfgm
+set_clock_groups -asynchronous -group ref0 -group ref1 -group ref2 -group ref3 -group ref4 -group ref5 -group ref6 -group ref7 -group ref8 -group ref9 -group ref10 -group ref11 -group ref12 -group ref13 -group ref14 -group ref15 -group ref16 -group ref17 -group ref18 -group ref19 -group ref20 -group ref21 -group ref22 -group ref23 -group ref24 -group ref25 -group ref26 -group ref27 -group ref28 -group ref29 -group ref30 -group ref31 -group [get_clocks -include_generated_clocks sys0] -group cfgm
+# sys0's group includes the MMCM output (the positive control's 156.25 MHz).
 set_false_path -to [get_ports {LED_A LED_B LED_C LED_D fan_ctl}]
 set_false_path -from [get_ports err_vccint]
 set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]

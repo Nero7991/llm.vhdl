@@ -10,9 +10,9 @@ add_files $here/jc_qpll_census.vhd
 set_property file_type {VHDL 2008} [get_files jc_qpll_census.vhd]
 add_files -fileset constrs_1 $here/jc_qpll_census.xdc
 create_ip -name vio -vendor xilinx.com -library ip -module_name vio_qpll
-set cfg [list CONFIG.C_NUM_PROBE_IN 38 CONFIG.C_NUM_PROBE_OUT 1 CONFIG.C_PROBE_OUT0_WIDTH 1 \
+set cfg [list CONFIG.C_NUM_PROBE_IN 41 CONFIG.C_NUM_PROBE_OUT 1 CONFIG.C_PROBE_OUT0_WIDTH 1 \
   CONFIG.C_PROBE_IN33_WIDTH 16 CONFIG.C_PROBE_IN37_WIDTH 2]
-foreach i {0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 34 35 36} {
+foreach i {0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 34 35 36 38} {
   lappend cfg CONFIG.C_PROBE_IN${i}_WIDTH 32
 }
 set_property -dict $cfg [get_ips vio_qpll]
@@ -38,7 +38,31 @@ set bad 0
 for {set q 0} {$q < 16} {incr q} {
   set c [get_cells "gen_q\[$q\].u_com"]
   set line "QPLLC_QUAD $q site=[get_property LOC $c]"
-  foreach {pn r} {GTREFCLK00 0 GTREFCLK11 1} {
+  set refs {GTREFCLK00 0 GTREFCLK11 1}
+  if {$q == 7} {
+    # the positive control: QPLL0 from GTGREFCLK0 <- BUFG <- MMCM, REFCLK0 not used
+    set refs {GTREFCLK11 1}
+    set n0 [get_nets -quiet -of_objects [get_pins $c/GTREFCLK00]]
+    # a tied-off pin is driven by a GND cell; count only refclk buffers
+    set l0 0; set d0 none
+    if {$n0 ne ""} {
+      set dc [get_cells -quiet -of_objects [get_pins -quiet -leaf -of_objects $n0 -filter {DIRECTION == OUT}]]
+      set d0 [join [get_property REF_NAME $dc] ,]
+      set l0 [llength [filter $dc {REF_NAME == IBUFDS_GTE4}]]
+    }
+    set ng [get_nets -of_objects [get_pins $c/GTGREFCLK0]]
+    set bg [get_cells -of_objects [get_pins -leaf -of_objects $ng -filter {DIRECTION == OUT}]]
+    set mm [get_cells -of_objects [get_pins -leaf -of_objects [get_nets -of_objects [get_pins $bg/I]] -filter {DIRECTION == OUT}]]
+    set sel ""
+    foreach k {2 1 0} { append sel [expr {[string match *const1* [get_nets -of_objects [get_pins "$c/QPLL0REFCLKSEL\[$k\]"]]] ? 1 : 0}] }
+    if {$sel ne "111"} { incr bad }
+    append line " QPLL0REFCLKSEL=$sel"
+    append line " CTL GTGREFCLK0<-[get_property REF_NAME $bg]:$bg<-[get_property REF_NAME $mm]:$mm@[get_property LOC $mm] GTREFCLK00_driver=$d0 refclk_buffers=$l0"
+    if {[get_property REF_NAME $mm] ne "MMCME4_ADV" || $l0 != 0} { incr bad }
+    set mmlk [get_nets -quiet -of_objects [get_pins $mm/LOCKED]]
+    append line " MMCM_LOCKED_net=$mmlk"
+  }
+  foreach {pn r} $refs {
     set net [get_nets -of_objects [get_pins $c/$pn]]
     set drv [get_cells -of_objects [get_pins -leaf -of_objects $net -filter {DIRECTION == OUT}]]
     set port [get_ports -of_objects [get_nets -of_objects [get_pins $drv/I]]]

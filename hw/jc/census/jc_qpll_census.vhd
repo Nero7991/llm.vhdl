@@ -45,6 +45,19 @@
 -- in32 = BC26 count, in33 = seq, in34 = lock(32) (bit 2*q+pll),
 -- in35 = refclklost(32) (bit 2*q+pll), in36 = drop(32), in37 = err_vccint & gate,
 -- probe_out0 = reset.
+--
+-- POSITIVE CONTROL (2026-11-04, after silicon showed no QPLL locked anywhere):
+-- an MMCM makes exactly 156.25 MHz from the 200 MHz BC26 sysclk (DIVCLK 4,
+-- MULT 25 -> VCO 1250 MHz, CLKOUT0 /8) and a BUFG feeds it to GTGREFCLK0 of
+-- quad CTL_Q = 7 (GTYE4_COMMON_X0Y7, bank 131), whose QPLL0REFCLKSEL is "111"
+-- (GTGREFCLK0, UG578).  That quad's REFCLK0 pin (index 14) still feeds its
+-- edge counter but no longer its QPLL0; its QPLL1 is unchanged (REFCLK1).
+-- The control common keeps the same 89 wizard attributes: gtwizard_ultrascale
+-- offers no fabric (GTGREFCLK) reference option, so no generation of that
+-- variant exists, and UG578 names no attribute that GTGREFCLK requires (it
+-- documents GTGREFCLK as a test/internal path, not for production jitter).
+-- Extra VIO: in38 = edge count of the MMCM output (expect 156.25/200 of
+-- BC26's count), in39 = mmcm_locked, in40 = ctl_lock (= lock bit 14).
 library ieee; use ieee.std_logic_1164.all; use ieee.numeric_std.all;
 library unisim; use unisim.vcomponents.all;
 
@@ -60,7 +73,8 @@ end entity;
 
 architecture rtl of jc_qpll_census is
   constant NREF : positive := 32;
-  constant NC   : positive := NREF + 1;
+  constant NC   : positive := NREF + 2;   -- + BC26, + the MMCM output
+  constant CTL_Q : natural := 7;
   signal cfgmclk, mclk, sys_i, sclk : std_logic;
   signal clk_v : std_logic_vector(NC-1 downto 0);
   signal refo  : std_logic_vector(NREF-1 downto 0);
@@ -73,12 +87,15 @@ architecture rtl of jc_qpll_census is
   signal por_cnt : unsigned(POR_LOG2 downto 0) := (others => '0');
   signal por  : std_logic := '1';
   signal vio_rst : std_logic_vector(0 downto 0);
+  attribute ASYNC_REG : string;
   signal qrst : std_logic := '1';
+  signal mm_fb, mm_fbg, mm_o0, ctl_clk, mm_locked : std_logic;
+  signal mm_lk_s1, mm_lk_s2 : std_logic := '0';
+  attribute ASYNC_REG of mm_lk_s1, mm_lk_s2 : signal is "TRUE";
   -- bit 2*q + pll
   signal lock_a, lost_a : std_logic_vector(NREF-1 downto 0);
   signal lock_s1, lock_s2, lost_s1, lost_s2 : std_logic_vector(NREF-1 downto 0) := (others => '0');
   signal seen, drop : std_logic_vector(NREF-1 downto 0) := (others => '0');
-  attribute ASYNC_REG : string;
   attribute ASYNC_REG of lock_s1, lock_s2, lost_s1, lost_s2 : signal is "TRUE";
 
   component vio_qpll
@@ -93,6 +110,8 @@ architecture rtl of jc_qpll_census is
            probe_in33 : in std_logic_vector(15 downto 0);
            probe_in34, probe_in35, probe_in36 : in std_logic_vector(31 downto 0);
            probe_in37 : in std_logic_vector(1 downto 0);
+           probe_in38 : in std_logic_vector(31 downto 0);
+           probe_in39, probe_in40 : in std_logic_vector(0 downto 0);
            probe_out0 : out std_logic_vector(0 downto 0) );
   end component;
   function slv(u : unsigned) return std_logic_vector is
@@ -112,6 +131,20 @@ begin
   u_sbg : BUFG   port map ( I => sys_i, O => sclk );
   clk_v(NREF) <= sclk;
 
+  -- the positive control's reference: 200 * 25 / 4 / 8 = 156.25 MHz
+  u_mmcm : MMCME4_BASE
+    generic map ( CLKIN1_PERIOD => 5.000, DIVCLK_DIVIDE => 4,
+                  CLKFBOUT_MULT_F => 25.000, CLKOUT0_DIVIDE_F => 8.000 )
+    port map ( CLKIN1 => sclk, CLKFBIN => mm_fbg, CLKFBOUT => mm_fb,
+               CLKFBOUTB => open, CLKOUT0 => mm_o0, CLKOUT0B => open,
+               CLKOUT1 => open, CLKOUT1B => open, CLKOUT2 => open,
+               CLKOUT2B => open, CLKOUT3 => open, CLKOUT3B => open,
+               CLKOUT4 => open, CLKOUT5 => open, CLKOUT6 => open,
+               LOCKED => mm_locked, PWRDWN => '0', RST => por );
+  u_fbg  : BUFG port map ( I => mm_fb, O => mm_fbg );
+  u_cbg  : BUFG port map ( I => mm_o0, O => ctl_clk );
+  clk_v(NREF + 1) <= ctl_clk;
+
   gen_ref : for i in 0 to NREF-1 generate
     signal od2 : std_logic;
   begin
@@ -126,7 +159,15 @@ begin
   end generate;
 
   gen_q : for q in 0 to 15 generate
+    -- the control quad takes GTGREFCLK0 (sel "111"); every other quad REFCLK0
+    constant IS_CTL : boolean := (q = CTL_Q);
+    signal ctl_clk_q, refclk00_q : std_logic;
+    function sel0(c : boolean) return std_logic_vector is
+    begin if c then return "111"; else return "001"; end if; end function;
+    constant sel0_q : std_logic_vector(2 downto 0) := sel0(IS_CTL);
   begin
+    ctl_clk_q  <= ctl_clk when IS_CTL else '0';
+    refclk00_q <= '0' when IS_CTL else refo(2*q);
     u_com : GTYE4_COMMON
       generic map (
         AEN_QPLL0_FBDIV        => '1',
@@ -240,10 +281,10 @@ begin
         BGRCALOVRD => "10000", BGRCALOVRDENB => '1',
         DRPADDR => (others => '0'), DRPCLK => sclk, DRPDI => (others => '0'),
         DRPEN => '0', DRPWE => '0',
-        GTGREFCLK0 => '0', GTGREFCLK1 => '0',
+        GTGREFCLK0 => ctl_clk_q, GTGREFCLK1 => '0',
         GTNORTHREFCLK00 => '0', GTNORTHREFCLK01 => '0',
         GTNORTHREFCLK10 => '0', GTNORTHREFCLK11 => '0',
-        GTREFCLK00 => refo(2*q), GTREFCLK01 => '0',
+        GTREFCLK00 => refclk00_q, GTREFCLK01 => '0',
         GTREFCLK10 => '0', GTREFCLK11 => refo(2*q+1),
         GTSOUTHREFCLK00 => '0', GTSOUTHREFCLK01 => '0',
         GTSOUTHREFCLK10 => '0', GTSOUTHREFCLK11 => '0',
@@ -251,7 +292,7 @@ begin
         PMARSVD0 => (others => '0'), PMARSVD1 => (others => '0'),
         QPLL0CLKRSVD0 => '0', QPLL0CLKRSVD1 => '0',
         QPLL0FBDIV => (others => '0'), QPLL0LOCKDETCLK => sclk,
-        QPLL0LOCKEN => '1', QPLL0PD => '0', QPLL0REFCLKSEL => "001",
+        QPLL0LOCKEN => '1', QPLL0PD => '0', QPLL0REFCLKSEL => sel0_q,
         QPLL0RESET => qrst,
         QPLL1CLKRSVD0 => '0', QPLL1CLKRSVD1 => '0',
         QPLL1FBDIV => (others => '0'), QPLL1LOCKDETCLK => sclk,
@@ -283,6 +324,7 @@ begin
       if por_cnt(POR_LOG2) = '0' then por_cnt <= por_cnt + 1; end if;
       por  <= not por_cnt(POR_LOG2);
       qrst <= por or vio_rst(0);
+      mm_lk_s1 <= mm_locked; mm_lk_s2 <= mm_lk_s1;
       lock_s1 <= lock_a; lock_s2 <= lock_s1;
       lost_s1 <= lost_a; lost_s2 <= lost_s1;
       if qrst = '1' then
@@ -332,6 +374,8 @@ begin
                probe_in33 => slv(seq),
                probe_in34 => lock_s2, probe_in35 => lost_s2, probe_in36 => drop,
                probe_in37 => err_vccint & gate,
+               probe_in38 => slv(cnt(NREF + 1)),
+               probe_in39(0) => mm_lk_s2, probe_in40(0) => lock_s2(2*CTL_Q),
                probe_out0 => vio_rst );
 
   LED_A <= blink(25);                  -- CFGMCLK alive: the bitstream is running
