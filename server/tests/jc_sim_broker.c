@@ -4,6 +4,7 @@
  *   jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]
  *                 [--fail-rd DIE:OFF:NTH:MODE[:TIMES]]
  *                 [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]
+ *                 [--trace FILE]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
  * sends: rd32, wr32, wrn with "fix":true, rdn, memrd) on a Unix socket.  Each die
@@ -48,6 +49,9 @@
  * makes the next read correct.  The log line is
  * `die rdn off K FAILED mode done=D ran=R` (R = items the sim executed).
  *
+ * --trace FILE: one line per register value, `W|R <die> 0x<off> 0x<val>`; wrn
+ * and rdn items one line each.
+ *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
  * exits on SIGTERM/SIGINT.  NO HARDWARE: no /dev, no coe.py, no BMC.
@@ -78,6 +82,7 @@ static int g_fail_ran = -1;          /* -1: no injection */
 static char g_failn_die[16];
 static unsigned long g_failn_off, g_failn_nth, g_failn_at, g_failn_times = 1, g_failn_seen;
 static int g_failn_ran = -1;         /* -1: no rdn injection */
+static FILE *g_trace;                /* --trace: every register value, for tools/jc/gen_tok_loop_vec.py */
 
 #define SIM_MAX_N     65536ul        /* jc_broker.py MAX_N */
 #define SIM_MAX_ITEMS 496ul          /* jc_ctl.MAX_ITEMS: items per frame */
@@ -156,11 +161,13 @@ static void handle(int fd, const char *line)
         rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
         fprintf(g_log, "%s rd32 0x%llx 1\n", g_name[d], off);
         if (rc) { reply(fd, "{\"ok\":false,\"err\":\"AxiError: sim read\"}\n"); return; }
+        if (g_trace) fprintf(g_trace, "R %s 0x%llx 0x%x\n", g_name[d], off, v);
         snprintf(buf, sizeof buf, "{\"ok\":true,\"val\":%u}\n", v);
         reply(fd, buf);
     } else if (has_op(line, "wr32") && !get_num(line, "off", &off) && !get_num(line, "val", &val)) {
         int rc = g_t[d]->reg_write32(g_t[d]->ctx, (uint32_t)off, (uint32_t)val);
         fprintf(g_log, "%s wr32 0x%llx 1\n", g_name[d], off);
+        if (g_trace) fprintf(g_trace, "W %s 0x%llx 0x%llx\n", g_name[d], off, val);
         reply(fd, rc ? "{\"ok\":false,\"err\":\"AxiError: sim write\"}\n" : "{\"ok\":true}\n");
     } else if (has_op(line, "wrn") && !get_num(line, "off", &off)
                && strstr(line, "\"fix\":true")) {
@@ -174,6 +181,7 @@ static void handle(int fd, const char *line)
             unsigned long long v = strtoull(p, &end, 10);
             if (end == p) { rc = -1; break; }
             if (!rc) rc = g_t[d]->reg_write32(g_t[d]->ctx, (uint32_t)off, (uint32_t)v);
+            if (g_trace) fprintf(g_trace, "W %s 0x%llx 0x%llx\n", g_name[d], off, v);
             cnt++;
             p = end;
             if (*p == ',') p++;
@@ -231,6 +239,7 @@ static void handle(int fd, const char *line)
             free(vals); free(h);
             return;
         }
+        if (g_trace) for (i = 0; i < n; i++) fprintf(g_trace, "R %s 0x%llx 0x%x\n", g_name[d], off, vals[i]);
         k = (size_t)sprintf(h, "{\"ok\":true,\"vals\":[");
         for (i = 0; i < n; i++) k += (size_t)sprintf(h + k, "%s%u", i ? "," : "", vals[i]);
         k += (size_t)sprintf(h + k, "]}\n");
@@ -256,6 +265,7 @@ static void handle(int fd, const char *line)
         reply(fd, "{\"ok\":false,\"err\":\"ValueError: unknown op\"}\n");
     }
     fflush(g_log);
+    if (g_trace) fflush(g_trace);
 }
 
 static volatile sig_atomic_t g_stop;
@@ -270,7 +280,8 @@ int main(int argc, char **argv)
     int ls, i;
     if (argc < 3) {
         fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B] "
-                "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]\n");
+                "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]] "
+                "[--trace FILE]\n");
         return 2;
     }
     sock = argv[1]; logp = argv[2];
@@ -299,6 +310,10 @@ int main(int argc, char **argv)
                 return 2;
             }
             g_failn_ran = !strcmp(mode, "ran");
+        }
+        else if (!strcmp(argv[i], "--trace")) {
+            g_trace = fopen(argv[i + 1], "w");
+            if (!g_trace) { perror(argv[i + 1]); return 2; }
         }
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }
@@ -370,6 +385,7 @@ int main(int argc, char **argv)
     close(ls);
     unlink(sock);
     for (i = 0; i < g_ndies; i++) g_t[i]->close(g_t[i]->ctx);
+    if (g_trace) fclose(g_trace);
     fclose(g_log);
     return 0;
 }
