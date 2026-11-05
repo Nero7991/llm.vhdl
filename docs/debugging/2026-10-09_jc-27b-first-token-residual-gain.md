@@ -287,3 +287,55 @@ Die A pos 0 sits within 37 counts of full scale: an output saturation there is p
 shown. Die B pos 22 loses 28% of ch 3994 even with exact input. Next probe: per-layer outputs
 inside die B (truncated `--blocks-range 33:L` token programs, die B alone on reference input) to
 find the layer where ch 3994 departs from l_out-L.
+
+## ADDENDUM 5, 2026-11-05: where die B's error comes from (per-layer probe, and the card model)
+
+**Answer.** After the rmsnorm fix the card tracks its own arithmetic model; most of the remaining
+gap to llama.cpp is the INT4 image itself (the model on the card's packed bytes also picks 1206).
+A smaller card-vs-model gap remains on die B (fit 0.953), not attributed.
+
+Procedure: truncated die-B token programs (`gen_layer_program.py --blocks-range 33:L --no-lmhead
+--pad-norms 66`), loaded as side images (die B only, broker stopped), die B alone on llama.cpp's
+l_out-32 rows for positions 0-22 (`layer_probe.sh` in the run dir), R_X compared with l_out-L at
+pos 22. Control: 33:63 without the LM head is bit-identical to the full program's R_X, so the LM
+head does not touch R_X. Full die-B program restored afterwards (JCVERIFY_PASS).
+
+MEASURED, die B alone, pos 22:
+
+| L | rel_rms vs l_out-L | ch 3994 card / llama.cpp |
+|---|---|---|
+| 40 | 0.082 | 70.0 / 70.9 |
+| 47 | 0.112 | 67.3 / 66.7 |
+| 55 | 0.152 | 56.0 / 53.8 |
+| 58 | 0.129 | 195.7 / 210.3 |
+| 60 | 0.160 | 114.8 / 122.2 |
+| 62 | 0.168 | 161.7 / 176.6 |
+| 63 | 0.189 | 116.4 / 162.0 |
+
+Per-block-group update (card(L) - card(L_prev) against llama.cpp's), fit scale 0.906-0.956 in
+every group, corr 0.975-0.992: block updates are systematically 4-9% small. Block 63 alone moves
+ch 3994 by -45.2 on the card against -14.6 in llama.cpp.
+
+Card against the INT4 card model (`ref/run9b.c -DREF27B` ok model, 2026-10-09 outputs in
+`~/regress_scratch/jc27b_gain/work/x23?_ok.txt`), pos 22:
+
+| | corr | rel_rms | fit | ch 3994 |
+|---|---|---|---|---|
+| die A: card vs model | 0.99833 | 0.0624 | 0.973 | 53.1 vs 55.0 |
+| die A: model vs llama.cpp | 0.99584 | 0.0925 | 0.976 | 55.0 vs 56.8 |
+| die B: card vs model | 0.99420 | 0.1134 | 0.953 | 92.6 vs 110.8 |
+| die B: model vs llama.cpp | 0.98473 | 0.1856 | 0.907 | 110.8 vs 162.0 |
+
+So the 4-9% per-block shrink is mostly present in the model too (die B model fit 0.907): it is an
+INT4/BFP format cost, not a card defect. The card-vs-model gap (0.06 die A, 0.11 die B, fit
+0.95-0.97) is the October "non-A stages in run9b are float, not the card's fixed point" gap: not
+separated from a possible second defect.
+
+Measured and REJECTED, do not retry: "block 63 (the last block, norm rows 126/127) is
+mis-indexed": its update correlates 0.985 with llama.cpp's like the other blocks; only ch 3994
+is far off, and the model loses ch 3994 too. "The LM head path alters R_X": bit-identical
+control above.
+
+Open: a fixed-point card model (non-matvec stages in the card's arithmetic) is the oracle that
+would attribute the remaining card-vs-model gap. Whether a better INT4 packing (e.g. per-channel
+handling of massive-activation channels such as 3994) would change the 27B's first token.
