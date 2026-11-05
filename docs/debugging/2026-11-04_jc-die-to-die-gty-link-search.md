@@ -41,3 +41,11 @@ not connected, versus connected but too lossy at 10 Gb/s, versus AC-coupling cap
 - Low-rate IBERT (1.25 Gb/s, then the IP's floor, about 0.5 Gb/s) building.
 - Whether the slot-to-slot pairs have unpopulated AC-coupling caps.
 - Where the pairs land if not on 124-127 (SLR1 quads are unpowered; no refclk on the 2xx column).
+
+## 2026-11-04: Oren reports unpopulated cap pads on the slot-to-slot pairs
+
+Oren (visual, not measured): many unpopulated pads, probably 0201, along the slot-to-slot pairs.
+If these are the series AC-coupling caps, every pair is open, which fits all measurements above
+(no PRBS on any RX; closed eyes; die 0 MGT_X0Y0's open eye with a fixed BER read as a floating,
+mostly static input). A lower line rate would not change an open pair. Plan: fit 100 nF 0201
+X5R/X7R on 2-4 pairs, then IBERT G125 and G (10.3125) lane map and BER.
