@@ -327,3 +327,72 @@ def test_an_rdn_that_keeps_failing_is_given_up_after_the_bound(work):
     k = [i for i, l in enumerate(log) if " FAILED " in l]
     for a, b in zip(k, k[1:]):
         assert log[a + 1:b] == ["A wr32 0xe058 1", "A wr32 0xe05c 1"], log[a:b + 1]
+
+
+# ---- 2026-11-05: --x-row with N rows pushes them as positions 0..N-1 (die B alone, fed the
+# CPU reference's l_out-32 at every prompt position). THE ORACLE: the sim seam echoes the pushed
+# X as R_X (server/fk33_sim.c x_buf), so the R_X dumped after the last GO must equal the LAST
+# row, and the per-position argmax depends on each row. A version that pushed row 0 every time,
+# or stopped after one row, fails these.
+
+N_EMBD_SIM = 4096      # the fixture manifests' n_embd as the sim serves it
+
+
+def _rows(d, name, rows):
+    with open(os.path.join(d, name), "w") as f:
+        for e, vals in rows:
+            f.write("exp %d\n" % e)
+            f.write("\n".join(str(v) for v in vals) + "\n")
+
+
+def _xrow_run(work, rows_file, prompt_ids, dump="x.out"):
+    with open(os.path.join(work, "pn.txt"), "w") as f:
+        f.write(" ".join(str(i) for i in prompt_ids) + "\n")
+    b = Broker(work)
+    p = rp(work, *(["--jc", b.sock, "--jc-die", "B", "--prompt", "pn.txt", "--v2", "--seq-reset",
+                    "--dtbl", "a.dtbl", "--rel", "a.rel", "--manifest", MAN_B, "--max-new", "1",
+                    "--stop", "-1", "--x-row", rows_file, "--ids-out", "x.ids",
+                    "--dump-xout", dump]))
+    log = b.stop()
+    return p, log
+
+
+def _row(k):
+    return [((i * (k + 3)) % 97) - 48 for i in range(N_EMBD_SIM)]
+
+
+def test_x_row_with_n_rows_pushes_each_as_its_position(work):
+    rows = [(2, _row(0)), (3, _row(1)), (4, _row(2))]
+    _rows(work, "r3.txt", rows)
+    p, log = _xrow_run(work, "r3.txt", [1, 2, 3])
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert re.search(r"^x-row +r3\.txt: 3 rows of %d mantissas pushed as positions 0\.\.2" % N_EMBD_SIM,
+                     p.stdout, re.M), p.stdout
+    assert re.search(r"^prefill +3 ids, pos 3, ", p.stdout, re.M), p.stdout
+    t = open(os.path.join(work, "x.out")).read().split()
+    assert [int(v) for v in t[2:2 + N_EMBD_SIM]] == rows[-1][1], "R_X after the last GO is not the last row"
+    assert sum(1 for l in log if re.match(r"^B wr32 0xe054 ", l)) == 3, log   # one X_EXP per position
+
+
+def test_x_row_last_row_changes_the_answer(work):
+    # same first two rows, different third: the dumped R_X and the argmax must follow row 2
+    _rows(work, "ra.txt", [(2, _row(0)), (3, _row(1)), (4, _row(2))])
+    _rows(work, "rb.txt", [(2, _row(0)), (3, _row(1)), (4, _row(5))])
+    pa, _ = _xrow_run(work, "ra.txt", [1, 2, 3], dump="a.out")
+    pb, _ = _xrow_run(work, "rb.txt", [1, 2, 3], dump="b.out")
+    assert pa.returncode == 0 and pb.returncode == 0, pa.stderr + pb.stderr
+    assert open(os.path.join(work, "a.out")).read() != open(os.path.join(work, "b.out")).read()
+
+
+def test_x_row_count_must_equal_the_prompt_length(work):
+    _rows(work, "r2.txt", [(2, _row(0)), (3, _row(1))])
+    p, _ = _xrow_run(work, "r2.txt", [1, 2, 3])
+    assert p.returncode == 2, p.stdout + p.stderr
+    assert re.search(r"--x-row: 2 rows in r2\.txt, but the prompt has 3 ids", p.stderr), p.stderr
+
+
+def test_x_row_single_row_still_works(work):
+    _rows(work, "r1.txt", [(2, _row(0))])
+    p, _ = _xrow_run(work, "r1.txt", [1])
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert re.search(r"^prefill +1 ids, pos 1, ", p.stdout, re.M), p.stdout

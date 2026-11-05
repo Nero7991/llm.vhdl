@@ -226,7 +226,7 @@ static void usage(void)
       "                  [--ids-out <file>]   the generated ids, one per line, in the\n"
       "                        format --reference reads: record a single-card run,\n"
       "                        then hand it to the two-card run as its reference\n"
-      "                  [--x-row <file>]     single card: push this row (the --dump-xout\n"
+      "                  [--x-row <file>]     single card: push this row, or N rows for an N-id prompt (the --dump-xout\n"
       "                        format, exp then n_embd int16) as position 0 in place of the\n"
       "                        prompt id's embedding: the card-1-alone oracle for the hop\n"
       "                  [--dump-xout <file>]  after the LAST GO, the residual R_X\n"
@@ -766,19 +766,40 @@ int main(int argc, char **argv)
              * question is whether card 1 given EXACTLY card 0's row (a
              * --dump-xout file) reproduces the pair's answer, and whether given
              * the reference's row it reproduces the reference's. */
-            int ne = pl_n_embd(c), nx = 0; int32_t xe = 0;
+            /* 2026-11-05: N rows (each "exp E" then n_embd mantissas) for an N-id
+             * prompt are pushed as positions 0..N-1, one GO each: die B alone fed the
+             * reference's l_out-32 at every prompt position. One row is the old case. */
+            int ne = pl_n_embd(c), nrow = 0; int32_t xe = 0;
             int16_t *xm = (int16_t *)malloc((size_t)ne * sizeof *xm);
             FILE *xf = fopen(x_row_path, "r");
             if (pp) { fprintf(stderr, "run_prompt: --x-row is single-card only\n"); status = 2; goto done; }
-            if (!xf || !xm || fscanf(xf, "exp %d", &xe) != 1) { fprintf(stderr, "run_prompt: --x-row: cannot read %s\n", x_row_path); status = 2; goto done; }
-            while (nx < ne && fscanf(xf, "%hd", &xm[nx]) == 1) nx++;
+            if (!xf || !xm) { fprintf(stderr, "run_prompt: --x-row: cannot read %s\n", x_row_path); status = 2; goto done; }
+            {   /* count the rows first, so a short file is refused before any GO */
+                char w[32]; int nv = 0, bad = 0;
+                while (fscanf(xf, "%31s", w) == 1) {
+                    if (!strcmp(w, "exp")) { if (nrow && nv != ne) bad = 1; nrow++; nv = 0;
+                                             if (fscanf(xf, "%31s", w) != 1) bad = 1; }
+                    else nv++;
+                }
+                if (nrow && nv != ne) bad = 1;
+                if (!nrow || bad) { fprintf(stderr, "run_prompt: --x-row: %s is not rows of \"exp E\" and %d mantissas\n", x_row_path, ne); fclose(xf); status = 2; goto done; }
+                if (nrow != n_prompt) { fprintf(stderr, "run_prompt: --x-row: %d rows in %s, but the prompt has %d ids (the ids are bookkeeping only)\n", nrow, x_row_path, n_prompt); fclose(xf); status = 2; goto done; }
+                rewind(xf);
+            }
+            if (nrow == 1) printf("x-row      %s: 1 row of %d mantissas pushed as position 0's X (no embedding)\n", x_row_path, ne);
+            else printf("x-row      %s: %d rows of %d mantissas pushed as positions 0..%d (no embedding)\n", x_row_path, nrow, ne, nrow - 1);
+            rc = 0;
+            for (int r = 0; r < nrow; r++) {
+                int nx = 0;
+                if (fscanf(xf, " exp %d", &xe) != 1) { rc = -1; break; }
+                while (nx < ne && fscanf(xf, "%hd", &xm[nx]) == 1) nx++;
+                if (nx != ne) { rc = -1; break; }
+                int rr = pl_decode_row(c, xm, xe, logits, &lexp, &argmax);
+                if (rr < 0) { rc = rr; break; }
+                rc++;
+            }
             fclose(xf);
-            if (nx != ne) { fprintf(stderr, "run_prompt: --x-row: %d mantissas in %s, need %d\n", nx, x_row_path, ne); status = 2; goto done; }
-            if (n_prompt != 1) { fprintf(stderr, "run_prompt: --x-row needs a one-id --prompt (the id is bookkeeping only)\n"); status = 2; goto done; }
-            printf("x-row      %s: exp %d, %d mantissas pushed as position 0's X (no embedding)\n", x_row_path, (int)xe, nx);
-            rc = pl_decode_row(c, xm, xe, logits, &lexp, &argmax);
             free(xm);
-            if (rc >= 0) rc = 1;
         } else
         rc = pp ? plp_prefill(pp, prompt, n_prompt, &argmax)
                 : pl_prefill(c, prompt, n_prompt, logits, &lexp, &argmax);
