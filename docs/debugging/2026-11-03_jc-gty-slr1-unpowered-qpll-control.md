@@ -230,3 +230,12 @@ Implication (DERIVED, not yet tested): the slot-to-slot pairs are mostly not on 
 The candidates are SLR1's quads (unpowered on these modules) or the 2xx column (no refclk found
 there). Trap hit: the bridge also holds a control port, so waiting for port 2542 to free is not
 enough before relaunching; the scripts now wait for the old bridge PID to exit.
+
+### CORRECTION 2026-11-04 ~18:30: die 0 lane 0's "inverted PRBS at 5% BER" is an artifact, WITHDRAWN
+
+TX scan (`txscan.tcl`, raw ~/regress_scratch/jc_ibert/txscan.txt): die 0 MGT_X0Y0 RX inverted,
+every one of the 32 TX of both dies switched in turn from PRBS31 to PRBS7: RX_BER = 0.0500 in
+every case, baseline and final 0.0500, and 0.949999 before inversion. A value fixed to 4 digits
+that no TX changes is not a received PRBS stream; it is a property of that receiver or its
+readout (cause not identified). So NO lane of quads 124-127 on either die receives a PRBS stream
+from the other die. The earlier claim that one lane sees a pattern is withdrawn.
