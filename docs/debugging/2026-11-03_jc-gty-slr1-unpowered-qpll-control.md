@@ -187,3 +187,24 @@ item.
 So the clock that held 15 min at ~37 C failed at ~50-58 C. Correlation, one point: the cold start
 earlier (14:15) failed while cold, but that was before the LMK VCC fix. Thermal dependence of
 the site-2 joints or parts is now the leading hypothesis, not yet separated.
+
+### 2026-11-04 ~17:00: die 0 near-end PMA loopback, 16 lanes error-free at 10.3125 Gb/s
+
+Die 1's AC36 refclk stopped (16:30-16:39, after ~40 min on the light b7 image: counts 0.4-4.1M,
+undriven signature, no lock); die 0 relocked 6/10 reads. So the die-to-die test was not possible
+and a die-0-only loopback was run instead (`/mnt/storage/fk33_builds/jc_ibert/loopback.tcl`,
+`lb_run.sh`): IBERT A loaded on both dies (temps at load 43.1 / 51.5 C), QPLL0 reset pulse, one
+TX+RX link per GT with LOOPBACK "Near-End PMA", PRBS31 both ways, GT TX/RX reset, error counters
+reset, 30 s, read (raw: ~/regress_scratch/jc_ibert/lb_die0.txt):
+
+```
+LB_PLL COMMON_X0Y0/QPLL0 LOCK=1   X0Y1 LOCK=1   X0Y2 LOCK=0   X0Y3 LOCK=1   (read at the end)
+lanes MGT_X0Y0..X0Y15: ERR=0 on all 16, BITS 3.46e11..3.84e11 each (5.9e12 total), BER < 2.9e-12 each
+```
+
+So the GTY TX and RX paths, the QPLL settings and the IBERT flow work on die 0 at 10.3125 Gb/s.
+Near-end PMA loopback does not exercise the package pins, the carrier or the other die. Quad 126's
+QPLL0 read LOCK=0 at the end although its four lanes logged no errors: either the lock dropped
+after the counters were read, or the lock read is stale; not separated. Trap hit: the script's
+`kill; sleep 3` left the IBERT bridge holding port 2542, so the b7 reload failed and IBERT kept
+heating the dies for ~5 min; the scripts now wait for the port to free.
