@@ -248,3 +248,42 @@ Open, not yet answered: what remains in die B's error growth with position (0.09
 accumulation precision on die B's blocks, or the norm-gain path (NORM_HBM). Next probes, in
 order: per-layer residuals inside die B at pos 22 against l_out-33..63; die B alone fed
 llama.cpp's l_out-32 at pos 22 (separates die A's input error from die B's own).
+
+## ADDENDUM 4, 2026-11-05: die B's own error, and the massive-activation channel
+
+Tool: `run_prompt --x-row` now takes N rows for an N-id prompt (commit b6308f20), so die B alone
+can be fed llama.cpp's l_out-32 (BFP16, quant rel err <= 0.0011) at every prompt position.
+
+MEASURED (jccard10, files under `/mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/`):
+
+| die B alone, reference input, last pos | corr vs l_out-63 | rel_rms |
+|---|---|---|
+| 0 | 0.98755 | 0.2409 |
+| 3 | 0.99611 | 0.0924 |
+| 7 | 0.99118 | 0.1369 |
+| 11 | 0.99335 | 0.1183 |
+| 15 | 0.98222 | 0.1897 |
+| 19 | 0.96062 | 0.2804 |
+| 22 | 0.98479 | 0.1891 (argmax still 1206) |
+
+So most of die B's pos-22 error (0.189 of the pair's 0.248) is die B's own, not die A's input.
+It is not monotone in position.
+
+REJECTED, do not retry: "die B mishandles the row exponent". The same row (card die A, pos 0)
+fed at exp 7 and re-expressed at exp 6 (mantissas halved): outputs corr 0.99993, rel 0.0166, and
+both match l_out-63 equally (0.0904 / 0.0909). The exp-7 run reproduces the pair's die B row bit
+for bit (control).
+
+LEAD: the largest element is systematically low on the card. Channel 3994 (and 3456 at pos 0):
+
+| row | card | llama.cpp |
+|---|---|---|
+| die A pos 0 (ch 3456) | 255.7 (mantissa 32730 of 32767 at exp 7) | 281.3 |
+| die A pos 3 / 22 (ch 3994) | 47.1 / 53.1 | 51.1 / 56.8 |
+| die B pos 0 (ch 3994) | 628.7 | 622.8 |
+| die B pos 22, pair / alone (ch 3994) | 92.6 / 116.4 | 162.0 |
+
+Die A pos 0 sits within 37 counts of full scale: an output saturation there is possible, not
+shown. Die B pos 22 loses 28% of ch 3994 even with exact input. Next probe: per-layer outputs
+inside die B (truncated `--blocks-range 33:L` token programs, die B alone on reference input) to
+find the layer where ch 3994 departs from l_out-L.
