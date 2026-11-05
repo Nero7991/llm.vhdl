@@ -10,6 +10,51 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-04-jc-on-fabric-loop-and-link-design.md` (read it with this plan; section numbers below are the spec's).
 
+## Pre-flight amendments (2026-11-05)
+
+Applied from `.superpowers/sdd/2026-11-04-jc-on-fabric-loop-and-link/preflight.md` (18 findings)
+before Task 1. One line each: finding, task touched, what changed.
+
+1. T7 Step 5: `-tclargs` used `1 0` instead of the literal word `bd_only`, so the "subagent-safe"
+   step started a full card build. Now passes `bd_only` so `build_card.tcl` stops after the BD.
+2. T7 Step 4: `jc_link_timing.tcl` and the build hook used unescaped `[0]`/`[*]` inside
+   double-quoted Tcl patterns (command substitution, then a glob character class). Patterns now
+   use `*_reg*` (no brackets); added an OOC-synth teeth check of `jc_tok_top` before any card build.
+3. T5 Step 4/T7 Step 2: no MMCM LOC or `CLOCK_DEDICATED_ROUTE BACKBONE` for the GTG MMCM. Added
+   both to `render_xdc` (f), plus a generator test.
+4. T4 Step 3/T6: `jc_link_tx` dropped a RESEND that arrived while busy. Now latches it and serves
+   it at `T_IDLE`; added bench case C11 and mutant L6; noted the dependency in T6's P3 case.
+5. T1 Step 1 bench: `refused_n = 2` was read one delta before the counter process updated it.
+   Added a `wait until rising_edge(clk)` before the check.
+6. T5 Step 7: `run_aurora_sim.sh`, and the Step 3/Step 7 generated `run_ip.sh`/`run_sims.sh`,
+   hardcoded the main checkout's path, not the worktree's. Now derive the repo root at runtime.
+7. T3 Step 1 bench: `get_row`'s corrupted-magic case read `err`/`err_code` one delta too early.
+   Added a `wait until rising_edge(clk)` after `req <= '0'` inside `get_row`.
+8. Duplicate of 5 (same bench, same fix): `refused_n` check.
+9. T6 Step 5: `tok_loop_pair.json` mutant deps omitted `rtl/util_pkg.vhd`, which
+   `rtl/async_fifo.vhd` uses. Inserted before it; mutation run no longer DID_NOT_ANALYZE.
+10. T7 Step 7: `jc_loop.py`'s `Broker.call` retried every op, including non-idempotent writes, on
+    WindowUnknown. Now retries only `rd32`; `setup`/`send_row` re-seek the ADDR register and
+    resend the whole buffer; NEXT_TOKEN/CTRL/OUT_ACK fail hard with `JCLOOP_FAIL`. Added a test.
+11. Global Constraints / T7 Step 10 / D13: the constraint line said clk_core 200 MHz while the
+    card build (and D13's own cycle math) uses the measured 125 MHz. Restated the constraint;
+    corrected D13's trailing 200 MHz remark and the jc_link_tx header's microsecond estimate.
+12. T2 Step 1: "16 passed" undercounted `test_run_prompt_jc.py`'s parametrized cases. Restated as
+    "all pass (16 functions, about 30 cases)".
+13. T6 FSM: `F_TXW`/`F_TXB2` had no ABORT exit while waiting on `tx_busy`, so die A was
+    unabortable while its TX lane was down. Added `elsif abort_l = '1' then stop(R_ABORT);`.
+14. T2 `tok_loop_regs`: LINK_CREDIT was not cleared at START, so a rerun without the host
+    rewriting it could let A outrun B. Cleared alongside `out_ack`/`next_tok_v`.
+15. T7 Step 7 fault mode: the `FAULT_PAUSED=%d ` prefix broke `main()`'s
+    `line.startswith("JCLOOP_DONE")` exit-status check. Changed to `"JCLOOP_DONE" in line`.
+16. Spec deviations: added D18 documenting that the gather's dequant scale takes the whole row's
+    max (matching `pl_embed_mv4i`), not spec 1.3's "block max" (RTL and the tree win).
+17. Stale cites: `fk33_seam.vhd:1094-1098` -> `:1101-1105` (T2); `jc_sim_broker.c` anchors
+    `:72` -> `:80`, `:126-262` -> `:131-262`, `:284-311` -> `:277-311` (T2).
+18. T7 Step 1: the refclk-pick/readback logic was written inline in T5 Step 3 and only shared out
+    in T7, forcing an extra IP regeneration. Moved `jc_aurora_refclk`/`jc_aurora_check` into T5's
+    `aurora_cfg.tcl` from the start; T7 Step 1 now just confirms they are already shared.
+
 ## Global Constraints
 
 - **Subagents get NO hardware access.** No `xsdb`, `hw_server`, `vivado ... program`, `sqrl_bridge`, XVC, CoE (`tools/jc/coe.py`, `coe_load.py`, `coe_soak.py`), no `tools/jc/jc_broker.py serve` against a BMC, no `hw/jc/host/jc_ctxtest.sh` or `jc_bc_lane.sh` real runs, nothing under `/dev/xdma*`, nothing that opens the Jungle Cat JTAG. Task 8 is main-session only. Put this line in every brief.
@@ -18,7 +63,10 @@
 - **Nothing expensive under /tmp** (including the session scratchpad). Bench and generator scratch: `~/regress_scratch/<run>` or `/mnt/storage/fk33_builds/scratch/<run>`. Build roots: `/mnt/storage/fk33_builds/<tag>/`.
 - **HBM is AXI3:** ARLEN <= 15 (16 beats), 32-byte beats, ARSIZE `101`, ARBURST `01`, no burst crosses 4 KB (`sim/jc_axi3_mem.vhd` checks all four).
 - **Same bitstream on both dies** (`sqrl_bridge` loads the first file of a comma list on both, `docs/boards/jungle-cat/README.md:102,118`). TX/RX role and A/B half are runtime registers, never generics.
-- **Part `xcvu35p-fsvh2104-2L-e`, clk_core 200 MHz** (`hw/jc/card/README.md`, `build_card.tcl:20-24`).
+- **Part `xcvu35p-fsvh2104-2L-e`.** `clk_core` defaults to 200 MHz (`hw/jc/card/README.md`,
+  `build_card.tcl:20-24`), but this plan's card build (Task 7 Step 10) runs at the jccard10-measured
+  125 MHz via `--clk-mhz 125`, and every timeout and cycle-count derived here (D13) uses 125 MHz,
+  not the 200 MHz default (finding 11, 2026-11-05).
 - **Link facts (MEASURED 2026-11-04):** die 0 GTYE4_CHANNEL_X0Y0 TX -> die 1 X0Y0 RX, TX polarity 0, RX polarity 0, 10.3125 Gb/s, 156.25 MHz refclk from an MMCM on GTGREFCLK0 (MMCME4 DIVCLK 4, MULT 25.000, CLKOUT0 8.000 from the 200 MHz BC26 sysclk; `/mnt/storage/fk33_builds/jc_ibert/G/SUMMARY.md`). Fallback line rate 1.25 Gb/s.
 - **GHDL gate:** `REGRESS_SCRATCH=~/regress_scratch/<run> bash sim/regress.sh --only <substr> --keep`; `--only` is a SUBSTRING; read `OVERALL PASS n` and require n >= 1 (`PASS 0` means nothing ran). A new `sim/tb_*.vhd` is a gate row the moment it exists: commit its vectors in the same commit. UNISIM/IP benches live under `hw/jc/link/sim/`, never `sim/tb_*`.
 - **Bench verdict lines:** every GHDL bench ends with `report "PASS: <tb> checks=<n>" severity note;` then `std.env.finish;`, or `report "FAIL: <tb> errors=<n>" severity failure;`. Checks are counted in VARIABLES. No other report line may contain the words FAIL, MISMATCH or FAILED unless it is a failure (`sim/regress.sh:2801`).
@@ -49,11 +97,12 @@
 - **D10. OUT_FIFO and the prompt buffer are fixed-address windows** (OUT_ADDR/OUT_DATA, PROMPT_ADDR/PROMPT_DATA, auto-increment), read non-destructively with an OUT_ACK count. `server/fk33_transport_jc.c:21-32` coalesces only one fixed offset per die and `server/tests/jc_sim_broker.c:165-166` accepts `wrn` only with `"fix":true`; a destructive pop would lose ids on the broker's WindowUnknown retries (`pl_backend.c:84-93`).
 - **D11. The pin-refclk select is a generator input, not a VHDL generic.** The Aurora core has no GTGREFCLK port (as IBERT, `G/SUMMARY.md` "What was changed"), so GTGREFCLK0 is wired by a netlist ECO before `opt_design`. `JC_LINK_REFCLK=gtg|pin` (stamped by `gen_jc_card.py`) selects ECO or pin. Task 5 Step 3 may find the shared-logic RTL exposes the ports; then it becomes a generic and the ECO is dropped.
 - **D12. Gather time:** the gather dequantizes one element per cycle: ~4096 + 2 x 128 beats + header, about 22 us at 200 MHz for the 9B (ESTIMATE), not the spec's ~10 us.
-- **D13. Engine timeout default** = 4 x 0.36 s x 125 MHz = 180,000,000 cycles (DERIVED from spec section 2's MEASURED 0.36 s at 125 MHz); at clk_core 200 MHz that is 0.9 s.
+- **D13. Engine timeout default** = 4 x 0.36 s x 125 MHz = 180,000,000 cycles (DERIVED from spec section 2's MEASURED 0.36 s at the card's standing 125 MHz `clk_core`, the jccard10 configuration; see the Global Constraints amendment, finding 11). The register is a cycle count, so it carries over unchanged if a future build moves to a different `clk_core`; only the real-time duration would change.
 - **D14. The xsim test is this plan's own bench around the IP, not the IP's example simulation.** Spec section 4 names "Aurora example simulation"; the example design checks the IP's own frame generator, not `jc_link_tx`/`jc_link_rx`. `hw/jc/link/sim/tb_jc_aurora_link.vhd` runs two cores of the generated IP (with `C_EXAMPLE_SIMULATION` true) carrying real frames, at NLANES 1 and 4, with the lane-map mutant.
 - **D15. Both directions are one core.** Spec 1b.6 "Both Aurora directions are instantiated, one enabled at runtime" is met by `dataflow_config = TX/RX_Simplex` (one core, independent TX and RX simplex channels on the same GT lanes, `component.xml` choice list line 53648); the role picks which half `tok_loop` uses. Two separate cores cannot share GTYE4_CHANNEL_X0Y0.
 - **D16. llama.cpp agreement is recorded, not gated, in silicon step 3.** Spec section 4 step 3 asks loop ids = run_prompt ids = llama.cpp. The card's host-path argmax already differs from llama.cpp's on the 23-id prompt (jccard10: 1206 vs 7732, `hw/jc/card/results/jc27b_jccard10_2026-11-04/README.md`), independent of the loop. Task 8 gates loop = host path (bit-exact ids, the oracle for what the loop changed) and records the llama.cpp id beside it.
 - **D17. Hop transparency is checked on die B's output residual.** Spec section 4 step 2 asks that die B's X window after the hop be bit-identical to die A's R_X. On the 27B card windows 2 and 3 are the same region (`hw/jc/card/jccard_const_allow.tcl`: `card/hw_reg` and `card/hr_reg` tied to R_X), so B's input is overwritten by its GO. Task 8 Step 6 compares both dies' `--dump-xout` residuals between the host hop and the loop hop for the same prefix; with a deterministic engine equal outputs imply equal inputs (DERIVED).
+- **D18. The gather's dequant scale takes the whole row's amax, not a per-block max.** Spec 1.3 says embed_gather "takes the block max"; the RTL (and the oracle it is checked against, `pl_embed_mv4i`, `server/embed_mv4i.c:497-501`) take one amax over the whole row. The RTL and the tree win: `embed_gather.vhd` matches `pl_embed_mv4i` as this plan validates it, not spec 1.3's wording (finding 16, 2026-11-05).
 
 ## Not grounded in the tree (decided at execution, with a stop condition)
 
@@ -383,6 +432,7 @@ begin
     axil_rd(clk, hm, hs, 16#100#, d, resp);
     chk(resp = "10" and d = x"00000000", "refused host read SLVERR, RDATA 0");
     chk(log_count = n0, "refused host accesses did not reach the seam");
+    wait until rising_edge(clk);   -- let the counter process register both refusals (finding 5)
     chk(refused_n = 2, "host_refused pulsed once per refusal");
     -- 3: owned loop accesses pass
     phase <= 3; wait until l_done = 3;
@@ -797,10 +847,10 @@ git commit -m "jc loop T1: seam ownership mux, AXI-Lite BFM, mutant runner" -- r
 - Create: `rtl/tok_loop_pkg.vhd`, `rtl/tok_loop_regs.vhd`, `rtl/tok_loop_axm.vhd`, `rtl/tok_loop_fsm.vhd`
 - Create: `sim/seam_beh_model.vhd`, `sim/row_synth_src.vhd`, `sim/tok_loop_tb_pkg.vhd`, `sim/seam_trace_chk.vhd`, `sim/tb_tok_loop.vhd`, `sim/tok_loop_vec.txt` (generated), `sim/mutants/tok_loop.json`
 - Create: `tools/jc/tok_loop_model.py`, `tools/jc/gen_tok_loop_vec.py`, `tools/jc/test_tok_loop_model.py`
-- Modify: `server/tests/jc_sim_broker.c` (add `--trace FILE`; handler at `:126-262`, option loop at `:284-311`)
+- Modify: `server/tests/jc_sim_broker.c` (add `--trace FILE`; handler at `:131-262`, option loop at `:277-311`)
 
 **Interfaces:**
-- Consumes: Task 1 `axil_bfm_pkg`; seam register offsets `server/fk33_seam.h:238-377` = `rtl/fk33_seam.vhd:365-479` (CTRL 0x14, STATUS 0x18, ERR_INFO 0x1C, SEQ_POS 0x20, N_STEP 0x24, ARGMAX 0x44, LOGIT_EXP 0x48, X_EXP 0x54, WIN_SEL 0x58, WIN_ADDR 0x5C, WIN_DATA 0x60, TOK_POS 0x8C, KV_MAXPOS 0xA0, XEXP_OUT 0xA4; STATUS bit0 DONE, bit1 BUSY, bit2 ERR, [11:8] code, `rtl/fk33_seam.vhd:1094-1098`); CTRL GO = 1, SEQ_RESET = 2 (`fk33_seam.h:461-462`); WIN_XIN 2, WIN_XOUT 3 (`fk33_seam.h:383-384`). The host sequence it replays: `pl_seq_reset` (`server/pl_backend.c:1252-1297`: W CTRL 2, R STATUS, R TOK_POS, R SEQ_POS, both 0), `push_x_inner` v2 path (`:1331-1349`: W X_EXP, W WIN_SEL 2, W WIN_ADDR 0, n_embd x W WIN_DATA), `go_issue` (`:1367-1389`: W SEQ_POS p, W N_STEP 1, W CTRL 1), `seam_wait` (`:173-243`: poll STATUS for DONE|ERR, on ERR wait BUSY low, R ERR_INFO), `go_finish` (`:1391-1415`: R ARGMAX). The token stream and stop rule of `server/tests/run_prompt.c:776-860` (the prefill's argmax is the first generated id; each id is pushed before the stop check; loop while `!stopped && n_got < max_new`). The sim's argmax (`server/fk33_sim.c:123-171`): `fx = FNV-1a(x_mant as uint16)`, `hist = FNV(hist, 0, pos, fx)`, `pick = (hist*31 + pos*7 + fx) mod n_vocab`, `hist` = 2166136261 after SEQ_RESET (`:568`) and 0 at open; XEXP_OUT echoes X_EXP and window 3 reads back window 2 (the hop model, `:418-430`).
+- Consumes: Task 1 `axil_bfm_pkg`; seam register offsets `server/fk33_seam.h:238-377` = `rtl/fk33_seam.vhd:365-479` (CTRL 0x14, STATUS 0x18, ERR_INFO 0x1C, SEQ_POS 0x20, N_STEP 0x24, ARGMAX 0x44, LOGIT_EXP 0x48, X_EXP 0x54, WIN_SEL 0x58, WIN_ADDR 0x5C, WIN_DATA 0x60, TOK_POS 0x8C, KV_MAXPOS 0xA0, XEXP_OUT 0xA4; STATUS bit0 DONE, bit1 BUSY, bit2 ERR, [11:8] code, `rtl/fk33_seam.vhd:1101-1105`); CTRL GO = 1, SEQ_RESET = 2 (`fk33_seam.h:461-462`); WIN_XIN 2, WIN_XOUT 3 (`fk33_seam.h:383-384`). The host sequence it replays: `pl_seq_reset` (`server/pl_backend.c:1252-1297`: W CTRL 2, R STATUS, R TOK_POS, R SEQ_POS, both 0), `push_x_inner` v2 path (`:1331-1349`: W X_EXP, W WIN_SEL 2, W WIN_ADDR 0, n_embd x W WIN_DATA), `go_issue` (`:1367-1389`: W SEQ_POS p, W N_STEP 1, W CTRL 1), `seam_wait` (`:173-243`: poll STATUS for DONE|ERR, on ERR wait BUSY low, R ERR_INFO), `go_finish` (`:1391-1415`: R ARGMAX). The token stream and stop rule of `server/tests/run_prompt.c:776-860` (the prefill's argmax is the first generated id; each id is pushed before the stop check; loop while `!stopped && n_got < max_new`). The sim's argmax (`server/fk33_sim.c:123-171`): `fx = FNV-1a(x_mant as uint16)`, `hist = FNV(hist, 0, pos, fx)`, `pick = (hist*31 + pos*7 + fx) mod n_vocab`, `hist` = 2166136261 after SEQ_RESET (`:568`) and 0 at open; XEXP_OUT echoes X_EXP and window 3 reads back window 2 (the hop model, `:418-430`).
 - Produces (names later tasks use):
   - package `tok_loop_pkg`: constants `SM_*`, `TL_*` (map below), `R_*` reasons, `ROLE_SINGLE/A/B`, `SRC_GATHER/HOST/LINK`, `LS_*` LINK_STATUS bits; records `tl_cfg_t`, `tl_stat_t`, `tl_lnk_t`; constants `TL_CFG_RESET`, `TL_LNK_ZERO`; function `tl_u32(n)`.
   - entity `tok_loop_regs` (generics `N_EMBD, PROMPT_MAX, OUT_DEPTH, CAPS`; AXI-Lite slave `s_*` 16-bit; `cfg : out tl_cfg_t`; `st : in tl_stat_t`; `lnk : in tl_lnk_t`; prompt read `pr_addr/pr_data`; OUT ring write `out_we/out_waddr/out_wdata`; host-row read `hr_addr/hr_data`).
@@ -858,7 +908,7 @@ FSM states (one transaction issued per state through `F_TXN`; `op_ret` names the
 
 - [ ] **Step 1: Add `--trace` to the fake broker**
 
-In `server/tests/jc_sim_broker.c`, after `static int g_failn_ran = -1;` (`:72`) add:
+In `server/tests/jc_sim_broker.c`, after `static int g_failn_ran = -1;` (`:80`) add:
 
 ```c
 static FILE *g_trace;                /* --trace: every register value, for tools/jc/gen_tok_loop_vec.py */
@@ -900,7 +950,8 @@ At the end of `handle()` (next to `fflush(g_log);`) add `if (g_trace) fflush(g_t
 and add `[--trace FILE]` to the usage string and the header comment ("--trace FILE: one line per register value, `W|R <die> 0x<off> 0x<val>`; wrn and rdn items one line each"). Before `fclose(g_log);` add `if (g_trace) fclose(g_trace);`.
 
 Run: `make -C server jc_sim_broker test_run_prompt_jc`
-Expected: builds; `16 passed` (the existing tests do not pass `--trace`).
+Expected: builds; all pass (16 test functions, about 30 cases once parametrize expands two of
+them; the existing tests do not pass `--trace`).
 
 - [ ] **Step 2: Write the Python model of run_prompt's writes**
 
@@ -1573,7 +1624,9 @@ begin
             when TL_CTRL =>
               c.start <= d(0); c.abort <= d(1); c.resend <= d(2); c.row_ready <= d(3); c.clear <= d(4);
               if d(0) = '1' and st.state /= 1 then
-                c.out_ack <= (others => '0'); c.next_tok_v <= '0';
+                -- finding 14: link_credit cleared alongside out_ack/next_tok_v, or a rerun
+                -- without the host rewriting it could let A outrun B (Review Focus 5)
+                c.out_ack <= (others => '0'); c.next_tok_v <= '0'; c.link_credit <= (others => '0');
               end if;
             when TL_PROMPT_LEN   => c.prompt_len <= unsigned(d);
             when TL_MAX_NEW      => c.max_new <= unsigned(d);
@@ -1938,9 +1991,13 @@ begin
           when F_TXW =>
             if tx_busy = '0' then
               tx_send <= '1'; tx_pos <= p; tx_exp <= xexp_r; fs <= F_TXB1;
+            elsif abort_l = '1' then stop(R_ABORT);
             end if;
           when F_TXB1 => fs <= F_TXB2;
-          when F_TXB2 => if tx_busy = '0' then fs <= F_GEN; end if;
+          when F_TXB2 =>
+            if tx_busy = '0' then fs <= F_GEN;
+            elsif abort_l = '1' then stop(R_ABORT);
+            end if;
           when F_GEN =>
             if p + 1 < plen then p <= p + 1; fs <= F_TOP;
             elsif role_l = ROLE_A then fs <= F_TOKW;
@@ -2910,6 +2967,7 @@ begin
     procedure get_row(tk : natural; ok_exp : out boolean) is
     begin
       tok <= to_unsigned(tk, 32); req <= '1'; wait until rising_edge(clk); req <= '0';
+      wait until rising_edge(clk);   -- let a stale err/err_code from the prior call clear (finding 7)
       n := 0;
       while exp_valid = '0' and err = '0' loop
         wait until rising_edge(clk); n := n + 1;
@@ -3618,6 +3676,17 @@ begin
     chk(head_valid = '1' and head_pos = 0, "C9 the queue holds frames 0 and 1");
     pulse(pop); tick(2);
     chk(head_valid = '1' and head_pos = 1 and consumed = 2 - 1, "C9 pop advances the head");
+    -- C11 a RESEND that arrives while busy is latched and served at T_IDLE, not dropped (finding 4)
+    pulse(run_start); tick(2); resend_cap <= to_unsigned(100, 32);
+    fill; n0 := to_integer(frames_sent);
+    send_pos <= to_unsigned(10, 32); send_exp <= x"00000005"; pulse(send);
+    tick(3); pulse(resend);     -- busy = '1' here: the old RTL drops this pulse on the floor
+    tx_idle; tx_idle;
+    chk(to_integer(frames_sent) = n0 + 2 and to_integer(resends) = 1,
+        "C11 the busy RESEND was latched and served: one extra frame, one resend counted");
+    expect_head(10, 5, "C11 the sent frame");
+    pulse(pop); tick(2);
+    expect_head(10, 5, "C11 the latched resend, same content, reaches the head too");
     if e = 0 then
       report "PASS: tb_jc_link checks=" & integer'image(c) severity note;
     else
@@ -3693,8 +3762,11 @@ end package body;
 -- payload buffer with R_X (two mantissas per word), then pulses send. The frame is kept for
 -- RESEND until the next fill begins (plan D3 guarantees that frame is the one die B waits
 -- for); a resend at resends >= resend_cap sets the sticky `exhausted` instead (spec 3).
+-- A RESEND that arrives while busy is latched (`resend_pend`) and served the next time the
+-- framer reaches T_IDLE with a frame still held; it is not dropped (finding 4, 2026-11-05:
+-- the host's recovery write can land mid-transmission, e.g. tb_tok_loop_pair's P3).
 -- One word per cycle at most (payload words every 3 cycles): 2,568 words for the 27B,
--- about 40 us at 200 MHz (ESTIMATE; the link carries it in ~8 us).
+-- about 62 us at the card's 125 MHz clk_core (ESTIMATE; the link carries it in ~8 us).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -3737,6 +3809,7 @@ architecture rtl of jc_link_tx is
   signal asm : words_t := (others => (others => '0'));
   signal nw : natural range 0 to W := 0;
   signal asm_last, bv, olast, held, exh : std_logic := '0';
+  signal resend_pend : std_logic := '0';   -- a RESEND that arrived while busy (finding 4)
   signal obeat : std_logic_vector(32*W-1 downto 0) := (others => '0');
   signal k : natural range 0 to FW := 0;
   signal crc : std_logic_vector(31 downto 0) := LK_CRC_INIT;
@@ -3772,19 +3845,22 @@ begin
       end if;
       if fill_we = '1' then held <= '0'; end if;
       if rst = '1' then
-        ts <= T_IDLE; bv <= '0'; nw <= 0; held <= '0'; exh <= '0';
+        ts <= T_IDLE; bv <= '0'; nw <= 0; held <= '0'; exh <= '0'; resend_pend <= '0';
         seq_next <= (others => '0'); nsent <= (others => '0'); nres <= (others => '0');
       else
         if run_start = '1' then
-          seq_next <= (others => '0'); held <= '0'; exh <= '0';
+          seq_next <= (others => '0'); held <= '0'; exh <= '0'; resend_pend <= '0';
           nsent <= (others => '0'); nres <= (others => '0');
         end if;
+        if resend = '1' and held = '1' then resend_pend <= '1'; end if;
+        if fill_we = '1' then resend_pend <= '0'; end if;   -- a new fill retires the old RESEND
         case ts is
           when T_IDLE =>
             if send = '1' then
               pos_r <= send_pos; exp_r <= send_exp; seq_r <= seq_next; seq_next <= seq_next + 1;
               held <= '1'; nsent <= nsent + 1; k <= 0; crc <= LK_CRC_INIT; ts <= T_GEN;
-            elsif resend = '1' and held = '1' then
+            elsif (resend = '1' or resend_pend = '1') and held = '1' then
+              resend_pend <= '0';
               if nres >= resend_cap then
                 exh <= '1';
               else
@@ -3976,7 +4052,7 @@ end architecture;
 - [ ] **Step 4: Run the bench to see it pass**
 
 Run: `REGRESS_SCRATCH=~/regress_scratch/t4-b bash sim/regress.sh --only tb_jc_link --keep`
-Expected: `OVERALL PASS 1`; the log ends `PASS: tb_jc_link checks=` with n >= 45.
+Expected: `OVERALL PASS 1`; the log ends `PASS: tb_jc_link checks=` with n >= 54 (C11 adds about 9).
 
 - [ ] **Step 5: Write and run the mutants**
 
@@ -4009,13 +4085,17 @@ Expected: `OVERALL PASS 1`; the log ends `PASS: tb_jc_link checks=` with n >= 45
     {"tag": "L5", "expect": "KILLED", "file": "rtl/jc_link_rx.vhd",
      "why": "a cut frame is not discarded after link-down",
      "old": "          rs <= R_DISC; bi <= 0; crc <= LK_CRC_INIT;\n        elsif",
-     "new": "        elsif"}
+     "new": "        elsif"},
+    {"tag": "L6", "expect": "KILLED", "file": "rtl/jc_link_tx.vhd",
+     "why": "a RESEND that arrives while busy is dropped again (finding 4): C11 sees no second frame",
+     "old": "elsif (resend = '1' or resend_pend = '1') and held = '1' then",
+     "new": "elsif resend = '1' and held = '1' then"}
   ]
 }
 ```
 
 Run: `python3 sim/mutate_rows.py sim/mutants/jc_link.json`
-Expected: `MUTANTS_OK 6`. (L5: without the discard the cut frame's tail, which the framer resumes when the channel comes back, is parsed as a new header and counted as a CRC failure; C5's `crc_fails = 3` check kills it.)
+Expected: `MUTANTS_OK 7`. (L5: without the discard the cut frame's tail, which the framer resumes when the channel comes back, is parsed as a new header and counted as a CRC failure; C5's `crc_fails = 3` check kills it. L6: reverting to the un-latched check leaves `frames_sent = n0 + 1` and `resends = 0`, failing C11's count and its second `expect_head`.)
 
 - [ ] **Step 6: Commit**
 
@@ -4370,6 +4450,30 @@ proc jc_lane_txpol {nlanes} {
   for {set l [expr {$nlanes - 1}]} {$l >= 0} {incr l -1} { append s [lindex [dict get $JC_LANES $l] 1] }
   return $s
 }
+
+# jc_aurora_refclk obj -> the C_REFCLK_SOURCE choice naming refclk1 of quad X0Y2
+# (MGTREFCLK1 of bank 126, pin AC36). obj is an IP (get_ips) or a BD cell (get_bd_cells).
+# Shared from the start (finding 18) so the card build (Task 7) never duplicates this pick.
+proc jc_aurora_refclk {obj} {
+  set choices [list_property_value CONFIG.C_REFCLK_SOURCE $obj]
+  puts "AURORA_REFCLK_CHOICES $choices"
+  foreach c $choices { if {[regexp -nocase {REFCLK1.*X0Y2} $c]} { return $c } }
+  error "AURORA_CFG_FAIL refclk: no choice names REFCLK1 of quad X0Y2 in {$choices}"
+}
+
+# jc_aurora_check obj cfg: every CONFIG the object was given reads back (numbers compared
+# as numbers: the IP may print 200.0 as 200.0000). Errors AURORA_CFG_FAIL readback.
+proc jc_aurora_check {obj cfg} {
+  set bad {}
+  foreach {k v} $cfg {
+    set got [get_property $k $obj]
+    if {$got ne $v && !([string is double -strict $got] && [string is double -strict $v] && $got == $v)} {
+      lappend bad "$k=$got (asked $v)"
+    }
+    puts "AURORA_CFG $k=$got"
+  }
+  if {[llength $bad]} { error "AURORA_CFG_FAIL readback: $bad" }
+}
 ```
 
 `hw/jc/link/gen_aurora_ip.tcl`:
@@ -4401,24 +4505,12 @@ if {[info exists ::env(JC_AUR_MUTATE)] && $::env(JC_AUR_MUTATE) eq "permute"} {
 create_ip -name aurora_64b66b -vendor xilinx.com -library ip -version 12.0 -module_name jc_aurora
 set ip [get_ips jc_aurora]
 
-# the refclk source: choose the choice naming refclk1 of quad X0Y2 (MGTREFCLK1_126, pin AC36)
-set choices [list_property_value CONFIG.C_REFCLK_SOURCE $ip]
-puts "AURORA_REFCLK_CHOICES $choices"
-set pick ""
-foreach c $choices { if {[regexp -nocase {REFCLK1.*X0Y2} $c]} { set pick $c } }
-if {$pick eq ""} { error "AURORA_CFG_FAIL refclk: no choice names REFCLK1 of quad X0Y2 in {$choices}" }
-lappend cfg CONFIG.C_REFCLK_SOURCE $pick
-
+# finding 18: the refclk pick and the readback are jc_aurora_refclk/jc_aurora_check, shared
+# from aurora_cfg.tcl (sourced above) since Task 5, never duplicated for Task 7 to extract.
+lappend cfg CONFIG.C_REFCLK_SOURCE [jc_aurora_refclk $ip]
 if {[catch {set_property -dict $cfg $ip} msg]} { error "AURORA_CFG_FAIL set_property: $msg" }
-set bad {}
-foreach {k v} $cfg {
-  set got [get_property $k $ip]
-  if {$got ne $v && !([string is double -strict $got] && [string is double -strict $v] && $got == $v)} {
-    lappend bad "$k=$got (asked $v)"
-  }
-  puts "AURORA_CFG $k=$got"
-}
-if {[llength $bad]} { error "AURORA_CFG_FAIL readback: $bad" }
+jc_aurora_check $ip $cfg
+set pick [get_property CONFIG.C_REFCLK_SOURCE $ip]
 
 generate_target all $ip
 synth_ip $ip
@@ -4459,10 +4551,11 @@ Memory budget, stated before running: one Vivado on this box at a time (check pr
 ```bash
 B=/mnt/storage/fk33_builds/jc_link_ip
 mkdir -p $B
+R=$(git rev-parse --show-toplevel)   # finding 6: this worktree, never a hardcoded checkout
 cat > $B/run_ip.sh <<'SH'
 #!/bin/bash
 set -u
-cd /home/orencollaco/GitHub/llama.vhdl
+cd "$R"
 for spec in "l1 1 10.3125 sim" "l4 4 10.3125 sim" "l1card 1 10.3125 card" "l1slow 1 1.25 card"; do
   set -- $spec
   vivado -mode batch -nojournal -log /mnt/storage/fk33_builds/jc_link_ip/$1.log \
@@ -4473,7 +4566,7 @@ JC_AUR_MUTATE=permute vivado -mode batch -nojournal -log /mnt/storage/fk33_build
 echo RUN_IP_DONE
 SH
 chmod +x $B/run_ip.sh
-systemd-run --user --scope -p MemoryHigh=8G -p MemoryMax=10G $B/run_ip.sh > $B/run_ip.out 2>&1
+systemd-run --user --scope --setenv=R="$R" -p MemoryHigh=8G -p MemoryMax=10G $B/run_ip.sh > $B/run_ip.out 2>&1
 grep -E '^(AURORA_IP_OK|AURORA_CFG_FAIL)' $B/l1.log $B/l4.log $B/l1card.log $B/l1slow.log $B/l4perm.log
 ```
 
@@ -4693,7 +4786,7 @@ architecture sim of tb_jc_aurora_link is
   signal a_tdata, b_rdata, b_tdata_unused : std_logic_vector(64*NLANES-1 downto 0);
   signal a_tkeep : std_logic_vector(8*NLANES-1 downto 0);
   signal a_tlast, a_tvalid, a_tready, b_rlast, b_rvalid : std_logic;
-  signal run_a, run_b, fill_we, send : std_logic := '0';
+  signal run_a, run_b, fill_we, send, do_resend : std_logic := '0';
   signal fill_idx, rd_idx : unsigned(11 downto 0) := (others => '0');
   signal fill_data, rd_data, hexp : std_logic_vector(31 downto 0) := (others => '0');
   signal send_pos, hpos : unsigned(31 downto 0) := (others => '0');
@@ -4736,7 +4829,7 @@ begin
     generic map(N_EMBD => N_EMBD, W => W)
     port map(clk => ua, rst => '0', run_start => run_a, fill_we => fill_we, fill_idx => fill_idx,
              fill_data => fill_data, send => send, send_pos => send_pos, send_exp => x"FFFFFFF8",
-             resend => '0', resend_cap => to_unsigned(3, 32), busy => busy, exhausted => exh,
+             resend => do_resend, resend_cap => to_unsigned(3, 32), busy => busy, exhausted => exh,
              frames_sent => fs, resends => rs, m_tdata => a_tdata, m_tkeep => a_tkeep,
              m_tlast => a_tlast, m_tvalid => a_tvalid, m_tready => a_tready);
   u_rx : entity work.jc_link_rx
@@ -4791,6 +4884,40 @@ begin
         pop <= '1'; wait until rising_edge(ub); pop <= '0'; wait until rising_edge(ub);
       end if;
     end procedure;
+    -- finding 5: jc_link_rx resyncs on the first tlast after a chan_up fall (rtl/jc_link_rx.vhd
+    -- header): the first frame sent after a reset is swallowed even though A never cut it. The
+    -- held frame's RESEND is what actually lands; retry once with resend if the plain send times out.
+    procedure frame_after_reset(p : natural; msg : string) is
+      variable bad_w : natural := 0;
+    begin
+      wait until rising_edge(ua);
+      for k in 0 to PW - 1 loop
+        lfsr := lfsr(30 downto 0) & (lfsr(31) xor lfsr(21) xor lfsr(1) xor lfsr(0));
+        sent(k) := lfsr;
+        fill_we <= '1'; fill_idx <= to_unsigned(k, 12); fill_data <= lfsr;
+        wait until rising_edge(ua);
+      end loop;
+      fill_we <= '0'; send_pos <= to_unsigned(p, 32); send <= '1';
+      wait until rising_edge(ua); send <= '0';
+      t0 := now;
+      while hval /= '1' and now - t0 < 50 us loop wait until rising_edge(ub); end loop;
+      if hval = '0' then
+        wait until rising_edge(ua); do_resend <= '1'; wait until rising_edge(ua); do_resend <= '0';
+        t0 := now;
+        while hval /= '1' and now - t0 < 50 us loop wait until rising_edge(ub); end loop;
+      end if;
+      chk(hval = '1', msg & ": frame arrived (resent once if the first send was eaten by the reset resync)");
+      if hval = '1' then
+        chk(hpos = p, msg & ": position");
+        for k in 0 to PW - 1 loop
+          rd_idx <= to_unsigned(k, 12);
+          wait until rising_edge(ub); wait until rising_edge(ub);
+          if rd_data /= sent(k) then bad_w := bad_w + 1; end if;
+        end loop;
+        chk(bad_w = 0, msg & ": payload equal");
+        pop <= '1'; wait until rising_edge(ub); pop <= '0'; wait until rising_edge(ub);
+      end if;
+    end procedure;
   begin
     -- PG074 reset order: pma_init and reset_pb high, pma_init low, then reset_pb low
     wait for 2 us; pma_a <= '0'; pma_b <= '0';
@@ -4808,7 +4935,7 @@ begin
     rpb_b <= '1'; wait for 2 us; rpb_b <= '0';
     wait_up(b_rxu, "B rx_channel_up again with A already up");
     chk(ld >= 1, "the B reset was counted as a link-down");
-    one_frame(NFRAMES, "frame after B reset");
+    frame_after_reset(NFRAMES, "frame after B reset");
     chk(a_txu = '1', "A tx_channel_up stayed up");
     if e = 0 then
       report "AURSIM_PASS tb_jc_aurora_link NLANES=" & integer'image(NLANES) &
@@ -4832,7 +4959,7 @@ end architecture;
 # prints ^AURSIM_PASS or ^AURSIM_FAIL (the bench's own line, or the harness's when it never ran)
 set -u
 IPOUT=$1; NL=$2; PERM=$3; WORK=$4
-R=/home/orencollaco/GitHub/llama.vhdl
+R=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)   # finding 6: this worktree
 mkdir -p "$WORK"
 cat > "$WORK/sim.tcl" <<TCL
 create_project -force s $WORK/prj -part xcvu35p-fsvh2104-2L-e
@@ -4861,17 +4988,18 @@ Budget: one Vivado on the box (xsim of 2 to 8 GT channel models, ESTIMATE under 
 
 ```bash
 B=/mnt/storage/fk33_builds/jc_link_ip
+R=$(git rev-parse --show-toplevel)   # finding 6: this worktree, never a hardcoded checkout
 cat > $B/run_sims.sh <<'SH'
 #!/bin/bash
-S=/home/orencollaco/GitHub/llama.vhdl/hw/jc/link/run_aurora_sim.sh
+S="$R/hw/jc/link/run_aurora_sim.sh"
 B=/mnt/storage/fk33_builds/jc_link_ip
-bash $S $B/l1 1 0 $B/sim_l1   > $B/sim_l1.out
-bash $S $B/l4 4 0 $B/sim_l4   > $B/sim_l4.out
-bash $S $B/l4 4 1 $B/sim_l4p  > $B/sim_l4p.out
+bash "$S" $B/l1 1 0 $B/sim_l1   > $B/sim_l1.out
+bash "$S" $B/l4 4 0 $B/sim_l4   > $B/sim_l4.out
+bash "$S" $B/l4 4 1 $B/sim_l4p  > $B/sim_l4p.out
 echo RUN_SIMS_DONE
 SH
 chmod +x $B/run_sims.sh
-systemd-run --user --scope -p MemoryHigh=8G -p MemoryMax=10G $B/run_sims.sh
+systemd-run --user --scope --setenv=R="$R" -p MemoryHigh=8G -p MemoryMax=10G $B/run_sims.sh
 cat $B/sim_l1.out $B/sim_l4.out $B/sim_l4p.out
 ```
 
@@ -5967,7 +6095,10 @@ begin
             end if;
             if f = 4 then flip_beat <= nbeats + 6; end if;        -- the resend is corrupted too
             handled := fails;
-            wa(TL_CTRL, u32(4));                                  -- RESEND
+            wa(TL_CTRL, u32(4));                                  -- RESEND (P3: A is still busy
+                                                                   -- sending the cut frame's tail
+                                                                   -- here; jc_link_tx latches this
+                                                                   -- and serves it at T_IDLE, finding 4)
           end if;
         end if;
         polls := polls + 1;
@@ -6392,7 +6523,8 @@ Expected: `OVERALL PASS 1`, `PASS: tb_tok_loop_faults checks=` with n >= 90.
   "deps": ["sim/axil_bfm_pkg.vhd", "rtl/tok_loop_pkg.vhd", "sim/tok_loop_tb_pkg.vhd",
            "rtl/tok_loop_regs.vhd", "rtl/tok_loop_axm.vhd", "rtl/tok_loop_fsm.vhd", "rtl/jc_seam_mux.vhd",
            "rtl/embed_gather.vhd", "rtl/jc_loader_pkg.vhd", "rtl/jc_link_pkg.vhd", "rtl/jc_link_tx.vhd",
-           "rtl/jc_link_rx.vhd", "rtl/tok_loop.vhd", "rtl/async_fifo.vhd", "rtl/jc_tok_top.vhd",
+           "rtl/jc_link_rx.vhd", "rtl/tok_loop.vhd", "rtl/util_pkg.vhd", "rtl/async_fifo.vhd",
+           "rtl/jc_tok_top.vhd",
            "sim/jc_link_chan_model.vhd", "sim/seam_beh_model.vhd", "sim/seam_trace_chk.vhd",
            "sim/tb_tok_loop_pair.vhd"],
   "vectors": ["sim/tok_loop_vec.txt"],
@@ -6478,50 +6610,28 @@ git commit -m "jc loop T6: tok_loop with gather/host/link row sources, card top 
 ### Task 7: Card integration, host tool, loop model in the fake broker, card build command
 
 **Files:**
-- Modify: `hw/jc/link/aurora_cfg.tcl`, `hw/jc/link/gen_aurora_ip.tcl` (shared refclk/readback procs), `hw/jc/card/gen_jc_card.py`, `hw/jc/card/test_gen_jc_card.py`, `hw/jc/card/build_card.tcl`, `hw/jc/card/jccard_const_allow.tcl` (only if the build names new constant bits), generated `hw/jc/card/jc_card_bd.tcl`, `jc_card.xdc`, `jc_card_top.vhd`, `server/tests/jc_sim_broker.c`, `server/Makefile`, `hw/jc/host/jc_ctxtest.sh`
+- Modify: `hw/jc/card/gen_jc_card.py`, `hw/jc/card/test_gen_jc_card.py`, `hw/jc/card/build_card.tcl`, `hw/jc/card/jccard_const_allow.tcl` (only if the build names new constant bits), generated `hw/jc/card/jc_card_bd.tcl`, `jc_card.xdc`, `jc_card_top.vhd`, `server/tests/jc_sim_broker.c`, `server/Makefile`, `hw/jc/host/jc_ctxtest.sh` (`hw/jc/link/aurora_cfg.tcl` and `gen_aurora_ip.tcl` already carry the shared refclk/readback procs from Task 5 Step 3, finding 18; Step 1 here only confirms it)
 - Create: `hw/jc/link/jc_link_timing.tcl`, `server/tests/jc_sim_loop.c`, `server/tests/jc_sim_loop.h`, `tools/jc/jc_loop.py`, `tools/jc/test_jc_loop.py`
 
 **Interfaces:**
 - Consumes (grounded): `gen_jc_card.py` sections `jtag_hbm_lines` (hbm_sc `NUM_SI {2}`, `:371`), `ctl_lines` (the ASSOCIATED_BUSIF pattern, `:387-428`), `render_tcl` order (`:645-664`: `P._seam_block` emitted after `eng_lines`), the seam block's connect (`jc_card_bd.tcl:466-469`: `NUM_MI + 1`, `axil2eng/M<n>_AXI` to `fk33_seam_0/s_axi`), `addr_lines` (`:571-602`: SEAM_BASE 0xE000 4K in `ctl/m_axil`; the 32-segment loop; the segment-count check `ctl/m_axil 3`), `check_lines` (`N_MODULE_REFS`, `:612`), `stamp_inputs` (`:123-125`), `render_top` (`:690-725`), `test_top_ports_match_xdc` (`test_gen_jc_card.py:330-339`); gen_pcieep's `UNCONNECTED_PIN_CHECK` (`hw/fk33/gen_pcieep.py:2968`: an unconnected module-reference input fails the BD; an IP input does NOT, so every Aurora input is tied explicitly); `build_card.tcl` `EXPECT_CELLS` (`:272`), `opt_design` (`:427-431`), timing sources (`:348-349`), `write_bitstream` (`:518`); `run_card.sh` (MemoryHigh 24G, 30 GiB swap guard, nonce sentinel); bank 126 refclk1 pin AC36 (`hw/jc/census/jc_qpll_census.xdc:11`, `refclk_p[5]`; `docs/debugging/2026-11-03_jc-gty-slr1-unpowered-qpll-control.md:107-116`); broker JSON ops and `--jc` run_prompt options (`server/tests/run_prompt.c:407-436`, `--open-only` `:434`); `jc_ctxtest.sh` `rp_cmd` and the `timing N GOs` check (`hw/jc/host/jc_ctxtest.sh:188-221`).
 - Produces: BD cells `tok` (module `jc_tok_top`), `gtgclk` (module `jc_gtg_clk`), `aur` (IP), tie cells `tie_<port>`; ctl map `tok/s_host` at 0xE000 (4K; the seam is behind it), `tok/s_ctl` at 0x00020000 (64K); `tok/m_seam` space: `fk33_seam_0/s_axi` at 0; `tok/m_hbm` space: the 32 HBM segments through `hbm_sc/S02_AXI`; top ports `gt_tx_txp/n(0:0)`, `gt_rx_rxp/n(0:0)`, `gt_refclk_clk_p/n`; GENSTAMP inputs `JC_LINK_RATE` (10.3125 | 1.25) and `JC_LINK_REFCLK` (gtg | pin). `jc_sim_broker --loop` (every die gets a C model of `tok_loop` at 0x20000; `--loop-pair A,B`; `--loop-drop N`). `tools/jc/jc_loop.py` sentinels `^JCLOOP_DONE`, `^JCLOOP_FAIL`, and a `timing <n> GOs` line in run_prompt's format.
 
-- [ ] **Step 1: Share the Aurora refclk choice and readback**
+- [ ] **Step 1: Confirm the Aurora refclk choice and readback are already shared (finding 18)**
 
-Append to `hw/jc/link/aurora_cfg.tcl`:
+`jc_aurora_refclk`/`jc_aurora_check` were added to `hw/jc/link/aurora_cfg.tcl` in Task 5 Step 3,
+and `gen_aurora_ip.tcl` has called them (not an inline duplicate) since that same step: there is
+nothing to extract here, and no IP regeneration this step needs to force. Confirm:
 
-```tcl
-# jc_aurora_refclk obj -> the C_REFCLK_SOURCE choice naming refclk1 of quad X0Y2
-# (MGTREFCLK1 of bank 126, pin AC36). obj is an IP (get_ips) or a BD cell (get_bd_cells).
-proc jc_aurora_refclk {obj} {
-  set choices [list_property_value CONFIG.C_REFCLK_SOURCE $obj]
-  puts "AURORA_REFCLK_CHOICES $choices"
-  foreach c $choices { if {[regexp -nocase {REFCLK1.*X0Y2} $c]} { return $c } }
-  error "AURORA_CFG_FAIL refclk: no choice names REFCLK1 of quad X0Y2 in {$choices}"
-}
-
-# jc_aurora_check obj cfg: every CONFIG the object was given reads back (numbers compared
-# as numbers: the IP may print 200.0 as 200.0000). Errors AURORA_CFG_FAIL readback.
-proc jc_aurora_check {obj cfg} {
-  set bad {}
-  foreach {k v} $cfg {
-    set got [get_property $k $obj]
-    if {$got ne $v && !([string is double -strict $got] && [string is double -strict $v] && $got == $v)} {
-      lappend bad "$k=$got (asked $v)"
-    }
-    puts "AURORA_CFG $k=$got"
-  }
-  if {[llength $bad]} { error "AURORA_CFG_FAIL readback: $bad" }
-}
+```bash
+grep -c '^proc jc_aurora_refclk' hw/jc/link/aurora_cfg.tcl
+grep -c '^proc jc_aurora_check' hw/jc/link/aurora_cfg.tcl
+grep -c 'AURORA_CFG_FAIL refclk:' hw/jc/link/gen_aurora_ip.tcl
 ```
 
-In `hw/jc/link/gen_aurora_ip.tcl`, replace the block from `# the refclk source:` through the readback `if {[llength $bad]} {...}` with:
-
-```tcl
-lappend cfg CONFIG.C_REFCLK_SOURCE [jc_aurora_refclk $ip]
-if {[catch {set_property -dict $cfg $ip} msg]} { error "AURORA_CFG_FAIL set_property: $msg" }
-jc_aurora_check $ip $cfg
-set pick [get_property CONFIG.C_REFCLK_SOURCE $ip]
-```
+Expected: `1`, `1`, `0` (the refclk-pick error text lives only inside the `aurora_cfg.tcl` proc,
+not inline in `gen_aurora_ip.tcl`). If any of these fail, Task 5 Step 3 was not applied as
+amended; fix it there, not here.
 
 Re-run Task 5 Step 3's `l1card` line alone and confirm `AURORA_IP_OK` and the same `AURORA_CFG` lines as recorded in `hw/jc/link/README.md`.
 
@@ -6609,6 +6719,16 @@ def test_gt_ports_in_top_and_refclk_pin():
     xdc = _read(XDC)
     assert re.search(r"^set_property PACKAGE_PIN AC36 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
     assert re.search(r"^create_clock -name gt_refclk -period 6.400 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
+
+
+def test_gtg_mmcm_has_a_site_and_a_dedicated_route():
+    """finding 3: no MMCM LOC or CLOCK_DEDICATED_ROUTE BACKBONE left the GTG refclk's MMCM to
+    place_design's own choice, which IBERT G needed a fixed site and route to avoid."""
+    xdc = _read(XDC)
+    assert re.search(r"^set_property LOC MMCM_X0Y2 \[get_cells -hier -filter "
+                      r"\{NAME =~ \*gtgclk/u_mmcm\}\]$", xdc, re.M)
+    assert re.search(r"^set_property CLOCK_DEDICATED_ROUTE BACKBONE \[get_pins -hier -filter "
+                      r"\{NAME =~ \*gtgclk/u_mmcm/CLKIN1\}\]$", xdc, re.M)
 ```
 
 and change `test_top_ports_match_xdc`'s last line to exclude the GT pins the GT site places:
@@ -6808,6 +6928,12 @@ the HBM `foreach {sp sx}` list gains `%s/m_hbm 16` (TOK_CELL), and the count che
         "# gtg the ECO reselects the QPLL to GTGREFCLK0 and this pin only satisfies the IP's port.",
         "set_property PACKAGE_PIN %s [get_ports gt_refclk_clk_p]" % REFCLK_PIN,
         "create_clock -name gt_refclk -period 6.400 [get_ports gt_refclk_clk_p]",
+        "# the GTG MMCM (hw/jc/link/rtl/jc_gtg_clk.vhd, instance %s/u_mmcm): IBERT G needed an" % GTG_CELL,
+        "# explicit site and a dedicated route for the BUFG -> MMCM net (G/SUMMARY.md); without",
+        "# both, place_design is free to miss the backbone and leave the clock unrouted (finding 3).",
+        "set_property LOC MMCM_X0Y2 [get_cells -hier -filter {NAME =~ *%s/u_mmcm}]" % GTG_CELL,
+        "set_property CLOCK_DEDICATED_ROUTE BACKBONE "
+        "[get_pins -hier -filter {NAME =~ *%s/u_mmcm/CLKIN1}]" % GTG_CELL,
     ]
 ```
 
@@ -6860,17 +6986,21 @@ proc jlk_cdc {pre clk_a clk_u clk_i} {
     if {[llength $ca]} { set_max_delay -datapath_only $g -to $ca }
   }
   foreach s {s_tx s_rx s_pll s_gtg s_ovf} {
-    set_max_delay -datapath_only $pa -to [jlk_cells "${pre}${s}_reg[0]"]
+    set_max_delay -datapath_only $pa -to [jlk_cells "${pre}${s}_reg*"]
   }
-  set_max_delay -datapath_only $pu -from $clk_a -to [jlk_cells "${pre}u_rst_s_reg[0]"]
-  set_max_delay -datapath_only $pu -from $clk_a -to [jlk_cells "${pre}u_pol_reg[*]"]
-  set_max_delay -datapath_only $pi -from $clk_a -to [jlk_cells "${pre}i_rpb_reg[0]"]
-  set_max_delay -datapath_only $pi -from $clk_a -to [jlk_cells "${pre}i_pma_reg[0]"]
+  set_max_delay -datapath_only $pu -from $clk_a -to [jlk_cells "${pre}u_rst_s_reg*"]
+  set_max_delay -datapath_only $pu -from $clk_a -to [jlk_cells "${pre}u_pol_reg*"]
+  set_max_delay -datapath_only $pi -from $clk_a -to [jlk_cells "${pre}i_rpb_reg*"]
+  set_max_delay -datapath_only $pi -from $clk_a -to [jlk_cells "${pre}i_pma_reg*"]
 }
-# endpoints crossing aclk <-> user_clk that are none of the above; returns the count
+# endpoints crossing aclk <-> user_clk that are none of the above; returns the count.
+# finding 2: a literal [0]/[*] inside a double-quoted Tcl pattern is command-substituted at
+# parse time ("invalid command name \"0\""), and even escaped (\[0\]) it still reaches
+# string match/=~ as a one-character glob class, not a literal bracket pair. Every pattern
+# here is bracket-free, as hw/jc/ctl/jc_ctl_timing.tcl's own patterns are.
 proc jlk_cdc_audit {pre clk_a clk_u} {
-  set ok [list "${pre}txf/*_s1_reg*" "${pre}rxf/*_s1_reg*" "${pre}s_*_reg\[0\]" \
-               "${pre}u_rst_s_reg\[0\]" "${pre}u_pol_reg*"]
+  set ok [list "${pre}txf/*_s1_reg*" "${pre}rxf/*_s1_reg*" "${pre}s_*_reg*" \
+               "${pre}u_rst_s_reg*" "${pre}u_pol_reg*"]
   set bad 0
   foreach {from to} [list $clk_a $clk_u $clk_u $clk_a] {
     foreach p [get_timing_paths -quiet -setup -from $from -to $to -max_paths 20000 -nworst 1] {
@@ -6891,13 +7021,45 @@ In `hw/jc/card/build_card.tcl`:
 - After `source $repo/hw/jc/ctl/jc_ctl_timing.tcl` (`:349`), add `source $repo/hw/jc/link/jc_link_timing.tcl`, and inside the existing `catch` block after the ctl constraints:
 
 ```tcl
-  set clk_u [jlk_clock_of_pin "*tok/inst/*rxf/wp_g_reg[0]/C"]
-  set clk_i [jlk_clock_of_pin "*tok/inst/*i_rpb_reg[0]/C"]
+  set clk_u [jlk_clock_of_pin "*tok/inst/*rxf/wp_g_reg*/C"]
+  set clk_i [jlk_clock_of_pin "*tok/inst/*i_rpb_reg*/C"]
   jlk_cdc "*tok/inst/*" $aclk_clk $clk_u $clk_i
   set lk_bad [jlk_cdc_audit "*tok/inst/*" $aclk_clk $clk_u]
   puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
   if {$lk_bad != 0} { jcc_fail "link cdc audit: $lk_bad unexpected crossing(s)" }
 ```
+
+Teeth (finding 2): before trusting the patterns above inside a multi-hour card build, source
+them against a standalone OOC synth of `jc_tok_top` alone, so a Tcl bracket defect
+(`invalid command name "0"`, or a `[0]`/`[*]` reaching `string match`/`=~` as a one-character
+glob class instead of a literal) is caught in minutes:
+
+```bash
+W=/mnt/storage/fk33_builds/jc_link_timing_ooc
+mkdir -p $W
+cat > $W/ooc.tcl <<'TCL'
+set repo [lindex $argv 0]
+read_vhdl -vhdl2008 [list $repo/rtl/jc_loader_pkg.vhd $repo/rtl/async_fifo.vhd \
+  $repo/rtl/tok_loop_pkg.vhd $repo/rtl/tok_loop_regs.vhd $repo/rtl/tok_loop_axm.vhd \
+  $repo/rtl/tok_loop_fsm.vhd $repo/rtl/jc_seam_mux.vhd $repo/rtl/embed_gather.vhd \
+  $repo/rtl/jc_link_pkg.vhd $repo/rtl/jc_link_tx.vhd $repo/rtl/jc_link_rx.vhd \
+  $repo/rtl/tok_loop.vhd $repo/rtl/jc_tok_top.vhd]
+synth_design -top jc_tok_top -part xcvu35p-fsvh2104-2L-e -mode out_of_context
+source $repo/hw/jc/link/jc_link_timing.tcl
+set clk_a [get_clocks -of_objects [get_pins aclk]]
+set clk_u [jlk_clock_of_pin "*rxf/wp_g_reg*/C"]
+set clk_i [jlk_clock_of_pin "*i_rpb_reg*/C"]
+jlk_cdc "" $clk_a $clk_u $clk_i
+set lk_bad [jlk_cdc_audit "" $clk_a $clk_u]
+puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
+TCL
+vivado -mode batch -nojournal -log $W/ooc.log -source $W/ooc.tcl -tclargs "$(git rev-parse --show-toplevel)"
+grep -E '^(JCLINK_CONSTRAINT_MATCH|JCLINK_CLOCK|JCCARD_LINK_CDC_UNEXPECTED|ERROR:)' $W/ooc.log
+```
+
+Expected: every `JCLINK_CONSTRAINT_MATCH` present, no `ERROR:`, `JCCARD_LINK_CDC_UNEXPECTED 0`.
+A Tcl error here is a stop condition for Step 5 and for any card build: fix the pattern, rerun,
+before proceeding. (Budget: one Vivado, an OOC synth of one small module, far under 8G; capped.)
 
 - Immediately before the `if {$impl eq "congestion"} { opt_design ...` block (`:427`):
 
@@ -6934,7 +7096,7 @@ R=/mnt/storage/fk33_builds/jcloop_bd1
 mkdir -p $R
 systemd-run --user --scope -p MemoryHigh=16G -p MemoryMax=18G \
   vivado -mode batch -nojournal -log $R/bd.log -source hw/jc/card/build_card.tcl \
-  -tclargs $R xcvu35p-fsvh2104-2L-e 1 0 -nonce jcloop-bd1
+  -tclargs $R xcvu35p-fsvh2104-2L-e bd_only -nonce jcloop-bd1
 grep -E '^(JCCARD_BD_DONE|JCCARD_BD FAIL|JCCARD_ADDR|AURORA_CFG_FAIL|FK33_BD_VALIDATE FAIL|ERROR:)' $R/bd.log
 ```
 
@@ -7291,6 +7453,10 @@ programs; this tool never touches them. One broker client at a time.
 Prints `timing <n> GOs` (run_prompt's line, so jc_ctxtest.sh's check applies) and ends with
 ^JCLOOP_DONE ids=<n> reason=<r> or ^JCLOOP_FAIL <why>. NO direct hardware access: it is a
 broker client, and a real run is the main session's or Oren's (CLAUDE.md).
+
+A WindowUnknown write (NEXT_TOKEN, CTRL, OUT_ACK and the rest outside send_row/setup's own
+re-seek-and-resend loops) is never retried (finding 10): it propagates out of run() as a
+RuntimeError and main() reports JCLOOP_FAIL rather than risk a double-applied write.
 """
 import argparse, json, os, socket, sys, time
 
@@ -7316,13 +7482,22 @@ class Broker:
         s.k.connect(path)
         s.f = s.k.makefile("rwb")
 
+    def _send(s, req):
+        s.f.write((json.dumps(req) + "\n").encode()); s.f.flush()
+        return json.loads(s.f.readline())
+
     def call(s, req, retries=5):
+        """finding 10: a WindowUnknown retry is safe only for rd32 -- re-reading changes
+        nothing. A write (wr32, wrn) gets exactly one attempt here; it may already have
+        landed, so the caller decides what a failure means (re-seek and resend the whole
+        buffer for ROW_DATA/PROMPT_DATA, or JCLOOP_FAIL for everything else), never a blind
+        retry of a write that could double-apply (a shifted row, a re-armed NEXT_TOKEN)."""
+        idempotent = req.get("op") == "rd32"
         for i in range(retries):
-            s.f.write((json.dumps(req) + "\n").encode()); s.f.flush()
-            r = json.loads(s.f.readline())
+            r = s._send(req)
             if r.get("ok"):
                 return r
-            if "WindowUnknown" not in r.get("err", "") or i == retries - 1:
+            if not idempotent or "WindowUnknown" not in r.get("err", "") or i == retries - 1:
                 raise RuntimeError("broker: %s -> %s" % (req, r.get("err")))
             time.sleep(0.2)
 
@@ -7353,7 +7528,9 @@ def row_source(a):
 
 def send_row(d, row_of, n):
     """Answer NEED_ROW. ROW_DATA auto-increments, so a failed bulk write is redone from
-    ROW_ADDR 0; ROW_READY is re-sent only while the same position still needs its row."""
+    ROW_ADDR 0; ROW_READY is re-sent only while the same position still needs its row.
+    finding 10: this re-seek-and-resend loop is the only retry ROW_DATA gets -- Broker.call
+    itself no longer retries a write silently underneath it."""
     pos, tok = d.rd("POS"), d.rd("ROW_TOK")
     mant, exp = row_of(tok, n)
     for attempt in range(3):
@@ -7377,8 +7554,14 @@ def setup(d, prompt, max_new, stop, role, src, cap):
     d.wr("ROLE", role); d.wr("ROW_SRC", src); d.wr("RESEND_CAP", cap)
     if role == 1:
         d.wr("LINK_CREDIT", 0)
-    d.wr("PROMPT_ADDR", 0)
-    d.wrn_fix("PROMPT_DATA", prompt)
+    for attempt in range(3):   # finding 10: re-seek PROMPT_ADDR and resend the whole prompt,
+        try:                   # never a blind retry of a bulk write that may have partly landed
+            d.wr("PROMPT_ADDR", 0)
+            d.wrn_fix("PROMPT_DATA", prompt)
+            break
+        except RuntimeError:
+            if attempt == 2:
+                raise
 
 
 def drain(d, got):
@@ -7462,7 +7645,7 @@ def main(argv=None):
     except (RuntimeError, OSError, ValueError) as e:
         line = "JCLOOP_FAIL %s" % e
     print(line)
-    return 0 if line.startswith("JCLOOP_DONE") else 1
+    return 0 if "JCLOOP_DONE" in line else 1   # finding 15: a FAULT_PAUSED= prefix moves this off startswith
 
 
 if __name__ == "__main__":
@@ -7483,6 +7666,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(HERE, "..", ".."))
 sys.path.insert(0, HERE)
 import gen_tok_loop_vec as GV  # noqa: E402
+import jc_loop as L  # noqa: E402
 
 SERVER = os.path.join(REPO, "server")
 
@@ -7556,12 +7740,36 @@ def test_pair_with_a_corrupted_frame_resends_and_matches():
 def test_timing_line_counts_positions():
     _, got, out = loop_ids([1, 2, 3], 5, False)
     assert "timing %d GOs" % (3 + len(got) - 1) in out
+
+
+def test_broker_call_does_not_retry_a_write(monkeypatch):
+    """finding 10: a WindowUnknown retry is safe only for rd32. A write (wr32, wrn) gets one
+    attempt through Broker.call and raises immediately, never a blind retry that could
+    double-apply (a shifted ROW_DATA/PROMPT_DATA window, a re-armed NEXT_TOKEN)."""
+    b = L.Broker.__new__(L.Broker)
+    calls = []
+
+    def fake_send(req):
+        calls.append(req["op"])
+        if req["op"] == "rd32" and len(calls) == 1:
+            return {"ok": False, "err": "WindowUnknown"}
+        if req["op"] == "wr32":
+            return {"ok": False, "err": "WindowUnknown"}
+        return {"ok": True, "val": 0}
+
+    monkeypatch.setattr(b, "_send", fake_send)
+    r = b.call({"op": "rd32", "off": 0})
+    assert r["ok"] and calls.count("rd32") == 2   # a read retried past one WindowUnknown
+    calls.clear()
+    with pytest.raises(RuntimeError):
+        b.call({"op": "wr32", "off": 0, "val": 1})
+    assert calls == ["wr32"]   # a write got exactly one attempt, then raised
 ```
 
-Teeth: (1) in `jc_loop.py`, drop the `A.wr("LINK_CREDIT", c)` relay: `test_pair_ids_equal_run_prompt` must fail (A waits for credit, timeout); (2) drop the RESEND write: `test_pair_with_a_corrupted_frame_resends_and_matches` must fail; restore both.
+Teeth: (1) in `jc_loop.py`, drop the `A.wr("LINK_CREDIT", c)` relay: `test_pair_ids_equal_run_prompt` must fail (A waits for credit, timeout); (2) drop the RESEND write: `test_pair_with_a_corrupted_frame_resends_and_matches` must fail; (3) in `Broker.call`, revert `idempotent = req.get("op") == "rd32"` to always retry (the old behaviour): `test_broker_call_does_not_retry_a_write` must fail (`calls == ["wr32", "wr32"]`, more than one attempt). Restore all three.
 
 Run: `python3 -m pytest -q tools/jc/test_jc_loop.py`
-Expected: `4 passed`; the two teeth checks each produce exactly one failing test.
+Expected: `5 passed`; the three teeth checks each produce exactly one failing test.
 
 - [ ] **Step 8: Add the loop mode to the context test**
 
@@ -7594,13 +7802,13 @@ Expected: all pass.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add hw/jc/link/aurora_cfg.tcl hw/jc/link/gen_aurora_ip.tcl hw/jc/link/jc_link_timing.tcl \
+git add hw/jc/link/jc_link_timing.tcl \
   hw/jc/card/gen_jc_card.py hw/jc/card/test_gen_jc_card.py hw/jc/card/build_card.tcl \
   hw/jc/card/jc_card_bd.tcl hw/jc/card/jc_card.xdc hw/jc/card/jc_card_top.vhd \
   server/tests/jc_sim_loop.c server/tests/jc_sim_loop.h server/tests/jc_sim_broker.c server/Makefile \
   tools/jc/jc_loop.py tools/jc/test_jc_loop.py hw/jc/host/jc_ctxtest.sh hw/jc/host/test_jc_ctxtest.py
 git commit -m "jc loop T7: tok/gtgclk/aur in the card BD, link CDC timing and ECO hook, jc_loop.py with a broker loop model" -- \
-  hw/jc/link/aurora_cfg.tcl hw/jc/link/gen_aurora_ip.tcl hw/jc/link/jc_link_timing.tcl \
+  hw/jc/link/jc_link_timing.tcl \
   hw/jc/card/gen_jc_card.py hw/jc/card/test_gen_jc_card.py hw/jc/card/build_card.tcl \
   hw/jc/card/jc_card_bd.tcl hw/jc/card/jc_card.xdc hw/jc/card/jc_card_top.vhd \
   server/tests/jc_sim_loop.c server/tests/jc_sim_loop.h server/tests/jc_sim_broker.c server/Makefile \
