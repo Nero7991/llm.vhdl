@@ -1,0 +1,29 @@
+{
+  "tb": "tb_embed_gather",
+  "deps": ["sim/jc_axi3_mem.vhd", "rtl/embed_gather.vhd", "sim/embed_gather_tc.vhd", "sim/tb_embed_gather.vhd"],
+  "vectors": ["sim/embed_gather_k4096_vec.txt"],
+  "stop_time": "200ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "G1", "expect": "KILLED", "file": "rtl/embed_gather.vhd",
+     "why": "codebook index swapped (spec 4)",
+     "old": "if ja mod 2 = 1 then nib := byte(7 downto 4); else nib := byte(3 downto 0); end if;",
+     "new": "if ja mod 2 = 1 then nib := byte(3 downto 0); else nib := byte(7 downto 4); end if;"},
+    {"tag": "G2", "expect": "KILLED", "file": "rtl/embed_gather.vhd",
+     "why": "block max taken before the scale (spec 4)",
+     "old": "a := abs_u(prod);",
+     "new": "a := abs_u(resize(cb(to_integer(unsigned(nib))), 25));"},
+    {"tag": "G3", "expect": "KILLED", "file": "rtl/embed_gather.vhd",
+     "why": "saturation removed (tok 61 rounds to 32768)",
+     "old": "if m26 > 32767 then m_data <= x\"7FFF\";",
+     "new": "if false then m_data <= x\"7FFF\";"},
+    {"tag": "G4", "expect": "KILLED", "file": "rtl/embed_gather.vhd",
+     "why": "header magic not checked",
+     "old": "ok := rerr = '0' and h32(0) = unsigned(MAGIC) and h32(16#0C#) = N_EMBD",
+     "new": "ok := rerr = '0' and h32(16#0C#) = N_EMBD"},
+    {"tag": "G5", "expect": "KILLED", "file": "rtl/embed_gather.vhd",
+     "why": "scale index within the beat + 1 (embed_mv4i.h mutant c6)",
+     "old": "half <= rr mod 2; kk <= rr mod 16;",
+     "new": "half <= rr mod 2; kk <= (rr + 1) mod 16;"}
+  ]
+}
