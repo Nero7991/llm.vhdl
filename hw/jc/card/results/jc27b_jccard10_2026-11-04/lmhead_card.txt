@@ -1,0 +1,17 @@
+source card /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/xout_B_k23.txt | n_vocab 248320 | eps 9.999999974752427e-07
+top1    1206 logit   23.5337 logprob  -0.8126
+top2    7732 logit   22.8848 logprob  -1.4615
+top3    2064 logit   22.3358 logprob  -2.0105
+top4    5449 logit   21.4498 logprob  -2.8965
+top5   89454 logit   20.7602 logprob  -3.5861
+top6    4350 logit   20.5751 logprob  -3.7712
+top7     760 logit   20.4155 logprob  -3.9308
+top8   73923 logit   19.8587 logprob  -4.4876
+top9   16619 logit   19.7322 logprob  -4.6141
+top10  50821 logit   19.5126 logprob  -4.8338
+id   7732 rank 2 logit   22.8848 logprob  -1.4615
+id   5449 rank 4 logit   21.4498 logprob  -2.8965
+id   1206 rank 1 logit   23.5337 logprob  -0.8126
+id   2064 rank 3 logit   22.3358 logprob  -2.0105
+id  89454 rank 5 logit   20.7602 logprob  -3.5861
+LMHEAD_ARGMAX 1206
