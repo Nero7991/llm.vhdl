@@ -208,3 +208,25 @@ QPLL0 read LOCK=0 at the end although its four lanes logged no errors: either th
 after the counters were read, or the lock read is stale; not separated. Trap hit: the script's
 `kill; sleep 3` left the IBERT bridge holding port 2542, so the b7 reload failed and IBERT kept
 heating the dies for ~5 min; the scripts now wait for the port to free.
+
+### 2026-11-04 ~18:00: die-to-die IBERT with an on-chip refclk (IBERT G): one lane sees a pattern
+
+Die 1's board refclk is absent (17:16-17:18 census: die 1 AD38 and AC36 count 0, die 0 both
+13.50-13.52M and locked; the LMK's VCC is therefore not the fault, die 1's branch is). To test
+without the board clock, IBERT G (`/mnt/storage/fk33_builds/jc_ibert/G/`, sha256 fde1186a...)
+feeds GTGREFCLK0 of all four COMMONs from an MMCM (BC26 200 MHz, b4 parameters, 156.25 MHz) and
+powers up with QPLL0REFCLKSEL = 111. All 8 QPLL0s locked on both dies after a reset pulse.
+
+`run_link.tcl ber 30` (raw ~/regress_scratch/jc_ibert/g1_ber.txt), PRBS31 on every TX of both
+dies, loopback None: all 32 RX had RXCDRLOCK=1 and RXPRBSLOCKED=0, BER 0.48-0.54 on 31 lanes
+(no correlated data), and die 0 MGT_X0Y0 (RX pin BF42) at 0.950. Repeated with RXPOLARITY = 1
+on every RX (`polscan.tcl`, raw pol_scan.txt, 10 s): die 0 MGT_X0Y0 0.050, every other lane
+0.45-0.52. So one lane (die 0 lane 0) receives an inverted PRBS31 at ~5% BER; no other lane of
+quads 124-127 on either die receives a PRBS stream from anywhere. Source of lane 0's stream
+(which TX, which die) not yet identified (txmap not run). RXCDRLOCK=1 is not evidence of a link:
+it was 1 on lanes at BER 0.5.
+
+Implication (DERIVED, not yet tested): the slot-to-slot pairs are mostly not on quads 124-127.
+The candidates are SLR1's quads (unpowered on these modules) or the 2xx column (no refclk found
+there). Trap hit: the bridge also holds a control port, so waiting for port 2542 to free is not
+enough before relaunching; the scripts now wait for the old bridge PID to exit.
