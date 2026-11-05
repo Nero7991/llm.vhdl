@@ -232,3 +232,19 @@ applies the same RN.
 - That Vivado refuses the negative-`natural` pins is the house idiom
   (`gdn_conv_w_mem.vhd` and others), not something re-checked on this unit.
 - Silicon behaviour: the 500-token ctxtest and the residual metrics against l_out.
+
+## ADDENDUM 3, 2026-11-04: jccard10 (exact rmsnorm mean) on silicon
+
+MEASURED, both dies, same prompt and reference, files `hw/jc/card/results/jc27b_jccard10_2026-11-04/`.
+The residual error dropped 2-7x at every position and die (e.g. die B pos 22 rel_rms 0.585 ->
+0.248, die B pos 0 0.675 -> 0.090), so the 2^clog2 divisor was the dominant error, as addenda
+1-2 predicted. The 23-id first argmax is still 1206 (llama.cpp 7732). The CPU lm_head on the
+card's die-B row now ranks 7732 second (logprob -1.46 against 1206's -0.81; jccard8: rank 5).
+llama.cpp's own top three lie within 0.75 logprob, so the remaining residual error (rel_rms
+0.10-0.12 at pos 0-3, 0.25 on die B at pos 22) is enough to flip the winner.
+
+Open, not yet answered: what remains in die B's error growth with position (0.090 at pos 0 to
+0.248 at pos 22, die A 0.089 to 0.115). Candidates, none tested: attention/KV or GDN state
+accumulation precision on die B's blocks, or the norm-gain path (NORM_HBM). Next probes, in
+order: per-layer residuals inside die B at pos 22 against l_out-33..63; die B alone fed
+llama.cpp's l_out-32 at pos 22 (separates die A's input error from die B's own).
