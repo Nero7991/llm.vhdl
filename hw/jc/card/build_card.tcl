@@ -436,9 +436,13 @@ if {[catch {
   # the token loop's crossings (rtl/jc_tok_top.vhd; hw/jc/link/jc_link_timing.tcl): aclk,
   # the Aurora user_clk, and init_clk (jc_gtg_clk's CLKOUT1), each found from a register
   # the tok RTL clocks; the Aurora IP's own XDC defines user_clk, jc_gtg_clk's MMCM init_clk.
+  # Only the STRUCTURAL audit runs here. The bounds (jlk_cdc) are applied after the gtg ECO
+  # and opt_design, below: jccard_loop2 (2026-11-11, MEASURED) applied them here, the ECO
+  # re-derived the Aurora clocks as txoutclk_out[0]_1, every "-from user_clk" bound stopped
+  # applying (17 crossings timed as synchronous, WNS -2.306) and report_exceptions died on
+  # the dangling clock (Constraints 18-396).
   set clk_u [jlk_clock_of_pin "${CORE_TOK}rxf/wp_g_reg*/C"]
   set clk_i [jlk_clock_of_pin "${CORE_TOK}i_rpb_reg*/C"]
-  jlk_cdc $CORE_TOK $aclk_clk $clk_u $clk_i
   set lk_bad [jlk_cdc_audit $CORE_TOK $aclk_clk $clk_u $clk_i]
   puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
   if {$lk_bad != 0} { error "link cdc audit: $lk_bad unexpected crossing(s)" }
@@ -528,6 +532,37 @@ if {$impl eq "congestion"} {
   opt_design
 }
 jccard_bscan_check post_opt_design
+# the link CDC bounds, HERE: after the gtg ECO has re-derived the Aurora clocks and after
+# opt_design, with the clocks found again from the tok's own registers and the GT's TXOUTCLK
+# pin, and every bound anchored to pins and cells (jlk_src), so no later re-derivation can
+# orphan one. jlk_exc_audit refuses after route if they did not stay in force.
+if {[catch {
+  lassign [jlk_clocks $CORE_TOK] clk_u clk_i
+  set lk_n [jlk_cdc $CORE_TOK $aclk_clk $clk_u $clk_i]
+  puts "JCCARD_LINK_CDC_APPLIED post_opt_design bounds=$lk_n user=[get_property NAME $clk_u] init=[get_property NAME $clk_i]"
+} err]} { jcc_fail "link constraints: $err" }
+# cb_data / cb_addr (jccard_loop2 root cause 2, MEASURED): eng's codebook write command
+# registers each drive all 1536 cbw_d/cbw_a copies in matvec_core (one register per copy,
+# by design). Placement pressure from the link logic stretched cb_data_reg[3]'s net to an
+# 8.5 ns route (0 logic levels, -0.847 ns; the same RTL met +0.109 on jccard10). Fixed
+# card-side, not in the shared engine RTL: force-replicate the 12 drivers after placement
+# so each replica sits near its share of the loads. Refuses unless replicas appear.
+proc jcc_cbdata_repl {} {
+  set flt {(NAME =~ "*/eng/inst/eng/cb_data_reg*" || NAME =~ "*/eng/inst/eng/cb_addr_reg*") && REF_NAME =~ FD*}
+  set regs [get_cells -quiet -hierarchical -filter $flt]
+  set orig {}
+  foreach c $regs { if {[string first "_replica" [get_property NAME $c]] < 0} { lappend orig $c } }
+  if {[llength $orig] != 12} { jcc_fail "cb_data replication: [llength $orig] cb_data/cb_addr registers, expected 12 (8 + 4)" }
+  set nets [get_nets -of_objects [get_pins -of_objects $orig -filter {REF_PIN_NAME == Q}]]
+  set loads {}
+  foreach n $nets { lappend loads [llength [get_pins -leaf -of_objects $n -filter {DIRECTION == IN}]] }
+  set lmin [tcl::mathfunc::min {*}$loads]
+  set before [llength $regs]
+  phys_opt_design -force_replication_on_nets $nets
+  set after [llength [get_cells -quiet -hierarchical -filter $flt]]
+  if {$after <= $before} { jcc_fail "cb_data replication: no replica created (drivers $before -> $after)" }
+  puts "JCCARD_CBDATA_REPL nets=[llength $nets] loads=$lmin..[tcl::mathfunc::max {*}$loads] drivers=$before->$after"
+}
 # one GT channel, at the measured lane's site (spec 1b.2: die 0 X0Y0 TX -> die 1 X0Y0 RX),
 # checked right after placement, before routing is paid for
 proc jcc_gt_loc_check {} {
@@ -540,11 +575,13 @@ proc jcc_gt_loc_check {} {
 if {$impl eq "congestion"} {
   place_design -directive AltSpreadLogic_high
   jcc_gt_loc_check
+  jcc_cbdata_repl
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
 } else {
   place_design
   jcc_gt_loc_check
+  jcc_cbdata_repl
   phys_opt_design
   route_design
 }
@@ -555,6 +592,15 @@ if {$impl eq "congestion" && $post_wns < 0} {
   puts "JCCARD_POST_ROUTE_PHYSOPT_WNS [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]"
 }
 write_checkpoint -force $bd/jc_card_routed.dcp
+# the link bounds must still be in force on the routed design (written first, so a refusal
+# leaves the checkpoint to read): every path user_clk/init_clk <-> aclk under a datapath-only
+# max delay, and no "(unsafe)" clock-interaction row between them.
+if {[catch {
+  lassign [jlk_clocks $CORE_TOK] clk_u clk_i
+  set lk_exc [jlk_exc_audit $aclk_clk $clk_u $clk_i]
+} err]} { jcc_fail "link exception audit: $err" }
+puts "JCCARD_LINK_EXC_AUDIT bad=$lk_exc"
+if {$lk_exc != 0} { jcc_fail "link cdc bounds not in force after route: $lk_exc failure(s) (JCLINK_EXC_* lines)" }
 
 set rp $bd/reports
 file mkdir $rp
@@ -566,8 +612,12 @@ report_clock_interaction -file $rp/clock_interaction.rpt
 report_clocks -file $rp/clocks.rpt
 report_cdc -details -file $rp/cdc.rpt
 report_cdc -file $rp/cdc_summary.rpt
-report_exceptions -file $rp/exceptions.rpt
-report_exceptions -ignored -file $rp/exceptions_ignored.rpt
+# a constraint left naming an object that no longer exists makes report_exceptions an ERROR
+# (jccard_loop2: Constraints 18-396, the pre-ECO "-from user_clk" bounds): a refusal, by name
+if {[catch {
+  report_exceptions -file $rp/exceptions.rpt
+  report_exceptions -ignored -file $rp/exceptions_ignored.rpt
+} err]} { jcc_fail "report_exceptions: $err" }
 report_bus_skew -file $rp/bus_skew.rpt
 report_methodology -file $rp/methodology.rpt
 report_drc -file $rp/drc.rpt
