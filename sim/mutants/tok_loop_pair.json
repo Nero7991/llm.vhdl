@@ -26,6 +26,10 @@
     {"tag": "K5", "expect": "KILLED", "file": "rtl/tok_loop.vhd",
      "why": "the link row source never pops: LINK_CONSUMED stays 0 and A starves",
      "old": "k_ev <= '0'; rx_pop <= '1'; ks <= K_IDLE;",
-     "new": "k_ev <= '0'; ks <= K_IDLE;"}
+     "new": "k_ev <= '0'; ks <= K_IDLE;"},
+    {"tag": "K6", "expect": "KILLED", "file": "rtl/jc_link_rx.vhd",
+     "why": "final review I3 reverted in the pair: after B's RX-only drop the RESEND frame is swallowed as the cut frame's terminator and the run hangs (P5)",
+     "old": "          restart;                                     -- the next beat after chan_up returns is a header\n",
+     "new": "          rs <= R_DISC; bi <= 0; crc <= LK_CRC_INIT;\n"}
   ]
 }

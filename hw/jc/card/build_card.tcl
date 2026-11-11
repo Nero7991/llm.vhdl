@@ -497,15 +497,15 @@ if {$cdc_bad != 0} { jcc_fail "cdc audit: $cdc_bad unexpected ctl crossing(s)" }
 # (gen_jc_card.py stamps JC_LINK_REFCLK; unset = gtg), not from this process's environment:
 # run_card.sh launches Vivado through systemd-run --user, which does not pass the caller's
 # environment. A JC_LINK_REFCLK that does reach this process must agree with the stamp.
-# gtg: the QPLL the core runs is moved to GTGREFCLK from jc_gtg_clk's 156.25 MHz BUFG. pin: no
-# ECO; the QPLL stays on the IP's nominal refclk, AK38/AK39, which the Jungle Cat board does
-# NOT drive (Task 5 ruling) -- so `pin` builds a card whose link cannot lock on this board.
+# gtg: the QPLL the core runs is moved to GTGREFCLK from jc_gtg_clk's 156.25 MHz BUFG. pin
+# (no ECO, the QPLL on the IP's nominal AK38/AK39, which the Jungle Cat board does NOT drive)
+# is refused here and in gen_jc_card.py (final ruling 2026-11-11): its link could never lock.
 set _bdt [open $here/jc_card_bd.tcl]; set _bdtxt [read $_bdt]; close $_bdt
 if {![regexp -line {^#\s+env\s+JC_LINK_REFCLK\s*=\s*(\S+)} $_bdtxt -> _stamped]} {
   jcc_fail "jc_card_bd.tcl carries no JC_LINK_REFCLK GENSTAMP line"
 }
 set _lr [expr {$_stamped eq "(unset)" ? "gtg" : $_stamped}]
-if {$_lr ni {gtg pin}} { jcc_fail "jc_card_bd.tcl was generated with JC_LINK_REFCLK=$_stamped" }
+if {$_lr ne "gtg"} { jcc_fail "jc_card_bd.tcl was generated with JC_LINK_REFCLK=$_stamped; only gtg is built (AK38/AK39 undriven)" }
 if {[info exists ::env(JC_LINK_REFCLK)] && $::env(JC_LINK_REFCLK) ne "" && $::env(JC_LINK_REFCLK) ne $_lr} {
   jcc_fail "JC_LINK_REFCLK=$::env(JC_LINK_REFCLK) here, but jc_card_bd.tcl was generated with $_stamped"
 }
@@ -518,8 +518,6 @@ if {$_lr eq "gtg"} {
   set ::JC_AUR_CELL [get_property NAME $_ac]
   set ::JC_GTG_PIN [get_property NAME $_gp]
   if {[catch {source $repo/hw/jc/link/eco_aurora_gtg.tcl} err]} { jcc_fail "gtg eco: $err" }
-} else {
-  puts "JCCARD_LINK_REFCLK pin: no ECO, the QPLL uses the IP's AK38 refclk (undriven on this board)"
 }
 # -impl congestion (jccard7, 2026-10-08): 125 MHz placed at WNS +0.513 but routed at -8.833,
 # 49k endpoints, one-LUT paths with ~16 ns of routing in u_arr and A's core: congestion

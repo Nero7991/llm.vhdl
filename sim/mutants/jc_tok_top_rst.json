@@ -1,0 +1,32 @@
+{
+  "tb": "tb_jc_tok_top_rst",
+  "deps": ["sim/axil_bfm_pkg.vhd", "rtl/tok_loop_pkg.vhd",
+           "rtl/tok_loop_regs.vhd", "rtl/tok_loop_axm.vhd", "rtl/tok_loop_fsm.vhd", "rtl/jc_seam_mux.vhd",
+           "rtl/embed_gather.vhd", "rtl/jc_loader_pkg.vhd", "rtl/jc_link_pkg.vhd", "rtl/jc_link_tx.vhd",
+           "rtl/jc_link_rx.vhd", "rtl/tok_loop.vhd", "rtl/util_pkg.vhd", "rtl/async_fifo.vhd",
+           "rtl/jc_tok_top.vhd", "sim/tb_jc_tok_top_rst.vhd"],
+  "stop_time": "1ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "I5A", "expect": "KILLED", "file": "rtl/jc_tok_top.vhd",
+     "why": "the I5 fix reverted: both resets come from LINK_CTRL alone, low while the GTG MMCM locks",
+     "old": "  aur_reset_pb <= i_rpb(1) or not i_lck(1);\n  aur_pma_init <= i_pma(1) or not i_lck(1);",
+     "new": "  aur_reset_pb <= i_rpb(1);\n  aur_pma_init <= i_pma(1);"},
+    {"tag": "I5B", "expect": "KILLED", "file": "rtl/jc_tok_top.vhd",
+     "why": "pma_init alone not held: the GT reset releases while init_clk and the refclk are unstable",
+     "old": "  aur_pma_init <= i_pma(1) or not i_lck(1);",
+     "new": "  aur_pma_init <= i_pma(1);"},
+    {"tag": "I5C", "expect": "KILLED", "file": "rtl/jc_tok_top.vhd",
+     "why": "the lock synchroniser initialised locked: released from configuration until the first init_clk edges",
+     "old": "signal i_lck : std_logic_vector(1 downto 0) := \"00\";",
+     "new": "signal i_lck : std_logic_vector(1 downto 0) := \"11\";"},
+    {"tag": "I5D", "expect": "KILLED", "file": "rtl/jc_tok_top.vhd",
+     "why": "lock sampled once and latched: a loss of lock does not re-assert the resets",
+     "old": "      i_lck <= i_lck(0) & gtg_locked;",
+     "new": "      i_lck <= i_lck(0) & (gtg_locked or i_lck(0));"},
+    {"tag": "I2A", "expect": "KILLED", "file": "rtl/tok_loop_pkg.vhd",
+     "why": "I2 reverted: TMO_LINK resets to TMO_DEFAULT (1.44 s at 125 MHz)",
+     "old": "tmo_link => TMO_LINK_DEFAULT,",
+     "new": "tmo_link => to_unsigned(TMO_DEFAULT, 32),"}
+  ]
+}

@@ -593,6 +593,20 @@ def test_link_stamp_and_refusals():
     assert {"JC_LINK_REFCLK", "JC_LINK_RATE"} <= names
 
 
+def test_link_refclk_pin_is_refused_citing_the_undriven_pins(capsys):
+    """Final ruling 2026-11-11: AK38/AK39 (the IP's nominal MGTREFCLK0 of quad X0Y0) are not
+    driven on the Jungle Cat board, so a `pin` card's link could never lock. Refused, with the
+    pins named; the stamp path refuses it too."""
+    for env in ({"JC_LINK_REFCLK": "pin"},):
+        with pytest.raises(SystemExit) as e:
+            G.link_refclk(env)
+        msg = str(e.value)
+        assert "AK38" in msg and "AK39" in msg and "undriven" in msg, msg
+        with pytest.raises(SystemExit):
+            G.stamp_inputs(env)
+    assert G.link_refclk({"JC_LINK_REFCLK": "gtg"}) == "gtg"
+
+
 def test_gt_ports_in_top_and_refclk_pin():
     top = _strip_vhdl_comments(_read(TOP))
     for n, d, w in G.GT_TOP_PORTS:

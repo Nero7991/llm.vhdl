@@ -83,8 +83,9 @@ hr_addr/hw_addr width (HADDR_W 15, the 27B wrapper's) and the seam's REGMAX/HADD
 
 INPUTS.  Three, stamped: JC_CLK_CORE_MHZ (integer MHz, 50..250, default 200);
 JC_LINK_RATE (10.3125 only: the 1.25 Gb/s core has no GTYE4_COMMON for the gtg ECO and
-its quad has no board refclk, Task 5 ruling); JC_LINK_REFCLK (gtg, default, or pin:
-build_card.tcl reads it from this GENSTAMP to decide the ECO).  The
+its quad has no board refclk, Task 5 ruling); JC_LINK_REFCLK (gtg only, the default; pin
+is refused, final ruling 2026-11-11: AK38/AK39 are undriven on the board; build_card.tcl
+reads it from this GENSTAMP and refuses anything but gtg).  The
 FK33_* values are pinned in this file, not read; a caller environment that sets one
 of them to a DIFFERENT value is refused rather than silently overridden.
 
@@ -299,9 +300,14 @@ def link_rate(env=None):
 def link_refclk(env=None):
     env = os.environ if env is None else env
     v = env.get(LINK_REFCLK_ENV) or "gtg"
-    if v not in ("gtg", "pin"):
-        sys.exit("ABORT: %s=%s; gtg (the MMCM on GTGREFCLK, the ECO) or pin (%s, undriven on "
-                 "the Jungle Cat board)" % (LINK_REFCLK_ENV, v, refclk_pins()[0]))
+    if v == "pin":
+        pp, pn = refclk_pins()
+        sys.exit("ABORT: %s=pin: the IP's nominal refclk pins %s/%s (MGTREFCLK0 of quad X0Y0) are "
+                 "undriven on the Jungle Cat board, so the link could never lock (final ruling "
+                 "2026-11-11; Task 5 refclk ruling). Use gtg." % (LINK_REFCLK_ENV, pp, pn))
+    if v != "gtg":
+        sys.exit("ABORT: %s=%s; only gtg (jc_gtg_clk's MMCM on GTGREFCLK, the ECO) is built"
+                 % (LINK_REFCLK_ENV, v))
     return v
 
 

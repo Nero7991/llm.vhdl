@@ -3,9 +3,13 @@
 -- only if it is well formed, its CRC matches, its magic and word count are right, and its
 -- seq and position are the next expected; anything else is dropped and counted, and sets
 -- `bad` (die B pauses, spec 3). A chan_up fall counts a link-down, sets `down`, and
--- discards up to the next tlast: the framer stalls on tready and resumes the cut frame when
--- the channel returns, so its tail must not parse as a header. If the link fell between
--- frames this also eats the next frame; die B stays paused and the host's RESEND recovers it
+-- returns the deframer to a header: beats are ignored while chan_up is low, so the first beat
+-- after the channel returns is parsed as a header (final review I3, 2026-11-11). Discarding
+-- to the next tlast instead hung die B when its RX dropped alone (simplex: A's TX never sees
+-- it and the cut frame's tail is lost): the first RESEND frame was swallowed as the
+-- terminator, B stayed paused and no counter moved. Now a resumed tail (A's framer stalled on
+-- tready and resumed the cut frame) is shorter than a frame, ends in tlast before the CRC
+-- beat, and is refused and COUNTED as a CRC failure; the host's RESEND recovers either way
 -- (spec 3). The next good frame clears both flags.
 -- The slot store has DEPTH + 1 slots for DEPTH frames: an incoming payload always lands in
 -- the one slot no committed frame holds, and whether the frame fits is decided at commit
@@ -93,7 +97,7 @@ begin
       else
         if up_d = '1' and chan_up = '0' then
           c_down <= c_down + 1; down_r <= '1';
-          rs <= R_DISC; bi <= 0; crc <= LK_CRC_INIT;
+          restart;                                     -- the next beat after chan_up returns is a header
         elsif s_tvalid = '1' and chan_up = '1' then
           case rs is
             when R_HDR =>

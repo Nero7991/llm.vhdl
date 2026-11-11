@@ -91,6 +91,13 @@ package tok_loop_pkg is
   constant LS_RX_OVF : natural := 12;
 
   constant TMO_DEFAULT : natural := 180000000;   -- plan D13
+  -- TMO_LINK's own reset value (final review I2, 2026-11-11): the maximum, 0xFFFFFFFF cycles
+  -- (34.4 s at the card's 125 MHz). Die B's link wait spans die A's position AND the host
+  -- relay of A's token and B's credit over the broker, which a BMC reconnect can stall for
+  -- seconds; TMO_DEFAULT's 1.44 s at 125 MHz does not cover that. Paused waits do not count
+  -- (spec 3). tools/jc/jc_loop.py writes the same value in setup, so neither depends on the
+  -- other. TMO_ENGINE keeps TMO_DEFAULT (plan D13).
+  constant TMO_LINK_DEFAULT : unsigned(31 downto 0) := (others => '1');
 
   type slv32_arr8 is array (0 to 7) of std_logic_vector(31 downto 0);
   type tl_cfg_t is record
@@ -124,7 +131,7 @@ package tok_loop_pkg is
   constant TL_CFG_RESET : tl_cfg_t := (
     prompt_len => (others => '0'), max_new => (others => '0'),
     row_src => "00", role => "00",
-    tmo_engine => to_unsigned(TMO_DEFAULT, 32), tmo_link => to_unsigned(TMO_DEFAULT, 32),
+    tmo_engine => to_unsigned(TMO_DEFAULT, 32), tmo_link => TMO_LINK_DEFAULT,
     resend_cap => to_unsigned(3, 32),
     stop_id => (others => x"FFFFFFFF"),
     start => '0', abort => '0', resend => '0', row_ready => '0', clear => '0',

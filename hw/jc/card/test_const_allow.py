@@ -52,3 +52,17 @@ def test_kv_write_address_beat_alignment_bits_are_allowed():
            ("u_bd/jcc_i/bcgrant/c_awaddr[0]", "POWER"),
            ("u_bd/jcc_i/bcgrant/c0_araddr[0]", "GROUND")]
     assert _check(bad) == [0] * 3
+
+
+def test_tok_seam_response_bits_are_allowed_and_nothing_near_them():
+    # jccard_loop1 (2026-11-11): fk33_seam drives s_axi_bresp/rresp "00" (fk33_seam.vhd:763,771),
+    # so tok/m_seam_{b,r}resp[1:0] are GROUND by design. Only those bits, only GROUND.
+    ok = [("u_bd/jcc_i/tok/m_seam_%s[%d]" % (p, b), "GROUND") for p in ("bresp", "rresp") for b in (0, 1)]
+    assert _check(ok) == [1] * 4
+    bad = [("u_bd/jcc_i/tok/m_seam_bresp[2]", "GROUND"),
+           ("u_bd/jcc_i/tok/m_seam_bresp[0]", "POWER"),
+           ("u_bd/jcc_i/tok/m_seam_rresp", "GROUND"),
+           ("u_bd/jcc_i/tok/m_hbm_rresp[0]", "GROUND"),
+           ("u_bd/jcc_i/tok/m_seam_rdata[0]", "GROUND"),
+           ("u_bd/jcc_i/fk33_seam_0/m_seam_bresp[0]", "GROUND")]
+    assert _check(bad) == [0] * len(bad)

@@ -114,12 +114,18 @@ foreach c [get_cells -hier -filter {REF_NAME == GTYE4_COMMON}] {
 }
 set ok1 [xdc_paths flat]
 opt_design
+set n_post 0
 foreach c [get_cells -hier -filter {REF_NAME == GTYE4_COMMON}] {
   set d [get_cells -of_objects [get_pins -leaf -of_objects [get_nets -of_objects [get_pins $c/GTGREFCLK$q]] -filter {DIRECTION == OUT}]]
   set sel {}
   foreach k {2 1 0} { lappend sel [get_property TYPE [get_nets -of_objects [get_pins "$c/QPLL${q}REFCLKSEL\[$k\]"]]] }
   puts "ECOCHK post_opt $c GTGREFCLK$q <- $d ([get_property REF_NAME $d]) sel=$sel"
+  # refuse, not just print (Task 5 review minor): opt_design must keep the ECO's work
+  if {[get_property REF_NAME $d] ni {BUFG BUFGCE}} { error "ECOCHK_FAIL post_opt $c GTGREFCLK$q not from a BUFG ([get_property REF_NAME $d])" }
+  if {$sel ne {POWER POWER POWER}} { error "ECOCHK_FAIL post_opt $c QPLL${q}REFCLKSEL is $sel, not 111" }
+  incr n_post
 }
+if {$n_post == 0} { error "ECOCHK_FAIL post_opt: no GTYE4_COMMON left" }
 close_design
 if {[info exists ::env(JC_ECO_MUTATE)]} { error "ECOCHK_MUTANT_SURVIVED $::env(JC_ECO_MUTATE)" }
 

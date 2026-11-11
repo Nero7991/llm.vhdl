@@ -26,9 +26,11 @@ proc jc_aurora_config {nlanes rate mode} {
   # line_rate/64 (MEASURED 2026-11-10, IP_Flow 19-3488: (3.125,161.13) at 10.3125, (3.125,19.53)
   # at 1.25), so the 200 MHz sclk cannot be init_clk. INIT_DIV 10 -> 125 MHz, 80 -> 15.625 MHz.
   set initclk [jc_init_clk_mhz $rate]
-  # drp_mode stays AXI4_LITE (the default): Disabled is refused on this part (MEASURED
-  # 2026-11-10, IP_Flow 19-3461: valid values AXI4_LITE, Native). Its idle s_axi_* slave is tied
-  # in aurora_ties.py.
+  # drp_mode is not set here. The packaged IP (gen_aurora_ip.tcl, Task 5's xsim core) keeps
+  # AXI4_LITE, its default there: Disabled was refused (MEASURED 2026-11-10, IP_Flow 19-3461:
+  # valid values AXI4_LITE, Native), and its idle s_axi_* slave is tied per aurora_ties.py. The
+  # card's BD cell defaults to Disabled (MEASURED 2026-11-11, aurprobe: no s_axi_* pins; Task 7
+  # ruling): gen_jc_card.py reads drp_mode back and emits the DRP ties only if it is not Disabled.
   # C_UCOLUMN_USED first: the IP defaults to the right (X1) column and refuses Quad_X0Y0/X0Y0 until
   # it is left. 156.25, not 156.250: the IP matches the refclk frequency as a string.
   set cfg [list \
@@ -78,8 +80,9 @@ proc jc_init_clk_mhz {rate} { return [format %.3f [expr {1250.0 / [jc_init_div $
 # refclks (MEASURED 2026-11-10: MGTREFCLK1_of_Quad_X0Y2 refused, IP_Flow 19-3461, valid values
 # MGTREFCLK0_of_Quad_X0Y0, MGTREFCLK1_of_Quad_X0Y0), and list_property_value returns {} for this
 # IP, so the pick is fixed rather than searched. The pin refclk is never used: the gtg ECO
-# (eco_aurora_gtg.tcl) sets QPLL0REFCLKSEL to 111 (GTGREFCLK0), the method IBERT G measured on
-# 2026-11-04. These package pins are UNDRIVEN on the Jungle Cat board (the board refclk is AC36,
+# (eco_aurora_gtg.tcl) sets the POWERED QPLL's QPLL<q>REFCLKSEL to 111 (GTGREFCLK<q>; the card's
+# core runs QPLL1, Task 5 ruling), the method IBERT G measured on 2026-11-04. A `pin` card is
+# refused by gen_jc_card.py and build_card.tcl (final ruling 2026-11-11). These package pins are UNDRIVEN on the Jungle Cat board (the board refclk is AC36,
 # MGTREFCLK1 of bank 126); they only give the IP's IBUFDS_GTE4 a legal site.
 # JC_REFCLK_PINS: {P N} = MGTREFCLK0P_124/MGTREFCLK0N_124, MEASURED from the device package data
 # (get_package_pins, xcvu35p-fsvh2104, 2026-11-10; README). eco_check.tcl re-reads PIN_FUNC and

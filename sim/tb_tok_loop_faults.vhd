@@ -6,6 +6,9 @@
 -- while the host holds the seam (F_TAKE), F18 OUT_ACK past N_GEN, and on a second DUT
 -- (regs + FSM fed by a bench row source that can stall or fail mid-row) F19 a clean control,
 -- F20 ABORT with the source stalled mid-row (F_DATA), F21 the source failing mid-row.
+-- F22/F23 (final fix pass, 2026-11-11): ABORT while role A waits for its token (F_TOKW), and
+-- ABORT while role B's link is paused (F_ROWEXP with the RX channel down). F0 also checks
+-- the timeout reset values (TMO_LINK 0xFFFFFFFF, final review I2).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -37,6 +40,7 @@ architecture sim of tb_tok_loop_faults is
   signal f_tokpos_stuck : std_logic := '0';
   signal seq_resets, n_refused : natural := 0;
   signal ltx_v : std_logic;
+  signal rx_up : std_logic := '1';
   -- the second DUT: regs + FSM + its own seam, fed by bad_src below
   signal cm2 : axil_m2s_t := AXIL_M2S_IDLE;
   signal cs2 : axil_s2m_t;
@@ -87,7 +91,7 @@ begin
              m_hbm_rlast => '0', m_hbm_rvalid => '0', m_hbm_rready => open,
              ltx_tdata => open, ltx_tkeep => open, ltx_tlast => open, ltx_tvalid => ltx_v, ltx_tready => '1',
              lrx_tdata => (others => '0'), lrx_tlast => '0', lrx_tvalid => '0',
-             lnk_tx_up => '1', lnk_rx_up => '1', lnk_gtg_lock => '1', lnk_pll_lock => '1', lnk_rx_ovf => '0',
+             lnk_tx_up => '1', lnk_rx_up => rx_up, lnk_gtg_lock => '1', lnk_pll_lock => '1', lnk_rx_ovf => '0',
              link_ctrl => open);
 
   seam : entity work.seam_beh_model
@@ -310,6 +314,9 @@ begin
     end procedure;
   begin
     tick(5); rst <= '0'; tick(5); seam_rst <= '0'; tick(2);
+    -- the timeout reset values (final review I2): TMO_LINK has its own, the maximum
+    rd(TL_TMO_LINK, d); chk(d = x"FFFFFFFF", "reset: TMO_LINK = 0xFFFFFFFF (TMO_LINK_DEFAULT)");
+    rd(TL_TMO_ENGINE, d); chk(unsigned(d) = TMO_DEFAULT, "reset: TMO_ENGINE = TMO_DEFAULT");
     -- F0: the reference
     setup(NREF, ROLE_SINGLE, SRC_HOST); wr(TL_CTRL, u32(1)); finish_run(0);
     expect(R_MAX_NEW, "F0");
@@ -367,7 +374,7 @@ begin
     wr(TL_TMO_LINK, u32(5000)); setup(NREF, ROLE_B, SRC_LINK); wr(TL_CTRL, u32(1)); finish_run(0);
     expect(R_LINK_TIMEOUT, "F9");
     rd(TL_POS, d); chk(unsigned(d) = 0, "F9: timed out waiting for position 0");
-    wr(TL_TMO_LINK, u32(TMO_DEFAULT));
+    wr(TL_TMO_LINK, std_logic_vector(TMO_LINK_DEFAULT));
     -- F10: KV_MAXPOS 4 ends the run cleanly (plan D9)
     maxpos <= 4; reset_seam;
     setup(NREF, ROLE_SINGLE, SRC_HOST); wr(TL_CTRL, u32(1)); finish_run(0);
@@ -466,6 +473,28 @@ begin
     acked := j1; finish_run(0); expect(R_MAX_NEW, "F18");
     rd(TL_N_GEN, d); chk(to_integer(unsigned(d)) = NREF, "F18: N_GEN");
     for j in j1 to NREF - 1 loop chk(got(j) = ref(j), "F18: id " & integer'image(j) & " equals F0's"); end loop;
+    -- F22: ABORT while role A waits for its generated token (F_TOKW): every prompt frame
+    -- sent, NEED_TOKEN up, nothing relayed
+    setup(1, ROLE_A, SRC_HOST); wr(TL_CTRL, u32(1)); wr(TL_LINK_CREDIT, u32(100));
+    polls := 0;
+    loop step(1); exit when st(3) = '1' or st(1 downto 0) = "10"; end loop;
+    tick(500);
+    rd(TL_STATUS, st); chk(st(1 downto 0) = "01" and st(3) = '1', "F22: running, waiting for the token");
+    wr(TL_CTRL, u32(2)); tick(50);
+    expect(R_ABORT, "F22");
+    -- F23: ABORT while role B's link is paused (RX channel down while it waits in F_ROWEXP).
+    -- TMO_LINK 2000 is far shorter than the pause: a paused link does not count (spec 3), so
+    -- only the ABORT can end this run.
+    wr(TL_TMO_LINK, u32(2000)); setup(NREF, ROLE_B, SRC_LINK); wr(TL_CTRL, u32(1));
+    polls := 0;
+    loop step(1); exit when st(18) = '1' or st(1 downto 0) = "10"; end loop;
+    rx_up <= '0'; tick(20); rx_up <= '1';              -- one link-down: LINK_DOWN latches, B pauses
+    tick(6000);
+    rd(TL_STATUS, st);
+    chk(st(1 downto 0) = "01" and st(4) = '1' and st(6) = '1', "F23: running, paused on LINK_DOWN past TMO_LINK");
+    wr(TL_CTRL, u32(2)); tick(50);
+    expect(R_ABORT, "F23");
+    wr(TL_TMO_LINK, std_logic_vector(TMO_LINK_DEFAULT));
     -- F19: DUT2 control, a clean run from bad_src reproduces F0's ids
     bs_mode <= 0; run2(200000, "F19");
     rd2(TL_STATUS, st);

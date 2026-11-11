@@ -124,11 +124,12 @@ architecture rtl of jc_tok_top is
   signal u_rst_s : std_logic_vector(1 downto 0) := "11";
   signal u_rst, ovf_u : std_logic := '0';
   signal i_rpb, i_pma : std_logic_vector(1 downto 0) := "00";
+  signal i_lck : std_logic_vector(1 downto 0) := "00";     -- gtg_locked in init_clk; "00" = not locked
   signal u_pol : std_logic_vector(2*NLANES-1 downto 0) := (others => '0');
   signal pol_mask : std_logic_vector(NLANES-1 downto 0);
   -- the synchroniser first stages; hw/jc/link/jc_link_timing.tcl names each one
   attribute ASYNC_REG : string;
-  attribute ASYNC_REG of s_tx, s_rx, s_pll, s_gtg, s_ovf, u_rst_s, i_rpb, i_pma, u_pol : signal is "TRUE";
+  attribute ASYNC_REG of s_tx, s_rx, s_pll, s_gtg, s_ovf, u_rst_s, i_rpb, i_pma, i_lck, u_pol : signal is "TRUE";
 begin
   core : entity work.tok_loop
     generic map(N_EMBD => N_EMBD, HAS_GATHER => HAS_GATHER, HAS_LINK => true, NLANES => NLANES)
@@ -205,13 +206,19 @@ begin
     end if;
   end process;
 
-  -- init clock domain: the Aurora resets (PG074: reset_pb and pma_init are init_clk inputs)
+  -- init clock domain: the Aurora resets (PG074: reset_pb and pma_init are init_clk inputs).
+  -- Final review I5 (2026-11-11): init_clk and the GTG refclk both come from jc_gtg_clk's
+  -- MMCM, so both resets are HELD while it is not locked (gtg_locked through a 2-flop
+  -- synchroniser into init_clk, initialised "not locked"), whatever LINK_CTRL says: they are
+  -- high from configuration, before init_clk has a single edge, and again on loss of lock.
+  -- Once locked they follow LINK_CTRL bit 0 (reset_pb) and bit 1 (pma_init).
   process(init_clk)
   begin
     if rising_edge(init_clk) then
       i_rpb <= i_rpb(0) & link_ctrl(0);  i_pma <= i_pma(0) & link_ctrl(1);
+      i_lck <= i_lck(0) & gtg_locked;
     end if;
   end process;
-  aur_reset_pb <= i_rpb(1);
-  aur_pma_init <= i_pma(1);
+  aur_reset_pb <= i_rpb(1) or not i_lck(1);
+  aur_pma_init <= i_pma(1) or not i_lck(1);
 end architecture;

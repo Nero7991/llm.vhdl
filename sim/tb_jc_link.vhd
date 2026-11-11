@@ -26,7 +26,7 @@ architecture sim of tb_jc_link is
   signal frames_sent, resends, frames_good, crc_fails, seqpos_bad, link_downs, overruns, consumed : unsigned(31 downto 0);
   signal t_data, r_data, inj_data : std_logic_vector(32*W-1 downto 0) := (others => '0');
   signal t_last, t_valid, t_ready, r_last, r_valid, chan_up, inj_valid, inj_last : std_logic := '0';
-  signal down : std_logic := '0';
+  signal down, rx_down : std_logic := '0';
   signal flip_beat, drop_beat : integer := -1;
   signal flip_bit : natural := 0;
   signal nbeats : natural;
@@ -46,7 +46,7 @@ begin
     generic map(W => W, LAT => 8)
     port map(clk => clk, s_tdata => t_data, s_tlast => t_last, s_tvalid => t_valid,
              s_tready => t_ready, m_tdata => r_data, m_tlast => r_last, m_tvalid => r_valid,
-             chan_up => chan_up, down => down, flip_beat => flip_beat, flip_bit => flip_bit,
+             chan_up => chan_up, down => down, rx_down => rx_down, flip_beat => flip_beat, flip_bit => flip_bit,
              drop_beat => drop_beat, inj_valid => inj_valid, inj_data => inj_data,
              inj_last => inj_last, nbeats => nbeats);
   rx : entity work.jc_link_rx
@@ -177,7 +177,7 @@ begin
     pulse(resend); tx_idle;
     expect_head(4, 2, "C5 resend");
     chk(down_f = '0', "C5 LINK_DOWN cleared by the good frame");
-    chk(crc_fails = 3, "C5 the resumed tail of the cut frame is discarded, not counted");
+    chk(crc_fails = 4, "C5 the resumed tail of the cut frame is parsed from a header, refused and counted (final review I3)");
     -- C6 stale frame: right seq, old position
     inject(5, 3);
     chk(head_valid = '0' and seqpos_bad = 1 and bad = '1', "C6 a stale position is refused");
@@ -238,6 +238,44 @@ begin
     fill; do_send(5, 0);
     chk(overruns = 1 and bad = '1', "C13 the third frame on a full queue overruns");
     expect_head_w(3, 0, keep, "C13 frame 3 at the head is intact after the overrun");
+    -- C14 (final review I3): die B's RX drops mid-frame while A's TX does not stall (simplex:
+    -- A never sees B's RX go down), so the cut frame's tail is lost with it. The deframer must
+    -- restart at a header when the channel returns, or the first RESEND frame is swallowed as
+    -- the cut frame's terminator and B stays paused with no counter moving.
+    pulse(run_start); tick(2);
+    fill; n0 := to_integer(link_downs); c0 := to_integer(crc_fails);
+    send_pos <= to_unsigned(0, 32); send_exp <= x"00000006"; pulse(send);
+    tick(12); rx_down <= '1'; tx_idle; rx_down <= '0'; tick(4);
+    chk(link_downs = n0 + 1 and down_f = '1' and head_valid = '0',
+        "C14 RX-only drop: link-down counted, LINK_DOWN, nothing committed");
+    pulse(resend); tx_idle;
+    expect_head(0, 6, "C14 one RESEND after an RX-only drop commits the frame");
+    chk(to_integer(crc_fails) = c0 and to_integer(seqpos_bad) = 0 and down_f = '0' and bad = '0',
+        "C14 counters: no CRC failure (no partial frame was seen), LINK_DOWN cleared by the good frame");
+    chk(resends = 1 and frames_good = 1, "C14 counters: one resend, one good frame");
+    -- C15: the RX side comes back mid-frame (TX still sending): the resumed tail is parsed
+    -- from the header, fails, and is COUNTED (final review I3 ruling); RESEND recovers
+    fill; c0 := to_integer(crc_fails);
+    send_pos <= to_unsigned(1, 32); send_exp <= x"00000004"; pulse(send);
+    tick(6); rx_down <= '1'; tick(4); rx_down <= '0'; tx_idle;
+    chk(to_integer(crc_fails) = c0 + 1 and head_valid = '0' and bad = '1',
+        "C15 a resumed tail is refused and counted as a CRC failure, LINK_BAD");
+    pulse(resend); tx_idle;
+    expect_head(1, 4, "C15 RESEND commits after a resumed tail");
+    chk(bad = '0' and down_f = '0', "C15 flags cleared by the good frame");
+    -- C16: the CRC beat (the frame's tlast) is lost. Nothing commits and LINK_BAD stays clear,
+    -- so tok_loop's LINK_TIMEOUT counts (rs_paused = bad or down; tb_tok_loop_faults F9): a
+    -- clean stop, not a pause nothing ends. A RESEND is then refused once (its first beat
+    -- lands where the CRC was due: counted) and a second one commits.
+    fill; c0 := to_integer(crc_fails); drop_beat <= nbeats + (8 + PW) / W; do_send(2, 1);
+    drop_beat <= -1;
+    chk(head_valid = '0' and bad = '0' and down_f = '0' and to_integer(crc_fails) = c0,
+        "C16 CRC beat lost: nothing committed, not paused (LINK_TIMEOUT can count)");
+    pulse(resend); tx_idle;
+    chk(head_valid = '0' and bad = '1' and to_integer(crc_fails) = c0 + 1,
+        "C16 the first RESEND after a lost CRC beat is refused and counted");
+    pulse(resend); tx_idle;
+    expect_head(2, 1, "C16 the second RESEND commits");
     if e = 0 then
       report "PASS: tb_jc_link checks=" & integer'image(c) severity note;
     else

@@ -1,4 +1,4 @@
--- hw/jc/link/rtl/jc_gtg_clk.vhd -- 156.25 MHz for the Aurora QPLL's GTGREFCLK0, from the
+-- hw/jc/link/rtl/jc_gtg_clk.vhd -- 156.25 MHz for the Aurora QPLL's GTGREFCLK<q>, from the
 -- 200 MHz board clock (spec 2026-11-04 section 1b.2: the IBERT G path, which locked on both
 -- dies). Parameters copied from jc_qpll_census.vhd u_mmcm (b4) as IBERT G did: BUFG of the
 -- IBUFDS output, MMCME4_BASE 200 * 25 / 4 / 8 = 156.25 (1250 MHz VCO), feedback through a
@@ -10,6 +10,8 @@
 -- serve. INIT_DIV 10 -> 125 MHz (10.3125 Gb/s), 80 -> 15.625 MHz (1.25 Gb/s); aurora_cfg.tcl
 -- jc_init_div gives the value per rate and C_INIT_CLK must match it.
 -- DONT_TOUCH keeps the load-less gtg_clk BUFG until the ECO connects it (IBERT G item 1).
+-- locked also holds the Aurora resets in jc_tok_top (final review I5): neither init_clk nor
+-- the GTG refclk is trustworthy before it.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -21,7 +23,7 @@ entity jc_gtg_clk is
   port(
     sys_i    : in  std_logic;    -- the board clock's IBUFDS output (200 MHz)
     sclk     : out std_logic;    -- BUFG of sys_i: the 200 MHz fabric clock
-    gtg_clk  : out std_logic;    -- 156.25 MHz, to GTGREFCLK0 by the ECO
+    gtg_clk  : out std_logic;    -- 156.25 MHz, to the powered QPLL's GTGREFCLK<q> by the ECO (QPLL1 on the card)
     init_clk : out std_logic;    -- 1250 / INIT_DIV MHz: init_clk of the Aurora core
     locked   : out std_logic);
 end entity;

@@ -9,6 +9,9 @@
 #   txf/rxf clr_*_s1 (async_fifo's clear handshake; jc_tok_top ties clr '0', kept by KEEP)
 #   s_tx/s_rx/s_pll/s_gtg_reg[0] (Aurora / MMCM levels -> aclk), s_ovf_reg[0] (user -> aclk)
 #   u_rst_s_reg[0], u_pol_reg[*] (aclk -> user_clk); i_rpb_reg[0], i_pma_reg[0] (aclk -> init_clk)
+#   i_lck_reg[0] (final review I5): gtg_locked into init_clk. Its source is the MMCM's LOCKED
+#   pin, which no clock times, so it has no bound here and is deliberately NOT on the audit's
+#   allowed list: a timed path into it from aclk or user_clk would be a wiring defect.
 # Requires jctl_src from hw/jc/ctl/jc_ctl_timing.tcl (build_card.tcl sources it first).
 #
 # finding 2: a literal [0]/[*] inside a double-quoted Tcl pattern is command-substituted at

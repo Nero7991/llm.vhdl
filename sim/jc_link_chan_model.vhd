@@ -2,6 +2,9 @@
 -- benches (plan 2026-11-04 Task 4): fixed latency, no RX backpressure (Aurora RX has no
 -- tready), a bit flip on one numbered beat, a dropped beat, and link-down (TX stalls,
 -- beats in flight are lost, chan_up low). Injected beats let a bench send crafted frames.
+-- rx_down (final review I3, 2026-11-11) is the RX side alone dropping, as die B's simplex RX
+-- does while die A's TX never notices: chan_up low and the beats in flight lost as with
+-- `down`, but TX does NOT stall, so every beat it sends meanwhile is accepted and lost.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -19,6 +22,7 @@ entity jc_link_chan_model is
     m_tvalid  : out std_logic := '0';
     chan_up   : out std_logic := '1';
     down      : in  std_logic := '0';
+    rx_down   : in  std_logic := '0';
     flip_beat : in  integer := -1;
     flip_bit  : in  natural := 0;
     drop_beat : in  integer := -1;
@@ -38,22 +42,24 @@ begin
     variable n : natural := 0;
     variable b : std_logic_vector(32*W-1 downto 0);
     variable v, lst : std_logic;
+    variable dn : std_logic;
   begin
     if rising_edge(clk) then
-      m_tdata <= dd(LAT-1); m_tvalid <= dv(LAT-1) and not down; m_tlast <= dl(LAT-1);
+      dn := down or rx_down;
+      m_tdata <= dd(LAT-1); m_tvalid <= dv(LAT-1) and not dn; m_tlast <= dl(LAT-1);
       for k in LAT-1 downto 1 loop dd(k) := dd(k-1); dv(k) := dv(k-1); dl(k) := dl(k-1); end loop;
       v := '0'; b := (others => '0'); lst := '0';
       if s_tvalid = '1' and down = '0' then
         b := s_tdata; lst := s_tlast; v := '1';
         if n = flip_beat then b(flip_bit) := not b(flip_bit); end if;
-        if n = drop_beat then v := '0'; end if;
+        if n = drop_beat or rx_down = '1' then v := '0'; end if;
         n := n + 1;
       elsif inj_valid = '1' then
         b := inj_data; lst := inj_last; v := '1';
       end if;
       dd(0) := b; dv(0) := v; dl(0) := lst;
-      if down = '1' then dv := (others => '0'); end if;
-      chan_up <= not down; nbeats <= n;
+      if dn = '1' then dv := (others => '0'); end if;
+      chan_up <= not dn; nbeats <= n;
     end if;
   end process;
 end architecture;

@@ -40,9 +40,10 @@ TIES = {
     "gt_txprecursor": "00000",
 }
 # single-bit (not per-lane) inputs tied to their non-zero component.xml default.
-# s_axi_bready (default 1): the GT DRP AXI4-Lite slave (drp_mode AXI4_LITE; Disabled is refused on
-# this part) is idle, since awvalid/wvalid/arvalid are tied 0, so no B response ever comes; 1 is
-# component.xml's own value.
+# s_axi_bready (default 1): the GT DRP AXI4-Lite slave is idle, since awvalid/wvalid/arvalid are
+# tied 0, so no B response ever comes; 1 is component.xml's own value. The slave exists only with
+# drp_mode AXI4_LITE: the packaged xsim IP (Disabled was refused there); the card's BD cell is
+# drp_mode Disabled (MEASURED 2026-11-11, no s_axi_* pins), where gen_jc_card.py emits no DRP tie.
 CONST = {
     "s_axi_bready": "1",
 }

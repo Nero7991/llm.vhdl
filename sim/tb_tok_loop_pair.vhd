@@ -33,7 +33,7 @@ architecture sim of tb_tok_loop_pair is
   signal qa, qb : seam_bus;
   signal a_tx, b_rx : std_logic_vector(63 downto 0);
   signal a_txl, a_txv, a_txr, b_rxl, b_rxv, chan_up : std_logic;
-  signal down : std_logic := '0';
+  signal down, rx_down : std_logic := '0';
   signal flip_beat, drop_beat : integer := -1;
   signal nbeats : natural;
   signal ev_a, ev_b : std_logic;
@@ -121,6 +121,7 @@ begin
     generic map(W => 2, LAT => 8)
     port map(clk => uclk, s_tdata => a_tx, s_tlast => a_txl, s_tvalid => a_txv, s_tready => a_txr,
              m_tdata => b_rx, m_tlast => b_rxl, m_tvalid => b_rxv, chan_up => chan_up, down => down,
+             rx_down => rx_down,
              flip_beat => flip_beat, flip_bit => 3, drop_beat => drop_beat, nbeats => nbeats);
 
   chk_a : entity work.seam_trace_chk
@@ -137,7 +138,7 @@ begin
     variable resp : std_logic_vector(1 downto 0);
     variable d, da, db, xexp : std_logic_vector(31 downto 0);
     variable row : row16_arr(0 to N - 1);
-    variable e, c, kp, polls, credit, relayed, handled, nb0, t_pause : natural := 0;
+    variable e, c, kp, polls, credit, relayed, handled, nb0, t_pause, nres : natural := 0;
     variable fault : natural;
     procedure chk(ok : boolean; msg : string) is
     begin
@@ -177,13 +178,14 @@ begin
       end loop;
     end procedure;
     -- one run; fault 0 clean, 2 payload flip in frame 2 with a delayed RESEND, 3 link down in
-    -- frame 4, 4 every frame from frame 1 on corrupted with RESEND_CAP 2
+    -- frame 4, 4 every frame from frame 1 on corrupted with RESEND_CAP 2, 5 die B's RX alone
+    -- down from mid-frame 4 past its end (A's TX never stalls: the tail is lost, final review I3)
     procedure run(f : natural) is
       variable fails : natural;
     begin
       case_sel <= kp; arm <= '1'; wait until rising_edge(clk); arm <= '0';
       nb0 := nbeats; credit := 0; relayed := 0; handled := 0; polls := 0; t_pause := 0;
-      flip_beat <= -1; drop_beat <= -1; down <= '0';
+      flip_beat <= -1; drop_beat <= -1; down <= '0'; rx_down <= '0';
       if f = 2 then flip_beat <= nb0 + 2 * FB + 6; end if;
       if f = 4 then flip_beat <= nb0 + 1 * FB + 6; end if;
       wb(TL_CTRL, u32(1)); wa(TL_CTRL, u32(1));
@@ -208,6 +210,10 @@ begin
         end loop;
         if f = 3 and down = '0' and t_pause = 0 and nbeats >= nb0 + 4 * FB + 100 then
           down <= '1'; for j in 1 to 400 loop wait until rising_edge(uclk); end loop; down <= '0';
+          t_pause := 1;
+        end if;
+        if f = 5 and rx_down = '0' and t_pause = 0 and nbeats >= nb0 + 4 * FB + 100 then
+          rx_down <= '1'; for j in 1 to 2 * FB loop wait until rising_edge(uclk); end loop; rx_down <= '0';
           t_pause := 1;
         end if;
         if db(4) = '1' then                                       -- B paused: LINK_BAD or LINK_DOWN
@@ -276,7 +282,22 @@ begin
     setup(3, 400000); run(3);
     check_ids("P3");
     rb(TL_LINK_DOWNS, d); chk(unsigned(d) = 1, "P3: one link-down counted");
-    ra(TL_RESENDS, d); chk(unsigned(d) = 1, "P3: one resend");
+    -- final review I3 (2026-11-11): the deframer restarts at a header when the link returns, so
+    -- the cut frame's resumed tail is refused and COUNTED (one CRC failure), and the host relay
+    -- may answer that count with a second RESEND; its duplicate of the committed frame is then
+    -- refused as stale. So: resends 1 or 2, and every resend past the first is one SEQPOS_BAD.
+    rb(TL_CRC_FAILS, d); chk(unsigned(d) = 1, "P3: the resumed tail of the cut frame is one CRC failure");
+    ra(TL_RESENDS, d); nres := to_integer(unsigned(d));
+    chk(nres = 1 or nres = 2, "P3: one or two resends (got " & integer'image(nres) & ")");
+    rb(TL_SEQPOS_BAD, d); chk(to_integer(unsigned(d)) = nres - 1, "P3: every extra resend is one stale frame");
+    -- P5 (final review I3): die B's RX drops mid-frame 4 and stays down past the frame's end
+    -- while A's TX runs on; one RESEND must recover it (the old deframer swallowed it and hung)
+    setup(3, 400000); run(5);
+    rb(TL_STATUS, db); chk(unsigned(db(15 downto 8)) = R_MAX_NEW, "P5: B stops on MAX_NEW");
+    check_ids("P5");
+    rb(TL_LINK_DOWNS, d); chk(unsigned(d) = 1, "P5: one link-down counted");
+    rb(TL_CRC_FAILS, d); chk(unsigned(d) = 0, "P5: no CRC failure: nothing of the cut frame arrived");
+    ra(TL_RESENDS, d); chk(unsigned(d) = 1, "P5: one resend");
     -- P4: every frame corrupted from frame 1, RESEND_CAP 2
     setup(2, 400000); run(4);
     ra(TL_STATUS, da); rb(TL_STATUS, db);
