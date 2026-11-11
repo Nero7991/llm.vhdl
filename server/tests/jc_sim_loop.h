@@ -19,4 +19,5 @@ int  jc_loop_owns_seam(const jc_loop *L);                   /* host seam access 
 void jc_loop_tick(jc_loop *L);                              /* run until blocked */
 void jc_loop_pair(jc_loop *a, jc_loop *b);                  /* a's frames go to b */
 void jc_loop_drop(jc_loop *a, unsigned long nth);           /* corrupt a's nth frame (1-based) */
+void jc_loop_fail_at(jc_loop *L, uint32_t pos, uint32_t reason); /* stop with reason at pos */
 #endif

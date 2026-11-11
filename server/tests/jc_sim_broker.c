@@ -4,7 +4,8 @@
  *   jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]
  *                 [--fail-rd DIE:OFF:NTH:MODE[:TIMES]]
  *                 [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]
- *                 [--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]]
+ *                 [--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]
+ *                  [--loop-fail DIE:POS:REASON] [--fail-wr DIE:OFF:NTH:MODE[:TIMES]]]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
  * sends: rd32, wr32, wrn with "fix":true, rdn, memrd) on a Unix socket.  Each die
@@ -61,6 +62,12 @@
  * frames (its R_X row and exponent per position) to B; --loop-drop N corrupts A's
  * Nth frame (B counts a CRC fail and pauses until A's RESEND).  Not an oracle for the
  * RTL (the GHDL benches are): it lets tools/jc/jc_loop.py be tested without hardware.
+ * --loop-fail DIE:POS:REASON stops DIE's model with REASON (rtl/tok_loop_pkg.vhd's number,
+ * e.g. 5 ENGINE_ERR) when it reaches position POS: a die failing mid-run (final fix pass,
+ * 2026-11-11); REASON 0 drops it to IDLE there instead, as a die reset or reloaded mid-run.  --fail-wr DIE:OFF:NTH:MODE[:TIMES] answers the NTH (1-based) wr32 to the
+ * loop register at byte offset OFF (0x20000-based) on DIE, and the TIMES-1 matching wr32s
+ * after it, with WindowUnknown, as --fail-rd does for reads: MODE `ran` applies the write
+ * first (only the answer is lost), `lost` does not.  The log line ends FAILED ran|lost.
  *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
@@ -95,6 +102,9 @@ static char g_failn_die[16];
 static unsigned long g_failn_off, g_failn_nth, g_failn_at, g_failn_times = 1, g_failn_seen;
 static int g_failn_ran = -1;         /* -1: no rdn injection */
 static FILE *g_trace;                /* --trace: every register value, for tools/jc/gen_tok_loop_vec.py */
+static char g_failw_die[16];
+static unsigned long g_failw_off, g_failw_nth, g_failw_times = 1, g_failw_seen;
+static int g_failw_ran = -1;         /* -1: no wr32 injection (--fail-wr, loop window only) */
 
 #define SIM_MAX_N     65536ul        /* jc_broker.py MAX_N */
 #define SIM_MAX_ITEMS 496ul          /* jc_ctl.MAX_ITEMS: items per frame */
@@ -163,6 +173,16 @@ static void handle(int fd, const char *line)
             if (is_rd) {
                 jc_loop_rd(g_loop[d], (uint32_t)(o - JC_LOOP_BASE), &v);
                 snprintf(buf, sizeof buf, "{\"ok\":true,\"val\":%u}\n", v);
+            } else if (g_failw_ran >= 0 && !strcmp(g_name[d], g_failw_die) && o == g_failw_off
+                       && ++g_failw_seen >= g_failw_nth && g_failw_seen < g_failw_nth + g_failw_times) {
+                get_num(line, "val", &vv);
+                if (g_failw_ran) jc_loop_wr(g_loop[d], (uint32_t)(o - JC_LOOP_BASE), (uint32_t)vv);
+                for (k = 0; k < g_ndies; k++) if (g_loop[k]) jc_loop_tick(g_loop[k]);
+                for (k = 0; k < g_ndies; k++) if (g_loop[k]) jc_loop_tick(g_loop[k]);
+                fprintf(g_log, "%s loop wr32 0x%llx FAILED %s\n", g_name[d], o, g_failw_ran ? "ran" : "lost");
+                snprintf(buf, sizeof buf, "{\"ok\":false,\"err\":\"WindowUnknown: injected: die %s "
+                         "wr32 at %#llx; die %s window state is UNKNOWN\"}\n", g_name[d], o, g_name[d]);
+                reply(fd, buf); fflush(g_log); return;
             } else {
                 get_num(line, "val", &vv);
                 jc_loop_wr(g_loop[d], (uint32_t)(o - JC_LOOP_BASE), (uint32_t)vv);
@@ -204,7 +224,7 @@ static void handle(int fd, const char *line)
     } else if (has_op(line, "wr32") && !get_num(line, "off", &off) && !get_num(line, "val", &val)) {
         int rc = g_t[d]->reg_write32(g_t[d]->ctx, (uint32_t)off, (uint32_t)val);
         fprintf(g_log, "%s wr32 0x%llx 1\n", g_name[d], off);
-        if (g_trace) fprintf(g_trace, "W %s 0x%llx 0x%llx\n", g_name[d], off, val);
+        if (g_trace && !rc) fprintf(g_trace, "W %s 0x%llx 0x%llx\n", g_name[d], off, val);
         reply(fd, rc ? "{\"ok\":false,\"err\":\"AxiError: sim write\"}\n" : "{\"ok\":true}\n");
     } else if (has_op(line, "wrn") && !get_num(line, "off", &off)
                && strstr(line, "\"fix\":true")) {
@@ -321,10 +341,13 @@ int main(int argc, char **argv)
     int loop_on = 0;
     const char *loop_pair = NULL;
     unsigned long loop_drop = 0;
+    char lf_die[16] = "";
+    unsigned long lf_pos = 0, lf_reason = 0;
     if (argc < 3) {
         fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B] "
                 "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]] "
-                "[--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]]\n");
+                "[--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]] "
+                "[--loop-fail DIE:POS:REASON] [--fail-wr DIE:OFF:NTH:MODE[:TIMES]]]\n");
         return 2;
     }
     sock = argv[1]; logp = argv[2];
@@ -367,6 +390,24 @@ int main(int argc, char **argv)
         }
         else if (!strcmp(argv[i], "--loop-pair")) loop_pair = argv[i + 1];
         else if (!strcmp(argv[i], "--loop-drop")) loop_drop = strtoul(argv[i + 1], NULL, 10);
+        else if (!strcmp(argv[i], "--loop-fail")) {
+            if (sscanf(argv[i + 1], "%15[^:]:%lu:%lu", lf_die, &lf_pos, &lf_reason) != 3
+                || lf_reason > 12) {
+                fprintf(stderr, "jc_sim_broker: --loop-fail DIE:POS:REASON (0..12)\n");
+                return 2;
+            }
+        }
+        else if (!strcmp(argv[i], "--fail-wr")) {
+            char mode[8] = "";
+            int k = sscanf(argv[i + 1], "%15[^:]:%li:%lu:%7[^:]:%lu", g_failw_die,
+                           (long *)&g_failw_off, &g_failw_nth, mode, &g_failw_times);
+            if (k < 4 || g_failw_nth < 1 || g_failw_times < 1
+                || (strcmp(mode, "ran") && strcmp(mode, "lost"))) {
+                fprintf(stderr, "jc_sim_broker: --fail-wr DIE:OFF:NTH:ran|lost[:TIMES]\n");
+                return 2;
+            }
+            g_failw_ran = !strcmp(mode, "ran");
+        }
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }
     {
@@ -387,6 +428,9 @@ int main(int argc, char **argv)
     }
     if ((loop_pair || loop_drop) && !loop_on) {
         fprintf(stderr, "jc_sim_broker: --loop-pair/--loop-drop need --loop\n"); return 2;
+    }
+    if ((lf_die[0] || g_failw_ran >= 0) && !loop_on) {
+        fprintf(stderr, "jc_sim_broker: --loop-fail/--fail-wr need --loop\n"); return 2;
     }
     if (loop_drop && !loop_pair) {
         fprintf(stderr, "jc_sim_broker: --loop-drop needs --loop-pair\n"); return 2;
@@ -411,6 +455,12 @@ int main(int argc, char **argv)
             }
             jc_loop_pair(g_loop[ia], g_loop[ib]);
             if (loop_drop) jc_loop_drop(g_loop[ia], loop_drop);
+        }
+        if (lf_die[0]) {
+            int k, hit = 0;
+            for (k = 0; k < g_ndies; k++)
+                if (!strcmp(g_name[k], lf_die)) { jc_loop_fail_at(g_loop[k], (uint32_t)lf_pos, (uint32_t)lf_reason); hit = 1; }
+            if (!hit) { fprintf(stderr, "jc_sim_broker: --loop-fail names an unknown die\n"); return 2; }
         }
     }
     g_log = fopen(logp, "w");

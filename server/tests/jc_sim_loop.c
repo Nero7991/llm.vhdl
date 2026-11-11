@@ -19,6 +19,7 @@ struct jc_loop {
   unsigned n;
   int state, wait, owns;
   uint32_t reason, pos, n_gen, plen, max_new, row_src, role, resend_cap, stop[8];
+  uint32_t c_plen, c_max_new, c_row_src, c_role;   /* as written; latched into the run's at START */
   uint32_t next_tok, next_v, row_exp, row_addr, prompt_addr, out_ack, out_addr, credit;
   uint32_t kvmax, g, row_ready, consumed, frames_sent, frames_good, crc_fails, resends, cleared;
   uint32_t seqpos_bad, overruns;
@@ -28,6 +29,9 @@ struct jc_loop {
   frame q[2]; int qn;              /* RXDEPTH 2 */
   frame held; int has_held;
   unsigned long drop_nth, sent_total;
+  uint32_t tmo_link;               /* TL_TMO_LINK (0x030): stored, read back; the model never times out */
+  uint32_t fail_pos, fail_reason;  /* jc_loop_fail_at: stop with fail_reason on reaching fail_pos */
+  int fail_on;                     /* reason 0: drop to IDLE there instead (a die reset mid-run) */
 };
 
 static int sw(jc_loop *L, uint32_t off, uint32_t v) { return L->t->reg_write32(L->t->ctx, SB + off, v); }
@@ -40,6 +44,8 @@ jc_loop *jc_loop_new(fk33_transport *t, unsigned n_embd)
   int k;
   if (!L) return NULL;
   L->t = t; L->n = n_embd; L->resend_cap = 3;
+  L->tmo_link = 0xFFFFFFFFu;       /* rtl/tok_loop_pkg.vhd TMO_LINK_DEFAULT (final review I2) */
+  L->fail_pos = 0xFFFFFFFFu;
   for (k = 0; k < 8; k++) L->stop[k] = 0xFFFFFFFFu;
   L->hrow = calloc(n_embd, sizeof *L->hrow);
   L->held.m = calloc(n_embd, sizeof(uint16_t));
@@ -48,6 +54,7 @@ jc_loop *jc_loop_new(fk33_transport *t, unsigned n_embd)
 }
 void jc_loop_pair(jc_loop *a, jc_loop *b) { a->peer = b; }
 void jc_loop_drop(jc_loop *a, unsigned long nth) { a->drop_nth = nth; }
+void jc_loop_fail_at(jc_loop *L, uint32_t pos, uint32_t reason) { L->fail_pos = pos; L->fail_reason = reason; L->fail_on = 1; }
 int jc_loop_owns_seam(const jc_loop *L) { return L->owns; }
 
 static void deliver(jc_loop *a, const frame *f)
@@ -69,6 +76,10 @@ static int start(jc_loop *L)
   L->pos = 0; L->n_gen = 0; L->reason = 0; L->out_ack = 0; L->next_v = 0; L->qn = 0;
   L->has_held = 0; L->consumed = 0; L->frames_sent = L->frames_good = L->crc_fails = L->resends = 0;
   L->cleared = 0; L->seqpos_bad = 0; L->overruns = 0;
+  L->credit = 0;                   /* tok_loop_regs.vhd:111 clears LINK_CREDIT on a START that takes */
+  /* tok_loop_fsm latches the configuration at START; a write mid-run is not used until the
+   * next one (tb_tok_loop_faults F12), so a running die ignores a new client's setup */
+  L->plen = L->c_plen; L->max_new = L->c_max_new; L->row_src = L->c_row_src; L->role = L->c_role;
   L->sent_total = 0; L->state = S_RUN;
   if (!L->plen || L->plen > MAXP || !L->max_new || L->role > 2 || L->row_src > 2
       || ((L->row_src == 2) != (L->role == 2)) || L->row_src == 0) { stop_(L, R_BAD_CONFIG); return 0; }
@@ -107,6 +118,11 @@ void jc_loop_tick(jc_loop *L)
     if (L->wait == W_OUT) { if (L->n_gen - L->out_ack >= OUT_DEPTH) return; L->wait = W_NONE; goto push; }
     if (L->wait == W_TOKEN) { if (!L->next_v) return; L->g = L->next_tok; L->next_v = 0; L->wait = W_NONE; goto push; }
     if (L->wait == W_CREDIT) { if (L->credit < L->pos) return; L->wait = W_NONE; }
+    if (L->fail_on && L->pos == L->fail_pos) {
+      L->fail_on = 0;
+      if (L->fail_reason) { stop_(L, L->fail_reason); return; }
+      L->state = S_IDLE; L->owns = 0; L->wait = W_NONE; return;   /* as after a reset or reload */
+    }
     if (L->pos >= L->kvmax) { stop_(L, R_MAXPOS); return; }
     /* plan D3. The RTL waits after GO, before reading R_X; waiting before the position
      * delivers the same frames in the same order, which is all the host can observe. */
@@ -152,10 +168,11 @@ int jc_loop_rd(jc_loop *L, uint32_t off, uint32_t *v)
     *v = s; break;
   case 0x014: *v = L->pos; break;
   case 0x018: case 0x060: *v = L->n_gen; break;
-  case 0x01C: *v = L->plen; break;
-  case 0x020: *v = L->max_new; break;
-  case 0x024: *v = L->row_src; break;
-  case 0x028: *v = L->role; break;
+  case 0x01C: *v = L->c_plen; break;
+  case 0x020: *v = L->c_max_new; break;
+  case 0x024: *v = L->c_row_src; break;
+  case 0x028: *v = L->c_role; break;
+  case 0x030: *v = L->tmo_link; break;
   case 0x034: *v = L->resend_cap; break;
   case 0x044: *v = L->pos < L->plen ? L->prompt[L->pos] : L->g; break;
   case 0x048: *v = L->next_tok; break;
@@ -192,10 +209,11 @@ int jc_loop_wr(jc_loop *L, uint32_t off, uint32_t v)
     }
     if ((v & 8) && L->wait == W_ROW) L->row_ready = 1;
     break;
-  case 0x01C: L->plen = v; break;
-  case 0x020: L->max_new = v; break;
-  case 0x024: L->row_src = v & 3; break;
-  case 0x028: L->role = v & 3; break;
+  case 0x01C: L->c_plen = v; break;
+  case 0x020: L->c_max_new = v; break;
+  case 0x024: L->c_row_src = v & 3; break;
+  case 0x028: L->c_role = v & 3; break;
+  case 0x030: L->tmo_link = v; break;
   case 0x034: L->resend_cap = v; break;
   case 0x048: L->next_tok = v; L->next_v = 1; break;
   case 0x04C: L->row_exp = v; break;
