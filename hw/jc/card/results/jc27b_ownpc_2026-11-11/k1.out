@@ -1,0 +1,22 @@
+embedding  mv4i /mnt/storage/llama-models/qwen38-27b-mv4i/token_embd.weight.mv4i M=248320 K=5120 ROWS_IF=48 AXI_DW=256 BLOCK=32 nports_w=24 n_scale_sub=3 nb=160 tiles=5174 w_exp=7 recipe=wide read=5120B x2
+program    /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/card0/token.dtbl: 8080 32-bit halves (505 descriptors of 8 64-bit words)
+release    /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/card0/token.rel: 505 entries
+program2   /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/card1/token.dtbl: 8896 32-bit halves (556 descriptors)
+release2   /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/card1/token.rel: 556 entries
+transport  JC broker /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/broker.sock die A
+card       seam v2 @BAR+0xE000 vocab=248320 embd=5120 layer=64 ctx=16384 chunk=1 x_stride=10304 l_stride=993344 | jc sock=/mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/broker.sock die=A win=0xe060
+transport2 JC broker /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/broker.sock die B
+card2      seam v2 @BAR+0xE000 vocab=248320 embd=5120 layer=64 ctx=16384 chunk=1 x_stride=10304 l_stride=993344 | jc sock=/mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/broker.sock die=B win=0xe060
+pipeline   card 0 -> host (R_X + exponent) -> card 1; card 1's argmax decides
+seq-reset  seam AND engine positions cleared (TOK_POS read back 0): the next token is a first token
+prefill    1 ids, pos 1, first argmax 8678, exp 0
+decode     1 ids generated, pos 1, stopped at --max-new
+timing     1 GOs: run_chunk 0.671 s (of which STATUS wait 0.632 s over 54 polls), X pushes 0.232 s, wall since start 4.058 s
+xout       R_X after the last GO: exp 7, 5120 mantissas -> /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_A_k1.txt
+xout2      card 1 R_X after the last GO: exp 5, 5120 mantissas -> /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_B_k1.txt
+hop        1 hops: read R_X 0.148 s, push+GO card 1 0.328 s; card 1 at pos 1; prefill overlapped
+bytes      h2c 20480, c2h 40960, go 1 (argmax fast path)
+ids        1 generated ids -> /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/k1.ids
+---- generated ----
+system
+-------------------

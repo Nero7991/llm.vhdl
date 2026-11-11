@@ -55,3 +55,44 @@ the good layout, A runs at its own cadence limit and memory supply is not bindin
 - Whether the HBM global switch is clocked by AXI_ACLK (125 MHz) or its own clock (PG276): not checked.
 - Die B not measured (its program sends A results to the sampler; the tool refuses die B).
 - P1 (repack die A, one lane per PC) gain is still an ESTIMATE (~1.38x per die from the study).
+
+## Addendum 1 (2026-11-11): P1 own-PC repack of die A, measured on silicon
+
+Image: /mnt/storage/llama-models/qwen38-27b-card0-b0-32-ownpc/ (branch worktree-agent-a9c437b4ed146b7d4,
+9f616c9c, `pack_model_fk33.py --stripe-own-pc`): every lane of every A tensor on its own pseudo-channel,
+0 lanes per lateral boundary (census 256/256). Same .mv4i bytes (258 objects decoded identical); only the
+27 lane bases per descriptor and the image record changed. Loaded with `coe_load --append` on top of the
+resident image (JCVERIFY_PASS 7170 pieces 0 bad, side 3 pieces 0 bad), jccard10 unchanged.
+
+Single jobs, die A (MEASURED, jc_run_job, raw in hw/jc/card/results/jc27b_ownpc_2026-11-11/measure_jobs.txt):
+
+| tensor | before c/word | after c/word | after util | match |
+|---|---|---|---|---|
+| blk.0.attn_gate | 1.510-1.511 | 1.510-1.512 | 0.662 | 2048/2048 x3 |
+| blk.1.ffn_gate | 4.764-4.850 | 1.508 | 0.663 | 2048/2048 x3 |
+
+Whole token, both dies, prompt k1 (MEASURED, run_prompt as on 2026-11-04):
+- Argmax 8678, and die A's and die B's dumped X_OUT are byte-identical to the 2026-11-04 run on the
+  old layout (`cmp`): the layout change moved bytes, not values.
+- Die A seam cycles for the token: 32,721,110 (jc_seam.py `last job`), against 45,482,738 before
+  (hw/jc/card/results/jc27b_first_token_2026-10-09/util_A.txt, seam_cycles_last_go). DERIVED: 1.39x.
+  The study's ESTIMATE was ~1.38x.
+- Control: die B, untouched, 44,565,746 now against 44,650,657 then (-0.19%), so the two runs are
+  comparable despite the different date, bitstream (jccard8 then, jccard10 now) and position.
+- run_chunk wall for the k1 GO: 0.671 s now against 0.769 s on 2026-11-04 (same prompt, same host path).
+- DERIVED pair token at 125 MHz with no host hop: die A 0.262 s + die B 0.357 s = 0.618 s, 1.62 tok/s,
+  against 0.721 s, 1.39 tok/s. Die B is now the longer die; it does not fit one PC per lane (273.21 MB
+  per lane against 268.44 MB) and needs the spill-aware layout from the study.
+
+Traps hit (this addendum):
+- `jc_reload_ownpc.sh measure` printed `JCRELOAD_DONE measure` after both jobs were REFUSED: its sentinel
+  fires on failure. Gate on the `^JCJOB ` lines, not the sentinel, until fixed.
+- The broker started by `jc_bc_lane.sh start` serves its socket under $JC_BCW; with a new JC_BCW the
+  workstation's ssh forward still pointed at the old directory's stale socket (ConnectionResetError).
+  Re-point the forward whenever JC_BCW changes.
+- The weights verify aborted once on "No route to host" to the BMC right after a 2,846 s append; a rerun
+  of verify alone passed. Verify is read-only and safe to rerun; the append itself is not resumable.
+
+Open: die B repack (spill layout); the PG276 switch-clock question (no longer blocking: the layout
+fix works whatever the cause's clocking); the bitstream's FAST_POP=false cadence (1.5 c/word) is now
+A's limit on both tensors.
