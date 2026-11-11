@@ -55,6 +55,17 @@ architecture rtl of tok_loop_regs is
   signal ra : natural range 0 to 65535 := 0;
   signal p_q, o_q, rdata_r : std_logic_vector(31 downto 0) := (others => '0');
   signal w_go : std_logic;
+  -- OUT_DEPTH must be a power of two no larger than 65536: the FSM writes slot n_gen(15:0)
+  -- mod OUT_DEPTH and the host reads OUT_ADDR mod OUT_DEPTH, which agree across the 16-bit
+  -- wrap only then. A violation is an out-of-range constant: elaboration fails.
+  function pow2_bad(n : positive) return natural is
+    variable k : positive := 1;
+  begin
+    while k < n loop k := 2 * k; end loop;
+    if k = n and n <= 65536 then return 0; end if;
+    return 1;
+  end function;
+  constant OUT_DEPTH_POW2 : natural range 0 to 0 := pow2_bad(OUT_DEPTH);
 begin
   cfg <= c;
   w_go <= s_awvalid and s_wvalid and not bv;
@@ -114,7 +125,8 @@ begin
             when TL_PROMPT_ADDR  => paddr <= unsigned(d(12 downto 0));
             when TL_PROMPT_DATA  =>
               pram(to_integer(paddr) mod PROMPT_MAX) <= d; paddr <= paddr + 1;
-            when TL_OUT_ACK      => c.out_ack <= unsigned(d);
+            when TL_OUT_ACK      =>                    -- clamped: an ack past N_GEN would wrap
+              if unsigned(d) > st.n_gen then c.out_ack <= st.n_gen; else c.out_ack <= unsigned(d); end if;
             when TL_OUT_ADDR     => oaddr <= unsigned(d);
             when TL_LINK_CREDIT  => c.link_credit <= unsigned(d);
             when TL_LINK_CTRL    => c.link_ctrl <= d;

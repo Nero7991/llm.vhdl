@@ -160,10 +160,11 @@ begin
             else
               fs <= F_TAKE;
             end if;
-          when F_TAKE =>
+          when F_TAKE =>                                  -- the mux grants only between host txns
             own_r <= '1';
             if owner = '1' then
               txn('1', SM_CTRL, tl_u32(CTRL_SEQ_RESET), F_RS1);
+            elsif abort_l = '1' then stop(R_ABORT);
             end if;
           when F_TXN =>
             if sent = '0' then
@@ -182,7 +183,8 @@ begin
             else txn('0', SM_TOK_POS, Z32, F_RS3); end if;
           when F_RS3 => tp_r <= rd_r; txn('0', SM_SEQ_POS, Z32, F_RS4);
           when F_RS4 =>
-            if unsigned(tp_r) /= 0 or unsigned(rd_r) /= 0 then stop(R_SEQ_RESET_FAIL);
+            if unsigned(tp_r) /= 0 or unsigned(rd_r) /= 0 then         -- TOK_POS, SEQ_POS reads
+              err_status <= tp_r; err_info <= rd_r; stop(R_SEQ_RESET_FAIL);
             else txn('0', SM_KV_MAXPOS, Z32, F_RS5); end if;
           when F_RS5 => kvmax <= unsigned(rd_r); fs <= F_TOP;
           when F_TOP =>
@@ -211,8 +213,10 @@ begin
             end if;
           when F_WS => txn('1', SM_WIN_SEL, tl_u32(WIN_XIN), F_WA);
           when F_WA => i <= 0; txn('1', SM_WIN_ADDR, Z32, F_DATA);
-          when F_DATA =>
-            if rs_m_valid = '1' then
+          when F_DATA =>                                  -- a source can stall or fail mid-row
+            if rs_err = '1' then stop(R_GATHER_ERR);
+            elsif abort_l = '1' then stop(R_ABORT);
+            elsif rs_m_valid = '1' then
               rs_m_ready <= '1';
               txn('1', SM_WIN_DATA, x"0000" & rs_m_data, F_DNEXT);
             end if;

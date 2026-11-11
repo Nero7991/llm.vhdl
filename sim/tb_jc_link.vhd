@@ -64,6 +64,7 @@ begin
     variable lfsr : std_logic_vector(31 downto 0) := x"1234ABCD";
     variable crc : std_logic_vector(31 downto 0);
     variable n0, c0 : natural;
+    variable keep : words_t;
     procedure chk(ok : boolean; msg : string) is
     begin
       c := c + 1;
@@ -98,7 +99,7 @@ begin
       send_pos <= to_unsigned(p, 32); send_exp <= std_logic_vector(to_signed(x, 32));
       pulse(send); tx_idle;
     end procedure;
-    procedure expect_head(p : natural; x : integer; msg : string) is
+    procedure expect_head_w(p : natural; x : integer; ws : words_t; msg : string) is
       variable bad_w : natural := 0;
     begin
       chk(head_valid = '1', msg & ": a frame is at the head");
@@ -107,11 +108,15 @@ begin
         chk(head_exp = std_logic_vector(to_signed(x, 32)), msg & ": head exponent");
         for k in 0 to PW - 1 loop
           rd_idx <= to_unsigned(k, 12); tick(2);
-          if rd_data /= sent(k) then bad_w := bad_w + 1; end if;
+          if rd_data /= ws(k) then bad_w := bad_w + 1; end if;
         end loop;
         chk(bad_w = 0, msg & ": every payload word equals what was filled");
         pulse(pop); tick(1);
       end if;
+    end procedure;
+    procedure expect_head(p : natural; x : integer; msg : string) is
+    begin
+      expect_head_w(p, x, sent, msg);
     end procedure;
     procedure inject(seq, p : natural) is
       type fw_t is array (0 to 8 + PW + 1) of std_logic_vector(31 downto 0);
@@ -214,6 +219,25 @@ begin
     expect_head(0, 5, "C11 the latched resend committed after the original's CRC failure");
     pulse(pop); tick(1);
     chk(head_valid = '0', "C11 pop leaves the queue empty: exactly one commit");
+    -- C12 (Task 4 finding, folded into Task 6): a pop while a frame is in flight frees the
+    -- slot it needs; the free-slot decision is made at commit, not at the frame's header
+    pulse(run_start); tick(2);
+    fill; do_send(0, 0); fill; do_send(1, 0);
+    chk(head_valid = '1' and overruns = 0, "C12 the queue holds two frames (DEPTH 2)");
+    fill; send_pos <= to_unsigned(2, 32); send_exp <= x"00000009"; pulse(send);
+    tick(40);                                      -- header in, payload still arriving
+    chk(busy = '1', "C12 frame 2 is still in flight at the pop");
+    pulse(pop); tx_idle;
+    chk(overruns = 0 and bad = '0', "C12 a pop mid-frame: no overrun counted, LINK_BAD clear");
+    chk(head_valid = '1' and head_pos = 1, "C12 the head is frame 1 after the pop");
+    pulse(pop); tick(2);
+    expect_head(2, 9, "C12 frame 2 committed into the slot the pop freed");
+    -- C13 a real overrun leaves the frame at the head intact (the payload of a refused frame
+    -- never lands in a slot a reader holds)
+    fill; keep := sent; do_send(3, 0); fill; do_send(4, 0);
+    fill; do_send(5, 0);
+    chk(overruns = 1 and bad = '1', "C13 the third frame on a full queue overruns");
+    expect_head_w(3, 0, keep, "C13 frame 3 at the head is intact after the overrun");
     if e = 0 then
       report "PASS: tb_jc_link checks=" & integer'image(c) severity note;
     else

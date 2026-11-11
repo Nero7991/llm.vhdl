@@ -20,6 +20,7 @@ package tok_loop_tb_pkg is
     plen, max_new, n_ids, p0, i0, op0, op1 : natural;
     stop : integer;
     pair : boolean;
+    gather : boolean;
   end record;
   type case_arr is array (0 to MAX_CASES-1) of case_t;
   type vec_t is record
@@ -74,7 +75,7 @@ package body tok_loop_tb_pkg is
             read(l, n); v.cs(cur).max_new := n;
             read(l, n); v.cs(cur).stop := n;
             read(l, n); v.cs(cur).n_ids := n;
-            read(l, n); v.cs(cur).pair := (n = 1);
+            read(l, n); v.cs(cur).pair := (n = 1); v.cs(cur).gather := (n = 2);
             v.cs(cur).op0 := v.n_ops; v.cs(cur).op1 := v.n_ops;
           when 'P' =>
             v.cs(cur).p0 := v.n_ints;

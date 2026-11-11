@@ -125,7 +125,7 @@ begin
     wait until rising_edge(clk);
     rd(TL_ID, d); chk(d = TL_ID_MAGIC, "ID reads TLP1");
     for k in 0 to V.n_cases - 1 loop
-      next when V.cs(k).pair;
+      next when V.cs(k).pair or V.cs(k).gather;
       ncase := ncase + 1;
       case_sel <= k; arm <= '1'; wait until rising_edge(clk); arm <= '0';
       wr(TL_PROMPT_LEN, u32(V.cs(k).plen));

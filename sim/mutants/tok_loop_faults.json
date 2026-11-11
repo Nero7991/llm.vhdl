@@ -1,0 +1,29 @@
+{
+  "tb": "tb_tok_loop_faults",
+  "deps": ["sim/axil_bfm_pkg.vhd", "rtl/tok_loop_pkg.vhd", "sim/tok_loop_tb_pkg.vhd",
+           "rtl/tok_loop_regs.vhd", "rtl/tok_loop_axm.vhd", "rtl/tok_loop_fsm.vhd", "rtl/jc_seam_mux.vhd",
+           "rtl/embed_gather.vhd", "rtl/jc_loader_pkg.vhd", "rtl/jc_link_pkg.vhd", "rtl/jc_link_tx.vhd",
+           "rtl/jc_link_rx.vhd", "rtl/tok_loop.vhd", "sim/seam_beh_model.vhd", "sim/tb_tok_loop_faults.vhd"],
+  "stop_time": "2000ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "K1", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "credit gate removed (plan D3): A overwrites a frame B has not consumed",
+     "old": "elsif cfg.link_credit >= p then",
+     "new": "elsif true then"},
+    {"tag": "K8", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "ROLE latched live instead of at START (Review Focus 1)",
+     "old": "if role_l = ROLE_A then fs <= F_XW; else fs <= F_GEN; end if;",
+     "new": "if cfg.role = ROLE_A then fs <= F_XW; else fs <= F_GEN; end if;"},
+    {"tag": "K9", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "OUT_FULL ignored: ids overwrite unread ring slots (Review Focus 3)",
+     "old": "            if n_gen - cfg.out_ack >= OUT_DEPTH then\n              if abort_l",
+     "new": "            if false then\n              if abort_l"},
+    {"tag": "P1", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "SEQ_RESET_FAIL via TOK_POS/SEQ_POS latches nothing (parked finding 1, F7)", "old": "err_status <= tp_r; err_info <= rd_r; stop(R_SEQ_RESET_FAIL);", "new": "stop(R_SEQ_RESET_FAIL);"},
+    {"tag": "P1S", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "TOK_POS and SEQ_POS latched into the wrong registers (parked finding 1, F7)", "old": "err_status <= tp_r; err_info <= rd_r; stop(R_SEQ_RESET_FAIL);", "new": "err_status <= rd_r; err_info <= tp_r; stop(R_SEQ_RESET_FAIL);"},
+    {"tag": "P2", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "no ABORT exit in F_TAKE: a run waiting for the seam cannot be aborted (parked finding 2, F17)", "old": "            elsif abort_l = '1' then stop(R_ABORT);\n            end if;\n          when F_TXN =>", "new": "            end if;\n          when F_TXN =>"},
+    {"tag": "P3", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "no ABORT exit in F_DATA: a source stalled mid-row hangs the loop (parked finding 2, F20)", "old": "            elsif abort_l = '1' then stop(R_ABORT);\n            elsif rs_m_valid = '1' then", "new": "            elsif rs_m_valid = '1' then"},
+    {"tag": "P4", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "no rs_err exit in F_DATA: a source failing mid-row hangs the loop (parked finding 2, F21)", "old": "            if rs_err = '1' then stop(R_GATHER_ERR);\n            elsif abort_l = '1' then stop(R_ABORT);\n            elsif rs_m_valid", "new": "            if abort_l = '1' then stop(R_ABORT);\n            elsif rs_m_valid"},
+    {"tag": "P5", "expect": "KILLED", "file": "rtl/tok_loop_regs.vhd", "why": "OUT_ACK past N_GEN not clamped: n_gen - out_ack wraps and the loop stalls OUT_FULL (parked finding 3, F18)", "old": "if unsigned(d) > st.n_gen then c.out_ack <= st.n_gen; else c.out_ack <= unsigned(d); end if;", "new": "c.out_ack <= unsigned(d);"}
+  ]
+}

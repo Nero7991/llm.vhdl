@@ -76,6 +76,11 @@ EXEMPT = {
         'seq_opdec: selects a decode rule, no loop bound, no array bound.',
     'STRICT_PROTO':
         'seq_desc_fetch: adds protocol asserts, no loop bound, no array bound.',
+    'HAS_GATHER':
+        'jc_tok_top/tok_loop/tok_loop_fsm (plan 2026-11-04 Task 6): the false arm drops the '
+        'embed_gather instance and ties the read-only HBM master idle; in the FSM it only adds '
+        'a BAD_CONFIG condition. No loop bound, no array bound. The card builds the true arm; '
+        'false is the pair bench only.',
 }
 
 # Arms whose non-default value IS bound by a `sim/ooc_*.tcl` or `*_run.sh`

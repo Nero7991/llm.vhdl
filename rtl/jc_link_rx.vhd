@@ -7,6 +7,10 @@
 -- the channel returns, so its tail must not parse as a header. If the link fell between
 -- frames this also eats the next frame; die B stays paused and the host's RESEND recovers it
 -- (spec 3). The next good frame clears both flags.
+-- The slot store has DEPTH + 1 slots for DEPTH frames: an incoming payload always lands in
+-- the one slot no committed frame holds, and whether the frame fits is decided at commit
+-- (occupancy then, net of a pop that cycle), so a pop during the frame frees room for it
+-- (Task 4 review finding, folded into Task 6).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -36,23 +40,24 @@ architecture rtl of jc_link_rx is
   constant HB  : natural := LK_HDR_WORDS / W;
   constant PB  : natural := PW / W;
   constant CHK : natural range 0 to 0 := (LK_HDR_WORDS mod W) + (PW mod W);
-  type ram_t is array (0 to DEPTH * PB - 1) of std_logic_vector(32*W-1 downto 0);
+  constant NSLOT : natural := DEPTH + 1;   -- one spare: the slot an arriving payload fills
+  type ram_t is array (0 to NSLOT * PB - 1) of std_logic_vector(32*W-1 downto 0);
   type hdr_t is array (0 to LK_HDR_WORDS - 1) of std_logic_vector(31 downto 0);
-  type u32_arr is array (0 to DEPTH - 1) of unsigned(31 downto 0);
-  type s32_arr is array (0 to DEPTH - 1) of std_logic_vector(31 downto 0);
+  type u32_arr is array (0 to NSLOT - 1) of unsigned(31 downto 0);
+  type s32_arr is array (0 to NSLOT - 1) of std_logic_vector(31 downto 0);
   type rs_t is (R_HDR, R_PAY, R_CRC, R_DISC);
   signal ram : ram_t;
   signal rs : rs_t := R_HDR;
   signal hdr : hdr_t := (others => (others => '0'));
   signal crc : std_logic_vector(31 downto 0) := LK_CRC_INIT;
   signal bi : natural range 0 to HB + PB := 0;
-  signal wslot, hslot : natural range 0 to DEPTH - 1 := 0;
+  signal wslot, hslot : natural range 0 to NSLOT - 1 := 0;
   signal occ : natural range 0 to DEPTH := 0;
   signal spos : u32_arr := (others => (others => '0'));
   signal sexp : s32_arr := (others => (others => '0'));
   signal exp_seq, exp_pos : unsigned(31 downto 0) := (others => '0');
   signal c_good, c_crc, c_sp, c_down, c_ovr, c_cons : unsigned(31 downto 0) := (others => '0');
-  signal bad_r, down_r, up_d, store : std_logic := '0';
+  signal bad_r, down_r, up_d : std_logic := '0';
   signal rq : std_logic_vector(32*W-1 downto 0) := (others => '0');
   signal rsel : natural range 0 to W - 1 := 0;
 begin
@@ -97,12 +102,12 @@ begin
               if s_tlast = '1' then
                 c_crc <= c_crc + 1; bad_r <= '1'; restart;
               elsif bi = HB - 1 then
-                rs <= R_PAY; bi <= bi + 1; store <= '1' when occ < DEPTH else '0';
+                rs <= R_PAY; bi <= bi + 1;
               else
                 bi <= bi + 1;
               end if;
             when R_PAY =>
-              if store = '1' then ram(wslot * PB + bi - HB) <= s_tdata; end if;
+              ram(wslot * PB + bi - HB) <= s_tdata;
               crc <= lk_crc_beat(crc, s_tdata, W);
               if s_tlast = '1' then
                 c_crc <= c_crc + 1; bad_r <= '1'; restart;
@@ -121,12 +126,12 @@ begin
                   c_sp <= c_sp + 1; bad_r <= '1';
                 elsif unsigned(hdr(1)) /= exp_seq or unsigned(hdr(2)) /= exp_pos then
                   c_sp <= c_sp + 1; bad_r <= '1';
-                elsif store = '0' then
+                elsif occ = DEPTH and pop = '0' then          -- no room at commit time
                   c_ovr <= c_ovr + 1; bad_r <= '1';
                 else
                   commit := true;
                   spos(wslot) <= unsigned(hdr(2)); sexp(wslot) <= hdr(4);
-                  wslot <= (wslot + 1) mod DEPTH;
+                  wslot <= (wslot + 1) mod NSLOT;
                   exp_seq <= exp_seq + 1; exp_pos <= exp_pos + 1; c_good <= c_good + 1;
                   bad_r <= '0'; down_r <= '0';
                 end if;
@@ -139,7 +144,7 @@ begin
         occ_n := occ;
         if commit then occ_n := occ_n + 1; end if;
         if pop = '1' and occ > 0 then
-          occ_n := occ_n - 1; hslot <= (hslot + 1) mod DEPTH; c_cons <= c_cons + 1;
+          occ_n := occ_n - 1; hslot <= (hslot + 1) mod NSLOT; c_cons <= c_cons + 1;
         end if;
         occ <= occ_n;
       end if;

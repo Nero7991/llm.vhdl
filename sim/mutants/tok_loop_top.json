@@ -1,0 +1,24 @@
+{
+  "tb": "tb_tok_loop_top",
+  "deps": ["sim/axil_bfm_pkg.vhd", "rtl/tok_loop_pkg.vhd", "sim/tok_loop_tb_pkg.vhd",
+           "rtl/tok_loop_regs.vhd", "rtl/tok_loop_axm.vhd", "rtl/tok_loop_fsm.vhd", "rtl/jc_seam_mux.vhd",
+           "rtl/embed_gather.vhd", "rtl/jc_loader_pkg.vhd", "rtl/jc_link_pkg.vhd", "rtl/jc_link_tx.vhd",
+           "rtl/jc_link_rx.vhd", "rtl/tok_loop.vhd", "sim/jc_axi3_mem.vhd", "sim/seam_beh_model.vhd",
+           "sim/seam_trace_chk.vhd", "sim/tb_tok_loop_top.vhd"],
+  "vectors": ["sim/tok_loop_vec.txt", "sim/embed_gather_k4096_vec.txt"],
+  "stop_time": "4000ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "K6", "expect": "KILLED", "file": "rtl/tok_loop.vhd",
+     "why": "host row source ignores ROW_EXP",
+     "old": "h_exp <= cfg.row_exp; h_ev <= '1';",
+     "new": "h_exp <= (others => '0'); h_ev <= '1';"},
+    {"tag": "K7", "expect": "KILLED", "file": "rtl/tok_loop.vhd",
+     "why": "the gather is fed the wrong token (row-source plumbing)",
+     "old": "req => g_req, tok => rs_tok,",
+     "new": "req => g_req, tok => rs_tok + 1,"},
+    {"tag": "G1", "expect": "KILLED", "file": "sim/tb_tok_loop_top.vhd", "why": "a non-power-of-two OUT_DEPTH must not elaborate (parked Task 2 finding 4; without the guard this bench passes at 1000)", "old": "OUT_DEPTH => 1024,", "new": "OUT_DEPTH => 1000,"},
+    {"tag": "G2", "expect": "KILLED", "file": "rtl/tok_loop.vhd", "why": "START does not restart the gather: after a mid-row ABORT the next run's row request is lost", "old": "if run_start = '1' then g_dirty <= '1'; g_reqp <= '0';", "new": "if false then g_dirty <= '1'; g_reqp <= '0';"},
+    {"tag": "G3", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd", "why": "no ABORT exit in F_DATA (parked Task 2 finding 2): a mid-row ABORT completes the row and issues GO", "old": "            elsif abort_l = '1' then stop(R_ABORT);\n            elsif rs_m_valid = '1' then", "new": "            elsif rs_m_valid = '1' then"}
+  ]
+}
