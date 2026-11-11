@@ -23,6 +23,7 @@ TCL = os.path.join(HERE, "jc_card_bd.tcl")
 XDC = os.path.join(HERE, "jc_card.xdc")
 TOP = os.path.join(HERE, "jc_card_top.vhd")
 LOADER_XDC = os.path.join(REPO, "hw", "jc", "loader", "jc_loader.xdc")
+sys.path.insert(0, os.path.join(REPO, "hw", "jc", "link"))
 
 
 def _import_clean(name, path):
@@ -335,7 +336,9 @@ def test_top_ports_match_xdc():
     xp = set()
     for s in xdc_ports:
         xp.update(s.split())
-    assert ports == xp, (ports, xp)
+    # the GT serial pins and the refclk's N leg are placed by the GT / IBUFDS_GTE4 site
+    gt_free = {n for n, _, _ in G.GT_TOP_PORTS if n != "gt_refclk_clk_p"}
+    assert ports - gt_free == xp, (ports, xp)
 
 
 # ---- GENSTAMP -----------------------------------------------------------------------
@@ -373,6 +376,15 @@ def _bd_ports(tcl_text):
     """{name: 'in'|'out'} for every BD external port the tcl creates."""
     ports = dict(SYSCLK_INTF_PORTS)
     assert "make_bd_intf_pins_external [get_bd_intf_pins sysclk_buf/CLK_IN_D]" in tcl_text
+    # the Aurora GT interfaces made external and renamed: <port>_<member> in the wrapper
+    # (the BD-only build reads the wrapper back against GT_TOP_PORTS, build_card.tcl)
+    for intf, port, members in (("GT_DIFF_REFCLK1", "gt_refclk", ("clk_p", "clk_n")),
+                                ("GT_SERIAL_TX", "gt_tx", ("txp", "txn")),
+                                ("GT_SERIAL_RX", "gt_rx", ("rxp", "rxn"))):
+        assert "make_bd_intf_pins_external [get_bd_intf_pins %s/%s]" % (G.AUR_CELL, intf) in tcl_text
+        assert "set_property name %s [get_bd_intf_ports %s_0]" % (port, intf) in tcl_text
+        for m in members:
+            ports["%s_%s" % (port, m)] = dict((n, d) for n, d, _ in G.GT_TOP_PORTS)["%s_%s" % (port, m)]
     for d, n in re.findall(r"^create_bd_port -dir ([IO]) (\w+)\s*$", tcl_text, re.M):
         assert n not in ports, "BD port %s created twice" % n
         ports[n] = "in" if d == "I" else "out"
@@ -482,3 +494,122 @@ def test_populate_reads_git_not_working_tree():
     assert got != _read(os.path.join(HERE, "gen_jc_card.py"))
     assert os.path.isfile(os.path.join(scratch, "sim", "check_bd_ports.py"))
     assert not os.path.exists(os.path.join(scratch, "hw", "fk33", "results"))
+
+
+# ---- the token loop and the link (plan 2026-11-04 Task 7) -------------------------------
+def test_link_cells(tcl):
+    for kind, ref, cell in (("module -reference", G.TOK_MODULE, G.TOK_CELL),
+                            ("module -reference", G.GTG_MODULE, G.GTG_CELL),
+                            ("ip -vlnv", G.AUR_VLNV, G.AUR_CELL)):
+        n = len(re.findall(r"^create_bd_cell -type %s %s %s$" % (kind, re.escape(ref), cell), tcl, re.M))
+        assert n == 1, (ref, cell, n)
+
+
+def test_seam_sits_behind_the_loop(tcl):
+    flat = [set(n) for n in _intf_nets(tcl)]
+    assert {"%s/m_seam" % G.TOK_CELL, "%s/s_axi" % P.SEAM_CELL} in flat
+    assert not any("%s/s_axi" % P.SEAM_CELL in n and any(e.startswith("axil2eng/") for e in n) for n in flat)
+    assert any("%s/s_host" % G.TOK_CELL in n and any(e.startswith("axil2eng/") for e in n) for n in flat)
+
+
+def test_loop_ctl_and_hbm_ports(tcl):
+    flat = [set(n) for n in _intf_nets(tcl)]
+    assert {"%s/m_hbm" % G.TOK_CELL, "%s/S02_AXI" % G.HBM_SC_CELL} in flat
+    assert {"%s/s_ctl" % G.TOK_CELL, "axil2eng/M%02d_AXI" % G.TOK_CTL_MI} in flat
+    assert re.search(r"CONFIG\.NUM_SI \{3\} CONFIG\.NUM_MI \{1\} CONFIG\.NUM_CLKS \{1\}\] \[get_bd_cells %s\]"
+                     % G.HBM_SC_CELL, tcl)
+    assert {"%s/m_axis_tx" % G.TOK_CELL, "%s/USER_DATA_S_AXIS_TX" % G.AUR_CELL} in flat
+    assert {"%s/USER_DATA_M_AXIS_RX" % G.AUR_CELL, "%s/s_axis_rx" % G.TOK_CELL} in flat
+
+
+def test_loop_address_map(tcl):
+    assert re.search(r"assign_bd_address -offset 0x0000E000 -range 4K .*\{%s/s_host/reg0\}" % G.TOK_CELL, tcl)
+    assert re.search(r"assign_bd_address -offset 0x00020000 -range 64K .*\{%s/s_ctl/reg0\}" % G.TOK_CELL, tcl)
+    assert re.search(r"get_bd_addr_spaces %s/m_seam\] \[get_bd_addr_segs \{%s/s_axi/reg0\}\]"
+                     % (G.TOK_CELL, P.SEAM_CELL), tcl)
+    assert "%s/m_hbm 16" % G.TOK_CELL in tcl
+    for sp, n in (("%s/%s" % (G.CTL_CELL, G.CTL_AXIL_INTF), 4), ("%s/m_hbm" % G.TOK_CELL, 32),
+                  ("%s/m_seam" % G.TOK_CELL, 1)):
+        assert "%s %d" % (sp, n) in tcl, (sp, n)
+
+
+def test_every_aurora_input_is_driven(tcl):
+    import aurora_ties as T
+    flat = _nets(tcl)
+    intf = {"s_axi_tx_tdata", "s_axi_tx_tkeep", "s_axi_tx_tlast", "s_axi_tx_tvalid",
+            "gt_refclk1_p", "gt_refclk1_n", "rxp", "rxn"}       # through BD interfaces
+    seen = 0
+    for name, d, w in G.aurora_core_ports():
+        if d != "in":
+            continue
+        seen += 1
+        if name in intf:
+            continue
+        net = _net_of(flat, "%s/%s" % (G.AUR_CELL, name))
+        if name in T.MAPPED:
+            assert len(net) >= 2, name          # a real net, from tok or gtgclk
+            continue
+        v = T.tie_value(name, w or 1, G.LINK_NLANES)
+        assert v is not None, name
+        cell = "tie_%s" % name
+        m = re.search(r"CONFIG.CONST_WIDTH \{%d\} CONFIG.CONST_VAL \{0x([0-9A-F]+)\}\] \[get_bd_cells %s\]"
+                      % (w or 1, cell), tcl)
+        assert m and int(m.group(1), 16) == int(v, 2), (name, v)
+        assert "%s/dout" % cell in net, name
+    assert seen > 30, seen
+
+
+def test_aurora_resets_and_init_clk(tcl):
+    """Task 5 rulings: TX/RX_Simplex has tx_reset_pb and rx_reset_pb, both from aur_reset_pb;
+    init_clk of the core and of tok's init domain is jc_gtg_clk's init_clk, not sclk."""
+    flat = _nets(tcl)
+    rpb = _net_of(flat, "%s/aur_reset_pb" % G.TOK_CELL)
+    assert {"%s/tx_reset_pb" % G.AUR_CELL, "%s/rx_reset_pb" % G.AUR_CELL} <= rpb
+    ic = _net_of(flat, "%s/init_clk" % G.GTG_CELL)
+    assert {"%s/init_clk" % G.AUR_CELL, "%s/init_clk" % G.TOK_CELL} <= ic
+    assert not _net_of(flat, "%s/sclk" % G.GTG_CELL) & {"%s/init_clk" % G.AUR_CELL}
+    assert "CONFIG.INIT_DIV [jc_init_div 10.3125]" in tcl
+
+
+def test_diffctrl_is_the_measured_swing(tcl):
+    m = re.search(r"CONFIG.CONST_VAL \{0x([0-9A-F]+)\}\] \[get_bd_cells tie_gt_txdiffctrl\]", tcl)
+    assert m and int(m.group(1), 16) == 0b11000
+
+
+def test_module_ref_count_includes_link(tcl):
+    assert "if {$_nmr != %d}" % G.N_MODULE_REFS in tcl and G.N_MODULE_REFS == 8
+
+
+def test_link_stamp_and_refusals():
+    assert G.link_refclk({}) == "gtg" and G.link_rate({}) == "10.3125"
+    with pytest.raises(SystemExit):
+        G.link_refclk({"JC_LINK_REFCLK": "mmcm"})
+    for bad in ("5.0", "1.25"):          # 1.25: Task 5 ruling, not wired into the card
+        with pytest.raises(SystemExit):
+            G.link_rate({"JC_LINK_RATE": bad})
+    with pytest.raises(SystemExit):
+        G.stamp_inputs({"JC_LINK_RATE": "1.25"})
+    names = {n for _, n, _ in G.stamp_inputs({})}
+    assert {"JC_LINK_REFCLK", "JC_LINK_RATE"} <= names
+
+
+def test_gt_ports_in_top_and_refclk_pin():
+    top = _strip_vhdl_comments(_read(TOP))
+    for n, d, w in G.GT_TOP_PORTS:
+        want = r"%s\s*:\s*%s\s+std_logic%s" % (n, d, r"_vector\(0 downto 0\)" if w else r"\b")
+        assert len(re.findall(want, top)) == 2, n          # entity and component
+    xdc = _read(XDC)
+    assert G.refclk_pins() == ["AK38", "AK39"]
+    assert re.search(r"^set_property PACKAGE_PIN AK38 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
+    assert re.search(r"^create_clock -name gt_refclk -period 6.400 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
+
+
+def test_gtg_mmcm_has_a_site_and_a_dedicated_route():
+    """finding 3 with the Task 5 ruling's pattern: in a BD the module reference sits under
+    `inst`, so *gtgclk/u_mmcm matches nothing; *gtgclk/*u_mmcm matches one. BACKBONE on the
+    BUFG -> MMCM net (IBERT G's form)."""
+    xdc = _read(XDC)
+    assert re.search(r"^set_property LOC MMCM_X0Y2 \[get_cells -hier -filter "
+                     r"\{NAME =~ \*gtgclk/\*u_mmcm\}\]$", xdc, re.M)
+    assert re.search(r"^set_property CLOCK_DEDICATED_ROUTE BACKBONE \[get_nets -of_objects \[get_pins -hier "
+                     r"-filter \{NAME =~ \*gtgclk/\*u_mmcm/CLKIN1\}\]\]$", xdc, re.M)

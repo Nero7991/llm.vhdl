@@ -4,7 +4,7 @@
  *   jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B]
  *                 [--fail-rd DIE:OFF:NTH:MODE[:TIMES]]
  *                 [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]
- *                 [--trace FILE]
+ *                 [--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
  * sends: rd32, wr32, wrn with "fix":true, rdn, memrd) on a Unix socket.  Each die
@@ -52,6 +52,16 @@
  * --trace FILE: one line per register value, `W|R <die> 0x<off> 0x<val>`; wrn
  * and rdn items one line each.
  *
+ * THE LOOP MODEL (--loop, plan 2026-11-04 Task 7).  Every die gets a C model of
+ * rtl/tok_loop.vhd's host-visible behaviour (tests/jc_sim_loop.c) at 0x20000..0x2FFFF:
+ * rd32/wr32/wrn there go to the model, which drives that die's simulated seam itself
+ * with tok_loop_fsm's write sequence; while it owns the seam, a host access to
+ * 0xE000..0xEFFF is refused (SLVERR), as jc_seam_mux refuses it.  Every model runs
+ * until blocked after each loop access and each wrn.  --loop-pair A,B sends A's
+ * frames (its R_X row and exponent per position) to B; --loop-drop N corrupts A's
+ * Nth frame (B counts a CRC fail and pauses until A's RESEND).  Not an oracle for the
+ * RTL (the GHDL benches are): it lets tools/jc/jc_loop.py be tested without hardware.
+ *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
  * exits on SIGTERM/SIGINT.  NO HARDWARE: no /dev, no coe.py, no BMC.
@@ -69,10 +79,12 @@
 
 #include "../fk33_transport.h"
 #include "../fk33_seam.h"
+#include "jc_sim_loop.h"
 
 #define MAX_DIES 4
 
 static fk33_transport *g_t[MAX_DIES];
+static jc_loop *g_loop[MAX_DIES];    /* --loop: a C model of tok_loop at 0x20000 per die */
 static char g_name[MAX_DIES][16];
 static int g_ndies;
 static FILE *g_log;
@@ -143,6 +155,31 @@ static void handle(int fd, const char *line)
         fprintf(g_log, "? refused %s\n", line);
         return;
     }
+    if (g_loop[d]) {
+        unsigned long long o = 0, vv = 0;
+        int is_rd = has_op(line, "rd32"), is_wr = has_op(line, "wr32"), k;
+        if ((is_rd || is_wr) && !get_num(line, "off", &o) && o >= JC_LOOP_BASE && o < JC_LOOP_BASE + JC_LOOP_SPAN) {
+            uint32_t v = 0;
+            if (is_rd) {
+                jc_loop_rd(g_loop[d], (uint32_t)(o - JC_LOOP_BASE), &v);
+                snprintf(buf, sizeof buf, "{\"ok\":true,\"val\":%u}\n", v);
+            } else {
+                get_num(line, "val", &vv);
+                jc_loop_wr(g_loop[d], (uint32_t)(o - JC_LOOP_BASE), (uint32_t)vv);
+                snprintf(buf, sizeof buf, "{\"ok\":true}\n");
+            }
+            fprintf(g_log, "%s loop %s 0x%llx\n", g_name[d], is_rd ? "rd32" : "wr32", o);
+            for (k = 0; k < g_ndies; k++) if (g_loop[k]) jc_loop_tick(g_loop[k]);
+            for (k = 0; k < g_ndies; k++) if (g_loop[k]) jc_loop_tick(g_loop[k]);
+            reply(fd, buf); fflush(g_log); return;
+        }
+        if (jc_loop_owns_seam(g_loop[d]) && !get_num(line, "off", &o) && o >= 0xE000 && o < 0xF000) {
+            fprintf(g_log, "%s refused seam 0x%llx (loop owns it)\n", g_name[d], o);
+            reply(fd, "{\"ok\":false,\"err\":\"AxiError: SLVERR (tok_loop owns the seam)\"}\n");
+            fflush(g_log);
+            return;
+        }
+    }
     if (has_op(line, "rd32") && !get_num(line, "off", &off)) {
         uint32_t v = 0;
         int rc;
@@ -180,13 +217,16 @@ static void handle(int fd, const char *line)
             char *end;
             unsigned long long v = strtoull(p, &end, 10);
             if (end == p) { rc = -1; break; }
-            if (!rc) rc = g_t[d]->reg_write32(g_t[d]->ctx, (uint32_t)off, (uint32_t)v);
+            if (!rc) rc = (g_loop[d] && off >= JC_LOOP_BASE && off < JC_LOOP_BASE + JC_LOOP_SPAN)
+                          ? jc_loop_wr(g_loop[d], (uint32_t)(off - JC_LOOP_BASE), (uint32_t)v)
+                          : g_t[d]->reg_write32(g_t[d]->ctx, (uint32_t)off, (uint32_t)v);
             if (g_trace) fprintf(g_trace, "W %s 0x%llx 0x%llx\n", g_name[d], off, v);
             cnt++;
             p = end;
             if (*p == ',') p++;
         }
         fprintf(g_log, "%s wrn 0x%llx %lu\n", g_name[d], off, cnt);
+        { int k; for (k = 0; k < g_ndies; k++) if (g_loop[k]) jc_loop_tick(g_loop[k]); }
         reply(fd, rc ? "{\"ok\":false,\"err\":\"AxiError: sim wrn\"}\n" : "{\"ok\":true}\n");
     } else if (has_op(line, "rdn") && !get_num(line, "off", &off) && !get_num(line, "n", &n)) {
         int fix = strstr(line, "\"fix\":true") != NULL;
@@ -278,13 +318,23 @@ int main(int argc, char **argv)
     struct sockaddr_un a;
     struct sigaction sa;
     int ls, i;
+    int loop_on = 0;
+    const char *loop_pair = NULL;
+    unsigned long loop_drop = 0;
     if (argc < 3) {
         fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B] "
                 "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]] "
-                "[--trace FILE]\n");
+                "[--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]]\n");
         return 2;
     }
     sock = argv[1]; logp = argv[2];
+    /* --loop takes no value; the option loop below reads pairs, so take it out first */
+    for (i = 3; i < argc; i++)
+        if (!strcmp(argv[i], "--loop")) {
+            loop_on = 1;
+            memmove(&argv[i], &argv[i + 1], (size_t)(argc - i - 1) * sizeof *argv);
+            argc--; i--;
+        }
     for (i = 3; i + 1 < argc; i += 2) {
         if (!strcmp(argv[i], "--kv-maxpos")) kv_maxpos = strtoul(argv[i + 1], NULL, 10);
         else if (!strcmp(argv[i], "--dies")) dies = argv[i + 1];
@@ -315,6 +365,8 @@ int main(int argc, char **argv)
             g_trace = fopen(argv[i + 1], "w");
             if (!g_trace) { perror(argv[i + 1]); return 2; }
         }
+        else if (!strcmp(argv[i], "--loop-pair")) loop_pair = argv[i + 1];
+        else if (!strcmp(argv[i], "--loop-drop")) loop_drop = strtoul(argv[i + 1], NULL, 10);
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }
     {
@@ -331,6 +383,34 @@ int main(int argc, char **argv)
             g_t[g_ndies] = fk33_transport_open_sim(&o);
             if (!g_t[g_ndies]) { fprintf(stderr, "jc_sim_broker: sim open failed\n"); return 1; }
             g_ndies++;
+        }
+    }
+    if ((loop_pair || loop_drop) && !loop_on) {
+        fprintf(stderr, "jc_sim_broker: --loop-pair/--loop-drop need --loop\n"); return 2;
+    }
+    if (loop_drop && !loop_pair) {
+        fprintf(stderr, "jc_sim_broker: --loop-drop needs --loop-pair\n"); return 2;
+    }
+    if (loop_on) {
+        for (i = 0; i < g_ndies; i++) {
+            g_loop[i] = jc_loop_new(g_t[i], 4096);   /* fk33_sim.c:183 n_embd */
+            if (!g_loop[i]) { fprintf(stderr, "jc_sim_broker: loop model alloc failed\n"); return 1; }
+        }
+        if (loop_pair) {
+            char pa[16] = "", pb[16] = "";
+            int ia = -1, ib = -1, k;
+            if (sscanf(loop_pair, "%15[^,],%15s", pa, pb) != 2) {
+                fprintf(stderr, "jc_sim_broker: --loop-pair A,B\n"); return 2;
+            }
+            for (k = 0; k < g_ndies; k++) {
+                if (!strcmp(g_name[k], pa)) ia = k;
+                if (!strcmp(g_name[k], pb)) ib = k;
+            }
+            if (ia < 0 || ib < 0 || ia == ib) {
+                fprintf(stderr, "jc_sim_broker: --loop-pair names an unknown die\n"); return 2;
+            }
+            jc_loop_pair(g_loop[ia], g_loop[ib]);
+            if (loop_drop) jc_loop_drop(g_loop[ia], loop_drop);
         }
     }
     g_log = fopen(logp, "w");

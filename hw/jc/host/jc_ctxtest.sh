@@ -51,6 +51,11 @@
 #   JC_NO_REZERO=1       run no JC_PREP at all (the GDN state carries over between runs)
 #   RUN_PROMPT           default <repo>/server/run_prompt
 #   REPEATS (2), TESTS ("input output")
+#   JC_LOOP=1            run the generation on the fabric loop (plan 2026-11-04 Task 7):
+#                        run_prompt --open-only streams the programs (its ids go to
+#                        <tag>.open.ids), then tools/jc/jc_loop.py drives the run from the same
+#                        prompt, embedding (JC_EMBED) and dies; the GO count is jc_loop.py's
+#                        `timing` line, and the run also needs ^JCLOOP_DONE in its output.
 #
 # Sentinels, line-anchored: ^CTXTEST_RUN, ^CTXTEST_PASS, ^CTXTEST_FAIL.  --dry-run prints
 # every command prefixed `DRYRUN ` and creates nothing; it never prints a sentinel.
@@ -193,8 +198,16 @@ rp_cmd() {
   if [[ $MODE == pair ]]; then RP+=(--dtbl2 "${RUNS[1]}/token.dtbl" --rel2 "${RUNS[1]}/token.rel"); fi
   RP+=(--manifest "${MANS[0]}")
   if [[ $MODE == pair ]]; then RP+=(--manifest2 "${MANS[1]}"); fi
-  RP+=(--prompt "$OUT/prompt_$1.txt" --qtk "$QTK" --stream --max-new "$2" --mv4i "$EMB" --quiet
-       --stop -1 --ids-out "$OUT/$3.ids")
+  if [[ ${JC_LOOP:-0} == 1 ]]; then
+    RP+=(--prompt "$OUT/prompt_$1.txt" --qtk "$QTK" --stream --max-new "$2" --mv4i "$EMB" --quiet
+         --stop -1 --ids-out "$OUT/$3.open.ids" --open-only)
+    LP=(python3 "$REPO/tools/jc/jc_loop.py" --sock "$SOCK" --die "${DIE[0]}")
+    if [[ $MODE == pair ]]; then LP+=(--die2 "${DIE[1]}"); fi
+    LP+=(--prompt "$OUT/prompt_$1.txt" --max-new "$2" --stop -1 --mv4i "$EMB" --ids-out "$OUT/$3.ids")
+  else
+    RP+=(--prompt "$OUT/prompt_$1.txt" --qtk "$QTK" --stream --max-new "$2" --mv4i "$EMB" --quiet
+         --stop -1 --ids-out "$OUT/$3.ids")
+  fi
 }
 
 fail=0
@@ -213,6 +226,11 @@ for T in $TESTS; do
     rp_cmd "$T" "$MAXNEW" "$tag"
     ex "$OUT/$tag.out" "$OUT/$tag.err" "${RP[@]}"
     rc=$?
+    if [[ ${JC_LOOP:-0} == 1 && $rc -eq 0 ]]; then
+      ex "$OUT/$tag.loop.out" "$OUT/$tag.loop.err" "${LP[@]}"; rc=$?
+      [[ $DRY == 1 ]] || cat "$OUT/$tag.loop.out" >> "$OUT/$tag.out"
+      [[ $DRY == 1 ]] || grep -qE '^JCLOOP_DONE' "$OUT/$tag.loop.out" || rc=1
+    fi
     seams "$tag"; serr=$?
     [[ $DRY == 1 ]] && continue
     gos=$(sed -n 's/^timing *\([0-9]*\) GOs.*/\1/p' "$OUT/$tag.out" | tail -1)

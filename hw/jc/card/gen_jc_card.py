@@ -30,6 +30,16 @@ WHAT IS IN THE BD
     ctl (jc_ctl_core)            the USER3 control core: AXI-Lite master -> axil2eng
                                  (engine control 0x12000, activation writer 0x13000,
                                  seam 0xE000); AXI4 read-only master -> hbm_sc
+    tok (jc_tok_top)             the on-fabric token loop (plan 2026-11-04 Task 7):
+                                 s_host <- axil2eng at 0xE000 (the host's seam window;
+                                 the seam sits BEHIND it on tok/m_seam), s_ctl <- axil2eng
+                                 at 0x20000 (64K, the loop's registers), m_hbm -> hbm_sc
+                                 S02 (the embedding gather), m_axis_tx/s_axis_rx <-> aur
+    gtgclk (jc_gtg_clk)          156.25 MHz for the QPLL's GTGREFCLK (through the netlist
+                                 ECO, build_card.tcl) and init_clk 1250/INIT_DIV MHz
+    aur (Aurora 64B66B, IP)      1 lane, TX/RX simplex, 10.3125 Gb/s, GTYE4_CHANNEL_X0Y0;
+                                 every input not driven by tok/gtgclk is tied from
+                                 hw/jc/link/aurora_ties.py (tie_<port> xlconstant cells)
 No XDMA, no PCIe, no aux domain, no SYSMON, no thermal guard (see THERMAL below).
 
 THE CARD WIRING IS gen_pcieep.py's, BY IMPORT
@@ -71,7 +81,10 @@ gen_pcieep.model_pkg_text() (gen_pcieep.py's own writer for it) and committed; t
 Tcl adds it to the project, refuses rtl/model_cfg_pkg.vhd, and reads back the card's
 hr_addr/hw_addr width (HADDR_W 15, the 27B wrapper's) and the seam's REGMAX/HADDR_W.
 
-INPUTS.  One: JC_CLK_CORE_MHZ (integer MHz, 50..250, default 200), stamped.  The
+INPUTS.  Three, stamped: JC_CLK_CORE_MHZ (integer MHz, 50..250, default 200);
+JC_LINK_RATE (10.3125 only: the 1.25 Gb/s core has no GTYE4_COMMON for the gtg ECO and
+its quad has no board refclk, Task 5 ruling); JC_LINK_REFCLK (gtg, default, or pin:
+build_card.tcl reads it from this GENSTAMP to decide the ECO).  The
 FK33_* values are pinned in this file, not read; a caller environment that sets one
 of them to a DIFFERENT value is refused rather than silently overridden.
 
@@ -122,7 +135,11 @@ def clk_core_mhz(env=None):
 
 def stamp_inputs(env=None):
     env = os.environ if env is None else env
-    return [("env", CLK_CORE_ENV, env.get(CLK_CORE_ENV) or None)]
+    link_rate(env)
+    link_refclk(env)
+    return [("env", CLK_CORE_ENV, env.get(CLK_CORE_ENV) or None),
+            ("env", LINK_RATE_ENV, env.get(LINK_RATE_ENV) or None),
+            ("env", LINK_REFCLK_ENV, env.get(LINK_REFCLK_ENV) or None)]
 
 
 def stamp_block(comment, env=None):
@@ -230,7 +247,249 @@ TOP_PORTS = [("sysclk_clk_p", "in"), ("sysclk_clk_n", "in"), ("fan_ctl", "out"),
              ("LED_A", "out"), ("LED_B", "out"), ("LED_C", "out"), ("LED_D", "out")]
 LOADER_PINS = [("fan_ctl", "fan_ctl"), ("led_a", "LED_A"), ("led_b", "LED_B"),
                ("led_c", "LED_C"), ("led_d", "LED_D")]
-N_MODULE_REFS = 6     # loader, ctl, eng, fk33_seam_0, card, bcgrant
+N_MODULE_REFS = 8     # loader, ctl, eng, fk33_seam_0, card, bcgrant, tok, gtgclk
+
+# ==== the token loop and the die-to-die link (plan 2026-11-04 Task 7) ===================
+TOK_MODULE, TOK_CELL = "jc_tok_top", "tok"
+GTG_MODULE, GTG_CELL = "jc_gtg_clk", "gtgclk"
+AUR_VLNV, AUR_CELL = "xilinx.com:ip:aurora_64b66b:12.0", "aur"
+TOK_CTL_BASE = 0x00020000
+TOK_N_EMBD = 5120                                 # the 27B model's embedding width
+LINK_NLANES = 1                                   # spec 1b.2: first build, GTYE4_CHANNEL_X0Y0
+LINK_RATE_ENV, LINK_REFCLK_ENV = "JC_LINK_RATE", "JC_LINK_REFCLK"
+AURORA_CFG = os.path.join(REPO, "hw", "jc", "link", "aurora_cfg.tcl")
+AUR_WRAP = os.path.join(REPO, "hw", "jc", "link", "rtl", "jc_aurora_wrap_l1.vhd")
+GT_TOP_PORTS = [("gt_tx_txp", "out", 1), ("gt_tx_txn", "out", 1),
+                ("gt_rx_rxp", "in", 1), ("gt_rx_rxn", "in", 1),
+                ("gt_refclk_clk_p", "in", None), ("gt_refclk_clk_n", "in", None)]
+# The MMCM site and its input net (IBERT G's; Task 5 ruling: in a BD the module reference
+# sits under `inst`, so the plan's *gtgclk/u_mmcm matches nothing; *gtgclk/*u_mmcm matches one).
+GTG_MMCM_LOC = "MMCM_X0Y2"
+GTG_MMCM_PAT = "*%s/*u_mmcm" % GTG_CELL
+sys.path.insert(0, os.path.join(REPO, "hw", "jc", "link"))
+import aurora_ties  # noqa: E402
+
+
+def refclk_pins():
+    """[P, N] package pins of the Aurora core's nominal refclk, read from aurora_cfg.tcl's
+    JC_REFCLK_PINS (Task 5 ruling: MGTREFCLK0 of quad X0Y0, AK38/AK39, UNDRIVEN on the board;
+    the gtg ECO moves the QPLL to GTGREFCLK so the pin is never used). Read, not copied, so
+    the IP's pick and the XDC cannot differ."""
+    m = re.search(r"^set JC_REFCLK_PINS \{(\w+) (\w+)\}", open(AURORA_CFG).read(), re.M)
+    if not m:
+        sys.exit("ABORT: no `set JC_REFCLK_PINS {P N}` in %s" % AURORA_CFG)
+    return [m.group(1), m.group(2)]
+
+
+def link_rate(env=None):
+    """JC_LINK_RATE. Only 10.3125 is built: the 1.25 Gb/s core (l1slow) runs the CPLL with no
+    GTYE4_COMMON, so the gtg ECO cannot give it a refclk and the board drives none on that
+    quad (Task 5 ruling: the fallback is not usable on silicon as configured)."""
+    env = os.environ if env is None else env
+    v = env.get(LINK_RATE_ENV) or "10.3125"
+    if v == "1.25":
+        sys.exit("ABORT: %s=1.25: the 1.25 Gb/s core has no GTYE4_COMMON, so the gtg ECO cannot "
+                 "apply and its quad has no board refclk (Task 5 ruling); not wired into the card"
+                 % LINK_RATE_ENV)
+    if v != "10.3125":
+        sys.exit("ABORT: %s=%s; the built rate is 10.3125 (spec 1b.2)" % (LINK_RATE_ENV, v))
+    return v
+
+
+def link_refclk(env=None):
+    env = os.environ if env is None else env
+    v = env.get(LINK_REFCLK_ENV) or "gtg"
+    if v not in ("gtg", "pin"):
+        sys.exit("ABORT: %s=%s; gtg (the MMCM on GTGREFCLK, the ECO) or pin (%s, undriven on "
+                 "the Jungle Cat board)" % (LINK_REFCLK_ENV, v, refclk_pins()[0]))
+    return v
+
+
+def aurora_core_ports():
+    """[(name, dir, width or None)] of the Aurora core, from the committed wrapper's component
+    (generated from the IP's own stub by hw/jc/link/gen_aurora_wrap.py)."""
+    t = open(AUR_WRAP).read()
+    comp = t[t.index("component jc_aurora"):t.index("end component")]
+    out = []
+    for m in re.finditer(r"^\s*(\w+)\s*:\s*(in|out)\s+std_logic(?:_vector\((\d+) (?:downto|to) (\d+)\))?",
+                         comp, re.M):
+        w = None if m.group(3) is None else abs(int(m.group(3)) - int(m.group(4))) + 1
+        out.append((m.group(1), m.group(2), w))
+    if not out:
+        sys.exit("ABORT: no ports parsed from %s" % AUR_WRAP)
+    return out
+
+
+def link_lines():
+    """tok, gtgclk, aur and the ties. Emitted BEFORE the seam block, which then connects
+    axil2eng's new MI to tok/s_host instead of fk33_seam_0/s_axi (render_tcl)."""
+    rate, T = link_rate(), aurora_ties
+    L = [
+        "",
+        "# ---- the token loop (jc_tok_top) and the die-to-die link (plan 2026-11-04) ---------",
+        "source [file join $jcc_repo hw jc link aurora_cfg.tcl]",
+        "# TXPOL_MASK is the lane table's TX polarity (lane 0 MEASURED 0, aurora_cfg.tcl).",
+        "if {[jc_lane_txpol %d] ne \"0\"} {" % LINK_NLANES,
+        "  error \"JCCARD_BD FAIL: aurora_cfg.tcl lane TX polarity is [jc_lane_txpol %d], the card emits TXPOL_MASK 0\""
+        % LINK_NLANES,
+        "}",
+        "create_bd_cell -type module -reference %s %s" % (TOK_MODULE, TOK_CELL),
+        "set_property -dict [list CONFIG.N_EMBD {%d} CONFIG.NLANES {%d} CONFIG.HAS_GATHER {true} "
+        "CONFIG.TXPOL_MASK {0}] [get_bd_cells %s]" % (TOK_N_EMBD, LINK_NLANES, TOK_CELL),
+        "foreach {k v} {N_EMBD %d NLANES %d HAS_GATHER true TXPOL_MASK 0} { jcc_want %s $k $v }"
+        % (TOK_N_EMBD, LINK_NLANES, TOK_CELL),
+        "foreach i [get_bd_intf_pins -quiet %s/*] { puts \"JCCARD_BD INTF %s [file tail $i]\" }"
+        % (TOK_CELL, TOK_CELL),
+        "foreach i {s_host m_seam s_ctl m_hbm m_axis_tx s_axis_rx} {",
+        "  if {[llength [get_bd_intf_pins -quiet %s/$i]] != 1} {" % TOK_CELL,
+        "    error \"JCCARD_BD FAIL: no inferred interface %s/$i\"" % TOK_CELL,
+        "  }",
+        "}",
+    ]
+    L += [
+        "# The clock association is EXACT, not a superset: without rtl/jc_tok_top.vhd's",
+        "# X_INTERFACE_PARAMETER attributes Vivado put all six interfaces on aclk (AXIS too) and",
+        "# then refused the set (BD 41-737, read-only; MEASURED jcloop_bd1).",
+    ]
+    for clk, intfs in (("aclk", "s_host:m_seam:s_ctl:m_hbm"), ("user_clk", "m_axis_tx:s_axis_rx")):
+        L += [
+            "set _ab [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins %s/%s]]" % (TOK_CELL, clk),
+            "if {[lsort [split $_ab :]] ne [lsort [split {%s} :]]} {" % intfs,
+            "  error \"JCCARD_BD FAIL: %s/%s ASSOCIATED_BUSIF is \\\"$_ab\\\", not exactly %s\""
+            % (TOK_CELL, clk, intfs),
+            "}",
+            "puts \"JCCARD_BD %s/%s ASSOCIATED_BUSIF $_ab\"" % (TOK_CELL, clk),
+        ]
+    L += [
+        _c(CORE_CLK, "%s/aclk" % TOK_CELL),
+        "if {[get_property TYPE [get_bd_pins %s/arst]] eq \"rst\"" % TOK_CELL,
+        "    && [string toupper [get_property CONFIG.POLARITY [get_bd_pins %s/arst]]] ne \"ACTIVE_HIGH\"} {" % TOK_CELL,
+        "  set_property CONFIG.POLARITY ACTIVE_HIGH [get_bd_pins %s/arst]" % TOK_CELL,
+        "}",
+        _c(CORE_RST, "%s/arst" % TOK_CELL),
+        "connect_bd_intf_net [get_bd_intf_pins %s/m_hbm] [get_bd_intf_pins %s/S02_AXI]" % (TOK_CELL, HBM_SC_CELL),
+        "# the GTG clock (hw/jc/link/rtl/jc_gtg_clk.vhd): 156.25 MHz for the QPLL through the ECO,",
+        "# and init_clk = 1250 / INIT_DIV MHz for the Aurora core (Task 5 ruling: init_clk is",
+        "# this port, not sclk; C_INIT_CLK is set from the same jc_init_div by jc_aurora_config).",
+        "create_bd_cell -type module -reference %s %s" % (GTG_MODULE, GTG_CELL),
+        "set_property CONFIG.INIT_DIV [jc_init_div %s] [get_bd_cells %s]" % (rate, GTG_CELL),
+        "jcc_want %s INIT_DIV [jc_init_div %s]" % (GTG_CELL, rate),
+        "# the module reference's output clocks carry no FREQ_HZ of their own (IP_Flow 19-4751,",
+        "# MEASURED jcloop_bd1); stated here so the Aurora init_clk and tok/init_clk see the real rate",
+        "# (sclk is not inferred as a clock interface and has no FREQ_HZ: BD 41-1411, jcloop_bd3)",
+        "foreach {pin hz} [list init_clk [expr {1250000000 / [jc_init_div %s]}] gtg_clk 156250000] {" % rate,
+        "  set_property CONFIG.FREQ_HZ $hz [get_bd_pins %s/$pin]" % GTG_CELL,
+        "  if {[get_property CONFIG.FREQ_HZ [get_bd_pins %s/$pin]] != $hz} {" % GTG_CELL,
+        "    error \"JCCARD_BD FAIL: %s/$pin FREQ_HZ reads [get_property CONFIG.FREQ_HZ [get_bd_pins %s/$pin]], not $hz\"" % (GTG_CELL, GTG_CELL),
+        "  }",
+        "}",
+        _c("sysclk_buf/IBUF_OUT", "%s/sys_i" % GTG_CELL),
+        "create_bd_cell -type ip -vlnv %s %s" % (AUR_VLNV, AUR_CELL),
+        "set _acfg [jc_aurora_config %d %s card]" % (LINK_NLANES, rate),
+        "set_property -dict $_acfg [get_bd_cells %s]" % AUR_CELL,
+        "# after the dict: the refclk choice depends on C_UCOLUMN_USED and C_START_QUAD",
+        "jc_aurora_refclk [get_bd_cells %s]" % AUR_CELL,
+        "jc_aurora_check [get_bd_cells %s] $_acfg" % AUR_CELL,
+        "if {abs([get_property CONFIG.C_INIT_CLK [get_bd_cells %s]] - 1250.0 / [get_property CONFIG.INIT_DIV [get_bd_cells %s]]) > 0.001} {"
+        % (AUR_CELL, GTG_CELL),
+        "  error \"JCCARD_BD FAIL: %s C_INIT_CLK does not match %s INIT_DIV\"" % (AUR_CELL, GTG_CELL),
+        "}",
+        "foreach i [get_bd_intf_pins -quiet %s/*] { puts \"JCCARD_BD INTF %s [file tail $i]\" }"
+        % (AUR_CELL, AUR_CELL),
+        "make_bd_intf_pins_external [get_bd_intf_pins %s/GT_DIFF_REFCLK1]" % AUR_CELL,
+        "set_property name gt_refclk [get_bd_intf_ports GT_DIFF_REFCLK1_0]",
+        "set_property CONFIG.FREQ_HZ 156250000 [get_bd_intf_ports gt_refclk]",
+        "make_bd_intf_pins_external [get_bd_intf_pins %s/GT_SERIAL_TX]" % AUR_CELL,
+        "set_property name gt_tx [get_bd_intf_ports GT_SERIAL_TX_0]",
+        "make_bd_intf_pins_external [get_bd_intf_pins %s/GT_SERIAL_RX]" % AUR_CELL,
+        "set_property name gt_rx [get_bd_intf_ports GT_SERIAL_RX_0]",
+        "foreach p {gt_refclk gt_tx gt_rx} {",
+        "  if {[llength [get_bd_intf_ports -quiet $p]] != 1} { error \"JCCARD_BD FAIL: no BD interface port $p\" }",
+        "}",
+        "connect_bd_intf_net [get_bd_intf_pins %s/m_axis_tx] [get_bd_intf_pins %s/USER_DATA_S_AXIS_TX]" % (TOK_CELL, AUR_CELL),
+        "connect_bd_intf_net [get_bd_intf_pins %s/USER_DATA_M_AXIS_RX] [get_bd_intf_pins %s/s_axis_rx]" % (AUR_CELL, TOK_CELL),
+        _c("%s/init_clk" % GTG_CELL, "%s/init_clk" % AUR_CELL),
+        _c("%s/init_clk" % GTG_CELL, "%s/init_clk" % TOK_CELL),
+        _c("%s/user_clk_out" % AUR_CELL, "%s/user_clk" % TOK_CELL),
+        _c("%s/tx_channel_up" % AUR_CELL, "%s/tx_channel_up" % TOK_CELL),
+        _c("%s/rx_channel_up" % AUR_CELL, "%s/rx_channel_up" % TOK_CELL),
+        _c("%s/gt_pll_lock" % AUR_CELL, "%s/gt_pll_lock" % TOK_CELL),
+        _c("%s/locked" % GTG_CELL, "%s/gtg_locked" % TOK_CELL),
+        "# TX/RX_Simplex has tx_reset_pb and rx_reset_pb, no reset_pb (Task 5): one reset drives both",
+        _c("%s/aur_reset_pb" % TOK_CELL, "%s/tx_reset_pb" % AUR_CELL),
+        _c("%s/aur_reset_pb" % TOK_CELL, "%s/rx_reset_pb" % AUR_CELL),
+        _c("%s/aur_pma_init" % TOK_CELL, "%s/pma_init" % AUR_CELL),
+        _c("%s/aur_tx_polarity" % TOK_CELL, "%s/gt_txpolarity" % AUR_CELL),
+        "# Every other Aurora input, tied from hw/jc/link/aurora_ties.py.  An IP input left",
+        "# open takes component.xml's default, 0 for all of these, and validate_bd_design does",
+        "# not warn: gt_txdiffctrl = 0 is the minimum TX swing (Task 5 trap).",
+        "# The GT DRP AXI4-Lite slave (s_axi_*) exists only when drp_mode is not Disabled: the BD",
+        "# cell defaults to Disabled (MEASURED 2026-11-11, aurprobe: no s_axi_* pins), where the",
+        "# packaged IP of Task 5 refused Disabled.  Its ties are emitted for the other case.",
+        "set _drp [get_property CONFIG.drp_mode [get_bd_cells %s]]" % AUR_CELL,
+        "puts \"JCCARD_BD %s drp_mode $_drp\"" % AUR_CELL,
+    ]
+    for name, d, w in aurora_core_ports():
+        if d != "in" or name in T.MAPPED:
+            continue
+        v = T.tie_value(name, w or 1, LINK_NLANES)
+        if v is None:
+            sys.exit("ABORT: Aurora input %s is not in hw/jc/link/aurora_ties.py" % name)
+        cell = "tie_%s" % name
+        body = [
+            "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 %s" % cell,
+            "set_property -dict [list CONFIG.CONST_WIDTH {%d} CONFIG.CONST_VAL {0x%X}] [get_bd_cells %s]"
+            % (w or 1, int(v, 2), cell),
+            _c("%s/dout" % cell, "%s/%s" % (AUR_CELL, name)),
+        ]
+        if name.startswith("s_axi_"):
+            L += ["if {$_drp ne \"Disabled\"} {"] + ["  " + l for l in body] + [
+                  "} elseif {[llength [get_bd_pins -quiet %s/%s]]} {" % (AUR_CELL, name),
+                  "  error \"JCCARD_BD FAIL: %s/%s exists with drp_mode Disabled\"" % (AUR_CELL, name),
+                  "}"]
+        else:
+            L += body
+    L += [
+        "# THE ORACLE FOR THE TIES: every input pin of the Aurora cell carries a net, except the",
+        "# members of the three interfaces connected as interfaces (and those must be connected).",
+        "foreach i {GT_DIFF_REFCLK1 GT_SERIAL_RX USER_DATA_S_AXIS_TX} {",
+        "  if {[llength [get_bd_intf_nets -quiet -of_objects [get_bd_intf_pins %s/$i]]] != 1} {" % AUR_CELL,
+        "    error \"JCCARD_BD FAIL: %s/$i is not connected\"" % AUR_CELL,
+        "  }",
+        "}",
+        "set _open {}",
+        "set _nin 0",
+        "foreach p [get_bd_pins -of_objects [get_bd_cells %s] -filter {DIR == I}] {" % AUR_CELL,
+        "  incr _nin",
+        "  set n [file tail $p]",
+        "  if {[llength [get_bd_nets -quiet -of_objects $p]]} { continue }",
+        "  if {$n in {gt_refclk1_p gt_refclk1_n rxp rxn s_axi_tx_tdata s_axi_tx_tkeep s_axi_tx_tlast s_axi_tx_tvalid}} { continue }",
+        "  lappend _open $n",
+        "}",
+        "puts \"JCCARD_BD %s inputs=$_nin open=[llength $_open] $_open\"" % AUR_CELL,
+        "if {[llength $_open]} { error \"JCCARD_BD FAIL: %s inputs with no net: $_open\" }" % AUR_CELL,
+    ]
+    return L
+
+
+TOK_CTL_MI = 3     # axil2eng M00/M01 engine, M02 tok/s_host (the seam block), M03 tok/s_ctl
+
+
+def link_ctl_lines(P):
+    """After the seam block: tok/m_seam -> the seam, and one more axil2eng MI for tok/s_ctl."""
+    return [
+        "",
+        "# the seam sits BEHIND the loop: tok/s_host took the seam's axil2eng MI above, and",
+        "# tok/m_seam (jc_seam_mux: the host's path when the loop does not own the seam) is",
+        "# the seam's only master.  tok/s_ctl (the loop's registers) is one more MI.",
+        "connect_bd_intf_net [get_bd_intf_pins %s/m_seam] [get_bd_intf_pins %s/s_axi]" % (TOK_CELL, P.SEAM_CELL),
+        "set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]",
+        "if {$n != %d} { error \"JCCARD_BD FAIL: axil2eng NUM_MI is $n before tok/s_ctl, expected %d\" }"
+        % (TOK_CTL_MI, TOK_CTL_MI),
+        "set_property CONFIG.NUM_MI %d [get_bd_cells axil2eng]" % (TOK_CTL_MI + 1),
+        "connect_bd_intf_net [get_bd_intf_pins axil2eng/M%02d_AXI] [get_bd_intf_pins %s/s_ctl]" % (TOK_CTL_MI, TOK_CELL),
+        "",
+    ]
 
 
 def _c(a, b):
@@ -368,7 +627,8 @@ def jtag_hbm_lines():
         "set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]",
         "jcc_want jtag_hbm M_AXI_ADDR_WIDTH 64",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 %s" % HBM_SC_CELL,
-        "set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells %s]"
+        "# S00 jtag_hbm, S01 the ctl read master, S02 tok/m_hbm (the embedding gather)",
+        "set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells %s]"
         % HBM_SC_CELL,
         "connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins %s/S00_AXI]" % HBM_SC_CELL,
         "connect_bd_intf_net [get_bd_intf_pins %s/M00_AXI] [get_bd_intf_pins hbm/SAXI_16]" % HBM_SC_CELL,
@@ -580,23 +840,31 @@ def addr_lines(P):
     ]
     for off, seg in ((P.ENG_CTL_BASE, "%s/s_axi/reg0" % P.ENG_CELL),
                      (P.ENG_XW_BASE, "%s/s_axix/reg0" % P.ENG_CELL),
-                     (P.SEAM_BASE, "%s/s_axi/reg0" % P.SEAM_CELL)):
+                     (P.SEAM_BASE, "%s/s_host/reg0" % TOK_CELL)):
         L.append("assign_bd_address -offset 0x%08X -range 4K -target_address_space "
                  "[get_bd_addr_spaces %s] [get_bd_addr_segs {%s}]" % (off, sp, seg))
+    L.append("# the seam is behind the loop: the host's 0xE000 window is tok/s_host, which")
+    L.append("# forwards to tok/m_seam -> %s/s_axi at 0 (plan 2026-11-04 Task 7)" % P.SEAM_CELL)
+    L.append("assign_bd_address -offset 0x%08X -range 64K -target_address_space "
+             "[get_bd_addr_spaces %s] [get_bd_addr_segs {%s/s_ctl/reg0}]" % (TOK_CTL_BASE, sp, TOK_CELL))
+    L.append("assign_bd_address -offset 0x00000000 -range 4K -target_address_space "
+             "[get_bd_addr_spaces %s/m_seam] [get_bd_addr_segs {%s/s_axi/reg0}]" % (TOK_CELL, P.SEAM_CELL))
     L.append(P._eng_hbm_addr_text().rstrip("\n"))
     L += [
-        "# The loader (SAXI_00), jtag_hbm and the ctl read master (SAXI_16 through hbm_sc):",
-        "# every one sees all 32 pseudo-channel segments at their absolute addresses.",
-        "foreach {sp sx} {%s/%s 00 jtag_hbm/Data 16 %s/%s 16} {"
-        % (LOADER_CELL, LOADER_INTF, CTL_CELL, CTL_MEM_INTF),
+        "# The loader (SAXI_00), jtag_hbm, the ctl read master and the loop's gather (SAXI_16",
+        "# through hbm_sc): every one sees all 32 pseudo-channel segments at their absolute",
+        "# addresses.",
+        "foreach {sp sx} {%s/%s 00 jtag_hbm/Data 16 %s/%s 16 %s/m_hbm 16} {"
+        % (LOADER_CELL, LOADER_INTF, CTL_CELL, CTL_MEM_INTF, TOK_CELL),
         "  for {set s 0} {$s < 32} {incr s} {",
         "    assign_bd_address -target_address_space [get_bd_addr_spaces $sp] \\",
         "      -offset [format 0x%X [expr {$s * 0x10000000}]] -range 256M \\",
         "      [get_bd_addr_segs [format \"hbm/SAXI_%s/HBM_MEM%02d\" $sx $s]]",
         "  }",
         "}",
-        "foreach {sp want} {%s/%s 32 jtag_hbm/Data 32 %s/%s 32 %s 3} {"
-        % (LOADER_CELL, LOADER_INTF, CTL_CELL, CTL_MEM_INTF, sp),
+        "# %s 4: engine control, activation writer, tok/s_host (the seam behind it), tok/s_ctl" % sp,
+        "foreach {sp want} {%s/%s 32 jtag_hbm/Data 32 %s/%s 32 %s 4 %s/m_hbm 32 %s/m_seam 1} {"
+        % (LOADER_CELL, LOADER_INTF, CTL_CELL, CTL_MEM_INTF, sp, TOK_CELL, TOK_CELL),
         "  set n [llength [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces $sp]]]",
         "  if {$n != $want} { error \"JCCARD_ADDR FAIL: $sp maps $n segments, not $want\" }",
         "  puts \"JCCARD_ADDR $sp maps $n segments\"",
@@ -658,7 +926,14 @@ def render_tcl(P, mhz, env=None):
     body += jtag_hbm_lines()
     body += ctl_lines()
     body += eng_lines(P)
-    body += P._seam_block(one_clock=True).split("\n")
+    body += link_lines()
+    seam = P._seam_block(one_clock=True)
+    hook = "                    [get_bd_intf_pins %s/s_axi]" % P.SEAM_CELL
+    if seam.count(hook) != 1:
+        sys.exit("ABORT: gen_pcieep's seam block no longer connects axil2eng to %s/s_axi in the "
+                 "shape gen_jc_card.py rewires (found %d)" % (P.SEAM_CELL, seam.count(hook)))
+    body += seam.replace(hook, "                    [get_bd_intf_pins %s/s_host]" % TOK_CELL).split("\n")
+    body += link_ctl_lines(P)
     body += seam_27b_lines(P)
     body += card_lines(P)
     body += addr_lines(P)
@@ -680,11 +955,34 @@ def render_xdc(env=None):
         "# opened synthesized design where a query that matches nothing stops the build.",
         "",
     ] + code
+    pp, pn = refclk_pins()
+    code2 = [
+        "",
+        "# the Aurora core's nominal refclk (plan 2026-11-04 Task 7; Task 5 ruling): MGTREFCLK0 of",
+        "# quad X0Y0, %s/%s, the only refclk the IP offers for lane X0Y0. UNDRIVEN on the" % (pp, pn),
+        "# Jungle Cat board: with JC_LINK_REFCLK=gtg the ECO (hw/jc/link/eco_aurora_gtg.tcl) moves",
+        "# the running QPLL to GTGREFCLK, and this pin only gives the IBUFDS_GTE4 a legal site.",
+        "set_property PACKAGE_PIN %s [get_ports gt_refclk_clk_p]" % pp,
+        "create_clock -name gt_refclk -period 6.400 [get_ports gt_refclk_clk_p]",
+        "# the GTG MMCM (hw/jc/link/rtl/jc_gtg_clk.vhd, cell %s/inst/u_mmcm in the BD): IBERT G" % GTG_CELL,
+        "# needed an explicit site and a dedicated route for the BUFG -> MMCM net (finding 3).",
+        "# The BACKBONE property goes on the NET (IBERT G's form; on the pin it reads back on the",
+        "# pin but not on the net, Task 5 eco_check). build_card.tcl reads both back.",
+        "set_property LOC %s [get_cells -hier -filter {NAME =~ %s}]" % (GTG_MMCM_LOC, GTG_MMCM_PAT),
+        "set_property CLOCK_DEDICATED_ROUTE BACKBONE "
+        "[get_nets -of_objects [get_pins -hier -filter {NAME =~ %s/CLKIN1}]]" % GTG_MMCM_PAT,
+    ]
+    out += code2
     return genstamp.append_end("\n".join(out) + "\n", stamp_block("#", env), "#")
 
 
 def render_top(env=None):
-    w = max(len(n) for n, _ in TOP_PORTS + [(p, d) for _, d, p, _ in CTL_JTAG])
+    w = max(len(n) for n, _ in TOP_PORTS + [(p, d) for _, d, p, _ in CTL_JTAG]
+            + [(n, d) for n, d, _ in GT_TOP_PORTS])
+
+    def gt(indent):
+        return [indent + "%-*s : %-3s %s" % (w, n, d, "std_logic_vector(0 downto 0)" if wd else "std_logic")
+                for n, d, wd in GT_TOP_PORTS]
     L = [
         "-- hw/jc/card/jc_card_top.vhd -- GENERATED by hw/jc/card/gen_jc_card.py.",
         "-- DO NOT HAND-EDIT; edit the generator.",
@@ -702,12 +1000,13 @@ def render_top(env=None):
         "entity jc_card_top is",
         "  port(",
     ]
-    ports = ["    %-*s : %-3s std_logic" % (w, n, d) for n, d in TOP_PORTS]
+    ports = ["    %-*s : %-3s std_logic" % (w, n, d) for n, d in TOP_PORTS] + gt("    ")
     L2 += [p + (";" if i < len(ports) - 1 else "") for i, p in enumerate(ports)]
     L2 += ["  );", "end entity;", "", "architecture rtl of jc_card_top is",
            "  component %s_wrapper is" % BD_NAME, "    port("]
     cports = (["      %-*s : %-3s std_logic" % (w, n, d) for n, d in TOP_PORTS]
-              + ["      %-*s : %-3s std_logic" % (w, p, d) for _, d, p, _ in CTL_JTAG])
+              + ["      %-*s : %-3s std_logic" % (w, p, d) for _, d, p, _ in CTL_JTAG]
+              + gt("      "))
     L2 += [p + (";" if i < len(cports) - 1 else "") for i, p in enumerate(cports)]
     L2 += ["    );", "  end component;"]
     if CTL_JTAG:
@@ -718,7 +1017,8 @@ def render_top(env=None):
         L2 += ["  u_%s : entity work.%s" % (CTL_RX_ENTITY, CTL_RX_ENTITY),
                "    port map(" + ",\n             ".join(maps) + ");", ""]
     bmaps = (["%s => %s" % (n, n) for n, _ in TOP_PORTS]
-             + ["%s => %s" % (p, p) for _, _, p, _ in CTL_JTAG])
+             + ["%s => %s" % (p, p) for _, _, p, _ in CTL_JTAG]
+             + ["%s => %s" % (n, n) for n, _, _ in GT_TOP_PORTS])
     L2 += ["  u_bd : %s_wrapper" % BD_NAME,
            "    port map(" + ",\n             ".join(bmaps) + ");",
            "end architecture;"]

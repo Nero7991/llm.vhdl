@@ -176,8 +176,8 @@ test_transport_jc: test_transport_jc.c fk33_transport_jc.c fk33_transport.h
 # fake broker whose dies are the simulated seam (tests/jc_sim_broker.c), the
 # real fk33_transport_jc.c on the run_prompt side, ids compared against the
 # same sim driven directly.  No hardware, no tools/jc/jc_broker.py, no BMC.
-jc_sim_broker: tests/jc_sim_broker.c fk33_sim.c fk33_transport.c fk33_transport.h fk33_seam.h
-	$(CC) $(CBACK) -I. -o $@ tests/jc_sim_broker.c fk33_sim.c fk33_transport.c -lm
+jc_sim_broker: tests/jc_sim_broker.c tests/jc_sim_loop.c tests/jc_sim_loop.h fk33_sim.c fk33_transport.c fk33_transport.h fk33_seam.h
+	$(CC) $(CBACK) -I. -o $@ tests/jc_sim_broker.c tests/jc_sim_loop.c fk33_sim.c fk33_transport.c -lm
 
 test_run_prompt_jc: run_prompt jc_sim_broker
 	python3 -m pytest -q tests/test_run_prompt_jc.py

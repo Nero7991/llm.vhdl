@@ -204,10 +204,25 @@ add_files -norecurse $repo/hw/fk33/rtl/fk33_bc_grant.vhd
 add_files -norecurse $repo/hw/fk33/rtl/fk33_card.vhd
 update_compile_order -fileset sources_1
 
+# -- the token loop and the die-to-die link (plan 2026-11-04 Task 7). tok_loop and what it
+#    instantiates are VHDL-2008; rtl/jc_loader_pkg.vhd, rtl/async_fifo.vhd and
+#    rtl/util_pkg.vhd are already in the project (the loader list). The two module-reference
+#    tops, rtl/jc_tok_top.vhd and hw/jc/link/rtl/jc_gtg_clk.vhd, are plain VHDL: a BD module
+#    reference refuses a VHDL-2008 top file (MEASURED Task 5, filemgmt 56-195).
+set LINK_2008 {
+  rtl/tok_loop_pkg.vhd rtl/tok_loop_regs.vhd rtl/tok_loop_axm.vhd rtl/tok_loop_fsm.vhd
+  rtl/jc_seam_mux.vhd rtl/embed_gather.vhd rtl/jc_link_pkg.vhd rtl/jc_link_tx.vhd
+  rtl/jc_link_rx.vhd rtl/tok_loop.vhd
+}
+foreach f $LINK_2008 { add_files -norecurse $repo/$f }
+set LINK_TOPS { rtl/jc_tok_top.vhd hw/jc/link/rtl/jc_gtg_clk.vhd }
+foreach f $LINK_TOPS { add_files -norecurse $repo/$f }
+update_compile_order -fileset sources_1
+
 # -- READ BACK every VHDL-2008 property (the FK33 lesson: a path that does not match
 #    leaves the file at VHDL-93 and the failure surfaces hundreds of lines later in a
 #    generated bd.v, naming neither the file nor the standard).
-set VHDL2008 [concat $LOADER_2008 $CTL_2008 $ENG_SRCS $CARD_2008]
+set VHDL2008 [concat $LOADER_2008 $CTL_2008 $ENG_SRCS $CARD_2008 $LINK_2008]
 # util_pkg.vhd and async_fifo.vhd are shared with ENG_SRCS at the FK33's own default
 # (VHDL-93 there); the loader's hard requirement for 2008 wins for this project, since
 # VHDL-2008 is a superset for the plain package/entity code in both files.
@@ -218,11 +233,46 @@ foreach f $VHDL2008 {
   set t [get_property FILE_TYPE [get_files -quiet $repo/$f]]
   if {$t ne "VHDL 2008"} { jcc_fail "source $f is FILE_TYPE \"$t\", not VHDL 2008" }
 }
-puts "JCCARD_SOURCES [llength $VHDL2008] at VHDL 2008, [expr {[llength $ENG_SRCS] + 6}] at the default"
+foreach f $LINK_TOPS {
+  set t [get_property FILE_TYPE [get_files -quiet $repo/$f]]
+  if {$t ne "VHDL"} { jcc_fail "source $f is FILE_TYPE \"$t\", not VHDL (a module-reference top)" }
+}
+puts "JCCARD_SOURCES [llength $VHDL2008] at VHDL 2008, [expr {[llength $ENG_SRCS] + 6 + [llength $LINK_TOPS]}] at the default"
 update_compile_order -fileset sources_1
 
 # ---- the block design ---------------------------------------------------------------
 if {[catch {source $here/jc_card_bd.tcl} err]} { jcc_fail "bd: $err" }
+# THE TOP'S COMPONENT MUST BE THE WRAPPER'S PORT LIST. jc_card_top.vhd declares jcc_wrapper
+# as a component with the ports gen_jc_card.py predicts (the GT interface ports' names are a
+# Vivado convention, <intf port>_<member>); read the wrapper make_wrapper writes and refuse
+# on any difference, here, before synthesis (plan 2026-11-04 Task 7).
+proc jcc_wrapper_ports {f} {
+  set fh [open $f]; set t [read $fh]; close $fh
+  set ps {}
+  foreach {- d n} [regexp -all -inline -line {^\s*(input|output)\s+(?:\[[^\]]*\]\s*)?(\w+)\s*[;,]?\s*$} $t] {
+    lappend ps [list $n [expr {$d eq "input" ? "in" : "out"}]]
+  }
+  return [lsort $ps]
+}
+proc jcc_component_ports {f} {
+  set fh [open $f]; set t [read $fh]; close $fh
+  if {![regexp {component\s+jcc_wrapper\s+is\s+port\s*\((.*?)\)\s*;\s*end\s+component} $t -> body]} {
+    jcc_fail "wrapper check: no jcc_wrapper component in $f"
+  }
+  set ps {}
+  foreach {- n d} [regexp -all -inline {(\w+)\s*:\s*(in|out)\s} $body] { lappend ps [list $n $d] }
+  return [lsort $ps]
+}
+set _wf [make_wrapper -files [get_files jcc.bd] -top -force]
+set _wp [jcc_wrapper_ports $_wf]
+set _cp [jcc_component_ports $here/jc_card_top.vhd]
+puts "JCCARD_WRAPPER_PORTS [llength $_wp] component=[llength $_cp] file=$_wf"
+if {$_wp ne $_cp} {
+  foreach p $_wp { if {[lsearch -exact $_cp $p] < 0} { puts "JCCARD_WRAPPER_ONLY $p" } }
+  foreach p $_cp { if {[lsearch -exact $_wp $p] < 0} { puts "JCCARD_COMPONENT_ONLY $p" } }
+  jcc_fail "wrapper ports differ from jc_card_top.vhd's jcc_wrapper component"
+}
+puts "JCCARD_WRAPPER_PORTS_OK"
 puts "JCCARD_BD_DONE"
 if {$bdonly} {
   foreach p [lsort [get_bd_pins -quiet hbm/*]] { puts "JCCARD_HBMPIN $p" }
@@ -269,7 +319,7 @@ open_run synth_1 -name synth_1
 
 # ---- the six module-reference cells: each input pin must carry a net (BD 41-759 is
 #      silent when the VHDL port has a default; every one of ours has none) ----------
-set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant}
+set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant tok gtgclk}
 # constant BY DESIGN, per bit and polarity (jccard2 classification, 2026-10-07)
 source $repo/hw/jc/card/jccard_const_allow.tcl
 set total_nin 0; set total_bad {}; set total_allowed 0
@@ -347,6 +397,8 @@ puts "JCCARD_LEVERS_OK NWIDE=off SWEEP_PIPE=off SCORE_EARLY=off"
 # ---- clocks and CDC -----------------------------------------------------------------
 source $repo/hw/jc/loader/jc_loader_timing.tcl
 source $repo/hw/jc/ctl/jc_ctl_timing.tcl
+source $repo/hw/jc/link/jc_link_timing.tcl
+set CORE_TOK "*/jcc_i/tok/inst/"
 if {[catch {
   # sysclk, and clk_core (clk_wiz_0/clk_out3) through its own IP constraints: find
   # aclk from a register this build's own RTL clocks, and require 1000/clk_mhz ns:
@@ -380,6 +432,25 @@ if {[catch {
   # card's ctl is its own OOC synthesis, so ooc_ctl_core.tcl's JCCTL_SYNC_OK does not
   # transfer; this is the same call that flow makes, with the card's prefix.
   jctl_syncs $CORE_CTL
+
+  # the token loop's crossings (rtl/jc_tok_top.vhd; hw/jc/link/jc_link_timing.tcl): aclk,
+  # the Aurora user_clk, and init_clk (jc_gtg_clk's CLKOUT1), each found from a register
+  # the tok RTL clocks; the Aurora IP's own XDC defines user_clk, jc_gtg_clk's MMCM init_clk.
+  set clk_u [jlk_clock_of_pin "${CORE_TOK}rxf/wp_g_reg*/C"]
+  set clk_i [jlk_clock_of_pin "${CORE_TOK}i_rpb_reg*/C"]
+  jlk_cdc $CORE_TOK $aclk_clk $clk_u $clk_i
+  set lk_bad [jlk_cdc_audit $CORE_TOK $aclk_clk $clk_u $clk_i]
+  puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
+  if {$lk_bad != 0} { error "link cdc audit: $lk_bad unexpected crossing(s)" }
+
+  # the GTG MMCM's site and dedicated route (jc_card.xdc; finding 3): read back, because a
+  # filter that matches nothing in an XDC is a CRITICAL WARNING, not a stop.
+  set gm [get_cells -quiet -hierarchical -filter {NAME =~ "*gtgclk/*u_mmcm" && IS_PRIMITIVE == 1}]
+  if {[llength $gm] != 1} { error "gtg mmcm: [llength $gm] cells match *gtgclk/*u_mmcm" }
+  set gn [get_nets -of_objects [get_pins $gm/CLKIN1]]
+  puts "JCCARD_GTG_MMCM $gm LOC=[get_property LOC $gm] CLKIN1_net=$gn CDR=[get_property CLOCK_DEDICATED_ROUTE $gn]"
+  if {[get_property LOC $gm] ne "MMCM_X0Y2"} { error "gtg mmcm LOC [get_property LOC $gm], not MMCM_X0Y2" }
+  if {[get_property CLOCK_DEDICATED_ROUTE $gn] ne "BACKBONE"} { error "gtg mmcm CLKIN1 net CLOCK_DEDICATED_ROUTE is not BACKBONE" }
 
   # CATTRIP -> compute_halt: RULED asynchronous (task-8 report concern 1; no 2-FF
   # synchroniser module exists for it, and adding one is outside this task's file
@@ -422,6 +493,34 @@ set cdc_bad [jctl_cdc_audit $CORE_CTL $aclk_clk [get_clocks tck_user3]]
 puts "JCCARD_CDC_UNEXPECTED $cdc_bad"
 if {$cdc_bad != 0} { jcc_fail "cdc audit: $cdc_bad unexpected ctl crossing(s)" }
 
+# the GTG refclk ECO (plan D11). The choice is READ FROM jc_card_bd.tcl's GENSTAMP
+# (gen_jc_card.py stamps JC_LINK_REFCLK; unset = gtg), not from this process's environment:
+# run_card.sh launches Vivado through systemd-run --user, which does not pass the caller's
+# environment. A JC_LINK_REFCLK that does reach this process must agree with the stamp.
+# gtg: the QPLL the core runs is moved to GTGREFCLK from jc_gtg_clk's 156.25 MHz BUFG. pin: no
+# ECO; the QPLL stays on the IP's nominal refclk, AK38/AK39, which the Jungle Cat board does
+# NOT drive (Task 5 ruling) -- so `pin` builds a card whose link cannot lock on this board.
+set _bdt [open $here/jc_card_bd.tcl]; set _bdtxt [read $_bdt]; close $_bdt
+if {![regexp -line {^#\s+env\s+JC_LINK_REFCLK\s*=\s*(\S+)} $_bdtxt -> _stamped]} {
+  jcc_fail "jc_card_bd.tcl carries no JC_LINK_REFCLK GENSTAMP line"
+}
+set _lr [expr {$_stamped eq "(unset)" ? "gtg" : $_stamped}]
+if {$_lr ni {gtg pin}} { jcc_fail "jc_card_bd.tcl was generated with JC_LINK_REFCLK=$_stamped" }
+if {[info exists ::env(JC_LINK_REFCLK)] && $::env(JC_LINK_REFCLK) ne "" && $::env(JC_LINK_REFCLK) ne $_lr} {
+  jcc_fail "JC_LINK_REFCLK=$::env(JC_LINK_REFCLK) here, but jc_card_bd.tcl was generated with $_stamped"
+}
+puts "JCCARD_LINK_REFCLK $_lr (stamped $_stamped)"
+if {$_lr eq "gtg"} {
+  set _ac [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/aur" && IS_PRIMITIVE == 0}]
+  if {[llength $_ac] != 1} { jcc_fail "gtg eco: [llength $_ac] cells match */jcc_i/aur" }
+  set _gp [get_pins -quiet -hierarchical -filter {NAME =~ "*gtgclk/*u_gbg/O"}]
+  if {[llength $_gp] != 1} { jcc_fail "gtg eco: [llength $_gp] pins match *gtgclk/*u_gbg/O" }
+  set ::JC_AUR_CELL [get_property NAME $_ac]
+  set ::JC_GTG_PIN [get_property NAME $_gp]
+  if {[catch {source $repo/hw/jc/link/eco_aurora_gtg.tcl} err]} { jcc_fail "gtg eco: $err" }
+} else {
+  puts "JCCARD_LINK_REFCLK pin: no ECO, the QPLL uses the IP's AK38 refclk (undriven on this board)"
+}
 # -impl congestion (jccard7, 2026-10-08): 125 MHz placed at WNS +0.513 but routed at -8.833,
 # 49k endpoints, one-LUT paths with ~16 ns of routing in u_arr and A's core: congestion
 # detours, not logic depth. Spread placement and aggressive route/phys_opt for that case.
@@ -431,12 +530,23 @@ if {$impl eq "congestion"} {
   opt_design
 }
 jccard_bscan_check post_opt_design
+# one GT channel, at the measured lane's site (spec 1b.2: die 0 X0Y0 TX -> die 1 X0Y0 RX),
+# checked right after placement, before routing is paid for
+proc jcc_gt_loc_check {} {
+  set gts [get_cells -hierarchical -filter {REF_NAME == GTYE4_CHANNEL}]
+  if {[llength $gts] != 1 || [get_property LOC $gts] ne "GTYE4_CHANNEL_X0Y0"} {
+    jcc_fail "GT placement: [llength $gts] channel(s) at [get_property LOC $gts], want one at GTYE4_CHANNEL_X0Y0"
+  }
+  puts "JCCARD_GT_LOC [get_property LOC $gts]"
+}
 if {$impl eq "congestion"} {
   place_design -directive AltSpreadLogic_high
+  jcc_gt_loc_check
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
 } else {
   place_design
+  jcc_gt_loc_check
   phys_opt_design
   route_design
 }

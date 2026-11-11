@@ -12,7 +12,8 @@ entity jc_tok_top is
   generic(N_EMBD : positive := 5120; NLANES : positive := 1; HAS_GATHER : boolean := true;
           TXPOL_MASK : natural := 0);
   port(
-    aclk, arst         : in  std_logic;
+    aclk               : in  std_logic;
+    arst               : in  std_logic;
     s_host_awaddr      : in  std_logic_vector(11 downto 0);
     s_host_awvalid     : in  std_logic;
     s_host_awready     : out std_logic;
@@ -96,6 +97,23 @@ entity jc_tok_top is
 end entity;
 
 architecture rtl of jc_tok_top is
+  -- The block design's clock association (plan 2026-11-04 Task 7), stated, not inferred: with
+  -- no attribute Vivado put all six interfaces on aclk, including the two AXIS ones that run
+  -- on user_clk, and then refused to change it (MEASURED jcloop_bd1, CRITICAL WARNING
+  -- BD 41-737 "Cannot set the parameter ASSOCIATED_BUSIF on /tok/aclk. It is read-only").
+  -- Attributes only: no logic, simulation unchanged. In the ARCHITECTURE: declared in the
+  -- entity, Vivado's module-reference reader misread them (IP_Flow 19-529 "Port named
+  -- 'jc_tok_top' does not exist", only aclk's seen; MEASURED jcloop_bd2).
+  attribute X_INTERFACE_INFO : string;
+  attribute X_INTERFACE_PARAMETER : string;
+  attribute X_INTERFACE_INFO of aclk : signal is "xilinx.com:signal:clock:1.0 aclk CLK";
+  attribute X_INTERFACE_PARAMETER of aclk : signal is
+    "ASSOCIATED_BUSIF s_host:m_seam:s_ctl:m_hbm, ASSOCIATED_RESET arst";
+  attribute X_INTERFACE_INFO of user_clk : signal is "xilinx.com:signal:clock:1.0 user_clk CLK";
+  attribute X_INTERFACE_PARAMETER of user_clk : signal is "ASSOCIATED_BUSIF m_axis_tx:s_axis_rx";
+  attribute X_INTERFACE_INFO of init_clk : signal is "xilinx.com:signal:clock:1.0 init_clk CLK";
+  attribute X_INTERFACE_INFO of arst : signal is "xilinx.com:signal:reset:1.0 arst RST";
+  attribute X_INTERFACE_PARAMETER of arst : signal is "POLARITY ACTIVE_HIGH";
   constant DW : positive := 64 * NLANES;
   signal ltx_d, lrx_d : std_logic_vector(DW-1 downto 0);
   signal ltx_l, ltx_v, ltx_r, lrx_l, lrx_v : std_logic;

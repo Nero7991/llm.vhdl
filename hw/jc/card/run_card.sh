@@ -164,6 +164,10 @@ MEMAVAIL=$(awk '/^MemAvailable:/{print $2*1024}' /proc/meminfo 2>/dev/null || ec
 SWAPFREE=$(awk '/^SwapFree:/{print $2*1024}' /proc/meminfo 2>/dev/null || echo "")
 
 echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_HIGH swap_kill_bytes=$SWAP_KILL_BYTES allow_neg=${ALLOW_NEG:-no} nonce=$NONCE"
+# the link's two generator inputs (plan 2026-11-04 Task 7): they reach gen_jc_card.py through
+# this environment and are stamped into jc_card_bd.tcl; build_card.tcl reads JC_LINK_REFCLK
+# from that stamp (systemd-run --user does not pass this environment on to Vivado).
+echo "JCCARD_LINK_ENV JC_LINK_REFCLK=${JC_LINK_REFCLK:-(unset)} JC_LINK_RATE=${JC_LINK_RATE:-(unset)}"
 echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 
 # ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
@@ -223,6 +227,8 @@ else
     echo "part=$PART"
     echo "clk_core_mhz=$CLK_CORE_MHZ"
     echo "nonce=$NONCE"
+    echo "jc_link_refclk=${JC_LINK_REFCLK:-(unset)}"
+    echo "jc_link_rate=${JC_LINK_RATE:-(unset)}"
   } > "$ROOT/PROVENANCE.txt"
 fi
 
