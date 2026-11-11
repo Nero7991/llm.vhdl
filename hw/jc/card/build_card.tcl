@@ -638,7 +638,8 @@ if {$bs_ids < 4 || $bs_rows != $bs_ids || $bs_neg > 0} {
 
 # report_cdc's own severity classification (fix round 2026-10-07, post-synth-audit.md
 # PASS-WRONGLY 6): a Critical row is allowed ONLY when its DESTINATION is the first stage
-# of a named synchroniser (the loader's and the ctl's, anchored on their own hierarchy).
+# of a named synchroniser (the loader's, the ctl's and the tok's, anchored on their own
+# hierarchy) AND its rule is not one refused everywhere (CDC-10; see jccard_cdc_scan).
 # The previous scan whitelisted a line when a known name appeared anywhere in it, so a
 # Critical crossing FROM a synchroniser register TO an unsynchronised one passed on its
 # Source column (masked in practice: the report's own summary row `CDC-1 Critical <n>`
@@ -652,12 +653,27 @@ foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg fifo/
            trst_s1_reg trip_s1_reg dnar/} { lappend CDC_DST_OK "${CORE_LOADER}${sy}*" }
 foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg rak_s1_reg fifo/wp_g_s1_reg
            fifo/rp_g_s1_reg rram_reg} { lappend CDC_DST_OK "${CORE_CTL}${sy}*" }
-lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown
+# the token loop's synchroniser first stages (rtl/jc_tok_top.vhd, the list jlk_cdc_audit
+# names; 2026-11-11), anchored on the tok hierarchy so a crossing into one of them is
+# reported BY NAME. Naming one does not make every Critical at it pass: jccard_cdc_scan
+# refuses a CDC-10 (combinational logic before the synchroniser) wherever it lands.
+foreach sy {s_tx_reg s_rx_reg s_pll_reg s_gtg_reg s_ovf_reg u_rst_s_reg u_pol_reg
+           i_rpb_reg i_pma_reg i_lck_reg txf/wp_g_s1_reg txf/rp_g_s1_reg txf/clr_r_s1_reg
+           txf/clr_a_s1_reg rxf/wp_g_s1_reg rxf/rp_g_s1_reg rxf/clr_r_s1_reg
+           rxf/clr_a_s1_reg} { lappend CDC_DST_OK "${CORE_TOK}${sy}*" }
+lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown crit_named
 foreach l $crit_unknown { puts "JCCARD_CDC_REPORT_UNKNOWN $l" }
 set crit_bad [llength $crit_unknown]
-puts "JCCARD_CDC_REPORT_CRITICAL summary=$crit_sum rows=$crit_rows unknown=$crit_bad"
+set crit_nref 0
+foreach n $crit_named {
+  lassign $n v id pat row
+  if {$v eq "refused"} { incr crit_nref }
+  puts "JCCARD_CDC_REPORT_NAMED [string toupper $v] $id at $pat: $row"
+}
+puts "JCCARD_CDC_REPORT_CRITICAL summary=$crit_sum rows=$crit_rows unknown=$crit_bad named=[llength $crit_named] named_refused=$crit_nref"
 if {$crit_rows != $crit_sum} { jcc_fail "report_cdc: summary states $crit_sum critical, $crit_rows detail rows parsed" }
 if {$crit_bad > 0} { jcc_fail "report_cdc: $crit_bad critical crossing(s) whose destination is not a named synchroniser" }
+if {$crit_nref > 0} { jcc_fail "report_cdc: $crit_nref critical crossing(s) at a named synchroniser of a refused kind (JCCARD_CDC_REPORT_NAMED REFUSED)" }
 
 set rs [report_route_status -return_string]
 if {![regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcc_fail "route status" }

@@ -27,6 +27,8 @@ BUS_LOADER = os.path.join(LOADER_FULL, "bus_skew.rpt")
 CDC_LOADER = os.path.join(LOADER_FULL, "cdc.rpt")
 BUS_CTL = os.path.join(DATA, "bus_skew_jcctl_ooc4.rpt")
 BUS_CARD_SYNTH = os.path.join(DATA, "bus_skew_jccard5_synth.rpt")
+# jccard_loop3's routed report_cdc (2026-11-11): two CDC-10 rows into tok's s_pll and s_tx
+CDC_LOOP3 = os.path.join(DATA, "cdc_jccard_loop3_routed.rpt")
 REV = os.environ.get("JCCARD_TEST_REV", "")
 
 
@@ -96,7 +98,7 @@ def _post_prelude(tmp_path):
 
 
 JCC_FAIL = 'proc jcc_fail {msg} { puts "JCCARD_FAIL $msg"; exit 1 }\n'
-CORES = 'set CORE_LOADER "*u_jc_core/"\nset CORE_CTL "*/jcc_i/ctl/inst/"\n'
+CORES = 'set CORE_LOADER "*u_jc_core/"\nset CORE_CTL "*/jcc_i/ctl/inst/"\nset CORE_TOK "*/jcc_i/tok/inst/"\n'
 
 
 # ---- WILL-FAIL 1: the halt_or output pin ---------------------------------------------
@@ -321,6 +323,50 @@ def test_report_cdc_critical_rows_are_judged_by_destination_only(tmp_path):
     for name, cdc in refused.items():
         ok, r = _reports(tmp_path, bus, cdc)
         assert not ok and "JCCARD_FAIL report_cdc" in r.stdout, name + ": " + r.stdout
+
+
+LOOP3_PLL = ("u_bd/jcc_i/aur/inst/jcc_aur_0_core_i/jcc_aur_0_wrapper_i/u_cdc_tx_fsm_resetdone_i/"
+             "s_level_out_d5_reg/C  u_bd/jcc_i/tok/inst/s_pll_reg[0]/D")
+LOOP3_TX = ("u_bd/jcc_i/aur/inst/jcc_aur_0_core_i/simplex_tx_global_logic_i/simplex_tx_channel_init_sm_i/"
+            "counter2_r_reg[1]/C  u_bd/jcc_i/tok/inst/s_tx_reg[0]/D")
+
+
+def _loop3_rows(cdc):
+    """The two CDC-10 detail lines of the real loop3 report, by their source/destination."""
+    rows = [l for l in cdc.split("\n") if "CDC-10  Critical" in l and not l.startswith("CDC-10")]
+    assert len(rows) == 2 and any(LOOP3_PLL in l for l in rows) and any(LOOP3_TX in l for l in rows), rows
+    return rows
+
+
+def test_report_cdc_refuses_loop3_cdc10_by_name(tmp_path):
+    """jccard_loop3's real report: both CDC-10 rows land on tok synchronisers the gate now
+    names, and the gate refuses them AS NAMED (not as unknown destinations)."""
+    bus, cdc = _read(BUS_LOADER), _read(CDC_LOOP3)
+    rows = _loop3_rows(cdc)
+    ok, r = _reports(tmp_path, bus, cdc)
+    assert not ok, r.stdout
+    assert "summary=2 rows=2 unknown=0 named=2 named_refused=2" in r.stdout, r.stdout
+    assert "JCCARD_FAIL report_cdc: 2 critical crossing(s) at a named synchroniser" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_NAMED REFUSED CDC-10 at */jcc_i/tok/inst/s_pll_reg*" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_NAMED REFUSED CDC-10 at */jcc_i/tok/inst/s_tx_reg*" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_UNKNOWN" not in r.stdout, r.stdout
+    # the same two rows as another Critical rule at the same named synchronisers: allowed
+    # (so the refusal above is the CDC-10 rule, not the destination)
+    c1 = cdc.replace("CDC-10  Critical      2  Combinational", "CDC-1   Critical      2  Combinational", 1)
+    for l in rows:
+        c1 = c1.replace(l, l.replace("CDC-10  Critical", "CDC-1   Critical", 1), 1)
+    ok, r = _reports(tmp_path, bus, c1)
+    assert ok and "summary=2 rows=2 unknown=0 named=2 named_refused=0" in r.stdout, r.stdout
+    # the fixed state (no Critical rows): passes
+    c0 = cdc.replace("CDC-10  Critical      2  Combinational", "CDC-10  Critical      0  Combinational", 1)
+    for l in rows:
+        c0 = c0.replace(l + "\n", "", 1)
+    ok, r = _reports(tmp_path, bus, c0)
+    assert ok and "summary=0 rows=0 unknown=0 named=0 named_refused=0" in r.stdout, r.stdout
+    # teeth: a CDC-10 into a tok register that is NOT a named synchroniser is still unknown
+    cx = cdc.replace("tok/inst/s_tx_reg[0]/D", "tok/inst/u_txup_reg/D", 1)
+    ok, r = _reports(tmp_path, bus, cx)
+    assert not ok and "unknown=1 named=1 named_refused=1" in r.stdout, r.stdout
 
 
 # ---- PASS-WRONGLY 5: jctl_syncs in the card flow ---------------------------------------

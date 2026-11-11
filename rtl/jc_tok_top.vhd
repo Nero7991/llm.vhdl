@@ -123,6 +123,14 @@ architecture rtl of jc_tok_top is
   signal s_tx, s_rx, s_pll, s_gtg, s_ovf : std_logic_vector(1 downto 0) := "00";
   signal u_rst_s : std_logic_vector(1 downto 0) := "11";
   signal u_rst, ovf_u : std_logic := '0';
+  -- The Aurora status outputs registered in their OWN domain before the aclk synchronisers
+  -- (2026-11-11, jccard_loop3 report_cdc CDC-10 x2): tx_channel_up is a COMPARE of the core's
+  -- user_clk counter (jcc_aur_0_tx_channel_init_sm_simplex.v:146, counter2_r == 0) and
+  -- gt_pll_lock an AND of three init_clk synchroniser outputs (jcc_aur_0_wrapper.v:575-578,
+  -- 937), so each fed a synchroniser through a LUT. rx_channel_up is already a user_clk
+  -- register (rx_channel_init_sm_simplex.v:208-213) and is registered too, so all three look
+  -- the same to the synchroniser. Not synchroniser stages (same-domain capture): no ASYNC_REG.
+  signal u_txup, u_rxup, i_pll : std_logic := '0';
   signal i_rpb, i_pma : std_logic_vector(1 downto 0) := "00";
   signal i_lck : std_logic_vector(1 downto 0) := "00";     -- gtg_locked in init_clk; "00" = not locked
   signal u_pol : std_logic_vector(2*NLANES-1 downto 0) := (others => '0');
@@ -181,12 +189,13 @@ begin
              rclk => aclk, rrst => arst, q_valid => lrx_v, q_data => rxq, q_ready => '1');
   lrx_d <= rxq(DW-1 downto 0);  lrx_l <= rxq(DW);
 
-  -- user clock domain: reset, overflow flag, TX polarity
+  -- user clock domain: reset, overflow flag, TX polarity, the two channel_up levels
   pol_mask <= std_logic_vector(to_unsigned(TXPOL_MASK, NLANES));
   process(user_clk)
   begin
     if rising_edge(user_clk) then
       u_rst_s <= u_rst_s(0) & arst;  u_rst <= u_rst_s(1);
+      u_txup <= tx_channel_up;  u_rxup <= rx_channel_up;
       if u_rst = '1' then ovf_u <= '0';
       elsif s_axis_rx_tvalid = '1' and rxw_r = '0' then ovf_u <= '1'; end if;
       for i in 0 to NLANES - 1 loop
@@ -200,8 +209,8 @@ begin
   process(aclk)
   begin
     if rising_edge(aclk) then
-      s_tx <= s_tx(0) & tx_channel_up;  s_rx <= s_rx(0) & rx_channel_up;
-      s_pll <= s_pll(0) & gt_pll_lock;  s_gtg <= s_gtg(0) & gtg_locked;
+      s_tx <= s_tx(0) & u_txup;  s_rx <= s_rx(0) & u_rxup;
+      s_pll <= s_pll(0) & i_pll;  s_gtg <= s_gtg(0) & gtg_locked;
       s_ovf <= s_ovf(0) & ovf_u;
     end if;
   end process;
@@ -217,6 +226,7 @@ begin
     if rising_edge(init_clk) then
       i_rpb <= i_rpb(0) & link_ctrl(0);  i_pma <= i_pma(0) & link_ctrl(1);
       i_lck <= i_lck(0) & gtg_locked;
+      i_pll <= gt_pll_lock;
     end if;
   end process;
   aur_reset_pb <= i_rpb(1) or not i_lck(1);

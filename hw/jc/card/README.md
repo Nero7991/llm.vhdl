@@ -126,6 +126,11 @@ refuses the build if the aclk it finds does not read back 5.000 ns.
 - `report_cdc`'s own text is scanned for a `Critical` row outside the named
   synchronisers (best-effort; UNVERIFIED against a real report_cdc run, so
   `jctl_cdc_audit`'s structural gate is the one this task actually trusts).
+  Since 2026-11-11 the named list includes the token loop's synchronisers
+  (`*/jcc_i/tok/inst/` s_*, u_rst_s, u_pol, i_*, and the txf/rxf FIFO syncs), and a
+  `CDC-10` (combinational logic before a synchroniser) is refused even at a named
+  one, printed as `JCCARD_CDC_REPORT_NAMED REFUSED` (tested on jccard_loop3's real
+  routed report, `testdata/cdc_jccard_loop3_routed.rpt`).
 - The BSCAN census (`jccard_bscan_check`, run twice: right after `opt_design`, cheap
   and early, and again right before `write_bitstream`) is exactly one chain-3 BSCANE2
   (`u_jc_ctl_rx/u_jc_ctl_bscan`, ours), one chain-4 BSCANE2 (`u_jc_frx/u_jc_bscan`,

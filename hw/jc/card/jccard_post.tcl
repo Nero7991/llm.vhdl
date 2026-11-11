@@ -88,21 +88,27 @@ proc jccard_bus_skew_parse {txt} {
 # report's own summary-table row, `CDC-1  Critical  <n>  ...`, which names no
 # synchroniser, so in practice it refused EVERY Critical crossing, named or not; the
 # Source-column hole was real for a detail row but masked by that.)
-# dst_ok: glob patterns a destination pin must match. Returns {nsum nrows bad}: the
-# Critical count the report's own summary table claims, the Critical detail rows parsed,
-# and the list of Critical rows whose destination matched nothing. The caller requires
-# nrows == nsum (a row the parse missed is a refusal) and bad empty.
-proc jccard_cdc_scan {txt dst_ok} {
-  set nsum 0; set nrows 0; set bad {}
+# dst_ok: glob patterns a destination pin must match. refuse_ids: the CDC rule IDs refused
+# even at a named synchroniser (default CDC-10, "Combinational logic detected before a
+# synchronizer": the synchroniser is right and its INPUT is wrong, a glitch it can capture;
+# MEASURED jccard_loop3, two of them into tok's s_pll/s_tx). Returns {nsum nrows bad named}:
+# the Critical count the report's own summary table claims, the Critical detail rows parsed,
+# the rows whose destination matched nothing, and the rows at a named synchroniser, each
+# {verdict id pattern row} with verdict "allowed" or "refused". The caller requires nrows ==
+# nsum (a row the parse missed is a refusal), bad empty and no "refused" entry in named.
+proc jccard_cdc_scan {txt dst_ok {refuse_ids {CDC-10}}} {
+  set nsum 0; set nrows 0; set bad {}; set named {}
   foreach l [split $txt "\n"] {
     if {[regexp {^(CDC-\d+)\s+Critical\s+(\d+)\s} $l -> id cnt]} { incr nsum $cnt; continue }
-    if {![regexp {^\s*\d+\s+CDC-\d+\s+Critical\s} $l]} { continue }
+    if {![regexp {^\s*\d+\s+(CDC-\d+)\s+Critical\s} $l -> id]} { continue }
     incr nrows
     set f [regexp -all -inline {\S+(?: \S+)*} [string trim $l]]
     set dst [lindex $f end]
-    set hit 0
-    foreach p $dst_ok { if {[string match $p $dst]} { set hit 1; break } }
-    if {!$hit} { lappend bad $l }
+    set hit ""
+    foreach p $dst_ok { if {[string match $p $dst]} { set hit $p; break } }
+    if {$hit eq ""} { lappend bad $l; continue }
+    set v [expr {[lsearch -exact $refuse_ids $id] >= 0 ? "refused" : "allowed"}]
+    lappend named [list $v $id $hit [string trim $l]]
   }
-  return [list $nsum $nrows $bad]
+  return [list $nsum $nrows $bad $named]
 }

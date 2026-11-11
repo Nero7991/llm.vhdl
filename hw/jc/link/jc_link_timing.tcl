@@ -9,7 +9,10 @@
 #   txf/wp_g -> txf/wp_g_s1 (aclk -> user_clk) and txf/rp_g -> txf/rp_g_s1 (user -> aclk)
 #   rxf/wp_g -> rxf/wp_g_s1 (user -> aclk) and rxf/rp_g -> rxf/rp_g_s1 (aclk -> user)
 #   txf/rxf clr_*_s1 (async_fifo's clear handshake; jc_tok_top ties clr '0', kept by KEEP)
-#   s_tx/s_rx/s_pll/s_gtg_reg[0] (Aurora / MMCM levels -> aclk), s_ovf_reg[0] (user -> aclk)
+#   s_tx/s_rx_reg[0] (user -> aclk, from u_txup/u_rxup), s_pll_reg[0] (init -> aclk, from
+#   i_pll), s_gtg_reg[0] (MMCM LOCKED, unclocked -> aclk), s_ovf_reg[0] (user -> aclk).
+#   u_txup/u_rxup/i_pll register the Aurora outputs in their own domain first (2026-11-11,
+#   jccard_loop3 CDC-10: tx_channel_up and gt_pll_lock are LUT outputs inside the core).
 #   u_rst_s_reg[0], u_pol_reg[*] (aclk -> user_clk); i_rpb_reg[0], i_pma_reg[0] (aclk -> init_clk)
 #   i_lck_reg[0] (final review I5): gtg_locked into init_clk. Its source is the MMCM's LOCKED
 #   pin, which no clock times, so it has no bound here and is deliberately NOT on the audit's
@@ -106,9 +109,10 @@ proc jlk_cdc {pre clk_a clk_u clk_i} {
     }
   }
   # the status levels into aclk, from every clocked startpoint not on aclk (the Aurora
-  # user_clk; the GT/MMCM lock levels where they are clocked at all), so the aclk-internal
-  # second stage keeps its normal timing. s_tx/s_rx/s_ovf must have one; s_pll/s_gtg may not.
-  foreach {s opt} {s_tx 0 s_rx 0 s_ovf 0 s_pll 1 s_gtg 1} {
+  # user_clk; init_clk for s_pll; the MMCM lock level where it is clocked at all), so the
+  # aclk-internal second stage keeps its normal timing. s_tx/s_rx/s_ovf/s_pll must have one
+  # (s_pll's is tok's own i_pll register since 2026-11-11); s_gtg may not.
+  foreach {s opt} {s_tx 0 s_rx 0 s_ovf 0 s_pll 0 s_gtg 1} {
     set d [jlk_cells "${pre}${s}_reg*"]
     set ss [jlk_src $d $clk_a 1 $opt]
     if {[llength $ss]} { set_max_delay -datapath_only $pa -from $ss -to $d; incr n }
