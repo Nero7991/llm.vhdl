@@ -213,7 +213,7 @@ begin
           t_pause := 1;
         end if;
         if f = 5 and rx_down = '0' and t_pause = 0 and nbeats >= nb0 + 4 * FB + 100 then
-          rx_down <= '1'; for j in 1 to 2 * FB loop wait until rising_edge(uclk); end loop; rx_down <= '0';
+          rx_down <= '1'; for j in 1 to 8 * FB loop wait until rising_edge(uclk); end loop; rx_down <= '0';
           t_pause := 1;
         end if;
         if db(4) = '1' then                                       -- B paused: LINK_BAD or LINK_DOWN
