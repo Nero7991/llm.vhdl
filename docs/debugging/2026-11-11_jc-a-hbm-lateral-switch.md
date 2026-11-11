@@ -126,3 +126,20 @@ and backlog 11 (B overlap). Both need a card build.
 
 Traps (this addendum): `measure-token` resolves run_prompt and the .qtk relative to the repo it runs from; in a
 worktree, set JC_QTK and provide server/run_prompt, or it refuses with "missing".
+
+## Addendum 4 (2026-11-11): PG276 closes the switch-clock question
+
+Source: PG276 v1.0 (AXI HBM controller), local copy /mnt/storage/docs/xilinx/pg276-axi-hbm-en-us-1.0.pdf.
+- "The global routing switch does not have a separate clock input, but rather shares one of the
+  AXI_xx_ACLKs ... For maximum efficiency, it is important that the AXI clock selected is the highest
+  frequency of all of the AXI port clocks." On the JC every AXI port runs at the 125 MHz core clock, so the
+  switch runs at 125 MHz: the condition the 2026-11-10 study named for the lateral hypothesis to hold. The
+  silicon result (addenda 1 and 3) already confirmed the hypothesis; this is the mechanism, not new evidence.
+- "Lateral AXI Switch Access Throughput Loss": two lateral connections per 4x4 switch, shared, limiting lateral
+  throughput to 50% of full bandwidth.
+- "A transaction that is stalled by the AXI Master while crossing switches will continue to reserve the
+  lateral path ... de-asserts RREADY mid-transaction". A's weight FIFO (FAST_POP=false) can deassert RREADY
+  mid-burst, which holds the lateral path against the other lanes sharing it: a plausible reason the
+  7-lanes-per-boundary tensor fell to 0.21 util rather than to the 50% lateral ceiling. ESTIMATE, not measured.
+- Consequence for the FK33 (250 MHz AXI, same switch): lateral capacity there is twice the JC's per core cycle,
+  consistent with the FK33's own measurements not showing this loss.
