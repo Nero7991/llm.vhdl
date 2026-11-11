@@ -1,0 +1,12 @@
+plan        blk.1.ffn_gate.weight slot 17 @0x1FF9BA200, 17408 rows, oracle /home/orencollaco/regress_scratch/jc_run_job/oracle_A_blk.1.ffn_gate.weight/oracle.txt
+census      27 lanes, 0 on their own PC, max 7 lanes per boundary-direction
+CENSUS own_pc=0/27 max_lanes_per_boundary=7
+identity    image record matches the manifest (fingerprint 12173b19e1576742759995c9ca46b0c0, 258/258 objects)
+descriptor  slot 17 read back from die A: identical to the plan (512 bytes)
+note        SEAM_FAULTS already has LOST_BEAT (0x00000002) before this run
+warn        the seam's ARENA register reads 0x0, the manifest's arena is 0x1FF9B8000 (0 means no token has run since the reload)
+JCJOB_UTIL_PRIOR die=A jobcyc=30951 port_beats=20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480,20480
+JCJOB tensor=blk.1.ffn_gate.weight rows=17408 cycles=276711 beats=58080 c_per_word=4.7643 starved=218631 match=2048/2048 die=A slot=17 rep=1 jobcyc=276711 wport_beats=58080..58080 sport_beats=58080..58080 util=0.2099 yexp_off=0 sat=0 verdict=PASS
+JCJOB tensor=blk.1.ffn_gate.weight rows=17408 cycles=276754 beats=58080 c_per_word=4.7650 starved=218674 match=2048/2048 die=A slot=17 rep=2 jobcyc=276754 wport_beats=58080..58080 sport_beats=58080..58080 util=0.2099 yexp_off=0 sat=0 verdict=PASS
+JCJOB tensor=blk.1.ffn_gate.weight rows=17408 cycles=281661 beats=58080 c_per_word=4.8495 starved=223581 match=2048/2048 die=A slot=17 rep=3 jobcyc=281661 wport_beats=58080..58080 sport_beats=58080..58080 util=0.2062 yexp_off=0 sat=0 verdict=PASS
+JCJOB_STATE die=A seam_regs=22 changed=0 faults=0x00000002->0x00000002 lost_beat=1

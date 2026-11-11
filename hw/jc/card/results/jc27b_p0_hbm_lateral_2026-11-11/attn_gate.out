@@ -1,0 +1,11 @@
+plan        blk.0.attn_gate.weight slot 3 @0x1FF9B8600, 6144 rows, oracle /home/orencollaco/regress_scratch/jc_run_job/oracle_A_blk.0.attn_gate.weight/oracle.txt
+census      27 lanes, 15 on their own PC, max 1 lanes per boundary-direction
+CENSUS own_pc=15/27 max_lanes_per_boundary=1
+identity    image record matches the manifest (fingerprint 12173b19e1576742759995c9ca46b0c0, 258/258 objects)
+descriptor  slot 3 read back from die A: identical to the plan (512 bytes)
+warn        the seam's ARENA register reads 0x0, the manifest's arena is 0x1FF9B8000 (0 means no token has run since the reload)
+JCJOB_UTIL_PRIOR die=A jobcyc=0 port_beats=0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+JCJOB tensor=blk.0.attn_gate.weight rows=6144 cycles=30932 beats=20480 c_per_word=1.5104 starved=10445 match=2048/2048 die=A slot=3 rep=1 jobcyc=30932 wport_beats=20480..20480 sport_beats=20480..20480 util=0.6621 yexp_off=0 sat=0 verdict=PASS
+JCJOB tensor=blk.0.attn_gate.weight rows=6144 cycles=30941 beats=20480 c_per_word=1.5108 starved=10460 match=2048/2048 die=A slot=3 rep=2 jobcyc=30941 wport_beats=20480..20480 sport_beats=20480..20480 util=0.6619 yexp_off=0 sat=0 verdict=PASS
+JCJOB tensor=blk.0.attn_gate.weight rows=6144 cycles=30951 beats=20480 c_per_word=1.5113 starved=10471 match=2048/2048 die=A slot=3 rep=3 jobcyc=30951 wport_beats=20480..20480 sport_beats=20480..20480 util=0.6617 yexp_off=0 sat=0 verdict=PASS
+JCJOB_STATE die=A seam_regs=22 changed=0 faults=0x00000000->0x00000002 lost_beat=1
