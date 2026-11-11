@@ -7829,12 +7829,103 @@ grep -E '^JCCARD_(DONE|FAIL)' /mnt/storage/fk33_builds/jccard_loop1/results/SENT
   /mnt/storage/fk33_builds/jccard_loop1/*.log | tail -3
 ```
 
-`--clk-mhz 125`: the jccard10 build's core clock (spec section 2's measured position time is at 125 MHz); change it only with the record of the build it follows. Gate on `^JCCARD_DONE`; also require in the build log `^ECOA_DONE commons=1`, `^JCCARD_GT_LOC GTYE4_CHANNEL_X0Y0`, `^JCCARD_LINK_CDC_UNEXPECTED 0`. On `JCCARD_FAIL ... const` naming `tok/` or `gtgclk/` bits, add each to `jccard_const_allow.tcl` only with a reason citing the RTL line that makes it constant, and rebuild. Copy the bitstream and logs into the repo results directory (`hw/jc/card/results/jccard_loop1_<date>/`) as soon as the sentinel appears.
+`--clk-mhz 125`: the jccard10 build's core clock (spec section 2's measured position time is at 125 MHz); change it only with the record of the build it follows. Gate on `^JCCARD_DONE`; also require in the build log `^ECOA_DONE commons=1`, `^JCCARD_GT_LOC GTYE4_CHANNEL_X0Y0`, `^JCCARD_LINK_CDC_UNEXPECTED 0`. The full watch list is Task 8 amendment A9. On `JCCARD_FAIL ... const` naming `tok/` or `gtgclk/` bits, add each to `jccard_const_allow.tcl` only with a reason citing the RTL line that makes it constant, and rebuild. Copy the bitstream and logs into the repo results directory (`hw/jc/card/results/jccard_loop1_<date>/`) as soon as the sentinel appears.
 
 ---
 ### Task 8: Silicon gates (spec section 4), MAIN SESSION ONLY
 
 Steps 1 and 2 are host code a subagent may write and test against `jc_sim_broker --loop` (no hardware). Steps 3 to 9 touch the board (`sqrl_bridge`, the broker, the BMC): the main session or Oren runs them, never a subagent.
+
+#### AMENDMENT 2026-11-11 (final fix pass; final review I4). Where this block and a step below disagree, this block wins.
+
+**A1. Images: the -ownpc manifests, and everything that hangs off them.** The dies carry the own-PC
+layout (`5e0b8618`, `056cc683`): card 0 (die A) `/mnt/storage/llama-models/qwen38-27b-card0-b0-32-ownpc/manifest.json`,
+card 1 (die B) `/mnt/storage/llama-models/qwen38-27b-card1-b33-63-ownpc/manifest.json`, with the
+BC-250 copies under `~/jc_models/` (`JC_BC_MAN0='~/jc_models/qwen38-27b-card0-b0-32-ownpc/manifest.json'`,
+`JC_BC_MAN1='~/jc_models/qwen38-27b-card1-b33-63-ownpc/manifest.json'`). `$MAN0`/`$MAN1` in `RB` are
+these two. The token programs (`token.dtbl`/`token.rel`, runbook 3.1), the side images
+(`side_gdn.json`, `gdn_zero.bin`, `imglock.bin`, runbook 3.2) and the broker's image fences
+(`jc_bc_lane.sh start` reads `JC_BC_MAN0/1`) are all generated FROM these manifests into the new
+`$W/card0` and `$W/card1`. Never reuse a program or side image built from the old layouts
+(`jc27b_silicon_2026-11-04/card1` is the OLD die-B layout).
+
+**A2. Host-path k1 regression anchor, BEFORE any loop run.** After Step 3's loads and before Step 4:
+
+```bash
+$REPO/server/run_prompt --jc $SOCK --jc-die A --jc-die2 B "${RB[@]}" \
+  --prompt /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/prompt_k1.txt --max-new 1 --stop -1 \
+  --ids-out $W/k1.ids --dump-xout $W/xout_A_k1.txt --dump-xout2 $W/xout_B_k1.txt
+tail -1 $W/k1.ids                                                          # want 8678
+cmp $W/xout_A_k1.txt /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_A_k1.txt && \
+cmp $W/xout_B_k1.txt /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_B_k1.txt && echo K1_ANCHOR_OK
+```
+
+Gate: argmax 8678 and `K1_ANCHOR_OK`. The anchor is the own-PC pair's MEASURED host-path result
+(`hw/jc/card/results/jc27b_ownpc_b_2026-11-11_silicon/measure_token.log` on branch `jc-card`:
+`first argmax 8678`, `X_OUT die A/B identical to .../jc27b_ownpc_2026-11-11/xout_{A,B}_k1.txt`).
+A mismatch means the new bitstream changed the engine or an image is wrong: stop before the loop.
+
+**A3. No 1.25 Gb/s fallback.** Step 3's "rebuild with `JC_LINK_RATE=1.25`" is WITHDRAWN: the 1.25
+core has no GTYE4_COMMON for the gtg ECO and its quad has no board refclk (Task 5 ruling;
+`gen_jc_card.py` refuses it, and refuses `JC_LINK_REFCLK=pin` since 2026-11-11 because AK38/AK39 are
+undriven). If rx_channel_up never rises after A4's reset pulse: stop, record LINK_STATUS on both
+dies, and open a debugging file; there is no other rate to fall back to.
+
+**A4. The explicit Aurora reset pulse at bring-up, kept as a defence.** The I5 fix holds `pma_init`
+and `reset_pb` high until the GTG MMCM locks, but a pulse after the dies are configured is still
+the first link action of Step 3, on both dies, TX side (A) first, then RX side (B): LINK_CTRL 1
+(reset_pb), then 3 (reset_pb + pma_init), hold 1 s, then 1 (pma_init low), then 0 (reset_pb low);
+then read LINK_STATUS. (PG074 is NOT installed on this workstation, only the IP changelog under
+`/tools/Xilinx/2023.2/Vivado/2023.2/data/ip/xilinx/aurora_64b66b_v12_0/doc`; this ordering is the
+usual reset_pb-around-pma_init one and is not verified against the guide. The generated core's
+`jc_aurora_support_reset_logic.v` debounces `pma_init` in `init_clk` and delays the GT reset
+release by ~19 `init_clk` cycles.) Record which order brought rx_channel_up.
+
+**A5. The socket forward follows `JC_BCW`.** `jc_bc_lane.sh start` serves the broker socket under
+`$JC_BCW` on the BC-250; whenever `JC_BCW` changes (a new work dir for new programs), re-point the
+workstation's ssh forward at `$JC_BCW/broker.sock` before any `run_prompt`/`jc_loop.py`: a forward
+left on an old `JC_BCW` gives `ConnectionResetError` (MEASURED 2026-11-11, `measure_token.log`).
+
+**A6. After ANY power loss (or a reprogram): reload the weights AND the side images, then
+`coe_load.py verify`.** HBM contents do not survive; a die that answers ID/CAPS after a power cycle
+holds no image. Runbook 3.3 for both images on both dies, then `coe_load.py verify` for each
+(`^JCVERIFY_PASS`), then A2's anchor again. VCCINT returns to wiper 128 on a power cycle (CLAUDE.md);
+set it back to 68 only by the standing procedure.
+
+**A7. Soak accounting (Step 5).** With no link-down, `|resends - (crc_fails + seqpos_bad)| <= crc_fails`
+(a framing corruption can merge two frames into one verdict, or split one into two; each costs at
+most one verdict per CRC failure). `jc_link_soak.py` implements exactly this (`accounting_ok`);
+`SOAK_FAIL accounting` means a gap wider than `crc_fails`.
+
+**A8. jc_loop.py behaviour the steps rely on (final fix pass).** Before setup it ABORTs a die still
+running from an earlier client; it ends the run as soon as either die stops for a reason other than
+MAX_NEW/STOP_ID or reads IDLE after START; every unclean exit ABORTs both dies; die B's TMO_LINK is
+written 0xFFFFFFFF (also its reset value now); absolute-value writes are retried on WindowUnknown,
+CTRL pulses are not (read-back verified), NEXT_TOKEN is not (JCLOOP_FAIL).
+
+**A9. Watch list for Task 7 Step 10 (the build log) and Task 8 (bring-up).** Each line must appear
+as stated; anything else is a stop:
+- `JCCARD_LINK_ENV JC_LINK_REFCLK=gtg ...` (or `(unset)`) and `JCCARD_LINK_REFCLK gtg`;
+- `JCCARD_BD aur inputs=35 open=0`;
+- `JCLINK_CLOCK` lines with periods 6.206 ns (user_clk, 10.3125/64 Gb/s) and 8.000 ns (init_clk,
+  jc_gtg_clk CLKOUT1 at INIT_DIV 10);
+- `JCCARD_LINK_CDC_UNEXPECTED 0`, AND after route `report_clock_interaction` shows no
+  `Timed (unsafe)` between aclk, user_clk and init_clk (the audit sees only named crossings);
+- `JCCARD_GTG_MMCM ... LOC=MMCM_X0Y2 ... CDR=BACKBONE`;
+- exactly one `ECOA_PD` line whose type is not POWER (the powered QPLL, QPLL1 on the card) and three
+  `ECOA_SEL ... now POWER` lines (QPLL<q>REFCLKSEL = 111);
+- `ECOA_DONE commons=1 loads=1`;
+- `JCCARD_GT_LOC GTYE4_CHANNEL_X0Y0`;
+- LINK_STATUS (0x080) bit meanings: 0 tx_channel_up, 1 rx_channel_up, 2 GTG MMCM locked, 3 gt_pll_lock,
+  8 paused, 9 bad, 10 down, 11 TX retry exhausted, 12 RX FIFO overflow (`rtl/tok_loop_pkg.vhd` LS_*);
+- `LOOP_ID <die> id=0x544c5031` on both dies.
+
+**A10. Steps 1 and 2 are DONE** in the final fix pass (2026-11-11): `jc_loop.py --dump-xout/--dump-xout2/
+--fault-polarity-at` and `tools/jc/jc_link_soak.py`, tested in `tools/jc/test_jc_loop.py`
+(`test_dump_xout_equals_run_prompts`, `test_soak_accounting_on_the_model`,
+`test_soak_accounting_slack_is_bounded_by_crc_fails`; `--fault-polarity-at` is silicon-only, the
+model has no polarity). The code blocks in Steps 1 and 2 below are the original brief; the committed
+files supersede them (CTRL writes there go through `Die.ctrl`, and the soak ABORTs both dies on exit).
 
 **Files:**
 - Modify: `tools/jc/jc_loop.py` (`--dump-xout`, `--dump-xout2`, `--fault-polarity-at`), `tools/jc/test_jc_loop.py`
@@ -8023,7 +8114,7 @@ sqrl_bridge C$BMC $BIT,$BIT skip 2>&1 | tee $W/load.log
 grep -c 'Using Bitstream' $W/load.log        # want 2: device 0 and device 1, the same file
 ```
 
-Then runbook 3.1 and 3.2 (token programs and side images, host only, into the new `$W`), 3.3 (side images and weight images, one die at a time, broker not running), 3.4 (broker; gate `LANE_OK` and `FWD_OK`) and 3.5 (seam ID, CAPS, image record on both dies). Then the loop and the link:
+Then runbook 3.1 and 3.2 (token programs and side images, host only, into the new `$W`, FROM the -ownpc manifests, amendment A1), 3.3 (side images and weight images, one die at a time, broker not running), 3.4 (broker; gate `LANE_OK` and `FWD_OK`; the forward re-pointed at the current `JC_BCW`, A5) and 3.5 (seam ID, CAPS, image record on both dies). Then A2's host-path k1 anchor, A4's Aurora reset pulse, and the loop and the link:
 
 ```bash
 cd $REPO && python3 - "$SOCK" <<'PY' | tee $W/loop_id.txt
@@ -8036,7 +8127,7 @@ for d in ("A", "B"):
 PY
 ```
 
-Gate: both lines `id=0x544c5031`, CAPS `[15:0]` = 5120 with bits 16 and 17 set; die A link_status bit 0 (tx_channel_up), die B bit 1 (rx_channel_up), both bits 2 (GTG MMCM locked) and 3 (gt_pll_lock). If die B's rx_channel_up is 0: pulse `pma_init` on B then A (LINK_CTRL bit 1 high for 1 s, then low) and re-read; record the order that works (Task 5 Step 7's RX-after-TX answer predicts it). If it never rises: stop, record LINK_STATUS on both dies, and rebuild with `JC_LINK_RATE=1.25` (the spec's fallback) before anything else.
+Gate: both lines `id=0x544c5031`, CAPS `[15:0]` = 5120 with bits 16 and 17 set; die A link_status bit 0 (tx_channel_up), die B bit 1 (rx_channel_up), both bits 2 (GTG MMCM locked) and 3 (gt_pll_lock). If die B's rx_channel_up is 0: pulse `pma_init` on B then A (LINK_CTRL bit 1 high for 1 s, then low) and re-read; record the order that works (Task 5 Step 7's RX-after-TX answer predicts it). If it never rises: stop and record LINK_STATUS on both dies. (The `JC_LINK_RATE=1.25` rebuild that stood here is WITHDRAWN, amendment A3; do A4's reset pulse first.)
 
 - [ ] **Step 4: GDN state at START (spec 1.5)**
 
@@ -8063,7 +8154,7 @@ cd $REPO/tools/jc && python3 jc_link_soak.py --sock $SOCK --a A --b B --seconds 
 grep -E '^SOAK_(PASS|FER|FAIL)' $W/soak.log
 ```
 
-Gate: `SOAK_PASS`, or `SOAK_FER <rate>` recorded as the measured frame error rate (the IBERT measurement was BER 1.7e-8 at 10.3125 Gb/s untuned: about 1.4e-3 frames of 82 kbit, DERIVED; a higher rate is a finding). `SOAK_FAIL accounting` is a defect in the deframer or the tool: stop.
+Gate (accounting per amendment A7): `SOAK_PASS`, or `SOAK_FER <rate>` recorded as the measured frame error rate (the IBERT measurement was BER 1.7e-8 at 10.3125 Gb/s untuned: about 1.4e-3 frames of 82 kbit, DERIVED; a higher rate is a finding). `SOAK_FAIL accounting` is a defect in the deframer or the tool: stop.
 
 - [ ] **Step 6: Hop transparency at positions 0, 3, 22 (spec 4 step 2)**
 
