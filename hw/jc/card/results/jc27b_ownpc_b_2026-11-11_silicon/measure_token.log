@@ -1,0 +1,14 @@
+broker socket: the broker jc_bc_lane.sh starts serves /home/labuser/jc27b_ownpc_b/broker.sock on the BC-250.
+  re-point the workstation forward at it (a forward left on an old JC_BCW gives ConnectionResetError):
+  ssh -f -N -M -S <ctl> -o ExitOnForwardFailure=yes -o StreamLocalBindUnlink=yes -L $JC_WS_SOCK:/home/labuser/jc27b_ownpc_b/broker.sock $JC_BC
+broker socket: /mnt/storage/fk33_builds/jc27b_silicon_2026-11-04/broker.sock answers (JCSEAM_STATUS ok {"connected": false, "connections": 0, "crc_retries": 0, "dies": {"A": {"axi_err": null, "crc_fail": nu)
+prefill    1 ids, pos 1, first argmax 8678, exp 0
+timing     1 GOs: run_chunk 0.567 s (of which STATUS wait 0.531 s over 49 polls), X pushes 0.231 s, wall since start 3.147 s
+hop        1 hops: read R_X 0.139 s, push+GO card 1 0.325 s; card 1 at pos 1; prefill overlapped
+JCTOKEN die A seam_cycles 32719893 a_jobcyc 12357195 port_beats 8192096 c_per_word 1.5084
+JCTOKEN die B seam_cycles 32836359 a_jobcyc 12847739 port_beats 8520192 c_per_word 1.5079
+X_OUT die A identical to /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_A_k1.txt
+X_OUT die B identical to /mnt/storage/fk33_builds/jc27b_ownpc_2026-11-11/xout_B_k1.txt
+reference (MEASURED 2026-11-11, die B on the OLD layout): die B seam 44,565,746; die A 32,721,110
+expect die B (ESTIMATE): seam about 32.9M, c_per_word about 1.51
+JCRELOAD_DONE measure-token

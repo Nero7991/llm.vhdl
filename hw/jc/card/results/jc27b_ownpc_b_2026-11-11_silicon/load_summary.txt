@@ -1,0 +1,5 @@
+JCLOAD_DONE last=3735241 committed=7556699 crc_fail=11 resyncs=0 pieces=6750 matched, wall 2956 s (planning 23 s), connections=18 reconnects=17, this run sent 7388436672 data bytes in 2933 s at 2.52 MB/s
+JCVERIFY_PASS 6750 pieces, 0 bad
+JCLOAD_DONE last=39770 committed=7603220 crc_fail=11 resyncs=0 pieces=3 matched, wall 31 s (planning 0 s), connections=1 reconnects=0, this run sent 78896640 data bytes in 31 s at 2.57 MB/s
+JCVERIFY_PASS 3 pieces, 0 bad
+JCRELOAD_DONE load

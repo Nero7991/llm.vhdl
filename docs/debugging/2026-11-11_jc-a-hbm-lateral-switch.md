@@ -96,3 +96,33 @@ Traps hit (this addendum):
 Open: die B repack (spill layout); the PG276 switch-clock question (no longer blocking: the layout
 fix works whatever the cause's clocking); the bitstream's FAST_POP=false cadence (1.5 c/word) is now
 A's limit on both tensors.
+
+## Addendum 3 (2026-11-11): die B spill layout on silicon; both dies own-PC
+
+Image: /mnt/storage/llama-models/qwen38-27b-card1-b33-63-ownpc/ (branch worktree-agent-aaf76f9db801ec3fc,
+cd700b41, `--stripe-ownpc-spill`: each lane on its own PC, the ~4.8 MB per lane that does not fit spilled
+as whole pieces to its stack's free PC 0 or 16, at most 1 lane per boundary; lateral bytes per token 4.82 GB
+-> 0.100 GB by census). Loaded with `coe_load --append` (JCVERIFY_PASS 6750 pieces 0 bad, side 3 pieces 0 bad).
+
+One k1 token through both dies (MEASURED, `jc_reload_ownpc.sh --die B measure-token`, raw in
+hw/jc/card/results/jc27b_ownpc_b_2026-11-11_silicon/measure_token.log):
+```
+prefill    1 ids, pos 1, first argmax 8678, exp 0
+JCTOKEN die A seam_cycles 32719893 a_jobcyc 12357195 port_beats 8192096 c_per_word 1.5084
+JCTOKEN die B seam_cycles 32836359 a_jobcyc 12847739 port_beats 8520192 c_per_word 1.5079
+X_OUT die A identical to the 2026-11-11 own-PC die A run
+X_OUT die B identical to the 2026-11-11 own-PC die A run (die B then on the old layout)
+```
+- Die B: 44,565,746 -> 32,836,359 seam cycles, DERIVED 1.357x (ESTIMATE was ~32.9M). Whole-token A runs at
+  1.508 c/word on both dies, the FAST_POP=false cadence limit.
+- Die A repeats its addendum-1 figure (32,719,893 against 32,721,110), the run-to-run control.
+- DERIVED pair token at 125 MHz, host hop excluded: (32,719,893 + 32,836,359) / 125e6 = 0.524 s, 1.91 tok/s,
+  against 0.721 s, 1.39 tok/s on 2026-11-04 (1.37x). With the hop the measured run_chunk is 0.567 s
+  (0.769 s on 2026-11-04 for the same prompt).
+- Values: both dies' outputs byte-identical across all three layouts tested; argmax 8678 throughout.
+
+Next levers now that A sits at its cadence limit: FAST_POP=true on the next bitstream (2/3 cap -> 1 beat/cycle),
+and backlog 11 (B overlap). Both need a card build.
+
+Traps (this addendum): `measure-token` resolves run_prompt and the .qtk relative to the repo it runs from; in a
+worktree, set JC_QTK and provide server/run_prompt, or it refuses with "missing".
