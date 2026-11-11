@@ -7875,11 +7875,20 @@ dies, and open a debugging file; there is no other rate to fall back to.
 and `reset_pb` high until the GTG MMCM locks, but a pulse after the dies are configured is still
 the first link action of Step 3, on both dies, TX side (A) first, then RX side (B): LINK_CTRL 1
 (reset_pb), then 3 (reset_pb + pma_init), hold 1 s, then 1 (pma_init low), then 0 (reset_pb low);
-then read LINK_STATUS. (PG074 is NOT installed on this workstation, only the IP changelog under
-`/tools/Xilinx/2023.2/Vivado/2023.2/data/ip/xilinx/aurora_64b66b_v12_0/doc`; this ordering is the
-usual reset_pb-around-pma_init one and is not verified against the guide. The generated core's
-`jc_aurora_support_reset_logic.v` debounces `pma_init` in `init_clk` and delays the GT reset
-release by ~19 `init_clk` cycles.) Record which order brought rx_channel_up.
+then read LINK_STATUS. Checked against PG074 (v13.0 guide, local copy
+`/mnt/storage/docs/xilinx/pg074-aurora-64b66b-en-us-13.0.pdf`, 2026-11-11), "Reset Sequencing" and
+"Aurora 64B/66B Simplex Normal Operation Reset Sequence": assert reset_pb at least 128 user_clk
+periods before pma_init; hold pma_init at least six init_clk periods (1 s for a hot-plug event the
+remote detects); deassert pma_init; then deassert tx_reset_pb/rx_reset_pb (they may go together).
+The pulse above follows that order. PG074 also states that when an MMCM generates init_clk,
+pma_init must be applied until the MMCM locks, and that GT_REFCLK must be stable when pma_init
+deasserts: the I5 hold satisfies both (gtg_clk and init_clk come from the same MMCM). One gap the
+pulse covers: on lock the RTL releases pma_init and reset_pb in the same init_clk edge, not
+pma_init first, so the explicit pulse is the guide-conforming sequence. PG074 simplex rule: send
+data only after the partner's rx_channel_up (at least 45 ms after tx_channel_up); die A cannot see
+B's rx_channel_up, so the host must read B's LINK_STATUS bit 1 before START on A. The generated
+core's `jc_aurora_support_reset_logic.v` debounces `pma_init` in `init_clk` and delays the GT reset
+release by ~19 `init_clk` cycles. Record which order brought rx_channel_up.
 
 **A5. The socket forward follows `JC_BCW`.** `jc_bc_lane.sh start` serves the broker socket under
 `$JC_BCW` on the BC-250; whenever `JC_BCW` changes (a new work dir for new programs), re-point the
