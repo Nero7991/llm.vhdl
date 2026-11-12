@@ -204,6 +204,9 @@ rp_cmd() {
     LP=(python3 "$REPO/tools/jc/jc_loop.py" --sock "$SOCK" --die "${DIE[0]}")
     if [[ $MODE == pair ]]; then LP+=(--die2 "${DIE[1]}"); fi
     LP+=(--prompt "$OUT/prompt_$1.txt" --max-new "$2" --stop -1 --mv4i "$EMB" --ids-out "$OUT/$3.ids")
+    # JC_LOOP_ARGS: extra jc_loop.py options, e.g. "--resend-max 1000" while a lane drops
+    # (jccard_loop5 silicon 2026-11-12: die B's link drops every 2-4 s, each costs a RESEND).
+    if [[ -n "${JC_LOOP_ARGS:-}" ]]; then read -r -a _xa <<< "$JC_LOOP_ARGS"; LP+=("${_xa[@]}"); fi
   else
     RP+=(--prompt "$OUT/prompt_$1.txt" --qtk "$QTK" --stream --max-new "$2" --mv4i "$EMB" --quiet
          --stop -1 --ids-out "$OUT/$3.ids")

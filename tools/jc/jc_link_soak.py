@@ -28,6 +28,18 @@ def accounting_ok(res, crc, sp, dn):
     return dn != 0 or abs(res - (crc + sp)) <= crc
 
 
+def resend_tolerant(A):
+    """One RESEND pulse. A WindowUnknown is harmless here: the accounting reads die A's own
+    RESENDS counter, so a pulse that did or did not land is counted by the hardware either way
+    (silicon 2026-11-12: a broker reconnect mid-soak aborted the first 600 s run). Returns 1 if
+    the outcome was unknown."""
+    try:
+        A.br.call({"die": A.name, "op": "wr32", "off": A.base + L.REG["CTRL"], "val": L.CTRL_BITS["RESEND"]})
+        return 0
+    except L.WindowUnknown:
+        return 1
+
+
 def soak(a, A, B):
     n = A.rd("CAPS") & 0xFFFF
     for d in (A, B):
@@ -47,19 +59,21 @@ def soak(a, A, B):
             return "SOAK_FAIL die %s never reached NEED_TOKEN" % A.name
     t1 = time.time()
     while B.rd("FRAMES_GOOD") < 1 and time.time() - t1 < 10:
-        pass
+        if B.rd("CRC_FAILS") + B.rd("LINK_DOWNS") > 0 and time.time() - t1 > 0.5:
+            resend_tolerant(A)                           # frame 0 itself was corrupted: send it again
+            time.sleep(0.2)
     if B.rd("FRAMES_GOOD") != 1:
         return ("SOAK_FAIL die %s did not take frame 0 (FRAMES_GOOD %d, CRC_FAILS %d)"
                 % (B.name, B.rd("FRAMES_GOOD"), B.rd("CRC_FAILS")))
-    t0, k = time.time(), 0
+    t0, k, lost = time.time(), 0, 0
     while time.time() - t0 < a.seconds:
-        L.resend(A)
+        lost += resend_tolerant(A)
         k += 1
         if k % 1000 == 0:
             print("soak: %d s, %d resends, crc_fails %d" % (time.time() - t0, A.rd("RESENDS"), B.rd("CRC_FAILS")))
     time.sleep(0.5)
     res, crc, sp, dn = A.rd("RESENDS"), B.rd("CRC_FAILS"), B.rd("SEQPOS_BAD"), B.rd("LINK_DOWNS")
-    print("soak: resends %d crc_fails %d seqpos_bad %d link_downs %d over %d s" % (res, crc, sp, dn, a.seconds))
+    print("soak: resends %d crc_fails %d seqpos_bad %d link_downs %d over %d s (%d RESEND pulses with an unknown outcome)" % (res, crc, sp, dn, a.seconds, lost))
     if not accounting_ok(res, crc, sp, dn):
         return ("SOAK_FAIL accounting: resends %d vs crc_fails %d + seqpos_bad %d differs by more than "
                 "crc_fails" % (res, crc, sp))
