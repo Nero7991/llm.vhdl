@@ -4,7 +4,7 @@ pass (2026-11-11) adds the failure paths: a die stopping with an error, a die le
 WindowUnknown retry of absolute writes and the read-back verification of CTRL pulses, and the
 ABORT that every unclean exit sends to both dies (final review I1, I2; finding 10 reversed for
 absolute writes). NO HARDWARE."""
-import os, signal, subprocess, sys, tempfile, time
+import argparse, io, os, signal, subprocess, sys, tempfile, time
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -365,3 +365,183 @@ def test_soak_accounting_slack_is_bounded_by_crc_fails():
     assert S.accounting_ok(100, 2, 100, 0)               # two splits (two verdicts over)
     assert not S.accounting_ok(100, 2, 101, 0)
     assert S.accounting_ok(100, 0, 0, 1)                 # a link-down: not checked
+
+
+# --- --ids-stream, SIGTERM/SIGHUP, broken pipe (llmvhdl_server.py loop mode) ---------------
+
+def test_ids_stream_matches_ids_out_over_the_sim():
+    """End to end over the real sim broker: --ids-stream's file must equal --ids-out's and the
+    reference ids, for a single-die synthetic run (plan: llmvhdl_server.py loop mode)."""
+    with tempfile.TemporaryDirectory(dir=SCRATCH) as work:
+        GV.write_programs(work)
+        b, sock = broker(work, ["--loop"])
+        try:
+            with open(os.path.join(work, "p.txt"), "w") as f:
+                f.write("1 2 3\n")
+            r = subprocess.run([GV.RUN_PROMPT, "--jc", sock, "--jc-die", "A", "--prompt", "p.txt",
+                                "--v2", "--seq-reset", "--dtbl", "a.dtbl", "--rel", "a.rel",
+                                "--manifest", GV.MAN_A, "--max-new", "1", "--stop", "-1",
+                                "--ids-out", "open.txt", "--open-only"], cwd=work,
+                               capture_output=True, text=True, timeout=300)
+            assert r.returncode == 0, r.stdout + r.stderr
+            stream_path = os.path.join(work, "stream.txt")
+            idsout_path = os.path.join(work, "ids.txt")
+            cmd = [sys.executable, os.path.join(HERE, "jc_loop.py"), "--sock", sock, "--die", "A",
+                   "--prompt", os.path.join(work, "p.txt"), "--max-new", "5", "--synthetic",
+                   "--ids-out", idsout_path, "--ids-stream", stream_path]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            assert r.returncode == 0, r.stdout + r.stderr
+            assert r.stdout.strip().splitlines()[-1].startswith("JCLOOP_DONE"), r.stdout
+            streamed = [int(x) for x in open(stream_path).read().split()]
+            out = [int(x) for x in open(idsout_path).read().split()]
+        finally:
+            b.send_signal(signal.SIGTERM); b.wait(timeout=10)
+    assert streamed == out == ref_ids([1, 2, 3], 5, False)
+
+
+class FakeOutDie:
+    """Just enough of Die for drain(): an OUT ring with a movable read pointer."""
+    def __init__(s, ids):
+        s._ids, s._ptr = ids, 0
+
+    def rd(s, reg):
+        if reg == "OUT_COUNT":
+            return len(s._ids)
+        if reg == "OUT_DATA":
+            return s._ids[s._ptr]
+        raise AssertionError(reg)
+
+    def wr(s, reg, val):
+        if reg == "OUT_ADDR":
+            s._ptr = val
+        elif reg != "OUT_ACK":
+            raise AssertionError(reg)
+
+
+def test_drain_streams_each_new_id_once_in_order():
+    d, got, buf = FakeOutDie([11, 22]), [], io.StringIO()
+    L.drain(d, got, buf)
+    assert got == [11, 22] and buf.getvalue() == "11\n22\n"
+    L.drain(d, got, buf)                 # nothing new: no re-write
+    assert buf.getvalue() == "11\n22\n"
+    d._ids.append(33)
+    L.drain(d, got, buf)
+    assert got == [11, 22, 33] and buf.getvalue() == "11\n22\n33\n"
+
+
+def test_drain_propagates_a_broken_ids_stream():
+    class BreakingStream:
+        def write(s, _):
+            raise BrokenPipeError("closed")
+    with pytest.raises(BrokenPipeError):
+        L.drain(FakeOutDie([5]), [], BreakingStream())
+
+
+class FakeAbortBroker:
+    """call()-compatible fake: every rd32 reads STATUS=0 (not running, so abort_all's landed()
+    check passes without needing a real register model), every wr32/wrn succeeds."""
+    def __init__(s):
+        s.calls = []
+
+    def call(s, req, retries=5, retry_write=False):
+        s.calls.append(dict(req))
+        if req.get("op") == "rd32":
+            return {"ok": True, "val": 0}
+        return {"ok": True}
+
+    def aborted_dies(s):
+        return {c["die"] for c in s.calls
+                if c.get("op") == "wr32" and c.get("off") == 0x20000 + L.REG["CTRL"]
+                and c.get("val") == L.CTRL_BITS["ABORT"]}
+
+
+def run_args(prompt_path, ids_out_path):
+    return argparse.Namespace(prompt=str(prompt_path), die="A", die2="B", base=0x20000,
+                               ids_stream=None, ids_out=str(ids_out_path))
+
+
+def test_broken_ids_stream_write_aborts_both_dies(monkeypatch, tmp_path):
+    """llmvhdl_server.py's loop-mode ssh pipe can close under jc_loop; that reaches drain() as
+    a BrokenPipeError, which must propagate (not be swallowed) and must still ABORT both dies,
+    exactly like any other unclean exit (I1)."""
+    def fake_decode(a, A, B, prompt, stream):
+        raise BrokenPipeError("ids stream closed")
+    monkeypatch.setattr(L, "decode", fake_decode)
+    prompt = tmp_path / "p.txt"; prompt.write_text("1\n")
+    fb = FakeAbortBroker()
+    with pytest.raises(BrokenPipeError):
+        L.run(run_args(prompt, tmp_path / "ids.txt"), fb)
+    assert fb.aborted_dies() == {"A", "B"}
+
+
+def test_sigterm_as_systemexit_aborts_both_dies_and_is_not_swallowed(monkeypatch, tmp_path):
+    """A SIGTERM delivered mid-run becomes SystemExit (_raise_on_signal); run()'s finally must
+    still ABORT both dies, and the SystemExit itself must reach the caller, not be swallowed."""
+    def fake_decode(a, A, B, prompt, stream):
+        raise SystemExit(1)
+    monkeypatch.setattr(L, "decode", fake_decode)
+    prompt = tmp_path / "p.txt"; prompt.write_text("1\n")
+    fb = FakeAbortBroker()
+    with pytest.raises(SystemExit):
+        L.run(run_args(prompt, tmp_path / "ids.txt"), fb)
+    assert fb.aborted_dies() == {"A", "B"}
+
+
+def test_raise_on_signal_raises_systemexit():
+    with pytest.raises(SystemExit):
+        L._raise_on_signal(signal.SIGTERM, None)
+    with pytest.raises(SystemExit):
+        L._raise_on_signal(signal.SIGHUP, None)
+
+
+def test_main_installs_sigterm_and_sighup_handlers(monkeypatch, tmp_path):
+    """main() wires both signals to _raise_on_signal, whatever happens next (checked here with
+    a socket path that cannot connect, so run() fails fast with no live broker needed)."""
+    installed = []
+    monkeypatch.setattr(L.signal, "signal", lambda sig, handler: installed.append((sig, handler)))
+    prompt = tmp_path / "p.txt"; prompt.write_text("1\n")
+    rc = L.main(["--sock", str(tmp_path / "nonexistent.sock"), "--die", "A", "--prompt", str(prompt),
+                 "--max-new", "1", "--synthetic", "--ids-out", str(tmp_path / "ids.txt")])
+    assert rc == 1
+    assert (signal.SIGTERM, L._raise_on_signal) in installed
+    assert (signal.SIGHUP, L._raise_on_signal) in installed
+
+
+def test_abort_all_print_does_not_raise_and_still_aborts_every_die(monkeypatch):
+    """abort_all's own prints must not raise on a broken stdout (the ids-stream case uses the
+    same process's stdout for its JCLOOP_* line), and every die must still get its ABORT."""
+    calls = []
+
+    class FakeDie:
+        def __init__(s, name):
+            s.name = name
+
+        def rd(s, reg):
+            return 0
+
+        def ctrl(s, pulse, landed):
+            calls.append((s.name, pulse))
+
+    def breaking_print(*a, **k):
+        raise OSError("broken pipe")
+    monkeypatch.setattr("builtins.print", breaking_print)
+    L.abort_all([FakeDie("A"), FakeDie("B")])
+    assert calls == [("A", "ABORT"), ("B", "ABORT")]
+
+
+def test_abort_all_attempts_every_die_even_when_one_ctrl_fails():
+    calls = []
+
+    class FakeDie:
+        def __init__(s, name, fail):
+            s.name, s.fail = name, fail
+
+        def rd(s, reg):
+            return 0
+
+        def ctrl(s, pulse, landed):
+            calls.append(s.name)
+            if s.fail:
+                raise RuntimeError("die stuck")
+    L.abort_all([FakeDie("A", True), FakeDie("B", False)])
+    assert calls == ["A", "B"]

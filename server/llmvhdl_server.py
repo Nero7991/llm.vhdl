@@ -43,6 +43,20 @@ unless given explicitly.  GDN state does NOT need re-zeroing between
 requests on the JC (MEASURED on silicon 2026-11-12: --seq-reset masks stale
 state), so jc mode runs no prep step before a request, unlike fk33_chat2.sh.
 
+`--jc-loop-host USER@HOST` (jc mode only) turns on LOOP MODE: a chat request
+runs `tools/jc/jc_loop.py` on that host (the BC-250, reached through the
+same broker) instead of `run_prompt` here, over `ssh -o BatchMode=yes HOST
+bash -s`. jc_loop drives the on-fabric token loop at the card's own speed
+(about 2x faster than the host round trips run_prompt makes), but it never
+touches the token programs itself, so at startup this server runs the usual
+`run_prompt --jc ... --open-only` once to stream them; a failure there fails
+startup. `--jc-loop-dir` is the remote directory holding jc_loop.py, its
+siblings, the embedding file and the broker socket; `--jc-loop-sock` and
+`--jc-loop-emb` are that broker's socket and the embedding file's paths ON
+THE REMOTE HOST; `--jc-loop-python` (default python3) is the remote
+interpreter. Stop runs a second, short ssh call that kills jc_loop's pid by
+reading it back from /proc (never pkill/pgrep).
+
 The chat template and the tokenizer are NOT reimplemented here: they are the
 verified C files (`qwen35_chat.c`, `qwen35_tok.c`) loaded through ctypes from
 `server/libqwen35chat.so` (`make -C server libqwen35chat.so`).
@@ -75,6 +89,7 @@ import mimetypes
 import os
 import re
 import select
+import shlex
 import signal
 import subprocess
 import sys
@@ -240,6 +255,63 @@ class CardError(Exception):
     pass
 
 
+def jc_base_cmd(a, pf, max_new):
+    """The --jc* options shared by every run_prompt invocation against the Jungle Cat: the
+    per-request host-driven run (Engine._run) and the loop-mode startup --open-only call.
+    Callers add whatever else they need (--stream/--ids-stream, or --stop/--open-only)."""
+    cmd = [RUN_PROMPT, "--jc", a.jc_sock, "--jc-die", a.jc_die0,
+           "--jc-die2", a.jc_die1, "--seq-reset", "--v2",
+           "--dtbl", os.path.join(a.jc_run0, "token.dtbl"),
+           "--rel", os.path.join(a.jc_run0, "token.rel"),
+           "--dtbl2", os.path.join(a.jc_run1, "token.dtbl"),
+           "--rel2", os.path.join(a.jc_run1, "token.rel"),
+           "--manifest", a.jc_man0, "--manifest2", a.jc_man1,
+           "--prompt", pf, "--qtk", a.qtk, "--max-new", str(max_new)]
+    if a.jc_emb:
+        cmd += ["--mv4i", a.jc_emb]
+    return cmd
+
+
+def jc_loop_open_once(a):
+    """Loop mode (--jc-loop-host): tools/jc/jc_loop.py only drives already-programmed dies
+    and never touches the token programs itself, so stream them once at startup through the
+    normal host path (--open-only), with the same --jc* options the non-loop per-request runs
+    use. A failure here fails startup: there is no point serving requests jc_loop cannot run."""
+    os.makedirs(a.run_dir, exist_ok=True)
+    pf = os.path.join(a.run_dir, "startup_open_only.ids")
+    with open(pf, "w") as f:
+        f.write("0\n")
+    cmd = jc_base_cmd(a, pf, 1) + ["--stop", "-1",
+                                   "--ids-out", os.path.join(a.run_dir, "startup_open_only_out.txt"),
+                                   "--open-only"]
+    r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=120)
+    if r.returncode != 0:
+        raise SystemExit("llmvhdl_server: --jc-loop-host startup --open-only failed (rc %d):\n%s\n%s"
+                         % (r.returncode, r.stdout[-2000:], r.stderr[-2000:]))
+
+
+def jc_loop_script(a, ids, max_new, stop_id):
+    """The bash script run over ssh on the BC-250: writes the prompt ids, records jc_loop's
+    pid for Stop, then execs jc_loop.py with its own stdout/stderr redirected to a remote log
+    (fd 3, saved before the redirect, carries the streamed ids back over the ssh channel)."""
+    dirq = shlex.quote(a.jc_loop_dir)
+    body = "".join("%d\n" % i for i in ids)
+    lines = [
+        "DIR=%s" % dirq,
+        "cat > \"$DIR/ui_req.ids\" <<'EOF'",
+        body + "EOF",
+        "echo $$ > \"$DIR/ui_loop.pid\"",
+        "exec 3>&1 >>\"$DIR/ui_loop.log\" 2>&1",
+        "cd \"$DIR\"",
+        "exec %s tools/jc/jc_loop.py --sock %s --die %s --die2 %s --prompt \"$DIR/ui_req.ids\" "
+        "--max-new %d --stop %d --mv4i %s --ids-out \"$DIR/ui_last.ids\" --resend-max 1000 "
+        "--ids-stream /dev/fd/3"
+        % (shlex.quote(a.jc_loop_python), shlex.quote(a.jc_loop_sock), shlex.quote(a.jc_die0),
+           shlex.quote(a.jc_die1), max_new, stop_id, shlex.quote(a.jc_loop_emb)),
+    ]
+    return "\n".join(lines) + "\n"
+
+
 class Engine:
     def __init__(self, a, tok):
         self.a = a
@@ -267,20 +339,13 @@ class Engine:
         pf = os.path.join(d, "prompt.ids")
         with open(pf, "w") as f:
             f.write("".join("%d\n" % i for i in ids))
+        if self.a.mode == "jc" and self.a.jc_loop_host:
+            return self._run_jc_loop(d, ids, max_new, on_id, should_stop)
         r, w = os.pipe()
         if self.a.mode == "jc":
             env = dict(os.environ)
-            cmd = [RUN_PROMPT, "--jc", self.a.jc_sock, "--jc-die", self.a.jc_die0,
-                   "--jc-die2", self.a.jc_die1, "--seq-reset", "--v2",
-                   "--dtbl", os.path.join(self.a.jc_run0, "token.dtbl"),
-                   "--rel", os.path.join(self.a.jc_run0, "token.rel"),
-                   "--dtbl2", os.path.join(self.a.jc_run1, "token.dtbl"),
-                   "--rel2", os.path.join(self.a.jc_run1, "token.rel"),
-                   "--manifest", self.a.jc_man0, "--manifest2", self.a.jc_man1,
-                   "--prompt", pf, "--qtk", self.a.qtk, "--stream",
-                   "--max-new", str(max_new), "--quiet", "--ids-stream", "/dev/fd/%d" % w]
-            if self.a.jc_emb:
-                cmd += ["--mv4i", self.a.jc_emb]
+            cmd = jc_base_cmd(self.a, pf, max_new) + ["--stream", "--quiet",
+                                                       "--ids-stream", "/dev/fd/%d" % w]
         else:
             env = dict(os.environ, FK33_PROMPT_IDS=pf)
             cmd = ["bash", CHAT[self.a.mode], "llm.vhdl web request", str(max_new),
@@ -339,6 +404,120 @@ class Engine:
         if rc != 0 and not termed:
             raise CardError(summarise_failure(err, out, rc, d, self.a.mode), facts)
         return facts
+
+    # -- jc loop mode: jc_loop.py on the BC-250, driven over ssh ----------
+    STOP_WAIT_S = 15.0
+
+    def _run_jc_loop(self, d, ids, max_new, on_id, should_stop):
+        """Launch `ssh HOST bash -s` running jc_loop_script()'s script; ids arrive on the
+        ssh process's own stdout (fd 3 in the remote script), one per line, read the same
+        way the non-loop path reads its pipe. Stop runs a second, short-lived ssh call that
+        kills jc_loop's pid remotely, then waits for the main ssh to exit (falling back to a
+        local terminate() after STOP_WAIT_S)."""
+        t0 = time.time()
+        script = jc_loop_script(self.a, ids, max_new, self.tok.eos)
+        ssh_argv = shlex.split(self.a.jc_loop_ssh_cmd) + [self.a.jc_loop_host, "bash", "-s"]
+        with open(os.path.join(d, "stdout.txt"), "wb") as so, \
+             open(os.path.join(d, "stderr.txt"), "wb") as se:
+            p = subprocess.Popen(ssh_argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=se, bufsize=0, start_new_session=True)
+            p.stdin.write(script.encode())
+            p.stdin.close()
+            rf = p.stdout
+            buf = b""
+            got = []
+            t_first = t_last = None
+            termed = False
+            term_sent_at = None
+            local_killed = False
+            while True:
+                if not termed and should_stop():
+                    self._stop_remote()
+                    termed = True
+                    term_sent_at = time.time()
+                if (termed and not local_killed and p.poll() is None
+                        and time.time() - term_sent_at > self.STOP_WAIT_S):
+                    try:
+                        p.terminate()
+                    except ProcessLookupError:
+                        pass
+                    local_killed = True
+                rl, _, _ = select.select([rf], [], [], 0.5)
+                if not rl:
+                    if p.poll() is not None:
+                        rest = rf.read()
+                        if not rest:
+                            break
+                        buf += rest
+                        so.write(rest); so.flush()
+                    else:
+                        continue
+                else:
+                    chunk = rf.read(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    so.write(chunk); so.flush()
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    if not line.strip():
+                        continue
+                    tid = int(line)
+                    now = time.time()
+                    if t_first is None:
+                        t_first = now
+                    t_last = now
+                    got.append(tid)
+                    on_id(tid)
+            rf.close()
+            rc = p.wait()
+        log_tail = self._fetch_remote_log_tail(d)
+        err = open(os.path.join(d, "stderr.txt"), "rb").read().decode("utf-8", "replace")
+        out = open(os.path.join(d, "stdout.txt"), "rb").read().decode("utf-8", "replace")
+        err_and_tail = (err + "\n" + log_tail) if log_tail else err
+        facts = {"rc": rc, "dir": d, "ids": got, "t0": t0, "t_first": t_first,
+                 "t_last": t_last, "t_end": time.time(), "termed": termed,
+                 "stdout_tail": out[-2000:], "stderr_tail": err_and_tail[-2000:]}
+        with open(os.path.join(d, "facts.json"), "w") as f:
+            json.dump({k: v for k, v in facts.items() if k != "ids"} | {"n_ids": len(got)}, f, indent=1)
+        if rc != 0 and not termed:
+            raise CardError(summarise_failure(err_and_tail, out, rc, d, self.a.mode), facts)
+        return facts
+
+    def _stop_remote(self):
+        """A second, short ssh call: kill -TERM the pid jc_loop_script() wrote, but only if
+        the pid file exists and /proc/PID/exe is a python (never pkill/pgrep -- CLAUDE.md)."""
+        dirq = shlex.quote(self.a.jc_loop_dir)
+        script = (
+            'PIDFILE=%s/ui_loop.pid\n'
+            'if [ -f "$PIDFILE" ]; then\n'
+            '  PID=$(cat "$PIDFILE" 2>/dev/null)\n'
+            '  EXE=$(readlink -f "/proc/$PID/exe" 2>/dev/null || true)\n'
+            '  case "$EXE" in\n'
+            '    */python*) kill -TERM "$PID" ;;\n'
+            '  esac\n'
+            'fi\n'
+        ) % dirq
+        ssh_argv = shlex.split(self.a.jc_loop_ssh_cmd) + [self.a.jc_loop_host, "bash", "-s"]
+        try:
+            subprocess.run(ssh_argv, input=script.encode(), capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            pass   # best effort: the STOP_WAIT_S local terminate() still covers it
+
+    def _fetch_remote_log_tail(self, d):
+        """One more ssh call, after the run, so a failure is diagnosable even though the
+        remote jc_loop.py's own stdout/stderr never crossed the ssh channel (fd 3 did)."""
+        dirq = shlex.quote(self.a.jc_loop_dir)
+        script = "tail -c 4000 %s/ui_loop.log 2>/dev/null || true\n" % dirq
+        ssh_argv = shlex.split(self.a.jc_loop_ssh_cmd) + [self.a.jc_loop_host, "bash", "-s"]
+        try:
+            r = subprocess.run(ssh_argv, input=script.encode(), capture_output=True, timeout=15)
+            tail = r.stdout.decode("utf-8", "replace")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            tail = "(could not fetch ui_loop.log: %s)" % e
+        with open(os.path.join(d, "ui_loop_log_tail.txt"), "w") as f:
+            f.write(tail)
+        return tail
 
 
 def summarise_failure(err, out, rc, d, mode):
@@ -669,6 +848,17 @@ def main():
     ap.add_argument("--jc-emb", help="jc mode: the token embedding .mv4i")
     ap.add_argument("--jc-die0", default="A", help="jc mode: card 0's die on the broker (default A)")
     ap.add_argument("--jc-die1", default="B", help="jc mode: card 1's die on the broker (default B)")
+    ap.add_argument("--jc-loop-host",
+                    help="jc mode: USER@HOST of the BC-250; turns on loop mode, where a chat "
+                         "request runs tools/jc/jc_loop.py there instead of run_prompt here")
+    ap.add_argument("--jc-loop-dir",
+                    help="loop mode: the remote directory holding tools/jc/jc_loop.py and its "
+                         "siblings, the embedding file, and the broker socket")
+    ap.add_argument("--jc-loop-sock", help="loop mode: the broker socket's path on the remote host")
+    ap.add_argument("--jc-loop-emb", help="loop mode: the token embedding .mv4i's path on the remote host")
+    ap.add_argument("--jc-loop-python", default="python3", help="loop mode: the remote python3 (default python3)")
+    ap.add_argument("--jc-loop-ssh-cmd", default="ssh -o BatchMode=yes",
+                    help=argparse.SUPPRESS)  # tests point this at a local fake ssh
     a = ap.parse_args()
     if a.n_ctx is None:
         a.n_ctx = JC_N_CTX_DEFAULT if a.mode == "jc" else 65536
@@ -691,14 +881,26 @@ def main():
                   " synthetic embedding provider, which is not a model of anything", file=sys.stderr)
         if b"--jc " not in rp_bytes:
             raise SystemExit("llmvhdl_server: server/run_prompt predates --jc; run `make -C server run_prompt`")
+        if a.jc_loop_host:
+            missing = [name for name, val in (
+                ("--jc-loop-dir", a.jc_loop_dir), ("--jc-loop-sock", a.jc_loop_sock),
+                ("--jc-loop-emb", a.jc_loop_emb),
+            ) if not val]
+            if missing:
+                raise SystemExit("llmvhdl_server: --jc-loop-host needs %s" % ", ".join(missing))
+    elif a.jc_loop_host:
+        raise SystemExit("llmvhdl_server: --jc-loop-host needs --mode jc")
     mimetypes.add_type("application/javascript", ".js")
     mimetypes.add_type("application/manifest+json", ".webmanifest")
     tok = Tok(a.lib, a.qtk)
+    if a.mode == "jc" and a.jc_loop_host:
+        jc_loop_open_once(a)
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     srv.daemon_threads = True
     srv.a, srv.tok, srv.eng, srv.t_start = a, tok, Engine(a, tok), time.time()
     print("llm.vhdl server: http://%s:%d/  mode %s, model %s, n_ctx %d, greedy only, "
-          "one request at a time, logs %s" % (a.host, a.port, a.mode, model_id(a), a.n_ctx, a.run_dir),
+          "one request at a time, logs %s%s" % (a.host, a.port, a.mode, model_id(a), a.n_ctx, a.run_dir,
+                                                 " (loop mode on %s)" % a.jc_loop_host if a.jc_loop_host else ""),
           flush=True)
     try:
         srv.serve_forever()

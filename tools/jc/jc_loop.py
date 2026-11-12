@@ -4,8 +4,15 @@ plan Task 7). The host only starts, answers NEED_ROW (host rows), relays tokens 
 between the dies (spec 1b.5 phase 1, plan D3), resends on a paused link, and drains OUT.
 
     jc_loop.py --sock S --die A [--die2 B] --prompt FILE --max-new N --stop ID
-               (--mv4i PATH | --synthetic) --ids-out FILE [--base 0x20000] [--timeout-s 3600]
-               [--dump-xout PATH] [--dump-xout2 PATH] [--fault-polarity-at N]
+               (--mv4i PATH | --synthetic) --ids-out FILE [--ids-stream PATH] [--base 0x20000]
+               [--timeout-s 3600] [--dump-xout PATH] [--dump-xout2 PATH] [--fault-polarity-at N]
+
+--ids-stream PATH (the llmvhdl_server.py loop-mode caller): each id is also written to PATH,
+one decimal per line, flushed, as soon as drain() pulls it off OUT -- never twice, since
+drain() is the only place `got` grows. A write failure there (BrokenPipeError/OSError, e.g.
+a closed ssh pipe) is a stop request: it propagates out of decode() so run()'s finally sees
+clean=False and ABORTs both dies. SIGTERM and SIGHUP do the same thing by another route: both
+raise SystemExit (not caught by main()'s except tuple), which unwinds through the same finally.
 
 --dump-xout/--dump-xout2 (plan Task 8 Step 1): after a clean finish, die A's / die B's R_X
 from the seam's window 3, in run_prompt --dump-xout's format (server/tests/run_prompt.c:319:
@@ -41,7 +48,7 @@ finding 10 for absolute writes):
 Die B's TMO_LINK is written 0xFFFFFFFF in setup (final review I2): its link wait spans die A's
 position and the host relay.
 """
-import argparse, json, os, socket, sys, time
+import argparse, json, os, signal, socket, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -210,11 +217,19 @@ def setup(d, prompt, max_new, stop, role, src, cap):
                 raise
 
 
-def drain(d, got):
+def drain(d, got, stream=None):
+    """The one place `got` grows: streaming here (if `stream` is set) writes each newly
+    drained id exactly once, in order, as soon as it is known. A write failure
+    (BrokenPipeError/OSError) is not swallowed: it propagates so run()'s finally treats it
+    as a stop request and aborts both dies."""
     n = d.rd("OUT_COUNT")
     while len(got) < n:
         d.wr("OUT_ADDR", len(got))
-        got.append(d.rd("OUT_DATA"))
+        v = d.rd("OUT_DATA")
+        got.append(v)
+        if stream is not None:
+            stream.write("%d\n" % v)
+            stream.flush()
     d.wr("OUT_ACK", len(got))
 
 
@@ -265,7 +280,7 @@ def polarity_fault(A, B):
     return paused, B.rd("CRC_FAILS") + B.rd("LINK_DOWNS") - 1
 
 
-def decode(a, A, B, prompt):
+def decode(a, A, B, prompt, stream=None):
     """The run proper. Returns (line, clean)."""
     n = A.rd("CAPS") & 0xFFFF
     row_of = row_source(a)
@@ -296,13 +311,13 @@ def decode(a, A, B, prompt):
             elif s == S_STOPPED and r not in OK_REASONS:
                 bad.append("die %s stopped %s" % (d.name, reason_name(r)))
         if bad:
-            drain(out, ids)
+            drain(out, ids, stream)
             ra, rb = state(sa)[1], state(sb)[1]
             return ("JCLOOP_FAIL %s; reason A=%s B=%s ids=%d"
                     % ("; ".join(bad), reason_name(ra), reason_name(rb) if B else "-", len(ids))), False
         if sa & 4:
             send_row(A, row_of, n)
-        drain(out, ids)
+        drain(out, ids, stream)
         if B:
             c = B.rd("LINK_CONSUMED")
             if c != credit:
@@ -327,7 +342,7 @@ def decode(a, A, B, prompt):
             break
         if time.time() - t0 > a.timeout_s:
             raise RuntimeError("timeout after %d s at position %d" % (a.timeout_s, A.rd("POS")))
-    drain(out, ids)
+    drain(out, ids, stream)
     sa = A.rd("STATUS"); sb = B.rd("STATUS") if B else sa
     ra, rb = state(sa)[1], state(sb)[1]
     with open(a.ids_out, "w") as f:
@@ -346,15 +361,24 @@ def decode(a, A, B, prompt):
     return pre + "JCLOOP_DONE ids=%d reason=%s" % (len(ids), reason_name(rb if B else ra)), True
 
 
+def _say(msg):
+    """print(), but a broken stdout (the ids-stream case, or a dropped ssh pipe) must not
+    stop the rest of abort_all's work."""
+    try:
+        print(msg)
+    except OSError:
+        pass
+
+
 def abort_all(dies):
     """I1: on any exit but a clean finish, ABORT every die (best effort: one failure must not
     stop the next die's ABORT). An ABORT to a die that is not running does nothing."""
     for d in dies:
         try:
             d.ctrl("ABORT", lambda d=d: d.rd("STATUS") & 3 != S_RUN)
-            print("jc_loop: ABORT sent to die %s" % d.name)
+            _say("jc_loop: ABORT sent to die %s" % d.name)
         except Exception as e:                   # report, keep going: the other die still needs it
-            print("jc_loop: ABORT to die %s failed: %s" % (d.name, e))
+            _say("jc_loop: ABORT to die %s failed: %s" % (d.name, e))
 
 
 def run(a, br):
@@ -362,12 +386,24 @@ def run(a, br):
     A = Die(br, a.die, a.base)
     B = Die(br, a.die2, a.base) if a.die2 else None
     clean = False
+    stream = open(a.ids_stream, "w") if a.ids_stream else None
     try:
-        line, clean = decode(a, A, B, prompt)
+        line, clean = decode(a, A, B, prompt, stream)
         return line
     finally:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError:
+                pass
         if not clean:
             abort_all([A] + ([B] if B else []))
+
+
+def _raise_on_signal(signum, frame):
+    """SIGTERM/SIGHUP handler: raise SystemExit, which is not in main()'s except tuple, so it
+    unwinds through run()'s finally (clean is False there) and aborts both dies."""
+    raise SystemExit(1)
 
 
 def main(argv=None):
@@ -382,6 +418,7 @@ def main(argv=None):
     g.add_argument("--mv4i")
     g.add_argument("--synthetic", action="store_true")
     ap.add_argument("--ids-out", required=True)
+    ap.add_argument("--ids-stream")
     ap.add_argument("--base", type=lambda s: int(s, 0), default=0x20000)
     ap.add_argument("--resend-max", type=int, default=3)
     ap.add_argument("--timeout-s", type=int, default=3600)
@@ -391,6 +428,10 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.fault_polarity_at and not a.die2:
         ap.error("--fault-polarity-at needs --die2 (a pair)")
+
+    signal.signal(signal.SIGTERM, _raise_on_signal)
+    signal.signal(signal.SIGHUP, _raise_on_signal)
+
     try:
         line = run(a, Broker(a.sock))
     except (RuntimeError, OSError, ValueError, KeyError, ImportError) as e:
