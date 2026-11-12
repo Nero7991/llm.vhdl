@@ -66,7 +66,7 @@ Each port carries a self-contained slice: 2 rows x BLK=32 INT4 weights per 256-b
 - The descriptor format and the A_JOB contract with the sequencer.
 - The INT4, codebook and BFP arithmetic, and so every output bit.
 - The HBM image layout (own-PC), the region file contract, and the util counters' meaning.
-- The DSP count stays about 1,584 plus 1 scale DSP per row (48).
+- The DSP count stays about 1,584 (per row: 32 product DSPs plus 1 scale DSP, x 48 rows).
 
 ## 2. Data flow, control, clock crossing
 
