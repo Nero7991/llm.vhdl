@@ -409,6 +409,12 @@ class CoE:
     def _recv(s, n):
         b = bytearray()
         while len(b) < n:
+            # TCP_QUICKACK before every recv (Linux clears it): the BMC answers a CMD_TMS move
+            # in two small writes, and the second waits for our ACK of the first. With delayed
+            # ACK that is ~40 ms per move and ~207 ms per die switch (5 moves); measured
+            # 2026-11-12 on the BC-250, alternating A/B reads 214 -> 7.2 ms.
+            if hasattr(socket, "TCP_QUICKACK") and hasattr(s.s, "setsockopt"):
+                s.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_QUICKACK, 1)
             c = s.s.recv(n - len(b))
             if not c:
                 raise ConnectionError("CoE closed")
