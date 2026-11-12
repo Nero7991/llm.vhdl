@@ -7822,9 +7822,9 @@ git commit -m "jc loop T7: tok/gtgclk/aur in the card BD, link CDC timing and EC
 The full card build is the FK33_CARD-class job: ~47 GB including swap. State the budget before starting: `free -g` (resident now), the job's peak (47 GB incl. swap, capped at MemoryHigh 24G with the 30 GiB swap guard), and what is left; ONE Vivado on the box (presence check by `/proc/PID/exe`); `llama-server` stopped (Oren's call: it is user-visible). Nothing under `/tmp`.
 
 ```bash
-bash hw/jc/card/run_card.sh --dry-run --clk-mhz 125 /mnt/storage/fk33_builds/jccard_loop1
+bash hw/jc/card/run_card.sh --dry-run --clk-mhz 125 --impl congestion /mnt/storage/fk33_builds/jccard_loop1
 JC_LINK_REFCLK=gtg JC_LINK_RATE=10.3125 \
-  bash hw/jc/card/run_card.sh --clk-mhz 125 /mnt/storage/fk33_builds/jccard_loop1
+  bash hw/jc/card/run_card.sh --clk-mhz 125 --impl congestion /mnt/storage/fk33_builds/jccard_loop1
 grep -E '^JCCARD_(DONE|FAIL)' /mnt/storage/fk33_builds/jccard_loop1/results/SENTINEL* \
   /mnt/storage/fk33_builds/jccard_loop1/*.log | tail -3
 ```
