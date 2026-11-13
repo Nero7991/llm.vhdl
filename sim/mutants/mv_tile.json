@@ -22,6 +22,10 @@
     {"tag": "V1", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
      "why": "dropped valid: a row-tile result is never pushed when the last block also starts the row-tile",
      "old": "e1_v <= c_v and c_l;",
-     "new": "e1_v <= c_v and c_l and not c_f;"}
+     "new": "e1_v <= c_v and c_l and not c_f;"},
+    {"tag": "J1", "expect": "KILLED", "file": "sim/tb_mv_tile.vhd",
+     "why": "job overlap: the bench skips the inter-case wait/flush (NO_DRAIN default flipped true), so the next job's PARAM pops while the previous job's results/pipeline have not drained -- proves mv_tile's `serialize` assertion has teeth on the UNMUTATED rtl",
+     "old": "    NO_DRAIN     : boolean  := false",
+     "new": "    NO_DRAIN     : boolean  := true"}
   ]
 }

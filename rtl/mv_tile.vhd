@@ -14,7 +14,13 @@
 --   kind 00  ITEM   x = one block of BLK activations (pad columns already zero),
 --                   s[15:0] row 0's scale, s[31:16] row 1's, first/last of the row-tile
 -- An ITEM pops together with one weight beat.  PARAM and CB pop alone.  Because the three
--- kinds share one FIFO, a codebook write can never overtake the items it precedes.
+-- kinds share one FIFO, a codebook write can never overtake the items it precedes.  The
+-- converse direction is a contract, not a check this FIFO gives for free: a new job's
+-- PARAM may pop only after every result of the PREVIOUS job has left this tile (outst back
+-- to 0 and the lane pipeline drained).  The controller, Task 6's mv_back, serialises jobs
+-- to guarantee it -- an early PARAM would rewrite cbl/os_r/mode_r/bias_r out from under
+-- lanes and tail stages still finishing the old job.  Caught by a simulation-only
+-- assertion (the `serialize` process below); synthesis ignores it.
 --
 -- ROOM.  `room` is '1' while the flit FIFO's level is below XD - SLACK, registered.  The
 -- distributor sends only while every tile's room is '1' (a registered AND tree), so SLACK
@@ -211,6 +217,23 @@ begin
       if rst = '0' then
         assert not (f_v = '1' and fq_ir = '0')
           report "mv_tile: a flit arrived with the flit FIFO full (room/credit overrun)"
+          severity failure;
+      end if;
+    end if;
+  end process;
+
+  -- job serialisation: a new PARAM may pop only once the previous job's lane pipeline
+  -- (vd) has drained and every one of its results has left (outst back to 0).  Otherwise
+  -- the PARAM's own pop would already be rewriting os_r/hi_r/lo_r/mode_r/bias_r (and the
+  -- CB flits right behind it would be rewriting cbl) while the old job's stragglers are
+  -- still reading them.  Simulation-only; synthesis ignores it.
+  serialize : process(clk)
+  begin
+    if rising_edge(clk) then
+      if rst = '0' then
+        assert not (pop = '1' and fq_d(B_K+1 downto B_K) = "10" and
+                    (outst > 0 or vd /= (vd'range => '0')))
+          report "mv_tile: a PARAM flit popped before the previous job's results and pipeline drained (job overlap)"
           severity failure;
       end if;
     end if;

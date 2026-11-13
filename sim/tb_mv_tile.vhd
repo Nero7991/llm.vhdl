@@ -29,7 +29,13 @@ entity tb_mv_tile is
     LR           : positive := 3;
     FGAP         : natural  := 20;   -- percent of cycles the bench withholds a flit
     RGAP         : natural  := 30;   -- percent of cycles result RDY is low
-    CHECK_VALUES : boolean  := true
+    CHECK_VALUES : boolean  := true;
+    -- NO_DRAIN: skip the inter-case wait-for-every-result and the 80-cycle flush, and
+    -- move to the next case's PARAM as soon as this case's flits are all SENT.  Default
+    -- false reproduces the normal bench exactly.  Exists only to demonstrate that
+    -- mv_tile's job-serialisation assertion (rtl/mv_tile.vhd, process `serialize`) has
+    -- teeth: sim/mutants/mv_tile.json row J1 flips this generic's default to true.
+    NO_DRAIN     : boolean  := false
   );
 end entity;
 
@@ -214,7 +220,7 @@ begin
 
       -- play the flits; collect the results
       total := 17 + nt*nb; sent := 0; nres := 0; waitc := 0;
-      while nres < nt loop
+      while nres < nt and not (NO_DRAIN and sent >= total) loop
         -- result side: the handshake happened at the edge we just passed
         rnd;
         -- send decision on the room seen LR cycles ago
@@ -260,14 +266,16 @@ begin
           & " results" severity failure;
       end loop;
       f_v <= '0'; r_rdy <= '0';
-      -- flush the tree model; no stray result may follow
-      for i in 0 to LF-1 loop fp(i).v := '0'; end loop;
-      for i in 1 to 80 loop
-        tick;
-        rp := rp(LR-2 downto 0) & room;
-        assert r_v = '0' report "tb_mv_tile: an extra result after the case's last row-tile"
-          severity failure;
-      end loop;
+      if not NO_DRAIN then
+        -- flush the tree model; no stray result may follow
+        for i in 0 to LF-1 loop fp(i).v := '0'; end loop;
+        for i in 1 to 80 loop
+          tick;
+          rp := rp(LR-2 downto 0) & room;
+          assert r_v = '0' report "tb_mv_tile: an extra result after the case's last row-tile"
+            severity failure;
+        end loop;
+      end if;
       checks := checks + 1;
       ncase := ncase + 1;
     end loop;
