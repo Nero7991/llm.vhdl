@@ -192,44 +192,46 @@ cache; the docstring in `server/llmvhdl_server.py` explains why.
 
 ## Jungle Cat (2x VU35P): the 27B target
 
-The two-die 27B target runs on the SQRL Jungle Cat (JCC2L-Lite carrier, two
-JCM35P modules = 2x `xcvu35p`, -2L). 27B INT4 fits one VU35P at about 46% LUT,
-and every shipping block closes 200 MHz on the VU35P -2 grade standalone.
+Qwen3.8-27B runs on the SQRL Jungle Cat (JCC2L-Lite carrier, two JCM35P modules
+= 2x `xcvu35p`, -2L at 0.85 V) as a two-die pipeline: die A holds layers 0-32,
+die B layers 33-63 and the LM head. First 27B tokens were served through the web
+UI on 2026-11-12.
 
-**Working:** both modules program and come up with a standard `.bit` over
-Ethernet through SQRL's on-board STM32, which bridges to JTAG (`sqrl_bridge`
-CoE; Vivado drives it over XVC). IDCODE confirmed on both dies. No PCIe and no
-bitstream reverse-engineering required.
+**Working:**
+- **Programming and weight load over Ethernet.** A standard `.bit` goes in
+  through SQRL's on-board STM32 JTAG bridge (`sqrl_bridge` CoE). The weights load
+  through a BSCAN USER4 loader into HBM and are verified by CRC on both dies.
+- **Die-to-die link.** One GTY lane runs Aurora 64B66B at 10.3125 Gb/s, die A to
+  die B. The refclk comes from a fabric MMCM via GTGREFCLK, because the carrier's
+  refclk sites are unpopulated. It carries the residual hand-off between the dies.
+  The lane drops every 2-4 s; a resend recovers every frame.
+- **On-fabric token loop** (`tok_loop`). It sequences the token on the card, so
+  the host relays only the token id and the embedding row. Outputs are identical
+  to the host-driven path. It passes the 500-token context test and the
+  link-fault test.
+- **Speed:** 0.52 s per position on the loop (MEASURED; the card's own rate,
+  about 1.9 tok/s decode), 1.4-1.5 tok/s in the web UI. The "own pseudo-channel"
+  HBM layout took A from 4.76 to 1.51 cycles per weight word.
 
-**Blockers:**
-- **No GTY reference clock.** The inter-die link (8-lane GTY / Aurora, quad 126)
-  for the two-die residual hand-off and the tensor-parallel collective cannot
-  come up: a sweep found no refclk on any bank, because the carrier's refclk
-  oscillator sites (X1/X2) are unpopulated. The clock-injection BOM
-  (a 156.25 MHz LVDS oscillator into a CDCLVD1204 fan-out) is identified and
-  awaits soldering.
-- **No fast weight-load path.** No PCIe; the only host paths are the CoE/JTAG
-  bridge (transport-bound, ~1 MB/s class) and BMC Ethernet, far too slow for the
-  ~13.5 GB of 27B INT4 weights. A JTAG-AXI probe bitstream is built to measure
-  the real ceiling; a bulk path (over Aurora once the link is up, or BMC
-  Ethernet) is the open question.
-- **Subsystem E (the TP collective) is still a skeleton.**
+**Open:** the link drops (a B-to-A lane would confirm the cause), the embedding
+table on-chip (715 MB, does not fit die A's HBM as laid out), and the return
+link B to A. Subsystem E (the TP collective) is still a skeleton.
 
-See `docs/boards/jungle-cat/2026-09-27_bringup.md` and
-`docs/2026-09-24_jungle-cat-performance-estimate.md`.
+See `docs/boards/jungle-cat/` and `docs/debugging/2026-11-*_jc-*.md`.
 
 ## Status and ongoing work
 
 `docs/WORKLOG.md` is the live board; `docs/` holds the dated design and
 debugging notes. In flight:
 
-- **9B on silicon** -- running across two FK33s as a pipeline split (card 0
-  holds the early blocks, card 1 the rest plus the LM head).
+- **Subsystem A at 450 MHz.** A is rebuilt as 24 per-port tiles in its own clock
+  domain with the HBM AXI ports. 450 MHz is the HBM's own port rate, 3.6x
+  today's 125 MHz. Values stay bit-exact with today's A. The rest of the engine
+  scales after it. Spec and plan:
+  `docs/superpowers/specs/2026-11-12-a450-per-port-tiles-design.md`.
+- **9B on silicon:** running across two FK33s as a pipeline split.
   See `docs/PLAN_TO_FIRST_INFERENCE.md` and the two-card pipeline spec.
-- **27B across two dies** -- fits a VU35P at about 46% LUT; composed timing
-  and the no-PCIe host path are the open items.
-  See `docs/2026-09-24_jungle-cat-performance-estimate.md`.
-- **Per-block fmax ratings** -- every shipping block clears 200 MHz on the
+- **Per-block fmax ratings:** every shipping block clears 200 MHz on the
   VU35P -2 deployment grade; flow under `hw/targets/`.
 
 ## License
