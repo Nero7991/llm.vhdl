@@ -1,0 +1,27 @@
+{
+  "tb": "tb_mv_tile",
+  "deps": ["rtl/util_pkg.vhd", "rtl/mv4i_arith_pkg.vhd", "rtl/stream_fifo.vhd",
+           "rtl/async_fifo.vhd", "rtl/axi_rd_fsm.vhd", "rtl/axi_rd_port.vhd",
+           "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd", "sim/axi_rd_mem_model.vhd", "sim/tb_mv_tile.vhd"],
+  "vectors": ["sim/mv_tile_vec.txt"],
+  "stop_time": "100ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "S1", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "scale path: the scale multiply reads row 0's scale for both rows",
+     "old": "s17 := '0' & sc(r*16 + 15 downto r*16);",
+     "new": "s17 := '0' & sc(15 downto 0);"},
+    {"tag": "K1", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "codebook index: row 1 decodes row 0's nibble",
+     "old": "a_cb(BLK + j) <= signed(cbl(BLK + j)(to_integer(unsigned(ln(23 downto 20)))));",
+     "new": "a_cb(BLK + j) <= signed(cbl(BLK + j)(to_integer(unsigned(ln(19 downto 16)))));"},
+    {"tag": "O1", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "out_shift: the coarse shift drops one byte step",
+     "old": "e3_w(r)   <= shift_right(e2_w(r), 8*hi_r);",
+     "new": "e3_w(r)   <= shift_right(e2_w(r), 8*(hi_r/2));"},
+    {"tag": "V1", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "dropped valid: a row-tile result is never pushed when the last block also starts the row-tile",
+     "old": "e1_v <= c_v and c_l;",
+     "new": "e1_v <= c_v and c_l and not c_f;"}
+  ]
+}
