@@ -171,3 +171,20 @@ Each tile reads only its own port. Weights never cross a tile boundary.
   (3.2 gate 2) answers whether the tile pblocks fit above them.
 - **Ports B and C share at 450 MHz.** Their dual-clock ports add FIFOs. Their timing is in
   `clk_core`, but the port-side halves are in `aclk_a` and must meet 450 MHz too.
+
+## 6. Plan-time amendments (2026-11-12)
+
+The plan `docs/superpowers/plans/2026-11-12-a450-per-port-tiles.md` ("Rulings where the RTL
+contradicted the spec", R1-R10) supersedes these points. Each was forced by the RTL.
+- **2.3: BFP folding.** BFP mode folds `amax` over all rows, so tiles end at sat32. The fold,
+  the emit and the 48-row assembly stay in `clk_core`, and each 97-bit result word crosses on its
+  own (R1, R3).
+- **2.4: descriptor fetch.** It stays in `clk_core`; its DUAL_CLK port already puts the AXI half
+  on `aclk_a` (R2).
+- **2.2: credits.** They are a registered room level with slack 12 at depth 32 (MEASURED, R4).
+  The distributor zeroes pad columns (R5).
+- **1.1: B and C memory ports.** B and C cross through `axi_clock_converter` and a two-clock
+  smartconnect, because their masters both read and write (R6).
+- **1.1: the 450 MHz clock.** `aclk_a` comes from a second MMCM (R7).
+- **Unchanged.** `stream_fifo` is not edited; the tiles use `mv_lfifo` (R10). Counters and
+  rating rows: R8, R9.
