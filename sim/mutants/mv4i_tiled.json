@@ -36,6 +36,22 @@
     {"tag": "M1", "expect": "KILLED", "file": "rtl/mv_back.vhd",
      "why": "the bench's own comparator: the back end masks the first pad row of a partial last row-tile as valid (raw and partial beats), which only the beat-by-beat y_mask compare against matvec_int4 can see",
      "old": "            if rbase + rr < n_rows then\n              y_mask(rr) <= '1'; re3_ok(rr) <= '1';",
-     "new": "            if rbase + rr <= n_rows then\n              y_mask(rr) <= '1'; re3_ok(rr) <= '1';"}
+     "new": "            if rbase + rr <= n_rows then\n              y_mask(rr) <= '1'; re3_ok(rr) <= '1';"},
+    {"tag": "S3", "expect": "PASS", "file": "rtl/mv_tile.vhd",
+     "why": "Task 7b fix round 1, RESET MARGIN (expected to survive): the tile/link reset one stage deeper (D = 3 registers from ar2).  Safe by design: the crossing's registered afull is '1' through wrst and one edge after, so link 0 cannot emit a stale word until two edges after ar_ts falls; a one-cycle reset tolerates D <= 4.  MEASURED: survives job 17",
+     "old": "  lrst : process(clk)\n  begin\n    if rising_edge(clk) then rst_l <= rst; end if;\n  end process;",
+     "new": "  lrst : process(clk)\n    variable rst_p : std_logic := '1';\n  begin\n    if rising_edge(clk) then rst_l <= rst_p; rst_p := rst; end if;\n  end process;"},
+    {"tag": "S4", "expect": "PASS", "file": "rtl/mv_tile.vhd",
+     "why": "Task 7b fix round 1, RESET MARGIN (expected to survive): D = 4, the last safe depth for a one-cycle reset (D <= L + 3).  MEASURED: survives job 17.  If a change to the crossing or the chain makes this one KILLED, the reset margin shrank",
+     "old": "  lrst : process(clk)\n  begin\n    if rising_edge(clk) then rst_l <= rst; end if;\n  end process;",
+     "new": "  lrst : process(clk)\n    variable rst_p0 : std_logic := '1';\n    variable rst_p1 : std_logic := '1';\n  begin\n    if rising_edge(clk) then rst_l <= rst_p1; rst_p1 := rst_p0; rst_p0 := rst; end if;\n  end process;"},
+    {"tag": "S5", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "Task 7b fix round 1, RESET MARGIN: D = 5, one past the safe depth.  After job 17's one-cycle reset in SAME, link 0 takes a stale word in the first cycle the crossing's afull is low and before its own reset lands; the word enters the crossing and job 18's SAME beats mismatch (MEASURED: MISMATCH job 18 DUT 2 beats 0 and 1).  Proves job 17 has teeth",
+     "old": "  lrst : process(clk)\n  begin\n    if rising_edge(clk) then rst_l <= rst; end if;\n  end process;",
+     "new": "  lrst : process(clk)\n    variable rst_p0 : std_logic := '1';\n    variable rst_p1 : std_logic := '1';\n    variable rst_p2 : std_logic := '1';\n  begin\n    if rising_edge(clk) then rst_l <= rst_p2; rst_p2 := rst_p1; rst_p1 := rst_p0; rst_p0 := rst; end if;\n  end process;"},
+    {"tag": "F1", "expect": "KILLED", "file": "rtl/mv_rdport.vhd",
+     "why": "Task 7b R-stage teeth: the weight/scale FIFOs are built at half the depth the AR credit assumes, so once port 13's stalls hold the distributor and the other tiles' FIFOs fill, a registered R beat meets a full FIFO; rready is tied '1', the `credit` check uses the credit's DEPTH, the FIFO drops silently: only mv_rdport's `rstage` assertion can see it (log: 'registered R beat found the FIFO full').  SURVIVES tb_mv_tile at DEPTH/2, /4 and /8 (MEASURED: its 16-word memory never has two bursts in flight)",
+     "old": "generic map(W => AXI_DW, DEPTH => DEPTH, FAST_POP => FAST_POP)",
+     "new": "generic map(W => AXI_DW, DEPTH => DEPTH / 2, FAST_POP => FAST_POP)"}
   ]
 }

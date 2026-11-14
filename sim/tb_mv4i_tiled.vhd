@@ -223,6 +223,8 @@ begin
       kind : natural;  -- 0 random, 1 saturating, 2 reset mid-job (not compared),
                        -- 3 the previous job's weights and x with a new codebook
                        -- 4 random, preceded by a one-cycle reset pulse at idle
+                       -- 5 a ONE-cycle reset two cycles after SAME's first y beat, while
+                       --   the result chain still holds words (not compared)
     end record;
     type jobs_t is array(natural range <>) of job_t;
     constant JOBS : jobs_t := (
@@ -237,9 +239,11 @@ begin
       (480, 32, 9, 2, 0, 0, 3),      -- same weights and x, a new codebook, partial
       (96, 640, 4, 0, 0, 0, 2),      -- rst pulsed 300 cycles into the job
       (96, 640, 4, 0, 1, 1, 0),      -- the job after the reset
-      (480, 640, 9, 1, 1, 2, 4));    -- 200 items per tile, over the 64-beat weight FIFO:
+      (480, 640, 9, 1, 1, 2, 4),     -- 200 items per tile, over the 64-beat weight FIFO:
                                      -- the SPLIT stalls now exhaust tile credits; a
                                      -- one-cycle reset at idle before it (kind 4)
+      (480, 32, 9, 1, 0, 0, 5),      -- Task 7b fix round 1: one-cycle reset mid-result
+      (96, 64, 4, 0, 2, 1, 0));      -- the job after it (a stale chain word shows here)
     variable rng : unsigned(31 downto 0) := x"5EED1234";
     variable nb, nt, cyc, checks, fails : natural := 0;
     variable bad : boolean;
@@ -333,6 +337,27 @@ begin
         -- release the owed bursts 20 clk cycles into the job after the mid-job reset
         for i in 1 to 20 loop wait until rising_edge(clk); end loop;
         mhold <= '0';
+      end if;
+      if JOBS(j).kind = 5 then
+        -- a ONE-cycle reset while results are moving: in SAME (aclk_a = clk) that is a
+        -- one-cycle ar2, the case where the tile/link reset and ar_ts deassert on the same
+        -- edge with nothing to spare (rtl/mv_afast.vhd RESET TREE).  Nothing of this job is
+        -- compared; the next job is.
+        cyc := 0;
+        while y_we(2) = '0' loop
+          wait until rising_edge(clk);
+          cyc := cyc + 1;
+          assert cyc < 400000 report "tb_mv4i_tiled: job " & integer'image(j)
+            & " never produced a SAME beat" severity failure;
+        end loop;
+        for i in 1 to 2 loop wait until rising_edge(clk); end loop;
+        rst <= '1';
+        wait until rising_edge(clk);
+        rst <= '0';
+        for i in 1 to 30 loop wait until rising_edge(clk); end loop;
+        report "tb_mv4i_tiled: job " & integer'image(j) & " one-cycle reset mid-result"
+          severity note;
+        next;
       end if;
       if JOBS(j).kind = 2 then
         -- reset in the middle of the job; nothing of it is compared, the next job is
