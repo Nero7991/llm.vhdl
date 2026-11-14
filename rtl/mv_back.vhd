@@ -4,7 +4,10 @@
 -- lives here, unchanged in meaning:
 --   * the spec 7.6 start checks (bad n_rows / n_cols / out_shift, BFP above MAXROWS_BFP):
 --     err and done, and the fast side is never started;
---   * the codebook, written in idle exactly as before (a cb_we cycle ignores start);
+--   * the codebook, written in idle as before, with ONE difference: a `start` in the
+--     same cycle as `cb_we` is dropped here (cb_we wins), where matvec_core honours both.
+--     No caller does this (matvec_int4_desc_axi issues start the cycle after its last
+--     cb_we), and a simulation assertion below refuses it;
 --   * the job values the fast side reads (j_*), held from the start pulse to the next
 --     start, and the one-cycle j_go that rtl/mv_tsync.vhd carries to aclk_a;
 --   * the result words from the crossing, NT per row-tile in tile order, assembled into
@@ -126,6 +129,17 @@ begin
   q_ready <= '1' when st = B_RUN else '0';
   w_beat  <= bt_v;
   w_words <= nb_r;
+
+  -- synthesis translate_off
+  cb_start : process(clk)
+  begin
+    if rising_edge(clk) then
+      assert rst = '1' or not (start = '1' and cb_we = '1')
+        report "mv_back: start in the same cycle as cb_we (the start would be dropped; matvec_core honoured both)"
+        severity failure;
+    end if;
+  end process;
+  -- synthesis translate_on
 
   process(clk)
     variable v48  : signed(47 downto 0);

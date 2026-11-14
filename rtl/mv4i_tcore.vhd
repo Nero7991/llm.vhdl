@@ -11,16 +11,23 @@
 --
 -- RESETS.  One source, `rst` (clk).  aclk_a's reset ar2 is rst through two flops.  The
 -- start crossing (mv_tsync) is reset from that same source on both sides: srst = rst,
--- drst = ar_ts = ar2 stretched by one aclk_a cycle.  The stretch is load bearing: a
--- reset clears the source toggle, which is itself a toggle edge whenever an odd number
--- of starts preceded it, and that edge reaches the destination's edge detector three
--- aclk_a edges after the clk edge that cleared it.  ar2 alone falls too early for a
--- one-cycle rst (it covers only up to the second aclk_a edge after rst falls), so the
--- fast side would see a phantom start and replay the last job into the tiles.  ar_ts
--- covers one aclk_a edge more, which is the third, and still falls before the first
--- start the back end can issue after the reset reaches the destination (start sampled
--- one clk edge after rst falls; its toggle edge is detected at the fifth).  Proven by
--- tb_mv4i_tiled's one-cycle reset before job 16 (mutant R1 drops the stretch).
+-- drst = ar_ts = ar2 or ar3, ar2 stretched by one aclk_a cycle.  ar1 is the first
+-- ASYNC_REG stage and feeds nothing but ar2 (review fix: ar_ts read ar1 before, a CDC
+-- violation).  The stretch is load bearing: a reset clears the source toggle, which is
+-- itself a toggle edge whenever an odd number of starts preceded it, and the detector
+-- fires on it three aclk_a edges after the edge at which s1 first samples it.  rst
+-- reaches ar1 and tog reaches s1 by two INDEPENDENT asynchronous paths, so in SPLIT
+-- either may land one aclk_a edge before the other; nothing orders them.  For a
+-- one-cycle rst, ar2 alone deasserts on exactly the edge the phantom start fires when
+-- tog's path is the slower one: zero edges of margin (and a phantom replays the last
+-- job into the tiles).  ar3 adds ONE edge of margin, no more: it covers the worst
+-- relative landing of the two paths by one aclk_a edge.  MARGIN ON THE OTHER SIDE: the
+-- first start the back end can issue after a reset (start sampled one clk edge after
+-- rst falls) is detected at the fifth clk edge; with aclk_a = clk (SAME) ar_ts is
+-- deasserted at that edge with zero edges to spare, so ar_ts must not be stretched
+-- further; in SPLIT (aclk_a 3.6x clk) the spare is several aclk_a edges.  Proven by
+-- tb_mv4i_tiled's one-cycle reset before job 16; mutant R1 (drst = ar2) removes the
+-- one edge and is killed.
 --
 -- The result crossing (mv_rcross, an async_fifo) needs the same care in both directions:
 -- each side clears its own pointers AND its synchronised copy of the other side's, so a
@@ -28,8 +35,8 @@
 -- pointer and replays stale words.  MEASURED on the first run of tb_mv4i_tiled with
 -- rrst = rst and wrst = ar2: the one-cycle reset before job 16 left SAME's crossing
 -- almost-full for 866 of the next 870 cycles and all 10 beats of job 16 wrong (stale
--- words of job 15 in front).  So wrst = ar_ts (zeroes the write pointer two aclk_a edges
--- after rst rises, while the read side is already in reset), and the read side's reset
+-- words of job 15 in front).  So wrst = ar_ts (zeroes the write pointer three aclk_a
+-- edges after rst rises, while the read side is already in reset), and the read side's reset
 -- rrst_x = rst or rr_hold, where rr_hold is set by rst and cleared only after ar_ts,
 -- synchronised back into clk (wr1, wr2), has been seen to rise and then fall.  The read
 -- side therefore leaves reset with the write pointer already zero and synchronised.  It
@@ -83,12 +90,13 @@ end entity;
 architecture rtl of mv4i_tcore is
   constant XA : positive := clog2(MAXCOLS);
   constant XB : positive := clog2((MAXCOLS + BLK - 1) / BLK);
-  signal ar1, ar2, ar_ts : std_logic := '1';
+  signal ar1, ar2, ar3, ar_ts : std_logic := '1';
   signal wr1, wr2, rr_hold : std_logic := '1';
   signal rr_seen, rrst_x : std_logic := '0';
   attribute async_reg : string;
   attribute async_reg of ar1 : signal is "TRUE";
   attribute async_reg of ar2 : signal is "TRUE";
+  attribute async_reg of ar3 : signal is "TRUE";
   attribute async_reg of wr1 : signal is "TRUE";
   attribute async_reg of wr2 : signal is "TRUE";
   signal i_rows, i_cols, i_osh, i_wexp, i_xexp, i_yexp, i_wb, i_sb : integer := 0;
@@ -117,8 +125,8 @@ begin
   arst : process(aclk_a)
   begin
     if rising_edge(aclk_a) then
-      ar1 <= rst; ar2 <= ar1;
-      ar_ts <= ar1 or ar2;
+      ar1 <= rst; ar2 <= ar1; ar3 <= ar2;
+      ar_ts <= ar2 or ar3;
     end if;
   end process;
 

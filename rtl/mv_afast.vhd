@@ -135,11 +135,14 @@ begin
              d_v => res_v, d_d => res_d, d_afull => res_afull);
 
   -- synthesis translate_off
-  -- STALL MONITOR (simulation only; a450 Task 6 ruling 4).  Spec 2.3 says the result
-  -- chain never stalls the tiles; this measures it.  Per tile, per job (reported at the
-  -- next go or at a reset, for the interval since the previous report):
-  --   bp    cycles the tile's result was waiting on the chain (own_v and not own_rdy),
-  --   room  cycles the tile's own room was '0',
+  -- RESULT-WAIT AND ROOM MONITOR (simulation only; a450 Task 6 ruling 4).  Per tile, per
+  -- job (reported at the next go or at a reset, for the interval since the previous
+  -- report):
+  --   bp    cycles a FINISHED result waited at the head of the tile's RD-deep result FIFO
+  --         for the chain (own_v and not own_rdy).  This is result-wait telemetry, NOT a
+  --         tile stall: the tile keeps computing until outst reaches RD, and only a lost
+  --         room (below) can hold the distributor.
+  --   room  cycles the tile's own room was '0' (the only way a tile holds every tile),
   -- and, for the whole fast side, `held`: cycles the distributor was busy with room_all
   -- '0' (every tile held), and `tail`: cycles the crossing's almost-full held the chain.
   stallmon : process(clk)
