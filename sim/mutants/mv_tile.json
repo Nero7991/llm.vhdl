@@ -1,7 +1,7 @@
 {
   "tb": "tb_mv_tile",
   "deps": ["rtl/util_pkg.vhd", "rtl/mv4i_arith_pkg.vhd", "rtl/stream_fifo.vhd",
-           "rtl/async_fifo.vhd", "rtl/axi_rd_fsm.vhd", "rtl/axi_rd_port.vhd",
+           "rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd",
            "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd", "sim/axi_rd_mem_model.vhd", "sim/tb_mv_tile.vhd"],
   "vectors": ["sim/mv_tile_vec.txt"],
   "stop_time": "100ms",
@@ -26,6 +26,14 @@
     {"tag": "J1", "expect": "KILLED", "file": "sim/tb_mv_tile.vhd",
      "why": "job overlap: the bench skips the inter-case wait/flush (NO_DRAIN default flipped true), so the next job's PARAM pops while the previous job's results/pipeline have not drained -- proves mv_tile's `serialize` assertion has teeth on the UNMUTATED rtl",
      "old": "    NO_DRAIN     : boolean  := false",
-     "new": "    NO_DRAIN     : boolean  := true"}
+     "new": "    NO_DRAIN     : boolean  := true"},
+    {"tag": "C1", "expect": "KILLED", "file": "rtl/mv_rdfsm.vhd",
+     "why": "AR credit: an issued burst does not take its length out of `free`; killed by free's declared range 0..DEPTH (bound failure as the pops push it past DEPTH), not by values: the FIFO backpressures R",
+     "old": "if pop_r = '1' then dl := dec1_r; else dl := dec0_r; end if;",
+     "new": "if pop_r = '1' then dl := 1; else dl := 0; end if;"},
+    {"tag": "C2", "expect": "KILLED", "file": "rtl/mv_rdfsm.vhd",
+     "why": "AR credit, in range: `free` gains one spare credit every cycle, saturated at DEPTH, so it never leaves 0..DEPTH while ARs go out past the FIFO's room; only mv_rdport's independent `credit` assertion (FIFO level plus beats in flight <= DEPTH) can see it",
+     "old": "free <= free + dl;",
+     "new": "free <= minimum(DEPTH, free + 1 + dl);"}
   ]
 }

@@ -195,9 +195,14 @@ begin
              i_valid => f_v, i_data => fq_in, i_ready => fq_ir,
              q_valid => fq_v, q_data => fq_d, q_ready => pop, level => fq_lvl);
 
-  wport : entity work.axi_rd_port
+  -- a450 Task 3: mv_rdport, not axi_rd_port.  Same single-clock wiring, but its FSM
+  -- (rtl/mv_rdfsm.vhd) issues ARs from a credit counter through a fully registered,
+  -- multi-cycle decision, so it routes at 2.222 ns -- see rtl/mv_rdport.vhd's and
+  -- rtl/mv_rdfsm.vhd's headers for why this is a tile-local copy and not an edit to
+  -- axi_rd_port/axi_rd_fsm.
+  wport : entity work.mv_rdport
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH, MAXB => MAXB,
-                MAXOUT => MAXOUT, DUAL_CLK => false, FAST_POP => true)
+                MAXOUT => MAXOUT, FAST_POP => true)
     port map(clk => clk, rst => rst, start => port_start,
              base => w_base, n_beats => w_beats,
              arvalid => arvalid, arready => arready, araddr => araddr, arlen => arlen,
