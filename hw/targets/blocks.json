@@ -1,4 +1,25 @@
 {
+  "a450_tile": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "40",
+      "AXI_DW": "256",
+      "BLK": "32",
+      "DEPTH": "512",
+      "MAXB": "16",
+      "MAXOUT": "16",
+      "RD": "4",
+      "SLACK": "12",
+      "XD": "32"
+    },
+    "levers": [],
+    "target_ns": 2.222,
+    "tier": "anchor",
+    "top": "mv_tile"
+  },
   "a_engine": {
     "clocks": {
       "m_aclk": "*",

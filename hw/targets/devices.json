@@ -14,6 +14,13 @@
     },
     "vccint_run": 0.715
   },
+  "vu35p_jc_2l85": {
+    "board": "jungle_cat",
+    "build_part": "xcvu35p-fsvh2104-2L-e",
+    "note": "the JC dies at their measured board default 0.850 V, where the -2 timing model applies to the -2L part (spec 2026-11-12-a450 section 0)",
+    "rating_part": "xcvu35p-fsvh2104-2L-e",
+    "vccint_run": 0.85
+  },
   "vu35p_jc_m1": {
     "board": "jungle_cat",
     "build_part": "xcvu35p-fsvh2104-1-e",
