@@ -1,0 +1,25 @@
+{
+  "tb": "tb_mv_rchain",
+  "deps": ["rtl/util_pkg.vhd", "rtl/async_fifo.vhd", "rtl/mv_rlink.vhd", "rtl/mv_rchain.vhd",
+           "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd", "sim/tb_mv_rchain.vhd"],
+  "stop_time": "1ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "R1", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "a stage passes one upstream word too many per row-tile (order broken)",
+     "old": "constant NPASS : natural := NT - 1 - K;",
+     "new": "constant NPASS : natural := NT - K;"},
+    {"tag": "R2", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "the stage's almost-full comes two words late (its FIFO overflows)",
+     "old": "if n >= 2 then ua_r <= '1'; else ua_r <= '0'; end if;",
+     "new": "if n >= 4 then ua_r <= '1'; else ua_r <= '0'; end if;"},
+    {"tag": "R3", "expect": "KILLED", "file": "rtl/mv_rcross.vhd",
+     "why": "the crossing's almost-full rises only past full (w_level carries OUT_MARGIN + 1 = 4 of conservatism, so a threshold of DEPTH alone is still safe and survives)",
+     "old": "elsif w_level >= DEPTH - 6 then af <= '1';",
+     "new": "elsif w_level >= DEPTH + 8 then af <= '1';"},
+    {"tag": "T1", "expect": "KILLED", "file": "rtl/mv_tsync.vhd",
+     "why": "the start pulse is the synchronised level, not its edge",
+     "old": "else s3 <= s2; d_pulse <= s2 xor s3;",
+     "new": "else s3 <= s2; d_pulse <= s2;"}
+  ]
+}
