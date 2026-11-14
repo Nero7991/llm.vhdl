@@ -96,9 +96,11 @@ begin
              o_v => d_v, o_kind => d_k, o_x => d_x, o_s => d_s, o_first => d_f,
              o_last => d_l, room_all => room_all, busy => busy);
 
+  -- a450 Task 4 review fix round 2: NSCALE covers JOB 6's ntl*nb (5174*1=5174 scale
+  -- superwords, the raw-mode LM head case, j_rows=248320 > the old MAXROWS=17408 bound).
   gm : for q in 0 to 2 generate
     sm : entity work.axi_rd_mem_model
-      generic map(AXI_DW => 256, ADDR_W => 40, NWORDS => 256, SEED => 11 + q, GAPPCT => 20)
+      generic map(AXI_DW => 256, ADDR_W => 40, NWORDS => 5200, SEED => 11 + q, GAPPCT => 20)
       port map(clk => aclk, rst => rst, arvalid => arv(q), arready => arr(q),
                araddr => ara(q*40+39 downto q*40), arlen => arl(q*8+7 downto q*8),
                rvalid => rv(q), rready => rr(q), rdata => rd(q*256+255 downto q*256),
@@ -114,7 +116,9 @@ begin
 
   run : process
     type xmem_t is array(0 to MAXC-1) of std_logic_vector(15 downto 0);
-    type sm_t is array(0 to 255) of std_logic_vector(3*256-1 downto 0);
+    -- a450 Task 4 review fix round 2: 5200 >= JOB 6's ntl*nb (5174), the raw-mode LM-head
+    -- case exercising j_rows above the old MAXROWS=17408 bound; see the `gm` generate.
+    type sm_t is array(0 to 5199) of std_logic_vector(3*256-1 downto 0);
     type nat_arr is array(0 to NT-1) of natural;
     variable xm : xmem_t;
     variable sm : sm_t;
@@ -130,9 +134,16 @@ begin
     variable ef, el : std_logic;
     variable allin : boolean;
     type job_t is record cols, rows, os, md : natural; end record;
-    type jobs_t is array(0 to 5) of job_t;
+    type jobs_t is array(0 to 6) of job_t;
+    -- JOB 6 (32, 248320, ...): the raw-mode LM head, j_rows = model_cfg_pkg.vhd's vocab,
+    -- above the old MAXROWS=17408 bound (a450 Task 4 review fix round 2, item 1) and well
+    -- into the reciprocal-multiply divide's full width (item 2) -- ntl = ceil(248320/48)
+    -- = 5174, needing 13 bits, where the old NTL_MAX (ceil(17408/48)=363) needed only 9.
+    -- cols=32 (nb=1) keeps it fast: 17+5174=5191 total flits per tile, same order as
+    -- JOB 3's 81.
     constant JOBS : jobs_t := ((96, 48, 3, 0), (100, 96, 40, 1), (31, 1, 0, 2),
-                               (1024, 50, 7, 0), (33, 144, 12, 1), (257, 49, 0, 0));
+                               (1024, 50, 7, 0), (33, 144, 12, 1), (257, 49, 0, 0),
+                               (32, 248320, 20, 1));
     procedure rnd is
     begin
       rng := rng xor shift_left(rng, 13);

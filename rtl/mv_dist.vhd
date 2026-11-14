@@ -37,15 +37,45 @@
 -- their real maxima: NB_MAX = ceil(MAXCOLS/BLK) for j_nb, MAXROWS for j_rows, BLK for
 -- j_lastv, and NB_MAX * ceil(MAXROWS/ROWS_IF) for s_beats (one scale superword per
 -- (row-tile, block) pair, spec 2.2) -- see the NB_MAX/NTL_MAX/SBEATS_MAX constants below.
+-- MAXROWS defaults to 248320 (model_cfg_pkg.vhd's `vocab`), NOT MAXROWS_BFP's 17408:
+-- MAXROWS_BFP (rtl/matvec_core.vhd) bounds only BFP-mode jobs (spec 7.6); the 27B LM head
+-- on die B is a RAW-mode job whose n_rows is the vocabulary, 248320, which exceeds
+-- MAXROWS_BFP by design (spec 7.6: "in raw mode M may exceed MAXROWS_BFP"). Binding
+-- MAXROWS to 17408 here would range-fail that job in simulation and truncate it in
+-- hardware (fix round 2, item 1).
+--
 -- The row-tile count is tracked as `rtleft_r`, row-tiles REMAINING after the one in
--- flight (not rows left), precomputed once at `go` (ceil(j_rows/ROWS_IF) - 1) alongside
--- `nb_m1_r` (j_nb - 1).  The per-cycle tests in D_RUN are then the narrow, registered-only
--- `b = nb_m1_r` and `rtleft_r = 0` (`at_lastblk`/`at_lastrt` below), never the wide
--- `b = nb_r - 1` subtraction or the wide `rows_left <= ROWS_IF` magnitude compare the
--- first cut of this file used -- both sat in the same cycle `s_take` (itself a late
--- signal, off room_all and the three scale FIFOs' `q_valid`) resolves in. The flit
--- sequence emitted is unchanged: this is a resynthesis of the same FSM, not a behaviour
--- change.
+-- flight (not rows left), precomputed once at `go` alongside `nb_m1_r` (j_nb - 1). The
+-- per-cycle tests in D_RUN are then the narrow, registered-only `b = nb_m1_r` and
+-- `rtleft_r = 0` (`at_lastblk`/`at_lastrt` below), never the wide `b = nb_r - 1`
+-- subtraction or the wide `rows_left <= ROWS_IF` magnitude compare the first cut of this
+-- file used -- both sat in the same cycle `s_take` (itself a late signal, off room_all
+-- and the three scale FIFOs' `q_valid`) resolves in.
+--
+-- `rtleft_r`'s initial value, ceil(j_rows/ROWS_IF) - 1, needs a DIVIDE (by ROWS_IF),
+-- which the first cut of this fix computed combinationally in the `go` cycle itself --
+-- fine at MAXROWS=17408 (an 18-bit dividend) but a correctness risk at MAXROWS=248320
+-- (still 18-19 bits, same order, but now definitely too wide a combinational divide to
+-- trust on a single 2.222 ns cycle without a routed measurement neither GHDL nor this
+-- fix round can take). Fix round 2, item 2: it is now a reciprocal MULTIPLY by a
+-- precomputed constant, pipelined over two dedicated FSM states (D_SET1, D_SET2) so
+-- `busy` (already '1' for any state but D_IDLE) stays high through the whole setup and
+-- neither state does more than one short, narrow op:
+--   D_SET1: prod_r <= y_r * DIV_M            (a single registered multiply, the same
+--                                              "DSP A/B regs -> DSP M reg" shape
+--                                              rtl/mv_tile.vhd's own MAC pipeline already
+--                                              measures closing at 450 MHz)
+--   D_SET2: rtleft_r <= (prod_r >> DIV_S) - 1  (a bit-select and a decrement, both narrow)
+-- DIV_S/DIV_M satisfy floor((j_rows + ROWS_IF - 1) * DIV_M / 2**DIV_S)
+--            = ceil(j_rows / ROWS_IF) for EVERY j_rows in 1..MAXROWS, proved exhaustively
+-- (not sampled) by tools/check_mv_dist_div.py, which runs the identical formula over the
+-- whole range in Python: MEASURED DIV_S=28, DIV_M=5592406 at the shipped generics
+-- (ROWS_IF=48, MAXROWS=248320), 0 mismatches over all 248,320 values.  Re-run that script
+-- before trusting a new DIV_S/DIV_M if either generic ever changes.
+--
+-- The flit sequence emitted is unchanged (same states reached in the same order, just two
+-- extra `go`-to-D_PAR cycles of setup latency): this is a resynthesis of the same FSM, not
+-- a behaviour change.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -62,7 +92,10 @@ entity mv_dist is
     MAXB     : positive := 16;
     MAXOUT   : positive := 16;
     MAXCOLS  : positive := 17408;
-    MAXROWS  : positive := 17408   -- a450 Task 4 review fix: bounds j_rows/s_beats
+    -- a450 Task 4 review fix round 2: 248320, model_cfg_pkg.vhd's `vocab` -- the 27B LM
+    -- head's raw-mode row count (spec 7.6), NOT MAXROWS_BFP's 17408, which bounds only
+    -- BFP-mode jobs and does not apply here. See the header.
+    MAXROWS  : positive := 248320
   );
   port(
     clk, rst  : in  std_logic;
@@ -112,7 +145,16 @@ architecture rtl of mv_dist is
   constant NB_MAX     : positive := (MAXCOLS + BLK - 1) / BLK;
   constant NTL_MAX     : positive := (MAXROWS + ROWS_IF - 1) / ROWS_IF;
   constant SBEATS_MAX : positive := NB_MAX * NTL_MAX;
-  type st_t is (D_IDLE, D_PAR, D_CB, D_RUN);
+  -- a450 Task 4 review fix round 2: the reciprocal-multiply ceil-divide (see the header).
+  -- DIV_YBITS/DIV_DBITS size y = j_rows + ROWS_IF - 1 and the divisor; DIV_S is 4 guard
+  -- bits past their sum (generous, not minimal -- tools/check_mv_dist_div.py is what
+  -- proves it, not this margin); DIV_M = ceil(2**DIV_S / ROWS_IF).
+  constant DIV_YBITS : positive := clog2(MAXROWS + ROWS_IF);
+  constant DIV_DBITS : positive := clog2(ROWS_IF);
+  constant DIV_S     : positive := DIV_YBITS + DIV_DBITS + 4;
+  constant DIV_M     : positive := (2**DIV_S + ROWS_IF - 1) / ROWS_IF;  -- ceil(2**DIV_S / ROWS_IF)
+  constant DIV_MBITS : positive := clog2(DIV_M + 1);
+  type st_t is (D_IDLE, D_SET1, D_SET2, D_PAR, D_CB, D_RUN);
   signal st : st_t := D_IDLE;
   type qd_t is array(0 to NPORTS_S-1) of std_logic_vector(AXI_DW-1 downto 0);
   signal qv : std_logic_vector(NPORTS_S-1 downto 0);
@@ -126,6 +168,11 @@ architecture rtl of mv_dist is
   -- cycle (see the header).
   signal nb_m1_r  : natural range 0 to NB_MAX-1  := 0;
   signal rtleft_r : natural range 0 to NTL_MAX-1 := 0;
+  -- a450 Task 4 review fix round 2: the two pipeline registers of the reciprocal-multiply
+  -- divide. y_r = j_rows + ROWS_IF - 1, registered at `go`; prod_r = y_r * DIV_M,
+  -- registered in D_SET1. rtleft_r (above) is written from prod_r in D_SET2.
+  signal y_r    : unsigned(DIV_YBITS-1 downto 0) := (others => '0');
+  signal prod_r : unsigned(DIV_YBITS+DIV_MBITS-1 downto 0) := (others => '0');
   signal b    : natural range 0 to NB_MAX-1 := 0;
   signal cbi  : natural range 0 to 15 := 0;
   signal lvm  : std_logic_vector(BLK-1 downto 0) := (others => '1');
@@ -214,7 +261,6 @@ begin
   end process;
 
   p : process(clk)
-    variable ntl0 : natural;
   begin
     if rising_edge(clk) then
       a_v <= '0';
@@ -234,15 +280,24 @@ begin
         when D_IDLE =>
           if go = '1' then
             nb_m1_r <= j_nb - 1; b <= 0; cbi <= 0;
-            ntl0 := (j_rows + ROWS_IF - 1) / ROWS_IF;
-            rtleft_r <= ntl0 - 1;
+            -- a450 Task 4 review fix round 2: register the dividend only here (a cheap,
+            -- narrow constant add); the divide itself is D_SET1/D_SET2 below.
+            y_r <= to_unsigned(j_rows + ROWS_IF - 1, DIV_YBITS);
             os_r <= j_os; md_r <= j_mode; cb_r <= j_cb;
             for j in 0 to BLK-1 loop
               if j < j_lastv then lvm(j) <= '1'; else lvm(j) <= '0'; end if;
             end loop;
             s_start <= '1';
-            st <= D_PAR;
+            st <= D_SET1;
           end if;
+        when D_SET1 =>
+          -- stage 1 of the reciprocal-multiply divide: one registered multiply.
+          prod_r <= y_r * to_unsigned(DIV_M, DIV_MBITS);
+          st <= D_SET2;
+        when D_SET2 =>
+          -- stage 2: a bit-select (the divide's quotient) and a decrement, both narrow.
+          rtleft_r <= to_integer(shift_right(prod_r, DIV_S)(DIV_YBITS-1 downto 0)) - 1;
+          st <= D_PAR;
         when D_PAR =>
           if room_all = '1' then
             a_v <= '1'; a_k <= "10";
