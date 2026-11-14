@@ -1488,7 +1488,7 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg
-          sim:tb_mv4i_tiled sim:tb_matvec_fk33_desc_tiled"
+          sim:tb_mv4i_tiled sim:tb_mv4i_tiled_hbmnr sim:tb_matvec_fk33_desc_tiled"
 # NORMALISED to single-space separated, and this is load bearing.  SLOW_TBS is
 # written across several lines for readability, so the separator between the
 # last entry on one line and the first on the next is a NEWLINE.  A membership
@@ -2362,6 +2362,8 @@ tb_timeout() {   # <suite:name> -> seconds for its `ghdl -r`; never below --time
     # tb_matvec_fk33_desc_tiled simulates the 24 tiles through the whole descriptor
     # bench (about 730 us of simulated time).
     sim:tb_mv4i_tiled)               [ "$t" -lt 3600 ] && t=3600 ;;
+    # the same bench with the memory models not reset with A (a450 Task 7b fix round 1)
+    sim:tb_mv4i_tiled_hbmnr)         [ "$t" -lt 3600 ] && t=3600 ;;
     sim:tb_matvec_fk33_desc_tiled)   [ "$t" -lt 7200 ] && t=7200 ;;
   esac
   echo "$t"

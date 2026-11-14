@@ -1,0 +1,49 @@
+{
+  "tb": "tb_mv4i_tiled_hbmnr",
+  "deps": [
+    "rtl/util_pkg.vhd",
+    "rtl/mv4i_arith_pkg.vhd",
+    "rtl/stream_fifo.vhd",
+    "rtl/async_fifo.vhd",
+    "rtl/axi_rd_fsm.vhd",
+    "rtl/axi_rd_port.vhd",
+    "rtl/weight_streamer.vhd",
+    "rtl/act_mem_striped.vhd",
+    "rtl/matvec_core.vhd",
+    "rtl/matvec_int4.vhd",
+    "rtl/mv_lfifo.vhd",
+    "rtl/mv_rdfsm.vhd",
+    "rtl/mv_rdport.vhd",
+    "rtl/mv_tile.vhd",
+    "rtl/mv_xbcast.vhd",
+    "rtl/act_mem_dp.vhd",
+    "rtl/mv_dist.vhd",
+    "rtl/mv_rlink.vhd",
+    "rtl/mv_rchain.vhd",
+    "rtl/mv_rcross.vhd",
+    "rtl/mv_tsync.vhd",
+    "rtl/mv_afast.vhd",
+    "rtl/mv_back.vhd",
+    "rtl/mv4i_tcore.vhd",
+    "rtl/mv4i_tiled.vhd",
+    "sim/axi_rd_mem_model.vhd",
+    "sim/tb_mv4i_tiled.vhd",
+    "sim/tb_mv4i_tiled_hbmnr.vhd"
+  ],
+  "stop_time": "1ms",
+  "timeout_s": 5400,
+  "rows": [
+    {
+      "tag": "Z0",
+      "expect": "PASS"
+    },
+    {
+      "tag": "G1",
+      "expect": "KILLED",
+      "file": "rtl/mv_rdfsm.vhd",
+      "why": "Task 7b fix round 1: S_DRAIN no longer waits for the bursts the memory still owes from before an A reset (owed); with the memory not reset and job 14's owed bursts arriving after job 15 reached S_RUN, those beats enter job 15's FIFOs (mismatch) or overrun them (rstage)",
+      "old": "if arv = '0' and os = 0 and owed = 0 then",
+      "new": "if arv = '0' and os = 0 then"
+    }
+  ]
+}

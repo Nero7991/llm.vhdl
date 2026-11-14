@@ -7,6 +7,9 @@
 -- requires.  GAPPCT is the percentage of cycles a beat is withheld; LONGPM is the
 -- per-mille chance per cycle of starting a LONGLEN-cycle stall, which is what drains a
 -- tile's credits in the composed bench.  An address outside the memory is a failure.
+-- `hold` (optional, default '0'): while '1' no R beat is sent; ARs are still accepted and
+-- queued.  It models an HBM that delivers bursts owed from before a master's reset late,
+-- after the master has started again (a450 Task 7b fix round 1).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -34,7 +37,8 @@ entity axi_rd_mem_model is
     rlast    : out std_logic;
     wr_en    : in  std_logic;
     wr_addr  : in  natural;
-    wr_data  : in  std_logic_vector(AXI_DW-1 downto 0)
+    wr_data  : in  std_logic_vector(AXI_DW-1 downto 0);
+    hold     : in  std_logic := '0'
   );
 end entity;
 
@@ -103,7 +107,7 @@ begin
         elsif LONGPM > 0 and to_integer(lf(19 downto 10)) < LONGPM then
           stall := LONGLEN;
         end if;
-        go := stall = 0 and to_integer(lf(29 downto 22)) mod 100 >= GAPPCT;
+        go := stall = 0 and to_integer(lf(29 downto 22)) mod 100 >= GAPPCT and hold = '0';
         if busy and left > 0 and go and not (rv_r = '1' and rready = '0') then
           assert cur < NWORDS report "axi_rd_mem_model: read past NWORDS" severity failure;
           rd_r <= mem(cur);

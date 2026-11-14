@@ -20,7 +20,7 @@
 -- never select.
 --
 -- R-CHANNEL REGISTER STAGE (a450 Task 7b).  rvalid, rdata and rlast are registered once
--- on entry (rv_q, rd_q, rl_q: no enable, rd_q/rl_q no reset) and everything below reads
+-- on entry (rv_q, rd_q, rl_q: no enable, no reset) and everything below reads
 -- the registered copies, so the HBM interface's clock-to-out reaches exactly one flop
 -- (Task 7 MEASURED, composed: HBM ACLK -> fabric R paths -0.66 ns).  rready to the
 -- memory is the constant '1', and that is not a weakening: rready_i below can only be '0'
@@ -30,7 +30,8 @@
 -- rv_q included.  `rstage` asserts it: a registered beat that finds the FIFO not ready
 -- is a failure, never a silent drop.  Full throughput, one beat per cycle; the stage adds
 -- one cycle of R latency, which the FSM never sees (it counts beats and rlast at the
--- registered side).
+-- registered side).  rv_q has no reset on purpose (fix round 1): the FSM's never-reset
+-- `owed` count must see the beats that arrive while this port is in reset.
 --
 -- Everything else -- the AR-side wiring, the output gate and its TAUTOLOGY assertion,
 -- FAST_POP forwarding, the clear-acknowledgement process -- is rtl/axi_rd_port.vhd's g_sc
@@ -127,7 +128,7 @@ begin
     if rising_edge(clk) then
       rd_q <= rdata;
       rl_q <= rlast;
-      if rst = '1' then rv_q <= '0'; else rv_q <= rvalid; end if;
+      rv_q <= rvalid;
       if rst = '0' then
         assert not (rv_q = '1' and rready_i = '0')
           report "mv_rdport: a registered R beat found the FIFO full (rready is tied '1' on "

@@ -137,7 +137,34 @@ architecture rtl of mv_rdfsm is
   -- decision reads run_r directly.  A decision ON the start cycle issues one AR for the
   -- old job, exactly as rtl/axi_rd_fsm.vhd can; S_DRAIN waits for it and discards it.
   signal hold     : std_logic_vector(1 downto 0) := "00";
+
+  -- OWED BURSTS ACROSS A RESET (a450 Task 7b fix round 1).  `outst` is cleared by rst, but
+  -- the memory is not reset with this port (the card's HBM is reset only at configuration):
+  -- every burst it accepted before the reset still delivers all its beats afterwards.  With
+  -- outst at 0 S_DRAIN would move on at once, and beats landing after the next job reached
+  -- S_RUN would enter the FIFO as that job's data (and, with up to MAXOUT x MAXB of them,
+  -- overrun it).  `owed` counts accepted bursts minus retired ones (rlast beats) and is
+  -- NEVER reset: its 0 is the configuration value, when the memory owes nothing either.
+  -- S_DRAIN waits for it, so a start after a reset first discards every owed beat
+  -- (rready is '1' and run '0' outside S_RUN).  `beat`/`rlast` must therefore count beats
+  -- during the reset too: rtl/mv_rdport.vhd's R register stage is not reset.
+  signal owed     : integer range 0 to MAXOUT := 0;
 begin
+  owe : process(clk)
+    variable o : integer range -1 to MAXOUT + 1;
+  begin
+    if rising_edge(clk) then
+      o := owed;
+      if arv = '1' and arready = '1' then o := o + 1; end if;
+      if beat = '1' and rlast = '1' then o := o - 1; end if;
+      assert o >= 0 and o <= MAXOUT
+        report "mv_rdfsm: owed bursts out of range (an rlast with nothing owed, or more than "
+             & "MAXOUT accepted)" severity failure;
+      if o < 0 then o := 0; elsif o > MAXOUT then o := MAXOUT; end if;
+      owed <= o;
+    end if;
+  end process;
+
   arvalid <= arv;
   araddr  <= std_logic_vector(ar_addr);
   arlen   <= std_logic_vector(to_unsigned(this_len - 1, 8));
@@ -198,7 +225,7 @@ begin
         else
           case st is
             when S_DRAIN =>
-              if arv = '0' and os = 0 then
+              if arv = '0' and os = 0 and owed = 0 then
                 clr_r <= '1';
                 st    <= S_CLR;
               end if;

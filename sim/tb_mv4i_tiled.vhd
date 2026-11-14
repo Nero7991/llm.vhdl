@@ -38,6 +38,22 @@ use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
 
 entity tb_mv4i_tiled is
+  generic(
+    -- a450 Task 7b fix round 1.  The two NEW DUTs' 54 memory models are reset only at
+    -- power-on (`por`), like the card's HBM, which A's reset does not reach: bursts they
+    -- accepted before a reset are still delivered after it (rtl/mv_rdfsm.vhd `owed`).
+    -- (Before fix round 1 they were reset with `rst` and silently dropped those bursts, a
+    -- memory the card does not have.)  HOLD_OWED = true additionally holds back their R
+    -- beats from the mid-job reset (job 14) until 20 clk cycles after the next start, so
+    -- the bursts job 14 left owed arrive after job 15 has started.  The OLD reference's
+    -- models keep resetting with rst (its own port has no owed count).  With HOLD_OWED the
+    -- hold starts at job 14's START, not at its reset, and the reset comes 100 cycles in
+    -- (not 300): job 14 reads only 40 beats per port, so without the hold every burst had
+    -- landed before the reset and nothing was owed (MEASURED: the unguarded RTL PASSED the
+    -- first version of this mode).  Under the hold each port's credit fills (FIFO_DEPTH 64
+    -- = 4 bursts of 16) and every one of those bursts is owed at the reset.
+    HOLD_OWED : boolean := false
+  );
 end entity;
 
 architecture sim of tb_mv4i_tiled is
@@ -96,7 +112,10 @@ architecture sim of tb_mv4i_tiled is
   type cnt_t is array(0 to ND-1) of natural;
   signal nbeat : cnt_t := (others => 0);
   signal clr_log : std_logic := '0';
+  -- the new DUTs' memory reset and R hold (see HOLD_OWED)
+  signal por, mrst, mhold : std_logic := '1';
 begin
+  mrst <= por;
   clk  <= not clk after 4 ns when not done_sim else '0';
   aclk <= not aclk after 1.111 ns when not done_sim else '0';
 
@@ -150,24 +169,35 @@ begin
       begin
         return dd = 1;
       end function;
+      -- OLD (d = 0) is the reference: its models always reset with rst and never hold
+      function sel_rst(dd : natural; r, m : std_logic) return std_logic is
+      begin
+        if dd = 0 then return r; else return m; end if;
+      end function;
+      function sel_hold(dd : natural; h : std_logic) return std_logic is
+      begin
+        if dd = 0 then return '0'; else return h; end if;
+      end function;
     begin
       g_a : if mclk_is_a(d) generate
         m : entity work.axi_rd_mem_model
           generic map(AXI_DW => DW, ADDR_W => AW, NWORDS => NWRD, SEED => 100*d + p + 1,
                       GAPPCT => 20, LONGPM => lpm(d, p), LONGLEN => 300)
-          port map(clk => aclk, rst => rst, arvalid => arv(d)(p), arready => arr(d)(p),
+          port map(clk => aclk, rst => mrst, arvalid => arv(d)(p), arready => arr(d)(p),
                    araddr => ara(d)(p*AW+AW-1 downto p*AW), arlen => arl(d)(p*8+7 downto p*8),
                    rvalid => rv(d)(p), rready => rr(d)(p), rdata => rd(d)(p*DW+DW-1 downto p*DW),
-                   rlast => rl(d)(p), wr_en => wr_en, wr_addr => wr_addr, wr_data => wr_data(p));
+                   rlast => rl(d)(p), wr_en => wr_en, wr_addr => wr_addr, wr_data => wr_data(p),
+                   hold => mhold);
       end generate;
       g_c : if not mclk_is_a(d) generate
         m : entity work.axi_rd_mem_model
           generic map(AXI_DW => DW, ADDR_W => AW, NWORDS => NWRD, SEED => 100*d + p + 1,
                       GAPPCT => 20, LONGPM => lpm(d, p), LONGLEN => 300)
-          port map(clk => clk, rst => rst, arvalid => arv(d)(p), arready => arr(d)(p),
+          port map(clk => clk, rst => sel_rst(d, rst, mrst), arvalid => arv(d)(p), arready => arr(d)(p),
                    araddr => ara(d)(p*AW+AW-1 downto p*AW), arlen => arl(d)(p*8+7 downto p*8),
                    rvalid => rv(d)(p), rready => rr(d)(p), rdata => rd(d)(p*DW+DW-1 downto p*DW),
-                   rlast => rl(d)(p), wr_en => wr_en, wr_addr => wr_addr, wr_data => wr_data(p));
+                   rlast => rl(d)(p), wr_en => wr_en, wr_addr => wr_addr, wr_data => wr_data(p),
+                   hold => sel_hold(d, mhold));
       end generate;
     end generate;
 
@@ -233,7 +263,7 @@ begin
   begin
     rst <= '1';
     for i in 1 to 10 loop wait until rising_edge(clk); end loop;
-    rst <= '0';
+    rst <= '0'; por <= '0'; mhold <= '0';
     for i in 1 to 10 loop wait until rising_edge(clk); end loop;
     for j in JOBS'range loop
       if JOBS(j).kind = 4 then
@@ -299,9 +329,19 @@ begin
       start <= '1';
       wait until rising_edge(clk);
       start <= '0';
+      if mhold = '1' then
+        -- release the owed bursts 20 clk cycles into the job after the mid-job reset
+        for i in 1 to 20 loop wait until rising_edge(clk); end loop;
+        mhold <= '0';
+      end if;
       if JOBS(j).kind = 2 then
         -- reset in the middle of the job; nothing of it is compared, the next job is
-        for i in 1 to 300 loop wait until rising_edge(clk); end loop;
+        if HOLD_OWED then
+          mhold <= '1';
+          for i in 1 to 100 loop wait until rising_edge(clk); end loop;
+        else
+          for i in 1 to 300 loop wait until rising_edge(clk); end loop;
+        end if;
         rst <= '1';
         for i in 1 to 3 loop wait until rising_edge(clk); end loop;
         rst <= '0';
@@ -348,7 +388,13 @@ begin
     rst <= '0';
     for i in 1 to 10 loop wait until rising_edge(clk); end loop;
     assert fails = 0 report "tb_mv4i_tiled: FAIL " & integer'image(fails) severity failure;
-    report "PASS: tb_mv4i_tiled checks=" & integer'image(checks) severity note;
+    -- the wrapper row (HOLD_OWED) reports under its own name, so sim/mutate_rows.py and
+    -- the gate read each row's own PASS line
+    if HOLD_OWED then
+      report "PASS: tb_mv4i_tiled_hbmnr checks=" & integer'image(checks) severity note;
+    else
+      report "PASS: tb_mv4i_tiled checks=" & integer'image(checks) severity note;
+    end if;
     done_sim <= true;
     wait;
   end process;
