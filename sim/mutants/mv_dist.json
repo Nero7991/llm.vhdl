@@ -1,7 +1,7 @@
 {
   "tb": "tb_mv_dist",
-  "deps": ["rtl/util_pkg.vhd", "rtl/stream_fifo.vhd", "rtl/async_fifo.vhd", "rtl/axi_rd_fsm.vhd",
-           "rtl/axi_rd_port.vhd", "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_xbcast.vhd",
+  "deps": ["rtl/util_pkg.vhd", "rtl/stream_fifo.vhd", "rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd",
+           "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_xbcast.vhd",
            "sim/axi_rd_mem_model.vhd", "sim/tb_mv_dist.vhd"],
   "stop_time": "2ms",
   "rows": [
@@ -21,6 +21,10 @@
     {"tag": "D4", "expect": "KILLED", "file": "rtl/mv_dist.vhd",
      "why": "the activation read address runs one block ahead",
      "old": "x_rbaddr <= std_logic_vector(to_unsigned(b, x_rbaddr'length));",
-     "new": "x_rbaddr <= std_logic_vector(to_unsigned((b + 1) mod (MAXCOLS/BLK), x_rbaddr'length));"}
+     "new": "x_rbaddr <= std_logic_vector(to_unsigned((b + 1) mod (MAXCOLS/BLK), x_rbaddr'length));"},
+    {"tag": "G1", "expect": "KILLED", "file": "sim/tb_mv_dist.vhd",
+     "why": "go accepted while busy: the bench issues one extra go pulse 5 cycles into every job, while mv_dist is still in D_PAR/D_CB -- proves mv_dist's go_accept assertion has teeth on the UNMUTATED rtl",
+     "old": "    EXTRA_GO : boolean := false",
+     "new": "    EXTRA_GO : boolean := true"}
   ]
 }

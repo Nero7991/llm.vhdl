@@ -22,7 +22,14 @@ use ieee.numeric_std.all;
 entity tb_mv_dist is
   generic(
     XD    : positive := 32;
-    SLACK : positive := 12
+    SLACK : positive := 12;
+    -- EXTRA_GO (a450 Task 4 review fix): after each job's normal `go` pulse, issue one
+    -- more spurious `go` pulse 5 cycles later, while mv_dist is certainly still busy
+    -- (D_PAR + D_CB alone take at least 17 cycles with room_all held high). Default false
+    -- reproduces the normal bench exactly. Exists only to demonstrate that mv_dist's
+    -- go-acceptance assertion (process `go_accept`, rtl/mv_dist.vhd) has teeth:
+    -- sim/mutants/mv_dist.json row G1 flips this generic's default to true.
+    EXTRA_GO : boolean := false
   );
 end entity;
 
@@ -184,6 +191,12 @@ begin
       go <= '1';
       wait until rising_edge(aclk);
       go <= '0';
+      if EXTRA_GO then
+        for i in 1 to 5 loop wait until rising_edge(aclk); end loop;
+        go <= '1';
+        wait until rising_edge(aclk);
+        go <= '0';
+      end if;
       cyc := 0;
       loop
         -- leaves: arrivals are checked against the expected sequence
