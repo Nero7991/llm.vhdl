@@ -90,7 +90,9 @@ report_clock_interaction -file [file join $bd clock_interaction.rpt]
 report_exceptions -file [file join $bd exceptions.rpt]
 report_utilization -file [file join $bd util_routed.rpt]
 report_utilization -hierarchical -file [file join $bd util_routed_hier.rpt]
-report_utilization -pblocks [get_pblocks pb_a450_*] -file [file join $bd util_pblocks.rpt]
+set pbf [file join $bd util_pblocks.rpt]
+file delete -force $pbf
+foreach pb [lsort [get_pblocks pb_a450_*]] { report_utilization -pblocks $pb -append -file $pbf }
 report_cdc -details -file [file join $bd cdc.rpt]
 report_design_analysis -logic_level_distribution -file [file join $bd levels_routed.rpt]
 

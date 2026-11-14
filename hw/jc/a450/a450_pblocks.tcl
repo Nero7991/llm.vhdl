@@ -3,13 +3,13 @@
 #
 #   proc a450_pblocks <fast_re> <hbm_glob> <portmap>
 #     fast_re    a REGEXP for the mv_afast instance, e.g. {.*/g_split\.u/fast}
-#     hbm_glob   the HBM IP instance prefix, e.g. "*/hbm/*"
+#     hbm_glob   everything inside the HBM IP, e.g. "*/hbm/*" (without "/*": the IP cell)
 #     portmap    the SAXI number of weight tile p, p = 0..23 (scale ports are not tiles)
 # For each tile p, re-derived from the NETLIST rather than from the block design's text:
 #   the tile cell (fast/g_t[p].tile) and its chain link (fast/chain/g[p].lk), exactly one
-#   each; the leaf input pin that tile p's `arvalid` reaches inside hbm_glob, exactly one;
-#   the HBM IP's boundary pin AXI_<n>_ARVALID on that same net, one distinct n, which must
-#   equal portmap(p) (so the block design's wiring is checked too);
+#   each; the HBM IP's boundary pin AXI_<n>_ARVALID for n = portmap(p), whose net's one leaf
+#   driver must lie inside tile p (so the block design's wiring is checked too), and whose
+#   one leaf load inside hbm_glob is the HBM interface cell;
 #   that HBM cell's LOC if it has one, else the device's SAXI site BLI_HBM_AXI_INTF_X<n>Y0
 #   (MEASURED on xcvu35p, devq2: 32 sites X0..X31, Y0, in clock regions X0..X7 Y0; the
 #   assumption n = site X is re-checked after placement by a450_pblocks_verify).
@@ -25,6 +25,9 @@ proc a450_pb_site {n} {
 proc a450_pblocks {fast_re hbm_glob portmap} {
   set cols [dict create]
   set ::a450_pb_expect {}
+  # the HBM IP cell: hbm_glob without its trailing /*
+  set hcell [get_cells -quiet -hierarchical -filter "NAME =~ [regsub {/\*$} $hbm_glob {}]"]
+  if {[llength $hcell] != 1} { error "A450PB FAIL: HBM IP cell for '$hbm_glob': [llength $hcell] matches" }
   for {set p 0} {$p < [llength $portmap]} {incr p} {
     set n [lindex $portmap $p]
     set tc [get_cells -quiet -hierarchical -regexp -filter "NAME =~ ${fast_re}/g_t\\\[$p\\\]\\.tile"]
@@ -32,35 +35,33 @@ proc a450_pblocks {fast_re hbm_glob portmap} {
     if {[llength $tc] != 1 || [llength $lc] != 1} {
       error "A450PB FAIL: tile $p: [llength $tc] tile cells, [llength $lc] link cells"
     }
-    # by REF_PIN_NAME: a pin pattern holding the tile's own name would read its [p] as a
-    # bus index (MEASURED, Task 7 pre-flight: "<tile>/arvalid" matched nothing)
-    set hp [get_pins -quiet -of_objects $tc -filter {REF_PIN_NAME == arvalid}]
-    if {[llength $hp] != 1} { error "A450PB FAIL: tile $p: [llength $hp] arvalid pins on $tc" }
-    set segs [get_nets -quiet -segments -of_objects $hp]
+    # Traced FROM the HBM side: the IP's boundary pin AXI_<n>_ARVALID keeps its name, a
+    # synthesised tile's boundary pins do not (MEASURED, a450_hbm_r1: flatten_hierarchy
+    # rebuilt renames them after their nets, e.g. g_t[0].tile/arv_reg).  The net's one
+    # leaf driver must sit inside tile p, so the block design's wiring is checked too.
+    # on the IP cell itself only: inside it, each stack names its ports AXI_00..15 again
+    # (MEASURED, dry run on a450_hbm_r1's synth: AXI_01 matched SAXI 1 and SAXI 17)
+    set bp [get_pins -quiet -of_objects $hcell -filter [format {REF_PIN_NAME == AXI_%02d_ARVALID} $n]]
+    if {[llength $bp] != 1} { error "A450PB FAIL: [llength $bp] pins AXI_[format %02d $n]_ARVALID on $hcell" }
+    set segs [get_nets -quiet -segments -of_objects $bp]
+    set drv [get_pins -quiet -leaf -filter {DIRECTION == OUT} -of_objects $segs]
+    if {[llength $drv] != 1} {
+      error "A450PB FAIL: SAXI_$n ARVALID has [llength $drv] leaf drivers: $drv"
+    }
+    if {![regexp "${fast_re}/g_t\\\[(\\d+)\\\]\\.tile/" [get_property NAME $drv] -> dp] || $dp != $p} {
+      error "A450PB FAIL: SAXI_$n ARVALID is driven by $drv, not by tile $p"
+    }
     set loads {}
     foreach lp [get_pins -quiet -leaf -filter {DIRECTION == IN} -of_objects $segs] {
       if {[string match $hbm_glob [get_property NAME $lp]]} { lappend loads $lp }
     }
+    if {[llength $loads] > 1} {
+      set loads [get_pins -quiet $loads -filter {REF_NAME =~ HBM*}]
+    }
     if {[llength $loads] != 1} {
-      error "A450PB FAIL: tile $p arvalid reaches [llength $loads] leaf pins in $hbm_glob: $loads"
+      error "A450PB FAIL: SAXI_$n ARVALID reaches [llength $loads] leaf pins in $hbm_glob: $loads"
     }
     set lp [lindex $loads 0]
-    # the SAXI number: from the HBM IP's own boundary pin(s) AXI_<n>_ARVALID on this net
-    # (the leaf primitive's pin may carry no port number)
-    set nums {}
-    foreach hpin [get_pins -quiet -of_objects $segs] {
-      if {[string match $hbm_glob [get_property NAME $hpin]] &&
-          [regexp {^AXI_(\d+)_ARVALID$} [get_property REF_PIN_NAME $hpin] -> pn]} {
-        lappend nums [scan $pn %d]
-      }
-    }
-    set nums [lsort -unique -integer $nums]
-    if {[llength $nums] != 1} {
-      error "A450PB FAIL: tile $p arvalid meets SAXI numbers {$nums} in $hbm_glob, not exactly one"
-    }
-    if {[lindex $nums 0] != $n} {
-      error "A450PB FAIL: tile $p arvalid lands on SAXI [lindex $nums 0] ($lp), portmap says $n"
-    }
     set hc [get_cells -of_objects $lp]
     set loc [get_property LOC $hc]
     set how loc
