@@ -1,0 +1,966 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Sat Nov 14 10:39:21 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_timing -to [get_clocks -quiet -of_objects [get_pins -quiet -hierarchical -filter {NAME =~ */g_split.u/fast/dist/s_start_reg/C}]] -max_paths 10 -nworst 1 -file /mnt/storage/fk33_builds/a450_hbm_7b_r1/proj/timing_aclk_top10.rpt
+| Design            : a450_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Timing Report
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ACLK
+                            (rising edge-triggered cell HBM_SNGLBLI_INTF_AXI clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[19]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        2.015ns  (logic 0.608ns (30.177%)  route 1.407ns (69.823%))
+  Logic Levels:           1  (LUT4=1)
+  Clock Path Skew:        -0.081ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    7.002ns = ( 9.224 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.234ns
+    Clock Pessimism Removal (CPR):    -0.849ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      2.104ns (routing 0.665ns, distribution 1.439ns)
+  Clock Net Delay (Destination): 1.877ns (routing 0.604ns, distribution 1.273ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      2.104     6.234                         a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/AXI_01_ACLK
+    BLI_HBM_AXI_INTF_X1Y0
+                         HBM_SNGLBLI_INTF_AXI                         r                       a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ACLK
+  -------------------------------------------------------------------    ----------------------------------------
+    BLI_HBM_AXI_INTF_X1Y0
+                         HBM_SNGLBLI_INTF_AXI (Prop_BLI_AXI_BLI_HBM_AXI_INTF_ACLK_ARREADY_PIPE)
+                                                      0.459     6.693 r                       a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ARREADY_PIPE
+                         net (fo=73, routed)          0.856     7.549                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/m00_axi_arready
+    SLICE_X18Y66         LUT4 (Prop_G6LUT_SLICEL_I0_O)
+                                                      0.149     7.698 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left[31]_i_1/O
+                         net (fo=32, routed)          0.551     8.249                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left[31]_i_1_n_0
+    SLICE_X19Y58         FDRE                                         r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[19]/CE
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.877     9.224                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/aclk_a
+    SLICE_X19Y58         FDRE                                         r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[19]/C
+                         clock pessimism             -0.849     8.375                           
+                         clock uncertainty           -0.065     8.310                           
+    SLICE_X19Y58         FDRE (Setup_DFF_SLICEM_C_CE)
+                                                     -0.061     8.249    pb_a450_x0             a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[19]
+  -------------------------------------------------------------------
+                         required time                          8.249                           
+                         arrival time                          -8.249                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ACLK
+                            (rising edge-triggered cell HBM_SNGLBLI_INTF_AXI clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[23]/CE
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        2.015ns  (logic 0.608ns (30.177%)  route 1.407ns (69.823%))
+  Logic Levels:           1  (LUT4=1)
+  Clock Path Skew:        -0.081ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    7.002ns = ( 9.224 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.234ns
+    Clock Pessimism Removal (CPR):    -0.849ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      2.104ns (routing 0.665ns, distribution 1.439ns)
+  Clock Net Delay (Destination): 1.877ns (routing 0.604ns, distribution 1.273ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      2.104     6.234                         a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/AXI_01_ACLK
+    BLI_HBM_AXI_INTF_X1Y0
+                         HBM_SNGLBLI_INTF_AXI                         r                       a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ACLK
+  -------------------------------------------------------------------    ----------------------------------------
+    BLI_HBM_AXI_INTF_X1Y0
+                         HBM_SNGLBLI_INTF_AXI (Prop_BLI_AXI_BLI_HBM_AXI_INTF_ACLK_ARREADY_PIPE)
+                                                      0.459     6.693 r                       a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ARREADY_PIPE
+                         net (fo=73, routed)          0.856     7.549                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/m00_axi_arready
+    SLICE_X18Y66         LUT4 (Prop_G6LUT_SLICEL_I0_O)
+                                                      0.149     7.698 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left[31]_i_1/O
+                         net (fo=32, routed)          0.551     8.249                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left[31]_i_1_n_0
+    SLICE_X19Y58         FDRE                                         r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[23]/CE
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.877     9.224                         a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/aclk_a
+    SLICE_X19Y58         FDRE                                         r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[23]/C
+                         clock pessimism             -0.849     8.375                           
+                         clock uncertainty           -0.065     8.310                           
+    SLICE_X19Y58         FDRE (Setup_CFF_SLICEM_C_CE)
+                                                     -0.061     8.249    pb_a450_x0             a450_i/top/inst/a/g_split.u/fast/g_t[0].tile/wport/fsm/ar_left_reg[23]
+  -------------------------------------------------------------------
+                         required time                          8.249                           
+                         arrival time                          -8.249                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/p0_w_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/DSP_A_B_DATA_INST/B[16]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.831ns  (logic 0.225ns (12.289%)  route 1.606ns (87.711%))
+  Logic Levels:           1  (RAMD32=1)
+  Clock Path Skew:        -0.072ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.684ns = ( 8.906 - 2.222 ) 
+    Source Clock Delay      (SCD):    5.822ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.692ns (routing 0.665ns, distribution 1.027ns)
+  Clock Net Delay (Destination): 1.559ns (routing 0.604ns, distribution 0.955ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.692     5.822                         a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/aclk_a
+    SLICE_X111Y46        FDRE                                         r  pb_a450_x3           a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/p0_w_reg[0]/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X111Y46        FDRE (Prop_AFF2_SLICEM_C_Q)
+                                                      0.080     5.902 r  pb_a450_x3           a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/p0_w_reg[0]/Q
+                         net (fo=14, routed)          1.281     7.183                         a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/cbl_reg[0][11]_0_15_0_7/ADDRD0
+    SLICE_X106Y131       RAMD32 (Prop_D6LUT_SLICEM_RADR0_O)
+                                                      0.145     7.328 r  pb_a450_x3           a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/cbl_reg[0][11]_0_15_0_7/RAMD_D1/O
+                         net (fo=11, routed)          0.325     7.653                         a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/B[16]
+    DSP48E2_X14Y46       DSP_A_B_DATA                                 r  pb_a450_x3           a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/DSP_A_B_DATA_INST/B[16]
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.559     8.906                         a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/CLK
+    DSP48E2_X14Y46       DSP_A_B_DATA                                 r  pb_a450_x3           a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/DSP_A_B_DATA_INST/CLK
+                         clock pessimism             -0.934     7.972                           
+                         clock uncertainty           -0.065     7.907                           
+    DSP48E2_X14Y46       DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_B[16])
+                                                     -0.254     7.653    pb_a450_x3             a450_i/top/inst/a/g_split.u/fast/g_t[12].tile/c_reg[0]/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                          7.653                           
+                         arrival time                          -7.653                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/tap_reg[27][23]__0/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/DSP_A_B_DATA_INST/B[16]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.725ns  (logic 0.167ns (9.684%)  route 1.558ns (90.316%))
+  Logic Levels:           1  (RAMD32=1)
+  Clock Path Skew:        -0.178ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.980ns = ( 9.202 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.228ns
+    Clock Pessimism Removal (CPR):    -0.930ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      2.098ns (routing 0.665ns, distribution 1.433ns)
+  Clock Net Delay (Destination): 1.855ns (routing 0.604ns, distribution 1.251ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      2.098     6.228                         a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/aclk_a
+    SLICE_X19Y56         FDRE                                         r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/tap_reg[27][23]__0/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X19Y56         FDRE (Prop_HFF_SLICEM_C_Q)
+                                                      0.079     6.307 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/tap_reg[27][23]__0/Q
+                         net (fo=14, routed)          1.055     7.362                         a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/cbl_reg[39][11]_0_15_0_7/ADDRD3
+    SLICE_X27Y107        RAMD32 (Prop_D6LUT_SLICEM_RADR3_O)
+                                                      0.088     7.450 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/cbl_reg[39][11]_0_15_0_7/RAMD_D1/O
+                         net (fo=11, routed)          0.502     7.953                         a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/B[16]
+    DSP48E2_X2Y40        DSP_A_B_DATA                                 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/DSP_A_B_DATA_INST/B[16]
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.855     9.202                         a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/CLK
+    DSP48E2_X2Y40        DSP_A_B_DATA                                 r  pb_a450_x0           a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/DSP_A_B_DATA_INST/CLK
+                         clock pessimism             -0.930     8.272                           
+                         clock uncertainty           -0.065     8.207                           
+    DSP48E2_X2Y40        DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_B[16])
+                                                     -0.254     7.953    pb_a450_x0             a450_i/top/inst/a/g_split.u/fast/g_t[1].tile/c_reg[39]/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                          7.953                           
+                         arrival time                          -7.953                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/g_seg[0].ob_rp_reg[0][0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/DSP_A_B_DATA_INST/A[25]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.698ns  (logic 0.231ns (13.604%)  route 1.467ns (86.396%))
+  Logic Levels:           1  (RAMD32=1)
+  Clock Path Skew:        -0.160ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.878ns = ( 9.100 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.108ns
+    Clock Pessimism Removal (CPR):    -0.930ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.978ns (routing 0.665ns, distribution 1.313ns)
+  Clock Net Delay (Destination): 1.753ns (routing 0.604ns, distribution 1.149ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.978     6.108                         a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/aclk_a
+    SLICE_X43Y108        FDRE                                         r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/g_seg[0].ob_rp_reg[0][0]/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X43Y108        FDRE (Prop_DFF2_SLICEL_C_Q)
+                                                      0.081     6.189 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/g_seg[0].ob_rp_reg[0][0]/Q
+                         net (fo=71, routed)          0.514     6.703                         a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/g_seg[0].ob_reg_0_1_14_27/ADDRA0
+    SLICE_X44Y99         RAMD32 (Prop_A6LUT_SLICEM_RADR0_O)
+                                                      0.150     6.853 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/flitq/g_seg[0].ob_reg_0_1_14_27/RAMA_D1/O
+                         net (fo=30, routed)          0.953     7.806                         a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/A[25]
+    DSP48E2_X6Y16        DSP_A_B_DATA                                 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/DSP_A_B_DATA_INST/A[25]
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.753     9.100                         a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/CLK
+    DSP48E2_X6Y16        DSP_A_B_DATA                                 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/DSP_A_B_DATA_INST/CLK
+                         clock pessimism             -0.930     8.170                           
+                         clock uncertainty           -0.065     8.105                           
+    DSP48E2_X6Y16        DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[25])
+                                                     -0.299     7.806    pb_a450_x1             a450_i/top/inst/a/g_split.u/fast/g_t[4].tile/c_reg[0]/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                          7.806                           
+                         arrival time                          -7.806                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/tap_reg[34][15]__0/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/DSP_A_B_DATA_INST/A[27]
+                            (rising edge-triggered cell DSP_A_B_DATA clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.758ns  (logic 0.078ns (4.436%)  route 1.680ns (95.564%))
+  Logic Levels:           0  
+  Clock Path Skew:        -0.117ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.904ns = ( 9.127 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.087ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.957ns (routing 0.665ns, distribution 1.292ns)
+  Clock Net Delay (Destination): 1.779ns (routing 0.604ns, distribution 1.175ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.957     6.087                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/aclk_a
+    SLICE_X53Y55         FDRE                                         r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/tap_reg[34][15]__0/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X53Y55         FDRE (Prop_HFF2_SLICEM_C_Q)
+                                                      0.078     6.165 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/tap_reg[34][15]__0/Q
+                         net (fo=30, routed)          1.680     7.845                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/A[27]
+    DSP48E2_X7Y47        DSP_A_B_DATA                                 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/DSP_A_B_DATA_INST/A[27]
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.779     9.127                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/CLK
+    DSP48E2_X7Y47        DSP_A_B_DATA                                 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/DSP_A_B_DATA_INST/CLK
+                         clock pessimism             -0.934     8.193                           
+                         clock uncertainty           -0.065     8.127                           
+    DSP48E2_X7Y47        DSP_A_B_DATA (Setup_DSP_A_B_DATA_DSP48E2_CLK_A[27])
+                                                     -0.282     7.845    pb_a450_x1             a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/c_reg[40]/DSP_A_B_DATA_INST
+  -------------------------------------------------------------------
+                         required time                          7.845                           
+                         arrival time                          -7.845                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/hi_r_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w_reg[0][26]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        2.064ns  (logic 0.204ns (9.883%)  route 1.860ns (90.117%))
+  Logic Levels:           1  (LUT6=1)
+  Clock Path Skew:        -0.118ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.888ns = ( 9.110 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.072ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.942ns (routing 0.665ns, distribution 1.277ns)
+  Clock Net Delay (Destination): 1.763ns (routing 0.604ns, distribution 1.159ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.942     6.072                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/aclk_a
+    SLICE_X54Y81         FDRE                                         r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/hi_r_reg[0]/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X54Y81         FDRE (Prop_HFF_SLICEL_C_Q)
+                                                      0.079     6.151 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/hi_r_reg[0]/Q
+                         net (fo=96, routed)          1.802     7.953                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/hi_r[0]
+    SLICE_X53Y215        LUT6 (Prop_H6LUT_SLICEM_I4_O)
+                                                      0.125     8.078 r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w[0][26]_i_1/O
+                         net (fo=1, routed)           0.058     8.136                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w[0][26]_i_1_n_0
+    SLICE_X53Y215        FDRE                                         r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w_reg[0][26]/D
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.763     9.110                         a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/aclk_a
+    SLICE_X53Y215        FDRE                                         r  pb_a450_x1           a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w_reg[0][26]/C
+                         clock pessimism             -0.934     8.176                           
+                         clock uncertainty           -0.065     8.111                           
+    SLICE_X53Y215        FDRE (Setup_HFF_SLICEM_C_D)
+                                                      0.025     8.136    pb_a450_x1             a450_i/top/inst/a/g_split.u/fast/g_t[6].tile/e3_w_reg[0][26]
+  -------------------------------------------------------------------
+                         required time                          8.136                           
+                         arrival time                          -8.136                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/ob_rp_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/tap_reg[274][21]_srl23/D
+                            (rising edge-triggered cell SRLC32E clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.996ns  (logic 0.228ns (11.423%)  route 1.768ns (88.577%))
+  Logic Levels:           1  (RAMD32=1)
+  Clock Path Skew:        -0.087ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.833ns = ( 9.055 - 2.222 ) 
+    Source Clock Delay      (SCD):    5.986ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.856ns (routing 0.665ns, distribution 1.191ns)
+  Clock Net Delay (Destination): 1.708ns (routing 0.604ns, distribution 1.104ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.856     5.986                         a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/aclk_a
+    SLICE_X68Y105        FDRE                                         r  pb_a450_x2           a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/ob_rp_reg[0]/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X68Y105        FDRE (Prop_HFF2_SLICEL_C_Q)
+                                                      0.080     6.066 r  pb_a450_x2           a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/ob_rp_reg[0]/Q
+                         net (fo=259, routed)         0.607     6.673                         a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/ob_reg_0_1_210_223/ADDRF0
+    SLICE_X65Y70         RAMD32 (Prop_F6LUT_SLICEM_RADR0_O)
+                                                      0.148     6.821 r  pb_a450_x2           a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wport/fifo/ob_reg_0_1_210_223/RAMF_D1/O
+                         net (fo=1, routed)           1.161     7.982                         a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/wq_d[221]
+    SLICE_X71Y163        SRLC32E                                      r  pb_a450_x2           a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/tap_reg[274][21]_srl23/D
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.708     9.055                         a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/aclk_a
+    SLICE_X71Y163        SRLC32E                                      r  pb_a450_x2           a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/tap_reg[274][21]_srl23/CLK
+                         clock pessimism             -0.934     8.121                           
+                         clock uncertainty           -0.065     8.056                           
+    SLICE_X71Y163        SRLC32E (Setup_A6LUT_SLICEM_CLK_D)
+                                                     -0.074     7.982    pb_a450_x2             a450_i/top/inst/a/g_split.u/fast/g_t[8].tile/tap_reg[274][21]_srl23
+  -------------------------------------------------------------------
+                         required time                          7.982                           
+                         arrival time                          -7.982                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/dist/b_reg[5]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/xmem/mem_reg_14/ADDRBWRADDR[10]
+                            (rising edge-triggered cell RAMB36E2 clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        1.690ns  (logic 0.079ns (4.676%)  route 1.611ns (95.324%))
+  Logic Levels:           0  
+  Clock Path Skew:        -0.158ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.769ns = ( 8.991 - 2.222 ) 
+    Source Clock Delay      (SCD):    5.993ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.863ns (routing 0.665ns, distribution 1.198ns)
+  Clock Net Delay (Destination): 1.644ns (routing 0.604ns, distribution 1.040ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r  
+    BC26                                              0.000     0.000 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100    a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r  a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902    a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r  a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286    a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r  a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410    a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r  a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394    a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r  a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984    a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r  a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102    a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r  a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.863     5.993    a450_i/top/inst/a/g_split.u/fast/dist/aclk_a
+    SLICE_X132Y105       FDRE                                         r  a450_i/top/inst/a/g_split.u/fast/dist/b_reg[5]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X132Y105       FDRE (Prop_EFF_SLICEL_C_Q)
+                                                      0.079     6.072 r  a450_i/top/inst/a/g_split.u/fast/dist/b_reg[5]/Q
+                         net (fo=20, routed)          1.611     7.683    a450_i/top/inst/a/g_split.u/xmem/ADDRBWRADDR[5]
+    RAMB36_X8Y30         RAMB36E2                                     r  a450_i/top/inst/a/g_split.u/xmem/mem_reg_14/ADDRBWRADDR[10]
+  -------------------------------------------------------------------    -------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r  
+    BC26                                              0.000     2.222 r  sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301    a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r  a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982    a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r  a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315    a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r  a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165    a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r  a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059    a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r  a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477    a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r  a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323    a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r  a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.644     8.991    a450_i/top/inst/a/g_split.u/xmem/aclk_a
+    RAMB36_X8Y30         RAMB36E2                                     r  a450_i/top/inst/a/g_split.u/xmem/mem_reg_14/CLKBWRCLK
+                         clock pessimism             -0.934     8.057    
+                         clock uncertainty           -0.065     7.992    
+    RAMB36_X8Y30         RAMB36E2 (Setup_RAMB36E2_RAMB36_CLKBWRCLK_ADDRBWRADDR[10])
+                                                     -0.309     7.683    a450_i/top/inst/a/g_split.u/xmem/mem_reg_14
+  -------------------------------------------------------------------
+                         required time                          7.683    
+                         arrival time                          -7.683    
+  -------------------------------------------------------------------
+                         slack                                  0.000    
+
+Slack (MET) :             0.000ns  (required time - arrival time)
+  Source:                 a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/hi_r_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Destination:            a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/e3_w_reg[1][27]/D
+                            (rising edge-triggered cell FDRE clocked by clk_out1_a450_clk_wiz_a_0  {rise@0.000ns fall@1.111ns period=2.222ns})
+  Path Group:             clk_out1_a450_clk_wiz_a_0
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            2.222ns  (clk_out1_a450_clk_wiz_a_0 rise@2.222ns - clk_out1_a450_clk_wiz_a_0 rise@0.000ns)
+  Data Path Delay:        2.049ns  (logic 0.201ns (9.808%)  route 1.848ns (90.192%))
+  Logic Levels:           1  (LUT6=1)
+  Clock Path Skew:        -0.132ns (DCD - SCD + CPR)
+    Destination Clock Delay (DCD):    6.882ns = ( 9.104 - 2.222 ) 
+    Source Clock Delay      (SCD):    6.080ns
+    Clock Pessimism Removal (CPR):    -0.934ns
+  Clock Uncertainty:      0.065ns  ((TSJ^2 + DJ^2)^1/2) / 2 + PE
+    Total System Jitter     (TSJ):    0.071ns
+    Discrete Jitter          (DJ):    0.110ns
+    Phase Error              (PE):    0.000ns
+  Clock Net Delay (Source):      1.950ns (routing 0.665ns, distribution 1.285ns)
+  Clock Net Delay (Destination): 1.757ns (routing 0.604ns, distribution 1.153ns)
+
+    Location             Delay type                Incr(ns)  Path(ns)    PBlock               Netlist Resource(s)
+  -------------------------------------------------------------------    ----------------------------------------
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      0.000     0.000 r                       
+    BC26                                              0.000     0.000 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.100     0.100                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.752     0.852 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.050     0.902                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     0.902 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.384     1.286                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                     -0.127     1.159 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.251     1.410                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     1.438 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.956     2.394                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     2.422 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.562     3.984                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                     -0.127     3.857 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.245     4.102                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.028     4.130 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.950     6.080                         a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/aclk_a
+    SLICE_X154Y77        FDRE                                         r  pb_a450_x5           a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/hi_r_reg[0]/C
+  -------------------------------------------------------------------    ----------------------------------------
+    SLICE_X154Y77        FDRE (Prop_EFF_SLICEM_C_Q)
+                                                      0.076     6.156 r  pb_a450_x5           a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/hi_r_reg[0]/Q
+                         net (fo=96, routed)          1.789     7.946                         a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/hi_r[0]
+    SLICE_X149Y164       LUT6 (Prop_B6LUT_SLICEM_I4_O)
+                                                      0.125     8.071 r  pb_a450_x5           a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/e3_w[1][27]_i_1/O
+                         net (fo=1, routed)           0.059     8.130                         a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/SHIFT_RIGHT[27]
+    SLICE_X149Y164       FDRE                                         r  pb_a450_x5           a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/e3_w_reg[1][27]/D
+  -------------------------------------------------------------------    ----------------------------------------
+
+                         (clock clk_out1_a450_clk_wiz_a_0 rise edge)
+                                                      2.222     2.222 r                       
+    BC26                                              0.000     2.222 r                       sysclk_clk_p[0] (IN)
+                         net (fo=0)                   0.079     2.301                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/I
+    HPIOBDIFFINBUF_X0Y37 DIFFINBUF (Prop_DIFFINBUF_HPIOBDIFFINBUF_DIFF_IN_P_O)
+                                                      0.641     2.942 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/DIFFINBUF_INST/O
+                         net (fo=1, routed)           0.040     2.982                         a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/OUT
+    BC26                 IBUFCTRL (Prop_IBUFCTRL_HPIOB_M_I_O)
+                                                      0.000     2.982 r                       a450_i/sysclk_buf/U0/USE_IBUFDS.GEN_IBUFDS[0].IBUFDS_I/IBUFCTRL_INST/O
+                         net (fo=1, routed)           0.333     3.315                         a450_i/clk_wiz_0/inst/clk_in1
+    MMCM_X0Y1            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT1)
+                                                      0.630     3.945 r                       a450_i/clk_wiz_0/inst/mmcme4_adv_inst/CLKOUT1
+                         net (fo=1, routed)           0.220     4.165                         a450_i/clk_wiz_0/inst/clk_out2_a450_clk_wiz_0_0
+    BUFGCE_X0Y28         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     4.189 r                       a450_i/clk_wiz_0/inst/clkout2_buf/O
+                         net (fo=4, routed)           0.870     5.059                         a450_i/clk_wiz_0/inst/clk_out2
+    BUFGCE_X0Y53         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     5.083 r                       a450_i/clk_wiz_0/inst/clk_out2_BUFGCE_collapsed_inst/O
+                         net (fo=3, routed)           1.394     6.477                         a450_i/clk_wiz_a/inst/lopt
+    MMCM_X0Y0            MMCME4_ADV (Prop_MMCM_CLKIN1_CLKOUT0)
+                                                      0.630     7.107 r                       a450_i/clk_wiz_a/inst/mmcme4_adv_inst/CLKOUT0
+                         net (fo=1, routed)           0.216     7.323                         a450_i/clk_wiz_a/inst/clk_out1_a450_clk_wiz_a_0
+    BUFGCE_X0Y23         BUFGCE (Prop_BUFCE_BUFGCE_I_O)
+                                                      0.024     7.347 r                       a450_i/clk_wiz_a/inst/clkout1_buf/O
+    X3Y1 (CLOCK_ROOT)    net (fo=200383, routed)      1.757     9.104                         a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/aclk_a
+    SLICE_X149Y164       FDRE                                         r  pb_a450_x5           a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/e3_w_reg[1][27]/C
+                         clock pessimism             -0.934     8.170                           
+                         clock uncertainty           -0.065     8.105                           
+    SLICE_X149Y164       FDRE (Setup_BFF_SLICEM_C_D)
+                                                      0.025     8.130    pb_a450_x5             a450_i/top/inst/a/g_split.u/fast/g_t[19].tile/e3_w_reg[1][27]
+  -------------------------------------------------------------------
+                         required time                          8.130                           
+                         arrival time                          -8.130                           
+  -------------------------------------------------------------------
+                         slack                                  0.000                           
+
+
+
+

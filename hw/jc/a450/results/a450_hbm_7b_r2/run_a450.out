@@ -1,0 +1,12 @@
+A450RUN_BUDGET MemAvailable=21303537664 min_avail=12884901888 cap=24G swap_kill=8589934592 nonce=a450hbm_1794678172_2226194 directives=default
+Running as unit: a450hbm_1794678172_2226194.service
+unit=a450hbm_1794678172_2226194.service cgroup=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/a450hbm_1794678172_2226194.service requested_cap=24G swap_kill=8589934592
+readback MemoryHigh=25769803776
+readback memory.high=25769803776
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 31min 18.783s
+CPU time consumed: 1h 20min 44.628s
+sampled_peak_current=19254415360 sampled_peak_swap=2820501504 last_memory.peak=19370815488 sys_min_MemAvailable=3399692288 sys_min_SwapFree=39527198720
+RC=0
+A450RUN_PASS 0.000

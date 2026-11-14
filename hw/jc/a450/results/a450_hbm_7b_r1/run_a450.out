@@ -1,0 +1,12 @@
+A450RUN_BUDGET MemAvailable=19981815808 min_avail=12884901888 cap=24G swap_kill=8589934592 nonce=a450hbm_1794676212_2063049 directives=default
+Running as unit: a450hbm_1794676212_2063049.service
+unit=a450hbm_1794676212_2063049.service cgroup=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/a450hbm_1794676212_2063049.service requested_cap=24G swap_kill=8589934592
+readback MemoryHigh=25769803776
+readback memory.high=25769803776
+Finished with result: success
+Main processes terminated with: code=exited/status=0
+Service runtime: 31min 19.520s
+CPU time consumed: 1h 20min 55.532s
+sampled_peak_current=18601402368 sampled_peak_swap=3636019200 last_memory.peak=18605674496 sys_min_MemAvailable=3298050048 sys_min_SwapFree=39471624192
+RC=0
+A450RUN_FAIL 1 post-route check(s) failed, WNS_ACLK 0.000: A450HBM_CHECK_FAIL report_cdc: 459 crossing(s) not on the allowed list
