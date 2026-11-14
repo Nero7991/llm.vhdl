@@ -1487,7 +1487,8 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           sim:seamgate_bconst sim:seamgate_qkn sim:seamgate_swg
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
-          tb:tb_weights_pkg"
+          tb:tb_weights_pkg
+          sim:tb_mv4i_tiled sim:tb_matvec_fk33_desc_tiled"
 # NORMALISED to single-space separated, and this is load bearing.  SLOW_TBS is
 # written across several lines for readability, so the separator between the
 # last entry on one line and the first on the next is a NEWLINE.  A membership
@@ -2353,6 +2354,19 @@ fi
 # ===========================================================================
 # All four tables below are keyed <suite>:<name>, never a bare name, for the
 # seven-name collision reason given at SLOW_TBS.
+tb_timeout() {   # <suite:name> -> seconds for its `ghdl -r`; never below --timeout
+  local t="$TIMEOUT"
+  case "$1" in
+    # The a450 composed A (plan 2026-11-12 Tasks 6 and 8): 24 tiles beside the old
+    # core.  tb_mv4i_tiled MEASURED 11 min quiet and about 45 min under a parallel gate;
+    # tb_matvec_fk33_desc_tiled simulates the 24 tiles through the whole descriptor
+    # bench (about 730 us of simulated time).
+    sim:tb_mv4i_tiled)               [ "$t" -lt 3600 ] && t=3600 ;;
+    sim:tb_matvec_fk33_desc_tiled)   [ "$t" -lt 7200 ] && t=7200 ;;
+  esac
+  echo "$t"
+}
+
 tb_args() {   # extra `ghdl -r` arguments for $1
   case "$1" in
     # sim/run_gdn_emit_chain.sh.  OVERLAP=true is how the chain actually runs
@@ -3183,7 +3197,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
 
     # --- run.  mcode: -e emits nothing, so -r is called directly. -------
     # shellcheck disable=SC2046,SC2086
-    ( cd "$run" && timeout -k 5 "$TIMEOUT" \
+    ( cd "$run" && timeout -k 5 "$(tb_timeout "$key")" \
         "$GHDL" -r $STD $RELAX --workdir="$work" "$top" \
         $(tb_args "$key") --max-stack-alloc=0 2>&1 )
     echo "GHDL_EXIT=$?"
@@ -3217,7 +3231,7 @@ run_one() {   # run_one <suite:name> <top-entity> <vectors-csv> <files...>
   fi
   [ -n "${rc:-}" ] || rc=1
   if [ "$rc" = "124" ] || [ "$rc" = "137" ]; then
-    verdict TIMEOUT "no result within ${TIMEOUT}s -- unguarded clock or deadlock, NOT the same thing as a failure"; return
+    verdict TIMEOUT "no result within $(tb_timeout "$key")s -- unguarded clock or deadlock, NOT the same thing as a failure"; return
   fi
   if [ -z "$(printf '%s' "$body" | tr -d '[:space:]')" ]; then
     verdict FAIL "produced NO output at all (exit $rc)"; return
