@@ -49,6 +49,16 @@
 --
 -- RESULT CREDIT.  A last ITEM pops only while `outst` (row-tiles issued and not yet taken
 -- by the result chain) is below RD, so the RD-deep result FIFO can never overflow.
+--
+-- RESET (a450 Task 7b).  `rst` is registered once inside the tile (`rst_l`, dont_touch so
+-- the 24 tiles' copies are not merged back into one net) and only rst_l reaches the
+-- tile's logic, so the tile's reset fan-out is a local net inside its own pblock instead of
+-- a branch of one aclk_a net reaching every tile (Task 7: that net, ar2, fanout 3,611, was
+-- the worst path of the A+HBM route).  rst_o is rst_l, for this tile's result-chain link,
+-- which must leave reset on the same edge as the tile (rtl/mv_afast.vhd).  The tile is
+-- therefore in reset one cycle later than `rst` says, on both edges.  Only control state
+-- is reset (valid bits, FIFO pointers and levels, FSM state, credit counters); every data
+-- register loads without a reset (see rtl/mv_lfifo.vhd for its memories).
 
 library ieee;
 use ieee.std_logic_1164.all;
@@ -90,7 +100,8 @@ entity mv_tile is
     room     : out std_logic;
     r_v      : out std_logic;
     r_d      : out std_logic_vector(96 downto 0);
-    r_rdy    : in  std_logic
+    r_rdy    : in  std_logic;
+    rst_o    : out std_logic    -- rst_l: this tile's own reset, for its chain link
   );
 end entity;
 
@@ -182,7 +193,16 @@ architecture rtl of mv_tile is
   -- result FIFO and its credit
   signal rq_ir : std_logic;
   signal outst : integer range 0 to RD := 0;
+  -- the tile-local reset register (see RESET in the header)
+  signal rst_l : std_logic := '1';
+  attribute dont_touch of rst_l : signal is "true";
 begin
+  lrst : process(clk)
+  begin
+    if rising_edge(clk) then rst_l <= rst; end if;
+  end process;
+  rst_o <= rst_l;
+
   fq_in(XW-1 downto 0)  <= f_x;
   fq_in(XW+31 downto XW) <= f_s;
   fq_in(B_F) <= f_first;
@@ -191,7 +211,7 @@ begin
 
   flitq : entity work.mv_lfifo
     generic map(W => FW, DEPTH => XD)
-    port map(clk => clk, rst => rst,
+    port map(clk => clk, rst => rst_l,
              i_valid => f_v, i_data => fq_in, i_ready => fq_ir,
              q_valid => fq_v, q_data => fq_d, q_ready => pop, level => fq_lvl);
 
@@ -203,7 +223,7 @@ begin
   wport : entity work.mv_rdport
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH, MAXB => MAXB,
                 MAXOUT => MAXOUT, FAST_POP => true)
-    port map(clk => clk, rst => rst, start => port_start,
+    port map(clk => clk, rst => rst_l, start => port_start,
              base => w_base, n_beats => w_beats,
              arvalid => arvalid, arready => arready, araddr => araddr, arlen => arlen,
              arsize => arsize, arburst => arburst,
@@ -219,7 +239,7 @@ begin
   overrun : process(clk)
   begin
     if rising_edge(clk) then
-      if rst = '0' then
+      if rst_l = '0' then
         assert not (f_v = '1' and fq_ir = '0')
           report "mv_tile: a flit arrived with the flit FIFO full (room/credit overrun)"
           severity failure;
@@ -235,7 +255,7 @@ begin
   serialize : process(clk)
   begin
     if rising_edge(clk) then
-      if rst = '0' then
+      if rst_l = '0' then
         assert not (pop = '1' and fq_d(B_K+1 downto B_K) = "10" and
                     (outst > 0 or vd /= (vd'range => '0')))
           report "mv_tile: a PARAM flit popped before the previous job's results and pipeline drained (job overlap)"
@@ -271,7 +291,7 @@ begin
           bias_r <= shift_left(to_signed(1, 49), osv - 1);
         end if;
       end if;
-      if rst = '1' then
+      if rst_l = '1' then
         p0_v <= '0'; cbw_v <= "00"; port_start <= '0'; room_r <= '0';
       else
         p0_v <= pop and is_item;
@@ -393,7 +413,7 @@ begin
       end loop;
       e6_d(96) <= sat;
 
-      if rst = '1' then
+      if rst_l = '1' then
         vd <= (others => '0');
         s_v <= '0'; c_v <= '0'; e1_v <= '0'; e2_v <= '0'; e3_v <= '0';
         e4_v <= '0'; e5_v <= '0'; e6_v <= '0';
@@ -409,7 +429,7 @@ begin
 
   resq : entity work.mv_lfifo
     generic map(W => 97, DEPTH => RD)
-    port map(clk => clk, rst => rst,
+    port map(clk => clk, rst => rst_l,
              i_valid => e6_v, i_data => e6_d, i_ready => rq_ir,
              q_valid => r_v, q_data => r_d, q_ready => r_rdy, level => open);
 
@@ -417,7 +437,7 @@ begin
     variable o : integer range -1 to RD + 1;
   begin
     if rising_edge(clk) then
-      if rst = '1' then
+      if rst_l = '1' then
         outst <= 0;
       else
         o := outst;
@@ -425,7 +445,7 @@ begin
         if r_v = '1' and r_rdy = '1' then o := o - 1; end if;
         outst <= o;
       end if;
-      if rst = '0' then
+      if rst_l = '0' then
         assert not (e6_v = '1' and rq_ir = '0')
           report "mv_tile: a row-tile result reached a full result FIFO (outst credit broken)"
           severity failure;

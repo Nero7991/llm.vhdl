@@ -52,7 +52,28 @@ begin
   q_data  <= ob(ob_rp);
   level   <= mcnt + ocnt + inflight;
 
-  process(clk)
+  -- DATA: no reset (a450 Task 7b).  The memory write, the registered memory read and the
+  -- output-stage write load whatever they load during a reset too.  Nothing written then
+  -- can reach q_data while it matters: reset zeroes mcnt, ocnt, mem_q_v and every pointer,
+  -- so a memory entry is read only after wp has passed it again (mcnt counts it from that
+  -- write), mem_q enters ob only on mem_q_v, and q_valid = ocnt > 0 covers only ob slots
+  -- written since.  Keeping rst out of these enables is what keeps the reset net off the
+  -- LUTRAM write enables (Task 7: the worst path was ar2 -> resq/ob LUTRAM WE).
+  data : process(clk)
+  begin
+    if rising_edge(clk) then
+      if i_valid = '1' and mcnt < DEPTH then
+        mem(wp) <= i_data;
+      end if;
+      mem_q <= mem(rp);
+      if mem_q_v = '1' then
+        ob(ob_wp) <= mem_q;
+      end if;
+    end if;
+  end process;
+
+  -- CONTROL: pointers, counts and the read-valid, reset
+  ctrl : process(clk)
     variable m, o : integer;
   begin
     if rising_edge(clk) then
@@ -61,18 +82,15 @@ begin
       else
         m := mcnt; o := ocnt;
         if i_valid = '1' and mcnt < DEPTH then
-          mem(wp) <= i_data;
           wp <= (wp + 1) mod DEPTH;
           m := m + 1;
         end if;
-        mem_q   <= mem(rp);
         mem_q_v <= do_rd;
         if do_rd = '1' then
           rp <= (rp + 1) mod DEPTH;
           m := m - 1;
         end if;
         if mem_q_v = '1' then
-          ob(ob_wp) <= mem_q;
           ob_wp <= (ob_wp + 1) mod 2;
           o := o + 1;
         end if;

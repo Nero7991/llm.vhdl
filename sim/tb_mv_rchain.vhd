@@ -27,6 +27,9 @@ architecture sim of tb_mv_rchain is
   constant W  : positive := 97;
   signal aclk, clk : std_logic := '0';
   signal rst : std_logic := '1';
+  -- mv_rchain takes one reset per link (a450 Task 7b); this bench resets all links at
+  -- once (a signal, not an aggregate actual: GHDL 1.0.0 trans.adb:553 crashes on that)
+  signal rst_v : std_logic_vector(NT-1 downto 0);
   signal done_sim : boolean := false;
   type sv_t is array(0 to 1) of std_logic_vector(NT-1 downto 0);
   type sd_t is array(0 to 1) of std_logic_vector(NT*W-1 downto 0);
@@ -53,6 +56,7 @@ architecture sim of tb_mv_rchain is
     return v;
   end function;
 begin
+  rst_v <= (others => rst);
   aclk <= not aclk after 1.111 ns when not done_sim else '0';
   clk  <= not clk after 4 ns when not done_sim else '0';
   rclk(0) <= clk;
@@ -61,7 +65,7 @@ begin
   g : for s in 0 to 1 generate
     ch : entity work.mv_rchain
       generic map(NT => NT, W => W)
-      port map(clk => aclk, rst => rst, own_v => own_v(s), own_d => own_d(s),
+      port map(clk => aclk, rst => rst_v, own_v => own_v(s), own_d => own_d(s),
                own_rdy => own_rdy(s), d_v => cv(s), d_d => cd(s), d_afull => ca(s));
     cx : entity work.mv_rcross
       generic map(W => W, DEPTH => 16)

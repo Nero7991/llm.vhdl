@@ -9,6 +9,28 @@
 -- and root AND).  Everything sent in that LF + LR window lands after room fell, so the
 -- tile withdraws room at XD - SLACK with SLACK = LF + LR + 4 (4 of margin).
 -- sim/tb_mv_dist.vhd measures the loop: SLACK = 3 overflows, 8 does not.
+--
+-- RESET TREE (a450 Task 7b).  `rst` (mv4i_tcore's ar2) drives the distributor and the
+-- distribution tree directly, unchanged.  The tiles and the chain get it through two more
+-- registers: NT/G mid registers here (rst_m, dont_touch, one per tile group of G, each
+-- with G loads), then one local register inside each tile (mv_tile rst_l), which also
+-- resets that tile's chain link (mv_tile rst_o -> mv_rchain rst(k)).  Task 7 MEASURED the
+-- single net ar2 at fanout 3,611 as the worst path of the A+HBM route.
+-- Why two extra cycles are safe (ar2 high for cycles [t, t+L), L >= 1):
+--   * tiles and links are in reset for [t+2, t+L+2).  mv4i_tcore's ar_ts (the start
+--     crossing's and the result crossing's write-side reset) is high for [t+1, t+L+2):
+--     both deassert on the same edge.  Over [t+1, t+L+2) the crossing discards every
+--     write (async_fifo wr_now needs wrst = '0') and holds afull, so a link emitting a
+--     stale word before its own reset lands cannot put it into the crossing; from t+L+2
+--     on the links are clear.
+--   * the first go after a reset reaches mv_dist no earlier than ar_ts falls (t+L+2,
+--     mv_tsync's destination is reset by ar_ts), and its first flit reaches a tile's FIFO
+--     at least D_SET1 + D_SET2 + D_PAR + LF cycles later, long after t+L+2.
+--   * a flit already in a tile when ar2 rises is cleared by the tile's own reset two
+--     cycles later; the tree's valids are cleared by ar2 itself at the end of cycle t,
+--     so the last flit a tile can receive is written at that same edge.  A port_start popped in those two cycles cannot issue an AR before the
+--     tile reset lands (mv_rdfsm needs S_DRAIN, S_CLR, S_CLR2 and its hold first).
+-- rtl/mv4i_tcore.vhd's ar1/ar2/ar3/ar_ts are not changed.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -82,7 +104,18 @@ architecture rtl of mv_afast is
   signal room_all, busy : std_logic;
   signal own_v, own_rdy : std_logic_vector(NT-1 downto 0);
   signal own_d : std_logic_vector(NT*97-1 downto 0);
+  -- the reset tree (see RESET TREE above): mid registers, then the tiles' own
+  constant NRM : positive := NT / G;
+  signal rst_m : std_logic_vector(NRM-1 downto 0) := (others => '1');
+  signal rst_t : std_logic_vector(NT-1 downto 0);
+  attribute dont_touch : string;
+  attribute dont_touch of rst_m : signal is "true";
 begin
+  rmid : process(clk)
+  begin
+    if rising_edge(clk) then rst_m <= (others => rst); end if;
+  end process;
+
   dist : entity work.mv_dist
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_S => NPORTS_S, AXI_DW => AXI_DW,
                 ADDR_W => ADDR_W, DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
@@ -114,7 +147,7 @@ begin
     tile : entity work.mv_tile
       generic map(BLK => BLK, AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => FIFO_DEPTH,
                   MAXB => MAXB, MAXOUT => MAXOUT, XD => XD, SLACK => SLACK, RD => 4)
-      port map(clk => clk, rst => rst,
+      port map(clk => clk, rst => rst_m(p / G),
                w_base => w_base((p+1)*ADDR_W-1 downto p*ADDR_W), w_beats => w_beats,
                arvalid => m_arvalid(p), arready => m_arready(p),
                araddr => m_araddr((p+1)*ADDR_W-1 downto p*ADDR_W),
@@ -126,12 +159,13 @@ begin
                f_v => l_v(p), f_kind => l_k(p*2+1 downto p*2),
                f_x => l_x((p+1)*XW-1 downto p*XW), f_s => l_s(p*32+31 downto p*32),
                f_first => l_f(p), f_last => l_l(p), room => rooms(p),
-               r_v => own_v(p), r_d => own_d((p+1)*97-1 downto p*97), r_rdy => own_rdy(p));
+               r_v => own_v(p), r_d => own_d((p+1)*97-1 downto p*97), r_rdy => own_rdy(p),
+               rst_o => rst_t(p));
   end generate;
 
   chain : entity work.mv_rchain
     generic map(NT => NT, W => 97)
-    port map(clk => clk, rst => rst, own_v => own_v, own_d => own_d, own_rdy => own_rdy,
+    port map(clk => clk, rst => rst_t, own_v => own_v, own_d => own_d, own_rdy => own_rdy,
              d_v => res_v, d_d => res_d, d_afull => res_afull);
 
   -- synthesis translate_off
