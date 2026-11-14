@@ -22,6 +22,11 @@ proc a4_fail {msg} { puts "A450HBM_FAIL $msg"; exit 1 }
 proc a4_check_fail {msg} { puts "A450HBM_CHECK_FAIL $msg" }
 if {$nonce eq ""} { a4_fail "no -nonce on -tclargs" }
 puts "A450HBM_NONCE $nonce"
+# implementation directives (Task 7b group E): `default` or `explore`, see run_a450.sh
+set di [lsearch -exact $argv -directives]
+set dirs [expr {$di >= 0 ? [lindex $argv [expr {$di + 1}]] : "default"}]
+if {$dirs ni {default explore}} { a4_fail "-directives '$dirs' is not default or explore" }
+puts "A450HBM_DIRECTIVES $dirs"
 set part xcvu35p-fsvh2104-2L-e
 set here $src/hw/jc/a450
 puts "A450HBM_PART $part"
@@ -78,10 +83,18 @@ set stub [get_cells -hierarchical -filter {NAME =~ */top/*/stub}]
 if {[llength $stub] != 1} { a4_fail "constraints: stub instance matches [llength $stub] cells" }
 puts "A450HBM_TCORE $tc STUB $stub"
 
-opt_design
-place_design
-phys_opt_design
-route_design
+if {$dirs eq "explore"} {
+  opt_design -directive ExploreWithRemap
+  place_design -directive ExtraTimingOpt
+  phys_opt_design -directive AggressiveExplore
+  route_design -directive AggressiveExplore
+  phys_opt_design -directive AggressiveExplore
+} else {
+  opt_design
+  place_design
+  phys_opt_design
+  route_design
+}
 write_checkpoint -force [file join $bd routed.dcp]
 report_route_status -file [file join $bd route_status.rpt]
 report_timing_summary -max_paths 20 -report_unconstrained -file [file join $bd timing_routed.rpt]

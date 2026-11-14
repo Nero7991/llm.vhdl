@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # hw/jc/a450/run_a450.sh -- run the a450 A+HBM timing design (build_a450.tcl) once, capped.
 #
-#   run_a450.sh [--dry-run] <root>
+#   run_a450.sh [--dry-run] [--directives explore] <root>
+#
+# --directives explore (a450 Task 7b group E): opt_design -directive ExploreWithRemap,
+# place_design -directive ExtraTimingOpt, phys_opt_design -directive AggressiveExplore
+# (after place and again after route), route_design -directive AggressiveExplore.
+# Default (no flag): Vivado's default directives, as every run before Task 7b group E.
 #
 # <root> must be a fresh directory under /mnt/storage/fk33_builds/ (never /tmp).  The
 # TRACKED tree at HEAD is copied to <root>/src (git archive), so the run is reproducible
@@ -19,6 +24,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 DRY=0
 if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
+DIRS=default
+if [ "${1:-}" = "--directives" ]; then
+  case "${2:-}" in explore) DIRS=explore ;; *) echo "A450RUN_FAIL --directives takes: explore"; exit 1 ;; esac
+  shift 2
+fi
 ROOT=${1:-}
 fail() { echo "A450RUN_FAIL $1"; exit 1; }
 [ -n "$ROOT" ] || fail "usage: $0 [--dry-run] <root>"
@@ -34,11 +44,11 @@ if [ -n "${A450_MIN_AVAIL_GIB:-}" ]; then
 else
   MIN_AVAIL=$(( $(numfmt --from=iec $MEM_HIGH) + 2147483648 ))
 fi
-echo "A450RUN_BUDGET MemAvailable=$MEMAVAIL min_avail=$MIN_AVAIL cap=$MEM_HIGH swap_kill=$SWAP_KILL nonce=$NONCE"
+echo "A450RUN_BUDGET MemAvailable=$MEMAVAIL min_avail=$MIN_AVAIL cap=$MEM_HIGH swap_kill=$SWAP_KILL nonce=$NONCE directives=$DIRS"
 VIVADO_BIN=$(command -v vivado 2>/dev/null || true)
 if [ "$DRY" = 1 ]; then
   echo "+ git -C $REPO archive HEAD | tar -x -C $ROOT/src"
-  echo "+ bash $REPO/hw/jc/loader/run_capped.sh $NONCE $MEM_HIGH $SWAP_KILL $ROOT ${VIVADO_BIN:-vivado} -mode batch -nojournal -log $ROOT/build.log -source $ROOT/src/hw/jc/a450/build_a450.tcl -tclargs $ROOT/src $ROOT/proj -nonce $NONCE"
+  echo "+ bash $REPO/hw/jc/loader/run_capped.sh $NONCE $MEM_HIGH $SWAP_KILL $ROOT ${VIVADO_BIN:-vivado} -mode batch -nojournal -log $ROOT/build.log -source $ROOT/src/hw/jc/a450/build_a450.tcl -tclargs $ROOT/src $ROOT/proj -nonce $NONCE -directives $DIRS"
   echo "A450RUN_DRY"
   exit 0
 fi
@@ -53,7 +63,7 @@ mkdir -p "$ROOT/src" || fail "mkdir $ROOT/src"
 git -C "$REPO" archive HEAD | tar -x -C "$ROOT/src" || fail "git archive"
 bash "$REPO/hw/jc/loader/run_capped.sh" "$NONCE" "$MEM_HIGH" "$SWAP_KILL" "$ROOT" \
   "$VIVADO_BIN" -mode batch -nojournal -log "$ROOT/build.log" \
-  -source "$ROOT/src/hw/jc/a450/build_a450.tcl" -tclargs "$ROOT/src" "$ROOT/proj" -nonce "$NONCE"
+  -source "$ROOT/src/hw/jc/a450/build_a450.tcl" -tclargs "$ROOT/src" "$ROOT/proj" -nonce "$NONCE" -directives "$DIRS"
 NL=$(grep -nE "^A450HBM_NONCE ${NONCE}\$" "$ROOT/build.log" | head -1 | cut -d: -f1)
 DL=$(grep -nE '^A450HBM_DONE' "$ROOT/build.log" | tail -1 | cut -d: -f1)
 if [ -z "$NL" ] || [ -z "$DL" ] || [ "$DL" -le "$NL" ]; then
