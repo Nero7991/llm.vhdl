@@ -227,8 +227,10 @@ debugging notes. In flight:
 - **Subsystem A at 450 MHz.** A is rebuilt as 24 per-port tiles in its own clock
   domain with the HBM AXI ports. 450 MHz is the HBM's own port rate, 3.6x
   today's 125 MHz. Values stay bit-exact with today's A. The rest of the engine
-  scales after it. Spec and plan:
-  `docs/superpowers/specs/2026-11-12-a450-per-port-tiles-design.md`.
+  scales after it. One tile now routes at 484 MHz on the VU35P (MEASURED, out of
+  context); the distributor and result chain are next, then the composed A with
+  the HBM. Spec and plan:
+  `docs/superpowers/specs/2026-11-12-a450-per-port-tiles-design.md` (branch `a450`).
 - **9B on silicon:** running across two FK33s as a pipeline split.
   See `docs/PLAN_TO_FIRST_INFERENCE.md` and the two-card pipeline spec.
 - **Per-block fmax ratings:** every shipping block clears 200 MHz on the
