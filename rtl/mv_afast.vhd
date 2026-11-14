@@ -10,26 +10,43 @@
 -- tile withdraws room at XD - SLACK with SLACK = LF + LR + 4 (4 of margin).
 -- sim/tb_mv_dist.vhd measures the loop: SLACK = 3 overflows, 8 does not.
 --
--- RESET TREE (a450 Task 7b).  `rst` (mv4i_tcore's ar2) drives the distributor and the
--- distribution tree directly, unchanged.  The tiles and the chain get it through two more
--- registers: NT/G mid registers here (rst_m, dont_touch, one per tile group of G, each
--- with G loads), then one local register inside each tile (mv_tile rst_l), which also
--- resets that tile's chain link (mv_tile rst_o -> mv_rchain rst(k)).  Task 7 MEASURED the
--- single net ar2 at fanout 3,611 as the worst path of the A+HBM route.
--- Why two extra cycles are safe (ar2 high for cycles [t, t+L), L >= 1):
---   * tiles and links are in reset for [t+2, t+L+2).  mv4i_tcore's ar_ts (the start
---     crossing's and the result crossing's write-side reset) is high for [t+1, t+L+2):
---     both deassert on the same edge.  Over [t+1, t+L+2) the crossing discards every
+-- RESET TREE (a450 Task 7b).  `rst` (mv4i_tcore's ar2) reaches no logic directly; it
+-- drives only registers.  The distributor and the distribution tree get it through one
+-- register (rst_d, dont_touch; fix round 1, Task 7b gate run 3 MEASURED ar2 at fanout 265
+-- as the worst path while it still drove them).  The tiles and the chain get it through
+-- two: NT/G mid registers (rst_m, dont_touch, one per tile group of G, G loads each), then
+-- one local register inside each tile (mv_tile rst_l), which also resets that tile's chain
+-- link (mv_tile rst_o -> mv_rchain rst(k)).  ar2 thus has NT/G + 1 loads here, plus ar3
+-- and ar_ts in mv4i_tcore.  Task 7 MEASURED ar2 driving everything at fanout 3,611.
+-- Why the delays are safe (ar2 high for cycles [t, t+L), L >= 1; E_k is the edge that
+-- ends cycle k, the edge at which a synchronous reset seen in cycle k acts):
+--   * dist and tree are in reset for [t+1, t+L+1); tiles and links for [t+2, t+L+2);
+--     mv4i_tcore's ar_ts (the start crossing's destination reset and the result
+--     crossing's write-side reset) for [t+1, t+L+2).  Tiles, links and ar_ts deassert
+--     together (last reset edge E_{t+L+1}).  Over [t+1, t+L+2) the crossing discards every
 --     write (async_fifo wr_now needs wrst = '0') and holds afull, so a link emitting a
 --     stale word before its own reset lands cannot put it into the crossing; from t+L+2
---     on the links are clear.
---   * the first go after a reset reaches mv_dist no earlier than ar_ts falls (t+L+2,
---     mv_tsync's destination is reset by ar_ts), and its first flit reaches a tile's FIFO
---     at least D_SET1 + D_SET2 + D_PAR + LF cycles later, long after t+L+2.
---   * a flit already in a tile when ar2 rises is cleared by the tile's own reset two
---     cycles later; the tree's valids are cleared by ar2 itself at the end of cycle t,
---     so the last flit a tile can receive is written at that same edge.  A port_start popped in those two cycles cannot issue an AR before the
---     tile reset lands (mv_rdfsm needs S_DRAIN, S_CLR, S_CLR2 and its hold first).
+--     on the links are clear.  MARGIN (fix round 1, MEASURED): the crossing's registered
+--     afull is '1' in every cycle of [t+2, t+L+3) (set during wrst, released one edge
+--     after), so link 0 cannot take a word before cycle t+L+3.  With D registers from ar2
+--     to a link (D = 2 here) the link's first reset edge is E_{t+D}; a stale word escapes
+--     only if link 0 can take in a cycle of [t+L+3, t+D), so the tree is safe for
+--     D <= L + 3, i.e. up to two more stages even for a one-cycle reset.  Mutants S3
+--     (D = 3) and S4 (D = 4) survive tb_mv4i_tiled's job 17 (a one-cycle reset in SAME while
+--     the chain holds words); S5 (D = 5) is killed there.
+--   * the first go after a reset reaches mv_dist no earlier than cycle t+L+2 (mv_tsync's
+--     destination is reset by ar_ts, last reset edge E_{t+L+1}); dist left reset at
+--     E_{t+L} (its last reset edge), so it is idle and ready a cycle before.  In SAME the
+--     first start after a reset arrives with zero edges to spare against ar_ts
+--     (mv4i_tcore's RESETS header); dist's one-cycle earlier exit keeps one edge of its
+--     own.  The go's first flit reaches a tile's FIFO at least D_SET1 + D_SET2 + D_PAR + LF
+--     cycles later, long after the tiles left reset at t+L+2.
+--   * stale flits: dist's stage registers and the tree's valids are cleared at E_{t+1}, so
+--     the last flit a tile can receive is written at E_{t+1}; the tile's first reset edge
+--     is E_{t+2}, which clears it.  After E_{t+1} dist is idle (st = D_IDLE) and emits
+--     nothing until a new go.  A port_start popped before the tile reset cannot issue an AR
+--     before it lands (mv_rdfsm needs S_DRAIN, S_CLR, S_CLR2 and its hold first), and
+--     every burst accepted before the reset is drained after it (mv_rdfsm `owed`).
 -- rtl/mv4i_tcore.vhd's ar1/ar2/ar3/ar_ts are not changed.
 library ieee;
 use ieee.std_logic_1164.all;
@@ -110,17 +127,19 @@ architecture rtl of mv_afast is
   signal rst_t : std_logic_vector(NT-1 downto 0);
   attribute dont_touch : string;
   attribute dont_touch of rst_m : signal is "true";
+  signal rst_d : std_logic := '1';          -- dist and tree
+  attribute dont_touch of rst_d : signal is "true";
 begin
   rmid : process(clk)
   begin
-    if rising_edge(clk) then rst_m <= (others => rst); end if;
+    if rising_edge(clk) then rst_m <= (others => rst); rst_d <= rst; end if;
   end process;
 
   dist : entity work.mv_dist
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_S => NPORTS_S, AXI_DW => AXI_DW,
                 ADDR_W => ADDR_W, DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
                 MAXCOLS => MAXCOLS)
-    port map(clk => clk, rst => rst, go => go, j_nb => j_nb, j_rows => j_rows,
+    port map(clk => clk, rst => rst_d, go => go, j_nb => j_nb, j_rows => j_rows,
              j_lastv => j_lastv, j_os => j_os, j_mode => j_mode, j_cb => j_cb,
              s_base => s_base, s_beats => s_beats, x_rbaddr => x_rbaddr, x_rdata => x_rdata,
              m_arvalid => m_arvalid(NT+NPORTS_S-1 downto NT),
@@ -138,7 +157,7 @@ begin
 
   tree : entity work.mv_xbcast
     generic map(NT => NT, G => G, XW => XW)
-    port map(clk => clk, rst => rst, i_v => d_v, i_kind => d_k, i_x => d_x, i_s => d_s,
+    port map(clk => clk, rst => rst_d, i_v => d_v, i_kind => d_k, i_x => d_x, i_s => d_s,
              i_first => d_f, i_last => d_l, o_v => l_v, o_kind => l_k, o_x => l_x,
              o_s => l_s, o_first => l_f, o_last => l_l, rooms => rooms,
              room_all => room_all);
