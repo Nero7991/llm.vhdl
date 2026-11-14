@@ -1,0 +1,44 @@
+ANA_NFAIL 72273
+ANA_GRP n=38696 worst=-0.747 a450_i/top/inst/a/g_split.u/ar2_reg/C
+ANA_GRP n=790 worst=-0.726 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/wport/fifo/ob_rp_reg[*]/C
+ANA_GRP n=3973 worst=-0.705 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/flitq/ob_rp_reg[*]/C
+ANA_GRP n=846 worst=-0.7 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/cbw_d_reg[*][*]/C
+ANA_GRP n=3589 worst=-0.68 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]__0/C
+ANA_GRP n=311 worst=-0.661 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<10>_INST/ACLK
+ANA_GRP n=256 worst=-0.648 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<7>_INST/ACLK
+ANA_GRP n=150 worst=-0.637 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<2>_INST/ACLK
+ANA_GRP n=2848 worst=-0.612 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/cbw_v_reg[*]/C
+ANA_GRP n=1499 worst=-0.605 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/flitq/rp_reg[*]/C
+ANA_GRP n=276 worst=-0.579 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<6>_INST/ACLK
+ANA_GRP n=7520 worst=-0.568 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/cbw_a_reg[*][*]/C
+ANA_GRP n=1600 worst=-0.565 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/flitq/rp_reg[*]_rep/C
+ANA_GRP n=190 worst=-0.538 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<4>_INST/ACLK
+ANA_GRP n=17 worst=-0.531 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<0>_INST/HBM_SNGLBLI_INTF_AXI<6>_INST/ACLK
+ANA_GRP n=19 worst=-0.523 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/wport/fsm/this_len_reg[*]/C
+ANA_GRP n=274 worst=-0.51 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/lo_r_reg[*]/C
+ANA_GRP n=7 worst=-0.508 a450_i/top/inst/a/g_split.u/fast/g_t_r_3/C
+ANA_GRP n=82 worst=-0.499 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]__0_psdsp_26/C
+ANA_GRP n=45 worst=-0.478 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/p0_x_reg[*]/C
+ANA_GRP n=179 worst=-0.467 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/p0_w_reg[*]/C
+ANA_GRP n=318 worst=-0.467 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<11>_INST/ACLK
+ANA_GRP n=62 worst=-0.467 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/wport/fsm/run_r_reg/C
+ANA_GRP n=40 worst=-0.463 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<1>_INST/ACLK
+ANA_GRP n=964 worst=-0.462 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/flitq/ob_wp_reg[*]/C
+ANA_GRP n=31 worst=-0.457 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]__0_psdsp_9/C
+ANA_GRP n=3 worst=-0.454 a450_i/top/inst/a/g_split.u/fast/tree/m_k_reg[*][*]/C
+ANA_GRP n=3430 worst=-0.453 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/flitq/wp_reg[*]/C
+ANA_GRP n=48 worst=-0.452 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/resq/rp_reg[*]/C
+ANA_GRP n=96 worst=-0.45 a450_i/top/inst/a/g_split.u/fast/dist/a_k_reg[*]/C
+ANA_GRP n=167 worst=-0.443 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/c_ct_reg[*][*]/C
+ANA_GRP n=51 worst=-0.412 a450_i/top/inst/a/g_split.u/fast/tree/ra_reg/C
+ANA_GRP n=2 worst=-0.41 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]__0_psdsp_11/C
+ANA_GRP n=119 worst=-0.402 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/wport/fifo/ocnt_reg[*]/C
+ANA_GRP n=55 worst=-0.399 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]/C
+ANA_GRP n=120 worst=-0.399 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/hi_r_reg[*]/C
+ANA_GRP n=7 worst=-0.397 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/resq/ocnt_reg[*]/C
+ANA_GRP n=106 worst=-0.396 a450_i/hbm/inst/TWO_STACK.u_hbm_top/TWO_STACK_HBM.hbm_two_stack_intf/HBM_ONE_STACK_INTF<1>_INST/HBM_SNGLBLI_INTF_AXI<5>_INST/ACLK
+ANA_GRP n=264 worst=-0.395 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/wport/fifo/mem_q_v_reg/C
+ANA_GRP n=1 worst=-0.395 a450_i/top/inst/a/g_split.u/fast/g_t[*].tile/tap_reg[*][*]__0_psdsp_13/C
+ANA_NONRST 1 SLACK -0.726 LEVELS 1 FANOUT 259 ROUTE_PCT 91 START a450_i/top/inst/a/g_split.u/fast/g_t[14].tile/wport/fifo/ob_rp_reg[0]/C END a450_i/top/inst/a/g_split.u/fast/g_t[14].tile/tap_reg[169][20]_srl18/D
+ANA_AR2NET a450_i/top/inst/a/g_split.u/ar2 FANOUT 3611 LOC SLICE_X117Y75
+ANA_DONE
