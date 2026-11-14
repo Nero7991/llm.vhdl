@@ -138,15 +138,20 @@ architecture rtl of mv_tile is
   signal p0_w : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
   signal p0_s : std_logic_vector(31 downto 0) := (others => '0');
   signal p0_f, p0_l : std_logic := '0';
-  -- codebook: one LUTRAM per lane, written in lockstep from one command per row
+  -- codebook: one LUTRAM per lane, written in lockstep from one command per LANE GROUP
+  -- (a450 Task 7b: NCG copies of the command, LG lanes each, so one copy's valid drives
+  -- LG x 8 = 64 LUTRAM write enables instead of 512; Task 3 and Task 7 MEASURED cbw_v,
+  -- cbw_a and cbw_d at fanout 512 as the tile's worst paths alone and composed)
+  constant LG  : positive := 8;
+  constant NCG : positive := (2*BLK + LG - 1) / LG;
   type cb_t   is array(0 to 15) of std_logic_vector(7 downto 0);
   type cbl_t  is array(0 to 2*BLK-1) of cb_t;
   signal cbl : cbl_t := (others => (others => (others => '0')));
   attribute ram_style : string;
   attribute ram_style of cbl : signal is "distributed";
-  type cmd_a_t is array(0 to 1) of std_logic_vector(3 downto 0);
-  type cmd_d_t is array(0 to 1) of std_logic_vector(7 downto 0);
-  signal cbw_v : std_logic_vector(1 downto 0) := (others => '0');
+  type cmd_a_t is array(0 to NCG-1) of std_logic_vector(3 downto 0);
+  type cmd_d_t is array(0 to NCG-1) of std_logic_vector(7 downto 0);
+  signal cbw_v : std_logic_vector(NCG-1 downto 0) := (others => '0');
   signal cbw_a : cmd_a_t := (others => (others => '0'));
   signal cbw_d : cmd_d_t := (others => (others => '0'));
   attribute dont_touch : string;
@@ -162,6 +167,14 @@ architecture rtl of mv_tile is
   -- skew: lane j's {row1 nibble, row0 nibble, x} delayed j cycles
   type tap_arr is array(0 to NTAP) of std_logic_vector(23 downto 0);
   signal tap : tap_arr := (others => (others => '0'));
+  -- a450 Task 7b: the skew SRLs end in a flop (srl_reg), so the LUTRAM lookup and the DSP
+  -- A input start from a register, not an SRL clock-to-out; p0_w/p0_x stay registers, so
+  -- the FIFO output mux ends at a flop's D, not at an SRL's D (Task 7 MEASURED composed:
+  -- wport/fifo/ob_rp -> tap SRL D -0.726, tap -> lookup -0.680)
+  attribute srl_style : string;
+  attribute srl_style of tap  : signal is "srl_reg";
+  attribute srl_style of p0_w : signal is "register";
+  attribute srl_style of p0_x : signal is "register";
   -- DSP columns
   type s8_arr  is array(0 to 2*BLK-1) of signed(7 downto 0);
   type s16_arr is array(0 to BLK-1) of signed(15 downto 0);
@@ -210,7 +223,7 @@ begin
   fq_in(B_K+1 downto B_K) <= f_kind;
 
   flitq : entity work.mv_lfifo
-    generic map(W => FW, DEPTH => XD)
+    generic map(W => FW, DEPTH => XD, NSEG => 8)
     port map(clk => clk, rst => rst_l,
              i_valid => f_v, i_data => fq_in, i_ready => fq_ir,
              q_valid => fq_v, q_data => fq_d, q_ready => pop, level => fq_lvl);
@@ -274,9 +287,9 @@ begin
       p0_f <= fq_d(B_F);
       p0_l <= fq_d(B_L);
       p0_w <= wq_d;
-      for r in 0 to 1 loop
-        cbw_a(r) <= fq_d(3 downto 0);
-        cbw_d(r) <= fq_d(11 downto 4);
+      for g in 0 to NCG-1 loop
+        cbw_a(g) <= fq_d(3 downto 0);
+        cbw_d(g) <= fq_d(11 downto 4);
       end loop;
       if fq_lvl < XD - SLACK then room_r <= '1'; else room_r <= '0'; end if;
       if pop = '1' and fq_d(B_K+1 downto B_K) = "10" then
@@ -292,26 +305,24 @@ begin
         end if;
       end if;
       if rst_l = '1' then
-        p0_v <= '0'; cbw_v <= "00"; port_start <= '0'; room_r <= '0';
+        p0_v <= '0'; cbw_v <= (others => '0'); port_start <= '0'; room_r <= '0';
       else
         p0_v <= pop and is_item;
-        if pop = '1' and fq_d(B_K+1 downto B_K) = "01" then cbw_v <= "11";
-        else cbw_v <= "00"; end if;
+        if pop = '1' and fq_d(B_K+1 downto B_K) = "01" then cbw_v <= (others => '1');
+        else cbw_v <= (others => '0'); end if;
         if pop = '1' and fq_d(B_K+1 downto B_K) = "10" then port_start <= '1';
         else port_start <= '0'; end if;
       end if;
     end if;
   end process;
 
-  -- the codebook write, every lane of a row from that row's command copy
+  -- the codebook write, every lane from its lane group's command copy
   cbwr : process(clk)
   begin
     if rising_edge(clk) then
-      for r in 0 to 1 loop
-        if cbw_v(r) = '1' then
-          for j in 0 to BLK-1 loop
-            cbl(r*BLK + j)(to_integer(unsigned(cbw_a(r)))) <= cbw_d(r);
-          end loop;
+      for l in 0 to 2*BLK-1 loop
+        if cbw_v(l / LG) = '1' then
+          cbl(l)(to_integer(unsigned(cbw_a(l / LG)))) <= cbw_d(l / LG);
         end if;
       end loop;
     end if;
