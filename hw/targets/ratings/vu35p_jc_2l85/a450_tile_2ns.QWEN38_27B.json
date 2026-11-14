@@ -1,0 +1,51 @@
+{
+  "achieved_mhz": 525.7623554153523,
+  "ceiling_mhz": 637.3486297004462,
+  "deps": [
+    "rtl/mv4i_arith_pkg.vhd",
+    "rtl/mv_lfifo.vhd",
+    "rtl/mv_rdfsm.vhd",
+    "rtl/mv_rdport.vhd",
+    "rtl/mv_tile.vhd",
+    "rtl/stream_fifo.vhd",
+    "rtl/util_pkg.vhd"
+  ],
+  "device": "vu35p_jc_2l85",
+  "evidence": "MEASURED, one draw; below the routed noise floor (0.4-0.75 ns) differences are not results",
+  "fmax_is_lower_bound": true,
+  "key": "95c80bba45cd7d73c36616d833a82adbbd65b04833cfab4412401c11d9981638",
+  "levers": [],
+  "limited_by": "routing",
+  "mem": {
+    "cap": "8G",
+    "lane": "local",
+    "peak": 4822302720,
+    "swap_peak": 0
+  },
+  "model": "QWEN38_27B",
+  "part": "xcvu35p-fsvh2104-2L-e",
+  "route": {
+    "end": "u_dut/e6_d_reg[59]/D",
+    "levels": 1,
+    "start": "u_dut/mode_r_reg[1]/C",
+    "unrouted": 0,
+    "whs": 0.007,
+    "wns": 0.098
+  },
+  "route_mhz": 525.7623554153523,
+  "row": "a450_tile_2ns",
+  "synth": {
+    "levels": 5,
+    "wns": 0.103
+  },
+  "target_ns": 2.0,
+  "tier": "anchor",
+  "util": {
+    "BRAM": 4,
+    "DSP": 66,
+    "FF": 4257,
+    "LUT": 3367,
+    "URAM": 0
+  },
+  "vivado": "2023.2"
+}

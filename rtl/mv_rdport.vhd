@@ -19,6 +19,19 @@
 -- wiring itself is unchanged, just no longer wrapped in a generate with a sibling it can
 -- never select.
 --
+-- R-CHANNEL REGISTER STAGE (a450 Task 7b).  rvalid, rdata and rlast are registered once
+-- on entry (rv_q, rd_q, rl_q: no enable, rd_q/rl_q no reset) and everything below reads
+-- the registered copies, so the HBM interface's clock-to-out reaches exactly one flop
+-- (Task 7 MEASURED, composed: HBM ACLK -> fabric R paths -0.66 ns).  rready to the
+-- memory is the constant '1', and that is not a weakening: rready_i below can only be '0'
+-- in S_RUN with the FIFO full, and the AR credit (rtl/mv_rdfsm.vhd: FIFO level plus beats
+-- requested and not yet landed never exceeds DEPTH; checked independently by `credit`
+-- below) means the FIFO always has a slot for every beat the memory can send, the one in
+-- rv_q included.  `rstage` asserts it: a registered beat that finds the FIFO not ready
+-- is a failure, never a silent drop.  Full throughput, one beat per cycle; the stage adds
+-- one cycle of R latency, which the FSM never sees (it counts beats and rlast at the
+-- registered side).
+--
 -- Everything else -- the AR-side wiring, the output gate and its TAUTOLOGY assertion,
 -- FAST_POP forwarding, the clear-acknowledgement process -- is rtl/axi_rd_port.vhd's g_sc
 -- generate, unchanged.
@@ -91,6 +104,11 @@ architecture rtl of mv_rdport is
   signal run_c   : std_logic;
 
   signal ack : std_logic := '0';
+
+  -- the R-channel register stage (see the header)
+  signal rv_q : std_logic := '0';
+  signal rd_q : std_logic_vector(AXI_DW-1 downto 0) := (others => '0');
+  signal rl_q : std_logic := '0';
   signal arvalid_i : std_logic;
   signal arlen_i   : std_logic_vector(7 downto 0);
 begin
@@ -100,9 +118,24 @@ begin
   -- In S_DRAIN the R channel is accepted and DISCARDED, so it must not be
   -- backpressured by the FIFO; in S_RUN the FIFO owns the backpressure.
   rready_i <= f_ir when run_f = '1' else '1';
-  rready   <= rready_i;
-  f_iv     <= rvalid when run_f = '1' else '0';
-  beat_f   <= rvalid and rready_i;
+  rready   <= '1';
+  f_iv     <= rv_q when run_f = '1' else '0';
+  beat_f   <= rv_q and rready_i;
+
+  rstage : process(clk)
+  begin
+    if rising_edge(clk) then
+      rd_q <= rdata;
+      rl_q <= rlast;
+      if rst = '1' then rv_q <= '0'; else rv_q <= rvalid; end if;
+      if rst = '0' then
+        assert not (rv_q = '1' and rready_i = '0')
+          report "mv_rdport: a registered R beat found the FIFO full (rready is tied '1' on "
+               & "the AR credit; the credit is broken)"
+          severity failure;
+      end if;
+    end if;
+  end process;
 
   -- The output is SUPPRESSED outside S_RUN.  See rtl/axi_rd_port.vhd's comment
   -- at the same point; unchanged here (DUAL_CLK's extra two-cycle lateness does
@@ -166,7 +199,7 @@ begin
              base => base, n_beats => n_beats,
              arvalid => arvalid_i, arready => arready,
              araddr => araddr, arlen => arlen_i,
-             beat => beat_f, rlast => rlast, pop => pop_f,
+             beat => beat_f, rlast => rl_q, pop => pop_f,
              clr => clr, clr_done => clr_done,
              run => run_f);
   arvalid <= arvalid_i;
@@ -178,7 +211,7 @@ begin
   fifo : entity work.stream_fifo
     generic map(W => AXI_DW, DEPTH => DEPTH, FAST_POP => FAST_POP)
     port map(clk => clk, rst => rst, flush => clr,
-             i_valid => f_iv, i_data => rdata, i_ready => f_ir,
+             i_valid => f_iv, i_data => rd_q, i_ready => f_ir,
              q_valid => f_qv, q_data => f_qd, q_ready => f_qr,
              level => f_level_raw);
 
