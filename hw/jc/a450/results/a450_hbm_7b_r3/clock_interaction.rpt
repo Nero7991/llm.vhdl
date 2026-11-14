@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Sat Nov 14 11:57:20 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_clock_interaction -file /mnt/storage/fk33_builds/a450_hbm_7b_r3/proj/clock_interaction.rpt
+| Design            : a450_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Physopt postRoute
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                                                              WNS                            TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock              
+From Clock                     To Clock                       Clock Edges  WNS(ns)  TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints              
+-----------------------------  -----------------------------  -----------  -------  -------  -----------  -----------  ---------------  -------------------  -----------------------  
+clk_out1_a450_clk_wiz_0_0      clk_out1_a450_clk_wiz_0_0      rise - rise     6.06     0.00            0         2648            10.00  Clean                Timed                    
+clk_out1_a450_clk_wiz_a_0      clk_out1_a450_clk_wiz_a_0      rise - rise     0.02     0.00            0       764845             2.22  Clean                Timed                    
+clk_out1_a450_clk_wiz_a_0      clk_out3_a450_clk_wiz_0_0      rise - rise     1.68     0.00            0            6             2.22  Ignored              Max Delay Datapath Only  
+clk_out3_a450_clk_wiz_0_0      clk_out1_a450_clk_wiz_a_0      rise - rise     0.07     0.00            0          903             4.44  Ignored              Max Delay Datapath Only  
+clk_out3_a450_clk_wiz_0_0      clk_out3_a450_clk_wiz_0_0      rise - rise     0.52     0.00            0        28188             8.00  Clean                Timed                    
+
+
