@@ -1,0 +1,26 @@
+{
+  "tb": "tb_mv_dist",
+  "deps": ["rtl/util_pkg.vhd", "rtl/stream_fifo.vhd", "rtl/async_fifo.vhd", "rtl/axi_rd_fsm.vhd",
+           "rtl/axi_rd_port.vhd", "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_xbcast.vhd",
+           "sim/axi_rd_mem_model.vhd", "sim/tb_mv_dist.vhd"],
+  "stop_time": "2ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "D1", "expect": "KILLED", "file": "rtl/mv_xbcast.vhd",
+     "why": "credit loss: the room AND tree ignores tile 0",
+     "old": "for i in 0 to G-1 loop a := a and rooms(k*G + i); end loop;",
+     "new": "for i in 0 to G-1 loop if k*G + i /= 0 then a := a and rooms(k*G + i); end if; end loop;"},
+    {"tag": "D2", "expect": "KILLED", "file": "rtl/mv_dist.vhd",
+     "why": "pad columns of the last block are not zeroed",
+     "old": "a_l <= '1'; a_msk <= lvm; b <= 0;",
+     "new": "a_l <= '1'; a_msk <= (others => '1'); b <= 0;"},
+    {"tag": "D3", "expect": "KILLED", "file": "rtl/mv_xbcast.vhd",
+     "why": "every tile gets the first mid copy's scales",
+     "old": "l_s(t*32+31 downto t*32) <= m_s(t / G)((t mod G)*32+31 downto (t mod G)*32);",
+     "new": "l_s(t*32+31 downto t*32) <= m_s(0)((t mod G)*32+31 downto (t mod G)*32);"},
+    {"tag": "D4", "expect": "KILLED", "file": "rtl/mv_dist.vhd",
+     "why": "the activation read address runs one block ahead",
+     "old": "x_rbaddr <= std_logic_vector(to_unsigned(b, x_rbaddr'length));",
+     "new": "x_rbaddr <= std_logic_vector(to_unsigned((b + 1) mod (MAXCOLS/BLK), x_rbaddr'length));"}
+  ]
+}
