@@ -162,7 +162,7 @@ def test_cdc_scan_counts_and_refuses(tmp_path):
         ("CDC-6", "Warning", TC + "/cross/q/wp_g_reg[3:0]/C", TC + "/cross/q/wp_g_s1_reg[3:0]/D"),
         ("CDC-6", "Warning", TC + "/cross/q/rp_g_reg[3]/C", TC + "/cross/q/rp_g_s1_reg[3]/D"),
         ("CDC-4", "Critical", TC + "/back/nb_r_reg[5]/C", TC + "/fast/dist/nb_m1_r_reg[5]/D"),
-        ("CDC-15", "Warning", STUB + "/w_base_reg[52]/C",
+        ("CDC-15", "Warning", STUB + "/wb_r_reg[52]/C",
          TC + "/fast/g_t[3].tile/wport/fsm/p_base_reg[12]/D"),
         ("CDC-15", "Warning", STUB + "/w_beats_reg[1]/C",
          TC + "/fast/dist/gen_s[2].sport/fsm/p_beats_reg[1]/D"),
@@ -172,7 +172,7 @@ def test_cdc_scan_counts_and_refuses(tmp_path):
         ("CDC-13", "Critical", TC + "/xmem/foo_reg/C", TC + "/fast/g_t[3].tile/bar_reg/D"),
         ("CDC-15", "Warning", TC + "/back/nb_r_reg[5]/C", TC + "/fast/g_t[3].tile/nb_m1_r_reg[5]/D"),
         ("CDC-1", "Critical", TC + "/back/foo_reg/C", "a450_i/aclk_reset/U0/bar_reg/D"),
-        ("CDC-15", "Warning", STUB + "/w_base_reg[52]/C",
+        ("CDC-15", "Warning", STUB + "/wb_r_reg[52]/C",
          TC + "/fast/g_t[3].tile/wport/fsm/x/p_base_reg[12]/D"),
     ]
     syn = _synth_report(tmp_path, "syn_cdc.rpt", ok + bad)

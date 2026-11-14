@@ -111,7 +111,10 @@ proc a450_cdc_rules {tc stub} {
   # the scale ports' p_beats too), so each stub source may reach either port kind.
   set PF "$t/fast/(g_t${IX}\\.tile/wport|dist/gen_s${IX}\\.sport)/fsm"
   lappend r [list stub_beats "^$st/(w|s)_beats_reg${IX}/C\$" "^$PF/p_beats_reg${IX}/D\$"]
-  lappend r [list stub_base  "^$st/(w|s)_base_reg${IX}/C\$"  "^$PF/p_base_reg${IX}/D\$"]
+  # the bases are the stub's wb_r/sb_r registers (MEASURED, a450_hbm_7b_r1: synthesis
+  # names them after the internal signals, not the w_base/s_base ports; the offset bits
+  # are common to every port and merge, so wb_r also reaches the scale ports)
+  lappend r [list stub_base  "^$st/(wb_r|sb_r)_reg${IX}/C\$" "^$PF/p_base_reg${IX}/D\$"]
   return $r
 }
 
