@@ -9,8 +9,9 @@
 --
 -- Flow control is local: each stage holds upstream words in a 4-deep FIFO and tells
 -- upstream to stop with a REGISTERED u_afull (count >= 2), so no ready signal chains
--- through stages.  With one cycle of decision and one of output register in flight a
--- stage can receive at most two words after asserting it: 4 is enough.
+-- through stages.  One cycle of registration plus one word already in flight when the
+-- threshold is crossed means occupancy never needs to exceed 3; the 4th slot is pure
+-- margin, and the design assertion below (not a GHDL range check) is what proves it.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -40,7 +41,12 @@ architecture rtl of mv_rlink is
   type uf_t is array(0 to 3) of std_logic_vector(W-1 downto 0);
   signal uf : uf_t := (others => (others => '0'));
   signal uh, ut : natural range 0 to 3 := 0;
-  signal un : natural range 0 to 4 := 0;
+  -- widened by one (0 to 5), simulation-only: a genuine overflow (n = 5) must reach
+  -- the assert below and fail THERE with a named cause; without the extra headroom
+  -- GHDL's own range check on `un <= n` fires first and shadows it (fix round 1).
+  -- Hardware never needs the 5th value: n = 5 only occurs on the overflow this
+  -- assert exists to catch, and severity failure halts the run at that point.
+  signal un : natural range 0 to 5 := 0;
   signal own_ph : std_logic := '1';
   signal cnt : natural range 0 to NT := 0;
   signal ua_r, dv_r : std_logic := '0';
@@ -78,7 +84,11 @@ begin
       if rst = '1' then
         uh <= 0; ut <= 0; un <= 0; own_ph <= '1'; cnt <= 0; ua_r <= '0'; dv_r <= '0';
       end if;
-      assert rst = '1' or not (u_v = '1' and un = 4)
+      -- n already nets this cycle's write against this cycle's read, so a
+      -- simultaneous take_up at un = 4 (n stays 4) is legal and must not fire; only
+      -- a write with no compensating read while already full (n = 5) is a real
+      -- overflow of the 4-deep upstream FIFO.
+      assert rst = '1' or n <= 4
         report "mv_rlink: upstream word into a full stage FIFO" severity failure;
     end if;
   end process;

@@ -1,7 +1,9 @@
 -- rtl/mv_rcross.vhd -- the result words' crossing from aclk_a to clk_core (spec 2.3).
 -- An async FIFO (rtl/async_fifo.vhd, gray pointers) and a REGISTERED almost-full for the
 -- chain's tail stage: w_afull is '1' while the FIFO's conservative write-side level is at
--- or above DEPTH - 6, which leaves room for the two words a link can still send after
+-- or above DEPTH - 6, which leaves 6 levels of threshold slack plus the 4 levels of
+-- conservatism w_level already carries (OUT_MARGIN + 1, see rtl/async_fifo.vhd's own
+-- REGISTERED LEVEL header) for whatever the chain's tail stage can still send after
 -- seeing it.  A write with the FIFO full is a failure assertion, never a drop.
 library ieee;
 use ieee.std_logic_1164.all;

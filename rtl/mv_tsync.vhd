@@ -1,6 +1,6 @@
 -- rtl/mv_tsync.vhd -- one-cycle pulse from one clock domain to another, by toggle.
 -- The source flips a toggle on each pulse; the destination samples it through two
--- ASYNC_REG flops and a third, and pulses on the change.  Pulses must be at least four
+-- ASYNC_REG flops and a third, and pulses on the change.  Pulses must be at least three
 -- destination cycles apart (A_JOB start is: the back end cannot start a second job
 -- before the first has returned all its results).  With equal clocks it is a 3-cycle
 -- delay, which is what A_CLK_SPLIT = false gets.
