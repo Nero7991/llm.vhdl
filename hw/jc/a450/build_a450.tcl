@@ -27,6 +27,10 @@ set di [lsearch -exact $argv -directives]
 set dirs [expr {$di >= 0 ? [lindex $argv [expr {$di + 1}]] : "default"}]
 if {$dirs ni {default explore}} { a4_fail "-directives '$dirs' is not default or explore" }
 puts "A450HBM_DIRECTIVES $dirs"
+# setup over-constraint of aclk_a (Task 7b fix round 1): `none` or a period in ns
+set oi [lsearch -exact $argv -overconstrain]
+set ocns [expr {$oi >= 0 ? [lindex $argv [expr {$oi + 1}]] : "none"}]
+if {$ocns ne "none" && ![string is double -strict $ocns]} { a4_fail "-overconstrain '$ocns' is not none or a number" }
 set part xcvu35p-fsvh2104-2L-e
 set here $src/hw/jc/a450
 puts "A450HBM_PART $part"
@@ -78,6 +82,12 @@ if {[catch {
   puts "A450HBM_PBLOCKS $npb"
 } err]} { a4_fail "constraints: $err" }
 if {$npb < 2} { a4_fail "constraints: only $npb pblock(s)" }
+if {$ocns ne "none"} {
+  set extra [expr {[get_property PERIOD $ca] - $ocns}]
+  if {$extra <= 0} { a4_fail "-overconstrain $ocns is not below the aclk_a period [get_property PERIOD $ca]" }
+  set_clock_uncertainty -setup $extra -from $ca -to $ca
+  puts "A450HBM_OVERCONSTRAIN aclk_a period [get_property PERIOD $ca] timed at $ocns: setup uncertainty +$extra"
+}
 set tc [regsub {/back/go_r_reg/C$} [get_pins -hierarchical -filter {NAME =~ */g_split.u/back/go_r_reg/C}] {}]
 set stub [get_cells -hierarchical -filter {NAME =~ */top/*/stub}]
 if {[llength $stub] != 1} { a4_fail "constraints: stub instance matches [llength $stub] cells" }

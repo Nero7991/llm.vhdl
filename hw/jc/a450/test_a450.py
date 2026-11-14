@@ -235,3 +235,21 @@ def test_directives_flag():
         assert d in b, d
     assert b.count("phys_opt_design -directive AggressiveExplore") == 2
     assert "A450HBM_DIRECTIVES" in b and "is not default or explore" in b
+
+
+def test_overconstrain_flag():
+    """Task 7b fix round 1: --overconstrain-ns reaches the build, refuses a non-number, and
+    the build adds setup uncertainty on aclk_a only, after the constraints."""
+    sh = os.path.join(HERE, "run_a450.sh")
+    root = "/mnt/storage/fk33_builds/a450_test_dry_never"
+    r = subprocess.run(["bash", sh, "--dry-run", "--overconstrain-ns", "2.15", root],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "-overconstrain 2.15" in r.stdout, r.stdout
+    r = subprocess.run(["bash", sh, "--dry-run", root], capture_output=True, text=True)
+    assert "-overconstrain none" in r.stdout, r.stdout
+    r = subprocess.run(["bash", sh, "--dry-run", "--overconstrain-ns", "x", root],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and re.search(r"^A450RUN_FAIL ", r.stdout, re.M), r.stdout
+    b = _code(_read("build_a450.tcl"))
+    assert "set_clock_uncertainty -setup $extra -from $ca -to $ca" in b
+    assert b.index("set_clock_uncertainty") < b.index("opt_design")
