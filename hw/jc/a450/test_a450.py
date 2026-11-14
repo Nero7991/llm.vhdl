@@ -102,44 +102,114 @@ def test_rtl_closure_analyses(tmp_path):
         assert r.returncode == 0 and "error" not in r.stderr.lower(), (f, r.stderr)
 
 
-@pytest.mark.skipif(subprocess.run(["which", "tclsh"], capture_output=True).returncode != 0,
-                    reason="tclsh not installed")
-def test_cdc_scan_counts_and_refuses(tmp_path):
-    """a450_cdc_scan on a REAL report (the loader's, 299 Warning rows, none of them a450's)
-    must count every flagged row and refuse all of them; one synthetic row per a450 rule
-    class must be allowed, and a near-miss (ar2, not ar1) refused."""
-    rpt = os.path.join(REPO, "hw", "jc", "loader", "results", "2026-10-05", "full", "cdc.rpt")
-    tc = "a450_i/top/inst/a/g_split.u"
-    rows = [
-        ("CDC-1", "Critical", "a450_i/core_reset/U0/PR_OUT_DFF[0].FDRE_PER_N/C", tc + "/ar1_reg/D"),
-        ("CDC-1", "Critical", tc + "/gosync/tog_reg/C", tc + "/gosync/s1_reg/D"),
-        ("CDC-6", "Warning", tc + "/cross/q/wp_g_reg[3]/C", tc + "/cross/q/wp_g_s1_reg[3]/D"),
-        ("CDC-4", "Critical", tc + "/back/nb_r_reg[5]/C", tc + "/fast/dist/nb_m1_r_reg[5]/D"),
-        ("CDC-1", "Critical", "a450_i/core_reset/U0/PR_OUT_DFF[0].FDRE_PER_N/C", tc + "/ar2_reg/D"),
-    ]
-    syn = "ID      Severity  Count  Description\n"
-    syn += "CDC-1   Critical      4  1-bit unknown CDC circuitry\n"
-    syn += "CDC-4   Critical      0  x\nCDC-6   Warning       1  Multi-bit synchronized\n"
-    for i, (rid, sev, s, d) in enumerate(rows):
-        syn += "%d  %s   %s  some description here  2  Max Delay Datapath Only  %s  %s\n" % (
-            i + 1, rid, sev, s, d)
-    syn_path = str(tmp_path / "syn_cdc.rpt")
-    with open(syn_path, "w") as f:
-        f.write(syn)
+TCLSH = subprocess.run(["which", "tclsh"], capture_output=True).returncode == 0
+TC = "a450_i/top/inst/a/g_split.u"
+STUB = "a450_i/top/inst/stub"
+
+
+def _scan(paths, extra=""):
+    """Run a450_cdc_scan + a450_cdc_verdict on each report; returns (scans, stdout)."""
     script = """
 source %s
-set rules [a450_cdc_rules %s a450_i/top/inst/stub]
-foreach p {%s %s} {
+set rules [a450_cdc_rules %s %s]
+foreach p {%s} {
   set fh [open $p]; set t [read $fh]; close $fh
   lassign [a450_cdc_scan $t $rules] ns nr bad hits
   puts "SCAN $ns $nr [llength $bad] [lsort [dict keys $hits]]"
   foreach b $bad { puts "BAD $b" }
+  foreach f [a450_cdc_verdict $ns $nr $bad $hits] { puts "VERDICT_FAIL $f" }
+  puts "END"
 }
-""" % (os.path.join(HERE, "a450_cdc.tcl"), tc, rpt, syn_path)
+%s
+""" % (os.path.join(HERE, "a450_cdc.tcl"), TC, STUB, " ".join(paths), extra)
     r = subprocess.run(["tclsh"], input=script, capture_output=True, text=True)
-    scans = re.findall(r"^SCAN (\d+) (\d+) (\d+) ?(.*)$", r.stdout, re.M)
-    assert len(scans) == 2, r.stdout + r.stderr
-    assert scans[0][:3] == ("299", "299", "299"), scans[0]
-    assert scans[1][:3] == ("5", "5", "1"), scans[1]
-    assert scans[1][3].split() == ["fifo_wp_gray", "job_nb_r", "rst_ar1", "tog_s1"]
-    assert re.search(r"^BAD CDC-1 Critical .*/ar2_reg/D$", r.stdout, re.M), r.stdout
+    blocks = r.stdout.split("END\n")
+    scans = []
+    for b in blocks:
+        m = re.search(r"^SCAN (\d+) (\d+) (\d+) ?(.*)$", b, re.M)
+        if m:
+            scans.append((m.groups(), re.findall(r"^BAD (.*)$", b, re.M),
+                          re.findall(r"^VERDICT_FAIL (.*)$", b, re.M)))
+    return scans, r.stdout + r.stderr
+
+
+def _synth_report(tmp_path, name, rows):
+    syn = "ID      Severity  Count  Description\n"
+    for sev in ("Critical", "Warning"):
+        n = sum(1 for (_, s, _, _) in rows if s == sev)
+        syn += "CDC-1   %s      %d  x\n" % (sev, n)
+    for i, (rid, sev, s, d) in enumerate(rows):
+        syn += "%d  %s   %s  some description here  2  Max Delay Datapath Only  %s  %s\n" % (
+            i + 1, rid, sev, s, d)
+    path = str(tmp_path / name)
+    with open(path, "w") as f:
+        f.write(syn)
+    return path
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_cdc_scan_counts_and_refuses(tmp_path):
+    """a450_cdc_scan on a REAL report (the loader's, 299 Warning rows, none of them a450's)
+    must count every flagged row and refuse all of them; one synthetic row per a450 rule
+    class must be allowed, and each near-miss refused: ar2 (not ar1), a crossing out of
+    xmem into a tile (the old xmem rules accepted any), a job value into a tile (the old
+    job rules accepted any fast/ destination), a vendor-looking reset path (the old
+    `*/*_reset/*` matched every path)."""
+    rpt = os.path.join(REPO, "hw", "jc", "loader", "results", "2026-10-05", "full", "cdc.rpt")
+    ok = [
+        ("CDC-1", "Critical", "a450_i/core_reset/U0/PR_OUT_DFF[0].FDRE_PER_N/C", TC + "/ar1_reg/D"),
+        ("CDC-1", "Critical", TC + "/gosync/tog_reg/C", TC + "/gosync/s1_reg/D"),
+        ("CDC-6", "Warning", TC + "/cross/q/wp_g_reg[3:0]/C", TC + "/cross/q/wp_g_s1_reg[3:0]/D"),
+        ("CDC-6", "Warning", TC + "/cross/q/rp_g_reg[3]/C", TC + "/cross/q/rp_g_s1_reg[3]/D"),
+        ("CDC-4", "Critical", TC + "/back/nb_r_reg[5]/C", TC + "/fast/dist/nb_m1_r_reg[5]/D"),
+        ("CDC-15", "Warning", STUB + "/w_base_reg[52]/C",
+         TC + "/fast/g_t[3].tile/wport/fsm/p_base_reg[12]/D"),
+        ("CDC-15", "Warning", STUB + "/w_beats_reg[1]/C",
+         TC + "/fast/dist/gen_s[2].sport/fsm/p_beats_reg[1]/D"),
+    ]
+    bad = [
+        ("CDC-1", "Critical", "a450_i/core_reset/U0/PR_OUT_DFF[0].FDRE_PER_N/C", TC + "/ar2_reg/D"),
+        ("CDC-13", "Critical", TC + "/xmem/foo_reg/C", TC + "/fast/g_t[3].tile/bar_reg/D"),
+        ("CDC-15", "Warning", TC + "/back/nb_r_reg[5]/C", TC + "/fast/g_t[3].tile/nb_m1_r_reg[5]/D"),
+        ("CDC-1", "Critical", TC + "/back/foo_reg/C", "a450_i/aclk_reset/U0/bar_reg/D"),
+        ("CDC-15", "Warning", STUB + "/w_base_reg[52]/C",
+         TC + "/fast/g_t[3].tile/wport/fsm/x/p_base_reg[12]/D"),
+    ]
+    syn = _synth_report(tmp_path, "syn_cdc.rpt", ok + bad)
+    scans, out = _scan([rpt, syn])
+    assert len(scans) == 2, out
+    assert scans[0][0][:3] == ("299", "299", "299"), scans[0]
+    assert scans[1][0][:3] == ("12", "12", "5"), (scans[1], out)
+    assert scans[1][0][3].split() == ["fifo_rp_gray", "fifo_wp_gray", "job_nb_r", "rst_ar1",
+                                      "stub_base", "stub_beats", "tog_s1"], scans[1]
+    got = sorted(b.split()[2] + " -> " + b.split()[4] for b in scans[1][1])
+    want = sorted(s + " -> " + d for (_, _, s, d) in bad)
+    assert got == want, (got, want)
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_cdc_rules_cover_r2_exactly():
+    """Every Critical/Warning row of the routed a450_hbm_r2 report matches a rule, and the
+    verdict passes; a rule nobody matched would be listed below (none is, except the
+    three Info synchronisers the Task 6 ruling keeps and the stub bases r2 did not have)."""
+    rpt = os.path.join(HERE, "results", "a450_hbm_r2", "cdc.rpt")
+    scans, out = _scan([rpt])
+    (ns, nr, nb, labels), bad, verdict = scans[0]
+    assert (ns, nr, nb) == ("439", "439", "0"), (scans[0], out)
+    assert verdict == [], verdict
+    assert set(labels.split()) == {"fifo_rp_gray", "fifo_wp_gray", "job_cbk", "job_lastv_r",
+                                   "job_md_r", "job_nb_r", "job_os_r", "job_rows_r",
+                                   "stub_beats"}, labels
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_cdc_verdict_refuses_vacuous(tmp_path):
+    """No flagged row at all, or no Gray-pointer row, is refused, not passed."""
+    empty = _synth_report(tmp_path, "empty.rpt", [])
+    nogray = _synth_report(tmp_path, "nogray.rpt", [
+        ("CDC-4", "Critical", TC + "/back/nb_r_reg[5]/C", TC + "/fast/dist/nb_m1_r_reg[5]/D")])
+    scans, out = _scan([empty, nogray])
+    assert len(scans) == 2, out
+    assert any("vacuous" in f for f in scans[0][2]), scans[0]
+    assert any("no fifo_wp_gray" in f for f in scans[1][2]), scans[1]
+    assert any("no fifo_rp_gray" in f for f in scans[1][2]), scans[1]

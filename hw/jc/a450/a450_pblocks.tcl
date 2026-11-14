@@ -85,9 +85,9 @@ proc a450_pblocks {fast_re hbm_glob portmap} {
   return [dict size $cols]
 }
 
-# a450_pblocks_verify: after placement, for every tile: if the HBM cell its arvalid
-# reaches is a placed SAXI interface cell, its site must be the one a450_pblocks assumed.
-# Returns the list of mismatches (empty = verified); prints A450PB_VERIFY lines.
+# a450_pblocks_verify: after placement, for every tile: the HBM cell its arvalid reaches
+# must be placed (have a LOC) at the site a450_pblocks assumed.  Returns the list of
+# mismatches AND unverifiable cells (empty = every tile verified); prints A450PB_VERIFY.
 proc a450_pblocks_verify {} {
   set bad {}
   foreach e $::a450_pb_expect {
@@ -95,7 +95,10 @@ proc a450_pblocks_verify {} {
     set loc [get_property LOC $hc]
     set ref [get_property REF_NAME $hc]
     if {$loc eq ""} {
+      # not checkable is not checked: a skip is a failure of the verify (Task 7 review),
+      # so a pblock assumption nothing confirmed cannot pass the gate
       puts "A450PB_VERIFY tile $p SAXI_$n cell $ref has no LOC (macro primitive): site not checkable"
+      lappend bad "tile $p SAXI_$n cell $ref has no LOC: site assumption unverified"
       continue
     }
     if {$loc ne $site} { lappend bad "tile $p SAXI_$n placed at $loc, assumed $site" }

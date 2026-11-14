@@ -191,7 +191,6 @@ lassign [a450_cdc_scan $ct [a450_cdc_rules $tc $stub]] nsum nrows bad hits
 foreach lab [lsort [dict keys $hits]] { puts "A450HBM_CDC_RULE $lab [dict get $hits $lab]" }
 foreach b [lrange $bad 0 49] { puts "A450HBM_CDC_UNLISTED $b" }
 puts "A450HBM_CDC flagged_summary $nsum flagged_rows $nrows unlisted [llength $bad]"
-if {$nsum != $nrows} { a4_check_fail "report_cdc: summary counts $nsum Critical+Warning, parsed $nrows rows" }
-if {[llength $bad] > 0} { a4_check_fail "report_cdc: [llength $bad] crossing(s) not on the allowed list" }
+foreach f [a450_cdc_verdict $nsum $nrows $bad $hits] { a4_check_fail $f }
 
 puts "A450HBM_DONE"

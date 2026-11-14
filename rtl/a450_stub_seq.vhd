@@ -1,9 +1,10 @@
 -- rtl/a450_stub_seq.vhd -- the stub sequencer of the a450 A+HBM timing design (plan
 -- Task 7, spec 3.2 gate 2).  It keeps every path of rtl/mv4i_tiled.vhd alive without a
 -- host: it loads 64 activations and a codebook from an LFSR, starts a legal job (random
--- shape, out_shift and mode, bases and beat counts consistent with the shape), waits for
--- done, and folds every y beat, y_exp, err and sat into `obs`, which drives an LED, so
--- synthesis can trim nothing.  It computes nothing anyone checks; it is timing harness.
+-- shape, out_shift and mode, per-port bases and beat counts consistent with the shape, all
+-- registers loaded at T_GO), waits for done, and folds every y beat, y_exp, err and sat
+-- into `obs`, which drives an LED, so synthesis can trim nothing.  It computes nothing
+-- anyone checks; it is timing harness.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -55,15 +56,25 @@ architecture rtl of a450_stub_seq is
   signal fold : std_logic_vector(7 downto 0) := (others => '0');
   signal o : std_logic := '0';
   signal nj : unsigned(31 downto 0) := (others => '0');
+  -- the per-job HBM bases, REGISTERS loaded at T_GO (Task 7 review): on the card they are
+  -- descriptor-loaded registers, and constant bases would let synthesis fold every read
+  -- port's address adder.  Port k (weight ports 0..NPORTS_W-1, then the scale ports) gets
+  -- region (r * NPORTS + k) of 4 MiB, r = lf(26:24) the same for every port of a job, so
+  -- the regions stay distinct; inside it a 4 KiB-aligned offset lf(21:12).  A job reads at
+  -- most 64 beats x 32 B = 2 KiB per port, so it never leaves its region.
+  constant NPORTS : positive := NPORTS_W + NPORTS_S;
+  signal wb_r : std_logic_vector(NPORTS_W*ADDR_W-1 downto 0) := (others => '0');
+  signal sb_r : std_logic_vector(NPORTS_S*ADDR_W-1 downto 0) := (others => '0');
+  function port_base(r : natural; k : natural; off : unsigned(9 downto 0)) return std_logic_vector is
+  begin
+    return std_logic_vector(to_unsigned(r * NPORTS + k, ADDR_W - 22)) & std_logic_vector(off)
+           & (11 downto 0 => '0');
+  end function;
 begin
   jobs <= std_logic_vector(nj);
   obs  <= o;
-  g_wb : for p in 0 to NPORTS_W-1 generate
-    w_base((p+1)*ADDR_W-1 downto p*ADDR_W) <= std_logic_vector(to_unsigned(p, ADDR_W - 22)) & (21 downto 0 => '0');
-  end generate;
-  g_sb : for q in 0 to NPORTS_S-1 generate
-    s_base((q+1)*ADDR_W-1 downto q*ADDR_W) <= std_logic_vector(to_unsigned(NPORTS_W + q, ADDR_W - 22)) & (21 downto 0 => '0');
-  end generate;
+  w_base <= wb_r;
+  s_base <= sb_r;
 
   seq : process(clk)
     variable v : std_logic_vector(63 downto 0);
@@ -108,6 +119,12 @@ begin
           else out_mode <= std_logic_vector(lf(23 downto 22)); end if;
           w_beats   <= std_logic_vector(to_unsigned(tl * nbk, 32));
           s_beats   <= std_logic_vector(to_unsigned(tl * nbk, 32));
+          for k in 0 to NPORTS_W-1 loop
+            wb_r((k+1)*ADDR_W-1 downto k*ADDR_W) <= port_base(to_integer(lf(26 downto 24)), k, lf(21 downto 12));
+          end loop;
+          for q in 0 to NPORTS_S-1 loop
+            sb_r((q+1)*ADDR_W-1 downto q*ADDR_W) <= port_base(to_integer(lf(26 downto 24)), NPORTS_W + q, lf(21 downto 12));
+          end loop;
           start <= '1';
           nj <= nj + 1;
           st <= T_WAIT;
