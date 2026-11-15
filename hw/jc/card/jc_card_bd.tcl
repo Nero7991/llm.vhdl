@@ -462,9 +462,12 @@ connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3]            [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
 # THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the
-# net of the 28 ports' ARESET_N above: a port reset drops every burst in flight,
-# and the tiled A (A_TILED) clears its owed-burst counts from it, which nothing
-# else does.  The array on the card today (A_TILED false) does not read it.
+# net of the 28 ports' ARESET_N above.  PG276 Table 5: that reset is pre-traffic
+# only; asserted mid-traffic the port and the controller go out of sync, and what
+# R does afterwards is undocumented.  The tiled A (A_TILED) clears its owed-burst
+# counts from it only so that it cannot hang forever after one; that is not a
+# recovery (a reprogram is).  The array on the card today (A_TILED false) does not
+# read it.
 connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins eng/hbm_aresetn]
 # ---- end subsystem A ------------------------------------------------------
 
