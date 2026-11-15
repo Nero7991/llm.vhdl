@@ -774,3 +774,30 @@ def test_split_on_slave_reset_waits_for_both_locks():
                      r"\[get_bd_cells lock_and\]", t)
     assert G.ACLK_A_RSTN in _net_of(nets, "core_reset/ext_reset_in")
     assert "lock_and" not in _render({"JC_A_TILED": "1"})
+
+
+def test_split_on_reads_back_ext_reset_polarity_after_validation():
+    """Fix round 1 (m4): C_EXT_RESET_HIGH is BD-propagated, so it is read back AFTER
+    validate_bd_design and refused unless 0, for core_reset and aclk_reset."""
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    code = "\n".join(_code_lines(t))
+    m = re.search(r"^foreach _rc \{core_reset aclk_reset\} \{\n"
+                  r"  set _erh \[get_property CONFIG\.C_EXT_RESET_HIGH \[get_bd_cells \$_rc\]\]\n"
+                  r"  if \{\$_erh ne \"0\"\} \{\n"
+                  r"    error \"JCCARD_RESET FAIL: [^\n]*\n"
+                  r"  \}\n"
+                  r"  puts \"JCCARD_RESET \$_rc C_EXT_RESET_HIGH \$_erh\"\n\}$", code, re.M)
+    assert m, "no polarity readback in the split-on render"
+    v = code.index("validate_bd_design -force")
+    assert v < m.start() < code.index("save_bd_design")
+    for env in ({}, {"JC_A_TILED": "1"}):
+        assert "C_EXT_RESET_HIGH" not in "\n".join(_code_lines(_render(env)))
+
+
+def test_core_reset_comment_matches_each_render():
+    """Fix round 1 (m5): the split-on render must not claim ext_reset_in is tied high."""
+    tied = "Its ext_reset_in is tied high"
+    assert tied in G.render_tcl(P, G.CLK_CORE_DEFAULT, {"JC_A_TILED": "1"})
+    on = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert tied not in on
+    assert "its ext_reset_in is aclk_reset's" in on

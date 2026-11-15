@@ -5620,21 +5620,52 @@ def _reset_abort(detail):
              "unreachable.\n\n%s\nWHAT CHANGED: %s\n" % (_RESET_WHY, detail))
 
 
+def _tcl_commands(text):
+    """The Tcl commands of `text`, one string each: lines split on `;`, comment
+    commands (a leading `#`, including the `;# ...` trailing form) dropped."""
+    out = []
+    for line in text.splitlines():
+        for cmd in line.split(";"):
+            c = cmd.strip()
+            if c and not c.startswith("#"):
+                out.append(c)
+    return out
+
+
+def _created_cells(text, cell):
+    """VLNV of every `create_bd_cell` command that names `cell`, braced or
+    quoted name included."""
+    out = []
+    for c in _tcl_commands(text):
+        tok = c.split()
+        if tok[0] != "create_bd_cell" or len(tok) < 2:
+            continue
+        if tok[-1].strip('{}"') != cell:
+            continue
+        vlnv = ""
+        if "-vlnv" in tok[:-1]:
+            vlnv = tok[tok.index("-vlnv") + 1].strip('{}"')
+        out.append(vlnv)
+    return out
+
+
 def _is_const_one(text, pin):
-    """True when `pin` is the dout of an xlconstant cell whose CONST_VAL is set,
-    exactly once, to {1}.  Full-line Tcl comments are skipped."""
+    """True when `pin` is the dout of a cell created exactly once, as an
+    xlconstant, whose CONST_VAL is set exactly once, to {1}.
+
+    The same-name clause is the safety-bearing one: a cell created as an
+    xlconstant and then deleted and re-created as anything else under the
+    same name would otherwise pass (teeth rows T13-T15).  The CONST_VAL clause
+    is a liveness check (any true constant is STRAY-safe; a 0 would hold the
+    engine in reset forever) and sees only the single-line braced form."""
     if not pin.endswith("/dout"):
         return False
     cell = pin.rsplit("/", 1)[0]
-    lines = [l.strip() for l in text.splitlines() if not l.strip().startswith("#")]
-    made = [l for l in lines if re.match(
-        r"create_bd_cell\s.*-vlnv\s+xilinx\.com:ip:xlconstant:\S+\s+%s$"
-        % re.escape(cell), l)]
-    made_any = [l for l in lines if re.match(
-        r"create_bd_cell\s.*\s%s$" % re.escape(cell), l)]
+    made = _created_cells(text, cell)
     vals = re.findall(r"CONFIG\.CONST_VAL \{(\w+)\}[^\n]*\[get_bd_cells %s\]"
-                      % re.escape(cell), "\n".join(lines))
-    return len(made) == 1 and len(made_any) == 1 and vals == ["1"]
+                      % re.escape(cell), "\n".join(_tcl_commands(text)))
+    return (len(made) == 1 and re.match(r"xilinx\.com:ip:xlconstant:", made[0])
+            is not None and vals == ["1"])
 
 
 def check_reset_topology(text):
@@ -5886,6 +5917,25 @@ _RESET_TEETH = [
      "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
      "[get_bd_cells t12_one]"),
 ]
+# T13-T15: a real xlconstant, deleted and re-created as a gate under the SAME
+# name, in three spellings of the re-create.  Each is refused only by the
+# same-name clause of _is_const_one.
+_T1X_CONST = ("[get_bd_pins %s/dout] [get_bd_pins core_reset/dcm_locked]\n"
+              "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 %s\n"
+              "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+              "[get_bd_cells %s]\n"
+              "delete_bd_objs [get_bd_cells %s]\n")
+for _tag, _name, _recreate, _how in (
+        ("T13", "t13_one", "t13_one", "plainly"),
+        ("T14", "t14_one", "t14_one ;# a trailing comment", "with a trailing ;# comment"),
+        ("T15", "t15_one", "{t15_one}", "with a braced name")):
+    _RESET_TEETH.append(
+        (_tag, True, "dcm_locked on an xlconstant deleted and re-created as a gate "
+         "under the same name, %s" % _how,
+         "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+         _T1X_CONST % (_name, _name, _name, _name)
+         + "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 "
+         + _recreate))
 # FK33_ENG_SPLIT_CLK: the engine's reset generator is `fast_reset`, emitted in
 # the same shapes as core_reset's lines, so the rows retarget by name.  With
 # the switch off ENG_RESET_CELL is "core_reset" and this is the identity.

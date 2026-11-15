@@ -568,9 +568,20 @@ def clock_lines(mhz, env=None):
         "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 one",
         "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] [get_bd_cells one]",
         "# core_reset is named as on the FK33 because gen_pcieep.py's card, seam and grant",
-        "# sections name it.  Its ext_reset_in is tied high (not in reset): left unconnected",
-        "# it would be tied to zero and hold the domain in reset forever.  There is no",
-        "# host-link reset on this board; the domain leaves reset when the MMCM locks.",
+    ]
+    if a_split(env):
+        L += [
+            "# sections name it.  JC_A_CLK_SPLIT: its ext_reset_in is aclk_reset's",
+            "# peripheral_aresetn and its dcm_locked a constant 1 (THE RESET TREE, below), so",
+            "# the domain leaves reset after aclk_reset does, once BOTH MMCMs have locked.",
+        ]
+    else:
+        L += [
+            "# sections name it.  Its ext_reset_in is tied high (not in reset): left unconnected",
+            "# it would be tied to zero and hold the domain in reset forever.  There is no",
+            "# host-link reset on this board; the domain leaves reset when the MMCM locks.",
+        ]
+    L += [
         "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 apb_rst",
     ]
@@ -1024,8 +1035,31 @@ def addr_lines(P):
     return L
 
 
-def check_lines(P):
+def reset_polarity_lines(env=None):
+    """JC_A_CLK_SPLIT: after validate_bd_design (in UNCONNECTED_PIN_CHECK), read back
+    the propagated ext_reset_in polarity of both reset generators.  C_EXT_RESET_HIGH is
+    BD-propagated (value_permission bd) and was measured 0 only for one/dout and
+    xdma/axi_aresetn drivers; a 1 on core_reset would invert the engine's reset against
+    the slaves'.  Refused unless both read 0."""
+    if not a_split(env):
+        return []
+    return [
+        "# THE RESET TREE'S POLARITY (a450 Task 9 fix round 1), read after validation:",
+        "# core_reset/ext_reset_in is driven by aclk_reset/peripheral_aresetn (active low),",
+        "# aclk_reset/ext_reset_in by one/dout.  Both must have propagated C_EXT_RESET_HIGH 0.",
+        "foreach _rc {core_reset aclk_reset} {",
+        "  set _erh [get_property CONFIG.C_EXT_RESET_HIGH [get_bd_cells $_rc]]",
+        "  if {$_erh ne \"0\"} {",
+        "    error \"JCCARD_RESET FAIL: $_rc CONFIG.C_EXT_RESET_HIGH is \\\"$_erh\\\", not 0: its ext_reset_in is not active low\"",
+        "  }",
+        "  puts \"JCCARD_RESET $_rc C_EXT_RESET_HIGH $_erh\"",
+        "}",
+    ]
+
+
+def check_lines(P, env=None):
     L = [P.UNCONNECTED_PIN_CHECK.rstrip("\n")]
+    L += reset_polarity_lines(env)
     L += [
         "set _nmr [llength [get_bd_cells -hierarchical -quiet -filter {VLNV =~ \"*:module_ref:*\"}]]",
         "if {$_nmr != %d} {" % N_MODULE_REFS,
@@ -1088,7 +1122,7 @@ def render_tcl(P, mhz, env=None):
     body += seam_27b_lines(P)
     body += card_lines(P, env)
     body += addr_lines(P)
-    body += check_lines(P)
+    body += check_lines(P, env)
     return ("\n".join(head) + "\n" + stamp_block("#", env) + "\n".join(body) + "\n")
 
 
