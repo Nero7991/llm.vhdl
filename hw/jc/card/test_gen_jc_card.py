@@ -718,3 +718,59 @@ def test_hbm_aresetn_forwarded_engine_to_tiled_array():
     desc = code("rtl/matvec_int4_desc_axi.vhd")
     g = re.search(r"^\s*g_tiled\s*:\s*if A_TILED generate(.*?)end generate", desc, re.M | re.S)
     assert g and re.search(r"\bhbm_aresetn\s*=>\s*hbm_aresetn\b", g.group(1))
+
+
+# ---- the STRAY-NEXTJOB reset guard on every render (a450 Task 9 fix) -------------------
+# generate_in_place runs gen_pcieep.check_reset_topology on the emitted text before it
+# writes anything.  Task 8 rendered the split-on BD in these tests but never ran that
+# guard on it, so the split-on build's refusal was first seen by the build.  Run it here
+# on the full render (comments included, as the generator does) for every clocking.
+_RENDERS = [({}, "default"), ({"JC_A_TILED": "1"}, "split_off"), (_SPLIT, "split_on")]
+
+
+@pytest.mark.parametrize("env", [e for e, _ in _RENDERS], ids=[n for _, n in _RENDERS])
+def test_reset_topology_guard_accepts_every_render(env, capsys):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, env)
+    P.check_reset_topology(t)          # SystemExit on a refusal
+    out = capsys.readouterr().out
+    assert re.search(r"^FK33_RESETGUARD %s/core_aresetn " % P.ENG_CELL, out, re.M), out
+
+
+# Teeth for the above on the split-on render: each mutation re-opens one way for the
+# engine's reset to assert while aclk_reset (every HBM port's ARESET_N) stays released.
+_SPLIT_RESET_MUTANTS = [
+    ("sibling_ext_reset",
+     "[get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins core_reset/ext_reset_in]",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/ext_reset_in]"),
+    ("core_lock_on_clk_wiz_0",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/dcm_locked]"),
+    ("aux_reset_driven",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/aux_reset_in]"),
+]
+
+
+@pytest.mark.parametrize("name,old,new", _SPLIT_RESET_MUTANTS,
+                         ids=[m[0] for m in _SPLIT_RESET_MUTANTS])
+def test_reset_topology_guard_refuses_split_on_mutants(name, old, new, capsys):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert t.count(old) == 1, "anchor moved: this row would test nothing"
+    with pytest.raises(SystemExit):
+        P.check_reset_topology(t.replace(old, new))
+
+
+def test_split_on_slave_reset_waits_for_both_locks():
+    """The guard grades core_reset against aclk_reset but cannot see aclk_reset's own
+    inputs.  core_reset's dcm_locked is a constant on the split-on card, so clk_wiz_0's
+    lock reaches the core domain ONLY through aclk_reset: pin lock_and = both locks."""
+    t = _render(_SPLIT)
+    nets = _nets(t)
+    assert _net_of(nets, "aclk_reset/dcm_locked") == _net_of(nets, "lock_and/Res")
+    assert "clk_wiz_0/locked" in _net_of(nets, "lock_and/Op1")
+    assert "clk_wiz_a/locked" in _net_of(nets, "lock_and/Op2")
+    assert re.search(r"CONFIG\.C_SIZE \{1\} CONFIG\.C_OPERATION \{and\}\] "
+                     r"\[get_bd_cells lock_and\]", t)
+    assert G.ACLK_A_RSTN in _net_of(nets, "core_reset/ext_reset_in")
+    assert "lock_and" not in _render({"JC_A_TILED": "1"})

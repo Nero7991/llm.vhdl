@@ -573,14 +573,19 @@ def clock_lines(mhz, env=None):
         "# host-link reset on this board; the domain leaves reset when the MMCM locks.",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset",
         "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 apb_rst",
-        _c("clk_wiz_0/locked", "core_reset/dcm_locked"),
-        _c("clk_wiz_0/locked", "apb_rst/dcm_locked"),
-        _c("one/dout", "core_reset/ext_reset_in"),
+    ]
+    split = a_split(env)
+    if not split:
+        L.append(_c("clk_wiz_0/locked", "core_reset/dcm_locked"))
+    L.append(_c("clk_wiz_0/locked", "apb_rst/dcm_locked"))
+    if not split:
+        L.append(_c("one/dout", "core_reset/ext_reset_in"))
+    L += [
         _c("one/dout", "apb_rst/ext_reset_in"),
         _c(CORE_CLK, "core_reset/slowest_sync_clk"),
         _c(APB_CLK, "apb_rst/slowest_sync_clk"),
     ]
-    if a_split(env):
+    if split:
         L += [
             "",
             "# aclk_a (JC_A_CLK_SPLIT=1): its own MMCM on clk_out2.  One MMCM cannot make",
@@ -596,10 +601,31 @@ def clock_lines(mhz, env=None):
             "  jcc_want clk_wiz_a $k $v",
             "}",
             _c(REF_CLK, "clk_wiz_a/clk_in1"),
+            "",
+            "# THE RESET TREE (a450 Task 9 fix).  Every HBM AXI port is reset by aclk_reset,",
+            "# so core_reset (the engine's core_aresetn) must DESCEND from it: a read port",
+            "# reset while its HBM slave stays released re-opens STRAY-NEXTJOB",
+            "# (docs/debugging/2026-08-30_strayreach-is-stray-nextjob-reachable.md;",
+            "# gen_pcieep.check_reset_topology refuses the sibling shape).  So aclk_reset",
+            "# takes BOTH locks (lock_and), and core_reset takes aclk_reset's",
+            "# peripheral_aresetn as its ext_reset_in, with a constant 1 on its dcm_locked:",
+            "# an unlock of either MMCM resets the slaves first and the engine through them,",
+            "# and nothing resets the engine alone.  ext_reset_in polarity is not set here:",
+            "# C_EXT_RESET_HIGH is BD-propagated (value_permission bd).  Read 0 in built",
+            "# xci files both from the polarity-less one/dout (jccard_loop3) and from an",
+            "# ACTIVE_LOW driver, xdma/axi_aresetn (FK33 build12b); peripheral_aresetn is",
+            "# ACTIVE_LOW too.",
             "create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 aclk_reset",
-            _c("clk_wiz_a/locked", "aclk_reset/dcm_locked"),
+            "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 lock_and",
+            "set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {and}] [get_bd_cells lock_and]",
+            "foreach {k v} {C_SIZE 1 C_OPERATION and} { jcc_want lock_and $k $v }",
+            _c("clk_wiz_0/locked", "lock_and/Op1"),
+            _c("clk_wiz_a/locked", "lock_and/Op2"),
+            _c("lock_and/Res", "aclk_reset/dcm_locked"),
             _c("one/dout", "aclk_reset/ext_reset_in"),
             _c(ACLK_A, "aclk_reset/slowest_sync_clk"),
+            _c(ACLK_A_RSTN, "core_reset/ext_reset_in"),
+            _c("one/dout", "core_reset/dcm_locked"),
         ]
     return L
 

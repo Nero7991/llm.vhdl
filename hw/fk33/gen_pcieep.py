@@ -5620,6 +5620,23 @@ def _reset_abort(detail):
              "unreachable.\n\n%s\nWHAT CHANGED: %s\n" % (_RESET_WHY, detail))
 
 
+def _is_const_one(text, pin):
+    """True when `pin` is the dout of an xlconstant cell whose CONST_VAL is set,
+    exactly once, to {1}.  Full-line Tcl comments are skipped."""
+    if not pin.endswith("/dout"):
+        return False
+    cell = pin.rsplit("/", 1)[0]
+    lines = [l.strip() for l in text.splitlines() if not l.strip().startswith("#")]
+    made = [l for l in lines if re.match(
+        r"create_bd_cell\s.*-vlnv\s+xilinx\.com:ip:xlconstant:\S+\s+%s$"
+        % re.escape(cell), l)]
+    made_any = [l for l in lines if re.match(
+        r"create_bd_cell\s.*\s%s$" % re.escape(cell), l)]
+    vals = re.findall(r"CONFIG\.CONST_VAL \{(\w+)\}[^\n]*\[get_bd_cells %s\]"
+                      % re.escape(cell), "\n".join(lines))
+    return len(made) == 1 and len(made_any) == 1 and vals == ["1"]
+
+
 def check_reset_topology(text):
     """Refuse to emit a build whose reset tree re-opens STRAY-NEXTJOB.
 
@@ -5734,10 +5751,20 @@ def check_reset_topology(text):
     # happen without the slave's reset.  Re-root the MMCM on a free-running
     # clock with its own reset and the engine resets on an unlock that the
     # slave never sees.
+    #
+    # A CONSTANT 1 on dcm_locked is the other safe shape (the Jungle Cat's
+    # JC_A_CLK_SPLIT card, a450 Task 9 fix): it can never deassert, so it adds
+    # no reset event at all, the same argument as the undriven aux inputs
+    # above.  That card moves the core MMCM's lock onto the SLAVE reset's own
+    # dcm_locked instead, so an unlock still reaches the engine, as a
+    # descendant.  Only an xlconstant cell whose one CONST_VAL is 1 counts; a
+    # cell merely NAMED like one is still graded as an MMCM.
     lock = _bd_net_peers(text, "%s/dcm_locked" % cell)
     if len(lock) > 1:
         _reset_abort("%s/dcm_locked has %d drivers (%s)."
                      % (cell, len(lock), ", ".join(lock)))
+    if lock and _is_const_one(text, lock[0]):
+        lock = []
     if lock:
         mmcm = lock[0].rsplit("/", 1)[0]
         mrst = (_bd_net_peers(text, "%s/resetn" % mmcm)
@@ -5832,6 +5859,32 @@ _RESET_TEETH = [
      "order-independent and so must this scan be",
      "[get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]",
      "[get_bd_pins core_reset/ext_reset_in] [get_bd_pins xdma/axi_aresetn]"),
+
+    # dcm_locked on a constant (a450 Task 9 fix: the Jungle Cat split-on card's
+    # shape).  A 1 can never deassert, so it adds no reset event; anything that
+    # only LOOKS like a constant is still graded as an MMCM and refused.
+    ("T10", False, "SAFE: dcm_locked on an xlconstant whose CONST_VAL is 1",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t10_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 t10_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t10_one]"),
+
+    ("T11", True, "dcm_locked on an xlconstant whose CONST_VAL is not 1: not "
+     "the constant the exemption is for",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t11_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 t11_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t11_one]"),
+
+    ("T12", True, "dcm_locked on a dout of a cell that is NOT an xlconstant "
+     "(a gate named like one, CONST_VAL text and all)",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t12_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 t12_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t12_one]"),
 ]
 # FK33_ENG_SPLIT_CLK: the engine's reset generator is `fast_reset`, emitted in
 # the same shapes as core_reset's lines, so the rows retarget by name.  With
