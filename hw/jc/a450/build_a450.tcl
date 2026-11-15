@@ -8,7 +8,10 @@
 # Sentinels (anchored): A450HBM_NONCE, A450HBM_SYNTH_DONE, A450HBM_PBLOCKS,
 # A450HBM_ROUTE routing_errors, A450HBM_WNS_ACLK, A450HBM_WNS_CORE, A450HBM_WNS,
 # A450HBM_WHS, A450HBM_UTIL, A450HBM_RSTAR1, A450HBM_TOGS1, A450HBM_DAFULL*,
-# A450HBM_TOP, A450HBM_CDC, A450HBM_DONE.  Any failure BEFORE routing prints
+# A450HBM_TOP, A450HBM_CDC, A450HBM_DONE; Task 9b adds A450HBM_IP_PBLOCKS, A450HBM_PLACED
+# (the floorplan as placed; refused before routing), A450HBM_FAILING_ACLK (the count of
+# failing setup endpoints in aclk_a) and A450HBM_IP <cell> (the worst setup slack into each
+# aclk_a-side IP cell).  Any failure BEFORE routing prints
 # A450HBM_FAIL <reason> and exits 1 (a constraint that did not apply makes the run
 # meaningless).  A post-route check that fails prints A450HBM_CHECK_FAIL <what> and the
 # run still writes every report and A450HBM_DONE; run_a450.sh refuses a PASS on any
@@ -44,7 +47,7 @@ set RTL08 {
   rtl/mv_rdfsm.vhd rtl/mv_rdport.vhd rtl/mv_lfifo.vhd rtl/mv_tile.vhd
   rtl/mv_xbcast.vhd rtl/act_mem_dp.vhd rtl/mv_dist.vhd rtl/mv_rlink.vhd rtl/mv_rchain.vhd
   rtl/mv_rcross.vhd rtl/mv_tsync.vhd rtl/mv_afast.vhd rtl/mv_back.vhd rtl/mv4i_tcore.vhd
-  rtl/mv4i_tiled.vhd rtl/a450_stub_seq.vhd
+  rtl/mv4i_tiled.vhd rtl/a450_stub_seq.vhd hw/jc/a450/a450_tg.vhd
 }
 foreach f $RTL08 {
   if {![file exists $src/$f]} { a4_fail "missing source $f" }
@@ -80,6 +83,10 @@ if {[catch {
   set npb [a450_pblocks {.*/g_split\.u/fast} "*/hbm/*" \
            {1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 17 18 19 20 21 22 23 24 25}]
   puts "A450HBM_PBLOCKS $npb"
+  # Task 9b: the card's aclk_a-side IP beside its HBM ports (the card's own call,
+  # build_card.tcl, with its own hierarchy prefix)
+  set nip [a450_ip_pblocks [a450_ip_chains {a450_i}]]
+  puts "A450HBM_IP_PBLOCKS $nip"
 } err]} { a4_fail "constraints: $err" }
 if {$npb < 2} { a4_fail "constraints: only $npb pblock(s)" }
 if {$ocns ne "none"} {
@@ -93,15 +100,24 @@ set stub [get_cells -hierarchical -filter {NAME =~ */top/*/stub}]
 if {[llength $stub] != 1} { a4_fail "constraints: stub instance matches [llength $stub] cells" }
 puts "A450HBM_TCORE $tc STUB $stub"
 
+# the floorplan as placed (Task 9b): refused before routing is paid for
+proc a4_placed {} {
+  lassign [a450_pblocks_placed] bad npb nt ni
+  puts "A450HBM_PLACED pblocks $npb tiles_inside $nt ip_inside $ni failures [llength $bad]"
+  foreach b $bad { puts "A450HBM_PLACED_BAD $b" }
+  if {[llength $bad] > 0} { a4_fail "placement outside the floorplan: [lindex $bad 0]" }
+}
 if {$dirs eq "explore"} {
   opt_design -directive ExploreWithRemap
   place_design -directive ExtraTimingOpt
+  a4_placed
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
   phys_opt_design -directive AggressiveExplore
 } else {
   opt_design
   place_design
+  a4_placed
   phys_opt_design
   route_design
 }
@@ -145,6 +161,14 @@ set pc [get_timing_paths -quiet -setup -max_paths 1 -to $cc]
 if {[llength $pa] != 1 || [llength $pc] != 1} { a4_check_fail "no setup path into aclk_a or clk_core" }
 puts "A450HBM_WNS_ACLK [get_property SLACK $pa] LEVELS [get_property LOGIC_LEVELS $pa] START [get_property STARTPOINT_PIN $pa] END [get_property ENDPOINT_PIN $pa]"
 puts "A450HBM_WNS_CORE [get_property SLACK $pc]"
+set nfail [llength [get_timing_paths -quiet -setup -to $ca -max_paths 100000 -nworst 1 -slack_lesser_than 0]]
+puts "A450HBM_FAILING_ACLK $nfail"
+foreach {re n} [a450_ip_chains {a450_i}] {
+  set cs [get_cells -quiet -hierarchical -filter "NAME =~ \"[string range $re 0 end]/*\" && IS_SEQUENTIAL"]
+  set pi [get_timing_paths -quiet -setup -max_paths 1 -to $cs]
+  if {[llength $pi] != 1} { a4_check_fail "IP $re: no setup path into its [llength $cs] sequential cells"; continue }
+  a4_path "A450HBM_IP $re SAXI_$n" $pi
+}
 puts "A450HBM_WNS [get_property SLACK [get_timing_paths -setup -max_paths 1]]"
 puts "A450HBM_WHS [get_property SLACK [get_timing_paths -hold -max_paths 1]]"
 set u [report_utilization -return_string]
@@ -210,7 +234,8 @@ if {[llength $vb] > 0} { a4_check_fail "pblock site assumption: $vb" }
 
 # report_cdc against the allowed list
 set fh [open [file join $bd cdc.rpt] r]; set ct [read $fh]; close $fh
-lassign [a450_cdc_scan $ct [a450_cdc_rules $tc $stub]] nsum nrows bad hits
+# Task 9b: plus the card's aclk_a-side IP rows (a450_cdc_ip_rules), by name
+lassign [a450_cdc_scan $ct [concat [a450_cdc_rules $tc $stub] [a450_cdc_ip_rules a450_i]]] nsum nrows bad hits
 foreach lab [lsort [dict keys $hits]] { puts "A450HBM_CDC_RULE $lab [dict get $hits $lab]" }
 foreach b [lrange $bad 0 49] { puts "A450HBM_CDC_UNLISTED $b" }
 puts "A450HBM_CDC flagged_summary $nsum flagged_rows $nrows unlisted [llength $bad]"

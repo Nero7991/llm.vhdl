@@ -118,6 +118,27 @@ proc a450_cdc_rules {tc stub} {
   return $r
 }
 
+# a450_cdc_ip_rules <bd>: the rows the gate's copy of the card's aclk_a-side IP adds (Task
+# 9b), as the card's own routed report_cdc shows them (MEASURED, jccard_a450s1b
+# reports/cdc.rpt: 686 CDC-15 Warning rows inside hbm_sc, 4 inside dbg_hub, none in the
+# axi_clock_converters).  CDC-15 here is an XPM LUTRAM FIFO's write port (one clock) read
+# by its own output register (the other clock): the FIFO's Gray pointers order the two,
+# inside Xilinx IP.  Each rule names the FIFO memory and its read register, inside one IP
+# instance; nothing else of the IP and nothing outside it matches.  <bd> is the block
+# design instance (a450_i on the gate).
+proc a450_cdc_ip_rules {bd} {
+  set b [a450_re_quote $bd]
+  set N {\[\d+\]}
+  set M "inst/m00_nodes/m00_(ar|aw|w|r|b)_node/inst/inst_mi_handler/(gen_normal_area\\.inst_fifo_node_payld|gen_normal_area\\.gen_fifo_req\\.inst_fifo_req)/gen_xpm_memory_fifo\\.inst_fifo/gen_mem_rep${N}\\.inst_xpm_memory/xpm_memory_base_inst"
+  set r {}
+  lappend r [list hbm_sc_node_fifo \
+    "^$b/hbm_sc/$M/gen_wr_a\\.gen_word_narrow\\.mem_reg\[^/\]*/RAM\[A-H\](_D1)?/CLK\$" \
+    "^$b/hbm_sc/$M/gen_rd_b\\.gen_rd_b_synth_template\\.gen_rf_narrow_reg\\.doutb_reg_reg${N}/D\$"]
+  set X {dbg_hub/inst/BSCANID\.u_xsdbm_id/CORE_XSDB\.UUT_MASTER/U_ICON_INTERFACE/U_CMD6_(RD/U_RD_FIFO/SUBCORE_FIFO\.xsdbm_v3_0_0_rdfifo_inst|WR/U_WR_FIFO/SUBCORE_FIFO\.xsdbm_v3_0_0_wrfifo_inst)/inst_fifo_gen/gconvfifo\.rf/grf\.rf/gntv_or_sync_fifo\.mem/gdm\.dm_gen\.dm}
+  lappend r [list dbg_hub_fifo "^$X/RAM_reg\[^/\]*/DP/CLK\$" "^$X/gpr1\\.dout_i_reg${N}/D\$"]
+  return $r
+}
+
 # a450_cdc_scan <report_text> <rules>: reads report_cdc -details text against the rules
 # above (regexp-matched).  A detail row is `Row ID Severity Description Depth Exception Source Destination`, columns separated by
 # two or more spaces (MEASURED format, hw/jc/card/jccard_post.tcl jccard_cdc_scan); source

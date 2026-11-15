@@ -6,11 +6,18 @@
 #   hbm: 2 stacks, all 32 SAXI on aclk_a at USER_AXI_INPUT_CLK_FREQ 450 (PG276: the switch
 #   runs on an AXI port clock, so every port moves with A).
 #   top (a450_hbm_top): m00..m23 weight ports, m24..m26 scale ports, on hbm/SAXI_nn per
-#   gen_pcieep.ENG_PORT_MAP's first 27 entries (the card's own map).  SAXI 00, 16, 29, 30,
-#   31 carry no master and are DISABLED: an enabled SAXI with nothing on it fails
-#   validate_bd_design (BD 41-1380, MEASURED in the Task 7 pre-flight), and there is no
-#   master in this design to put on them.  The switch clocks are therefore selected from
-#   SAXI_01 and SAXI_17 (both on aclk_a, like every enabled port).
+#   gen_pcieep.ENG_PORT_MAP's first 27 entries (the card's own map).
+#   Task 9b: the split-on card's aclk_a-side IP on the card's own ports, so the gate times
+#   what the card places beside A (docs/debugging/2026-11-15_a450-card-split-timing.md,
+#   fix 7).  Each of the card's other HBM masters is an a450_tg on clk_core (top/x_*_axi),
+#   behind the card's IP, IP_CHAIN below: an axi_clock_converter (clk_core -> aclk_a) and
+#   an axi_register_slice on aclk_a in front of SAXI 00 (loader), 29 (A's descriptor
+#   fetch), 30 and 31 (the B/C grant's pool); and on SAXI 16 the two-clock smartconnect
+#   hbm_sc (S00 a jtag_axi exactly as the card's jtag_hbm, S01/S02 the ctl and tok read
+#   masters) and a register slice.  All 32 SAXI are enabled, as on the card, and the
+#   switch clocks are the card's (AXI_00, AXI_16).  The CONFIG values of the converters,
+#   slices and smartconnect are the card's (hw/jc/card/gen_jc_card.py; test_a450.py pins
+#   them equal).
 # Every CONFIG this file sets is read back (a set_property on a name the object lacks is
 # silent).  Sentinels: A450BD_CFG lines, A450BD_DONE; failures are Tcl errors.
 create_bd_design a450
@@ -24,6 +31,14 @@ proc a4_want {cell key want} {
 }
 
 set PORTMAP {1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 17 18 19 20 21 22 23 24 25 26 27 28}
+# {source interface, converter, register slice, SAXI}: the card's names and ports
+set IP_CHAIN {
+  top/x_ld_axi  ld_cdc  ld_rs  0
+  top/x_d_axi   d_cdc   d_rs   29
+  top/x_bc0_axi bc_cdc0 bc_rs0 30
+  top/x_bc1_axi bc_cdc1 bc_rs1 31
+}
+set SC_SAXI 16
 
 create_bd_cell -type ip -vlnv xilinx.com:ip:util_ds_buf:2.2 sysclk_buf
 set_property CONFIG.C_BUF_TYPE {IBUFDS} [get_bd_cells sysclk_buf]
@@ -77,25 +92,22 @@ set_property -dict [list CONFIG.USER_HBM_DENSITY {8GB} CONFIG.USER_HBM_STACK {2}
 set_property -dict [list CONFIG.USER_HBM_REF_CLK_0 {200} CONFIG.USER_HBM_REF_CLK_1 {200} \
   CONFIG.USER_AXI_INPUT_CLK_FREQ {450} CONFIG.USER_AXI_INPUT_CLK1_FREQ {450}] [get_bd_cells hbm]
 set_property -dict [list CONFIG.USER_SWITCH_ENABLE_00 {TRUE} CONFIG.USER_SWITCH_ENABLE_01 {TRUE}] [get_bd_cells hbm]
-set SAXI_ON {}
+set SAXI_ON $PORTMAP
+foreach {- - - n} $IP_CHAIN { lappend SAXI_ON $n }
+lappend SAXI_ON $SC_SAXI
+set SAXI_ON [lsort -integer $SAXI_ON]
 for {set i 0} {$i < 32} {incr i} {
-  set on [expr {[lsearch -exact $PORTMAP $i] >= 0}]
-  if {$on} { lappend SAXI_ON $i }
+  set on [expr {[lsearch -exact $SAXI_ON $i] >= 0}]
   set_property [format CONFIG.USER_SAXI_%02d $i] [expr {$on ? "true" : "false"}] [get_bd_cells hbm]
 }
-if {[llength $SAXI_ON] != 27} { error "A450BD FAIL: [llength $SAXI_ON] SAXI enabled, not 27" }
+if {[llength $SAXI_ON] != 32} { error "A450BD FAIL: [llength $SAXI_ON] SAXI enabled, not 32" }
 set_property CONFIG.USER_APB_EN {false} [get_bd_cells hbm]
-# the switch clock of each stack: any enabled port will do (all are on aclk_a).  Asked
-# for after the enables (MEASURED, Task 7 pre-flight: asked for before, AXI_01 read back
-# as AXI_08); whatever the IP keeps is checked to be an enabled port's ACLK.
-set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_01_ACLK} CONFIG.USER_CLK_SEL_LIST1 {AXI_17_ACLK}] [get_bd_cells hbm]
-foreach k {USER_CLK_SEL_LIST0 USER_CLK_SEL_LIST1} {
-  set got [get_property CONFIG.$k [get_bd_cells hbm]]
-  if {![regexp {^AXI_(\d\d)_ACLK$} $got -> cn] || [lsearch -exact $SAXI_ON [scan $cn %d]] < 0} {
-    error "A450BD_CFG FAIL hbm.$k is \"$got\", not an enabled port's ACLK"
-  }
-  puts "A450BD_CFG hbm.$k = $got"
-}
+# the switch clock of each stack: the card's (AXI_00, AXI_16; all ports are on aclk_a).
+# Asked for after the enables (MEASURED, Task 7 pre-flight: asked for before, AXI_01 read
+# back as AXI_08), and read back exactly.
+set_property -dict [list CONFIG.USER_CLK_SEL_LIST0 {AXI_00_ACLK} CONFIG.USER_CLK_SEL_LIST1 {AXI_16_ACLK}] [get_bd_cells hbm]
+a4_want hbm USER_CLK_SEL_LIST0 AXI_00_ACLK
+a4_want hbm USER_CLK_SEL_LIST1 AXI_16_ACLK
 foreach {k v} {USER_HBM_DENSITY 8GB USER_HBM_STACK 2 USER_HBM_REF_CLK_0 200 USER_HBM_REF_CLK_1 200
                USER_AXI_INPUT_CLK_FREQ 450 USER_AXI_INPUT_CLK1_FREQ 450
                USER_SWITCH_ENABLE_00 TRUE USER_SWITCH_ENABLE_01 TRUE
@@ -144,6 +156,68 @@ for {set m 0} {$m < 27} {incr m} {
   if {$n != 32} { error "A450BD FAIL: top/m[format %02d $m]_axi maps $n segments, not 32" }
 }
 puts "A450BD PORTMAP $PORTMAP"
+
+# ---- Task 9b: the card's aclk_a-side IP -------------------------------------------------
+# the CONFIG of each, the card's (gen_jc_card.py RS_CONFIG / ip_chain_lines; pinned equal by
+# test_a450.py)
+proc a4_rs {name} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 $name
+  set_property -dict [list CONFIG.PROTOCOL {AXI3} CONFIG.REG_AW {1} CONFIG.REG_AR {1} CONFIG.REG_W {1} CONFIG.REG_R {1} CONFIG.REG_B {1}] [get_bd_cells $name]
+  foreach {k v} {PROTOCOL AXI3 REG_AW 1 REG_AR 1 REG_W 1 REG_R 1 REG_B 1} { a4_want $name $k $v }
+  connect_bd_net [get_bd_pins clk_wiz_a/clk_out1] [get_bd_pins $name/aclk]
+  connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins $name/aresetn]
+}
+proc a4_seg32 {sp n} {
+  for {set g 0} {$g < 32} {incr g} {
+    assign_bd_address -target_address_space [get_bd_addr_spaces $sp] \
+      -offset [format 0x%X [expr {$g * 0x10000000}]] -range 256M \
+      [get_bd_addr_segs [format "hbm/SAXI_%02d/HBM_MEM%02d" $n $g]]
+  }
+  set k [llength [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces $sp]]]
+  if {$k != 32} { error "A450BD FAIL: $sp maps $k segments, not 32" }
+}
+set busc [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins top/clk_core]]
+foreach i {x_ld_axi x_d_axi x_bc0_axi x_bc1_axi x_ctl_axi x_tok_axi} {
+  if {[lsearch -exact [split $busc :] $i] < 0} { error "A450BD FAIL: top/clk_core ASSOCIATED_BUSIF \"$busc\" lacks $i" }
+}
+puts "A450BD ASSOCIATED_BUSIF top/clk_core = $busc"
+foreach {src cc rs n} $IP_CHAIN {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 $cc
+  set pr [get_property CONFIG.PROTOCOL [get_bd_intf_pins $src]]
+  set_property CONFIG.PROTOCOL $pr [get_bd_cells $cc]
+  a4_want $cc PROTOCOL $pr
+  if {$pr ne "AXI3"} { error "A450BD FAIL: $src PROTOCOL is $pr, not AXI3 (the card's loader/eng/grant shape)" }
+  connect_bd_intf_net [get_bd_intf_pins $src] [get_bd_intf_pins $cc/S_AXI]
+  connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins $cc/s_axi_aclk]
+  connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins $cc/s_axi_aresetn]
+  connect_bd_net [get_bd_pins clk_wiz_a/clk_out1] [get_bd_pins $cc/m_axi_aclk]
+  connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins $cc/m_axi_aresetn]
+  a4_rs $rs
+  connect_bd_intf_net [get_bd_intf_pins $cc/M_AXI] [get_bd_intf_pins $rs/S_AXI]
+  connect_bd_intf_net [get_bd_intf_pins $rs/M_AXI] [get_bd_intf_pins [format hbm/SAXI_%02d $n]]
+  a4_seg32 $src $n
+  puts "A450BD IP $src -> $cc -> $rs -> SAXI_[format %02d $n]"
+}
+# SAXI 16: jtag_hbm, the ctl and tok read masters -> hbm_sc (two clocks) -> sc_rs
+create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi jtag_hbm
+set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]
+a4_want jtag_hbm M_AXI_ADDR_WIDTH 64
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins jtag_hbm/aclk]
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins jtag_hbm/aresetn]
+create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 hbm_sc
+set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {2}] [get_bd_cells hbm_sc]
+foreach {k v} {NUM_SI 3 NUM_MI 1 NUM_CLKS 2} { a4_want hbm_sc $k $v }
+connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins hbm_sc/S00_AXI]
+connect_bd_intf_net [get_bd_intf_pins top/x_ctl_axi] [get_bd_intf_pins hbm_sc/S01_AXI]
+connect_bd_intf_net [get_bd_intf_pins top/x_tok_axi] [get_bd_intf_pins hbm_sc/S02_AXI]
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins hbm_sc/aclk]
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm_sc/aresetn]
+connect_bd_net [get_bd_pins clk_wiz_a/clk_out1] [get_bd_pins hbm_sc/aclk1]
+a4_rs sc_rs
+connect_bd_intf_net [get_bd_intf_pins hbm_sc/M00_AXI] [get_bd_intf_pins sc_rs/S_AXI]
+connect_bd_intf_net [get_bd_intf_pins sc_rs/M_AXI] [get_bd_intf_pins [format hbm/SAXI_%02d $SC_SAXI]]
+foreach sp {jtag_hbm/Data top/x_ctl_axi top/x_tok_axi} { a4_seg32 $sp $SC_SAXI }
+puts "A450BD IP jtag_hbm,top/x_ctl_axi,top/x_tok_axi -> hbm_sc -> sc_rs -> SAXI_[format %02d $SC_SAXI]"
 create_bd_port -dir O led
 connect_bd_net [get_bd_pins top/led] [get_bd_ports led]
 validate_bd_design

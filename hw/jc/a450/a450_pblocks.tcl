@@ -69,7 +69,7 @@ proc a450_pblocks {fast_re hbm_glob portmap} {
     set cr [get_clock_regions -of_objects [get_sites $loc]]
     if {![regexp {^X(\d+)Y(\d+)$} $cr -> x y]} { error "A450PB FAIL: clock region '$cr' of $loc" }
     dict lappend cols $x $tc $lc
-    lappend ::a450_pb_expect [list $p $n $hc [a450_pb_site $n]]
+    lappend ::a450_pb_expect [list $p $n $hc [a450_pb_site $n] $tc $x]
     puts "A450PB tile $p SAXI_$n leaf [get_property NAME $lp] cell [get_property REF_NAME $hc] site $loc ($how) region $cr"
   }
   foreach x [lsort -integer [dict keys $cols]] {
@@ -105,4 +105,104 @@ proc a450_pblocks_verify {} {
     puts "A450PB_VERIFY tile $p SAXI_$n placed $loc assumed $site [expr {$loc eq $site ? "ok" : "MISMATCH"}]"
   }
   return $bad
+}
+
+# ---- Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 1 and 7) --------
+# a450_ip_pblocks <chains>: the aclk_a-side IP (clock converters, register slices, the HBM
+# smartconnect) beside the HBM port it serves.  chains is a flat list {cell_re saxi ...}:
+# cell_re a REGEXP that must match exactly ONE hierarchical cell, saxi the HBM port number.
+# The column is the clock region of that port's site (BLI_HBM_AXI_INTF_X<n>Y0, the same
+# assumption a450_pblocks makes and a450_pblocks_verify re-checks for the tiles).  The cell
+# joins that column's tile pblock pb_a450_x<X> if one exists, else pb_a450_ip_x<X>
+# (CLOCKREGION_X<X>Y0:X<X>Y3, SLR0).  Prints A450PB_IP lines; returns the cell count and
+# leaves ::a450_pb_ip = list of {cell saxi x pblock} for a450_pblocks_placed.
+proc a450_ip_pblocks {chains} {
+  set ::a450_pb_ip {}
+  foreach {re n} $chains {
+    set c [get_cells -quiet -hierarchical -regexp -filter "NAME =~ $re"]
+    if {[llength $c] != 1} { error "A450PB FAIL: IP cell '$re' matches [llength $c] cells, not 1" }
+    set cr [get_clock_regions -of_objects [a450_pb_site $n]]
+    if {![regexp {^X(\d+)Y(\d+)$} $cr -> x y]} { error "A450PB FAIL: clock region '$cr' of SAXI_$n" }
+    set pb [get_pblocks -quiet pb_a450_x$x]
+    if {[llength $pb] != 1} {
+      set pb [get_pblocks -quiet pb_a450_ip_x$x]
+      if {[llength $pb] != 1} {
+        set pb [create_pblock pb_a450_ip_x$x]
+        resize_pblock $pb -add "CLOCKREGION_X${x}Y0:CLOCKREGION_X${x}Y3"
+      }
+    }
+    add_cells_to_pblock $pb $c
+    if {[get_pblocks -of_objects $c] ne [get_property NAME $pb]} {
+      error "A450PB FAIL: $c is in pblock '[get_pblocks -of_objects $c]', not $pb"
+    }
+    lappend ::a450_pb_ip [list $c $n $x [get_property NAME $pb]]
+    puts "A450PB_IP $c SAXI_$n region $cr pblock [get_property NAME $pb]"
+  }
+  return [llength $::a450_pb_ip]
+}
+
+# a450_ip_chains <bd_re>: the split-on card's aclk_a-side IP cells and their HBM ports, the
+# one list the gate (build_a450.tcl, bd_re a450_i) and the card (build_card.tcl, bd_re
+# .*/jcc_i) both floorplan: the clock converter and register slice of the loader (SAXI 0),
+# A's descriptor fetch (29) and the B/C pool (30, 31), and the HBM smartconnect and its
+# slice (16).  Cell names are the block designs' (a450_bd.tcl IP_CHAIN, gen_jc_card.py).
+proc a450_ip_chains {bd_re} {
+  set r {}
+  foreach {c n} {ld_cdc 0 ld_rs 0 d_cdc 29 d_rs 29 bc_cdc0 30 bc_rs0 30 bc_cdc1 31 bc_rs1 31
+                 hbm_sc 16 sc_rs 16} {
+    lappend r "${bd_re}/$c" $n
+  }
+  return $r
+}
+
+# a450_pb_regions <cell>: the clock regions of every placed primitive under <cell> (a
+# hierarchical cell) or of <cell> itself; and the count of its primitives with no site.
+proc a450_pb_regions {c} {
+  set nm [get_property NAME $c]
+  set f "NAME =~ \"$nm/*\" && IS_PRIMITIVE && PRIMITIVE_LEVEL != MACRO && REF_NAME != GND && REF_NAME != VCC"
+  set placed [get_cells -quiet -hierarchical -filter "$f && IS_PLACED"]
+  set unplaced [llength [get_cells -quiet -hierarchical -filter "$f && !IS_PLACED"]]
+  set regs {}
+  if {[llength $placed] > 0} {
+    foreach r [get_clock_regions -quiet -of_objects [get_sites -quiet -of_objects $placed]] { lappend regs [get_property NAME $r] }
+  }
+  return [list [lsort -unique $regs] [llength $placed] $unplaced]
+}
+
+# a450_pblocks_placed: after placement, the floorplan as PLACED, not as requested: every
+# pb_a450_* pblock holds cells, and every tile (from a450_pblocks) and every IP cell (from
+# a450_ip_pblocks) has all its placed primitives inside its column's clock regions
+# X<X>Y0..X<X>Y3 and none unplaced.  Prints A450PB_PLACED lines; returns
+# {failures npblocks ntiles_inside nip_inside}.
+proc a450_pblocks_placed {} {
+  set bad {}
+  set pbs [get_pblocks -quiet pb_a450_*]
+  foreach pb $pbs {
+    set k [llength [get_cells -quiet -of_objects $pb]]
+    if {$k == 0} { lappend bad "pblock $pb is empty" }
+    puts "A450PB_PLACED pblock $pb cells $k"
+  }
+  set items {}
+  if {[info exists ::a450_pb_expect]} {
+    foreach e $::a450_pb_expect { lassign $e p n hc site tc x; lappend items [list "tile $p" $tc $x] }
+  }
+  if {[info exists ::a450_pb_ip]} {
+    foreach e $::a450_pb_ip { lassign $e c n x pb; lappend items [list "ip $c" $c $x] }
+  }
+  set nt 0; set ni 0
+  foreach it $items {
+    lassign $it what c x
+    lassign [a450_pb_regions [get_cells $c]] regs np nu
+    set out {}
+    foreach r $regs {
+      if {![regexp {^X(\d+)Y(\d+)$} $r -> rx ry] || $rx != $x || $ry > 3} { lappend out $r }
+    }
+    set ok [expr {$np > 0 && $nu == 0 && [llength $out] == 0}]
+    puts "A450PB_PLACED $what column X$x placed $np unplaced $nu regions {$regs} [expr {$ok ? "ok" : "OUTSIDE {$out}"}]"
+    if {!$ok} {
+      lappend bad "$what: placed $np unplaced $nu outside {$out}"
+    } elseif {[string match "tile *" $what]} { incr nt } else { incr ni }
+  }
+  if {[llength $items] == 0} { lappend bad "no tile or IP recorded (a450_pblocks never ran)" }
+  return [list $bad [llength $pbs] $nt $ni]
 }

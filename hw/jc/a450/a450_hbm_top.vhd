@@ -15,6 +15,7 @@
 -- at A_CLK_SPLIT = true (tiles and the 27 masters on aclk_a, the back end on clk_core),
 -- jobs from rtl/a450_stub_seq.vhd, everything it emits folded into `led`.  ARLEN is AXI3
 -- (4 bits): MAXB = 16 keeps every burst at or below 16 beats, so the truncation is exact.
+-- On clk_core, the card's six other HBM masters as a450_tg traffic generators (Task 9b).
 library ieee;
 use ieee.std_logic_1164.all;
 
@@ -806,7 +807,145 @@ entity a450_hbm_top is
     m26_axi_rdata   : in  std_logic_vector(255 downto 0);
     m26_axi_rlast   : in  std_logic;
     m26_axi_rid     : in  std_logic_vector(5 downto 0);
-    m26_axi_rresp   : in  std_logic_vector(1 downto 0)
+    m26_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_ld_axi_awvalid : out std_logic;
+    x_ld_axi_awready : in  std_logic;
+    x_ld_axi_awaddr  : out std_logic_vector(32 downto 0);
+    x_ld_axi_awid    : out std_logic_vector(5 downto 0);
+    x_ld_axi_awlen   : out std_logic_vector(3 downto 0);
+    x_ld_axi_awsize  : out std_logic_vector(2 downto 0);
+    x_ld_axi_awburst : out std_logic_vector(1 downto 0);
+    x_ld_axi_wvalid  : out std_logic;
+    x_ld_axi_wready  : in  std_logic;
+    x_ld_axi_wdata   : out std_logic_vector(255 downto 0);
+    x_ld_axi_wstrb   : out std_logic_vector(31 downto 0);
+    x_ld_axi_wlast   : out std_logic;
+    x_ld_axi_bvalid  : in  std_logic;
+    x_ld_axi_bready  : out std_logic;
+    x_ld_axi_bid     : in  std_logic_vector(5 downto 0);
+    x_ld_axi_bresp   : in  std_logic_vector(1 downto 0);
+    x_ld_axi_arvalid : out std_logic;
+    x_ld_axi_arready : in  std_logic;
+    x_ld_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_ld_axi_arid    : out std_logic_vector(5 downto 0);
+    x_ld_axi_arlen   : out std_logic_vector(3 downto 0);
+    x_ld_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_ld_axi_arburst : out std_logic_vector(1 downto 0);
+    x_ld_axi_rvalid  : in  std_logic;
+    x_ld_axi_rready  : out std_logic;
+    x_ld_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_ld_axi_rlast   : in  std_logic;
+    x_ld_axi_rid     : in  std_logic_vector(5 downto 0);
+    x_ld_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_d_axi_awvalid : out std_logic;
+    x_d_axi_awready : in  std_logic;
+    x_d_axi_awaddr  : out std_logic_vector(32 downto 0);
+    x_d_axi_awid    : out std_logic_vector(5 downto 0);
+    x_d_axi_awlen   : out std_logic_vector(3 downto 0);
+    x_d_axi_awsize  : out std_logic_vector(2 downto 0);
+    x_d_axi_awburst : out std_logic_vector(1 downto 0);
+    x_d_axi_wvalid  : out std_logic;
+    x_d_axi_wready  : in  std_logic;
+    x_d_axi_wdata   : out std_logic_vector(255 downto 0);
+    x_d_axi_wstrb   : out std_logic_vector(31 downto 0);
+    x_d_axi_wlast   : out std_logic;
+    x_d_axi_bvalid  : in  std_logic;
+    x_d_axi_bready  : out std_logic;
+    x_d_axi_bid     : in  std_logic_vector(5 downto 0);
+    x_d_axi_bresp   : in  std_logic_vector(1 downto 0);
+    x_d_axi_arvalid : out std_logic;
+    x_d_axi_arready : in  std_logic;
+    x_d_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_d_axi_arid    : out std_logic_vector(5 downto 0);
+    x_d_axi_arlen   : out std_logic_vector(3 downto 0);
+    x_d_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_d_axi_arburst : out std_logic_vector(1 downto 0);
+    x_d_axi_rvalid  : in  std_logic;
+    x_d_axi_rready  : out std_logic;
+    x_d_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_d_axi_rlast   : in  std_logic;
+    x_d_axi_rid     : in  std_logic_vector(5 downto 0);
+    x_d_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_bc0_axi_awvalid : out std_logic;
+    x_bc0_axi_awready : in  std_logic;
+    x_bc0_axi_awaddr  : out std_logic_vector(32 downto 0);
+    x_bc0_axi_awid    : out std_logic_vector(5 downto 0);
+    x_bc0_axi_awlen   : out std_logic_vector(3 downto 0);
+    x_bc0_axi_awsize  : out std_logic_vector(2 downto 0);
+    x_bc0_axi_awburst : out std_logic_vector(1 downto 0);
+    x_bc0_axi_wvalid  : out std_logic;
+    x_bc0_axi_wready  : in  std_logic;
+    x_bc0_axi_wdata   : out std_logic_vector(255 downto 0);
+    x_bc0_axi_wstrb   : out std_logic_vector(31 downto 0);
+    x_bc0_axi_wlast   : out std_logic;
+    x_bc0_axi_bvalid  : in  std_logic;
+    x_bc0_axi_bready  : out std_logic;
+    x_bc0_axi_bid     : in  std_logic_vector(5 downto 0);
+    x_bc0_axi_bresp   : in  std_logic_vector(1 downto 0);
+    x_bc0_axi_arvalid : out std_logic;
+    x_bc0_axi_arready : in  std_logic;
+    x_bc0_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_bc0_axi_arid    : out std_logic_vector(5 downto 0);
+    x_bc0_axi_arlen   : out std_logic_vector(3 downto 0);
+    x_bc0_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_bc0_axi_arburst : out std_logic_vector(1 downto 0);
+    x_bc0_axi_rvalid  : in  std_logic;
+    x_bc0_axi_rready  : out std_logic;
+    x_bc0_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_bc0_axi_rlast   : in  std_logic;
+    x_bc0_axi_rid     : in  std_logic_vector(5 downto 0);
+    x_bc0_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_bc1_axi_awvalid : out std_logic;
+    x_bc1_axi_awready : in  std_logic;
+    x_bc1_axi_awaddr  : out std_logic_vector(32 downto 0);
+    x_bc1_axi_awid    : out std_logic_vector(5 downto 0);
+    x_bc1_axi_awlen   : out std_logic_vector(3 downto 0);
+    x_bc1_axi_awsize  : out std_logic_vector(2 downto 0);
+    x_bc1_axi_awburst : out std_logic_vector(1 downto 0);
+    x_bc1_axi_wvalid  : out std_logic;
+    x_bc1_axi_wready  : in  std_logic;
+    x_bc1_axi_wdata   : out std_logic_vector(255 downto 0);
+    x_bc1_axi_wstrb   : out std_logic_vector(31 downto 0);
+    x_bc1_axi_wlast   : out std_logic;
+    x_bc1_axi_bvalid  : in  std_logic;
+    x_bc1_axi_bready  : out std_logic;
+    x_bc1_axi_bid     : in  std_logic_vector(5 downto 0);
+    x_bc1_axi_bresp   : in  std_logic_vector(1 downto 0);
+    x_bc1_axi_arvalid : out std_logic;
+    x_bc1_axi_arready : in  std_logic;
+    x_bc1_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_bc1_axi_arid    : out std_logic_vector(5 downto 0);
+    x_bc1_axi_arlen   : out std_logic_vector(3 downto 0);
+    x_bc1_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_bc1_axi_arburst : out std_logic_vector(1 downto 0);
+    x_bc1_axi_rvalid  : in  std_logic;
+    x_bc1_axi_rready  : out std_logic;
+    x_bc1_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_bc1_axi_rlast   : in  std_logic;
+    x_bc1_axi_rid     : in  std_logic_vector(5 downto 0);
+    x_bc1_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_ctl_axi_arvalid : out std_logic;
+    x_ctl_axi_arready : in  std_logic;
+    x_ctl_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_ctl_axi_arlen   : out std_logic_vector(7 downto 0);
+    x_ctl_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_ctl_axi_arburst : out std_logic_vector(1 downto 0);
+    x_ctl_axi_rvalid  : in  std_logic;
+    x_ctl_axi_rready  : out std_logic;
+    x_ctl_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_ctl_axi_rlast   : in  std_logic;
+    x_ctl_axi_rresp   : in  std_logic_vector(1 downto 0);
+    x_tok_axi_arvalid : out std_logic;
+    x_tok_axi_arready : in  std_logic;
+    x_tok_axi_araddr  : out std_logic_vector(32 downto 0);
+    x_tok_axi_arlen   : out std_logic_vector(7 downto 0);
+    x_tok_axi_arsize  : out std_logic_vector(2 downto 0);
+    x_tok_axi_arburst : out std_logic_vector(1 downto 0);
+    x_tok_axi_rvalid  : in  std_logic;
+    x_tok_axi_rready  : out std_logic;
+    x_tok_axi_rdata   : in  std_logic_vector(255 downto 0);
+    x_tok_axi_rlast   : in  std_logic;
+    x_tok_axi_rresp   : in  std_logic_vector(1 downto 0)
   );
 end entity;
 
@@ -818,7 +957,13 @@ architecture rtl of a450_hbm_top is
   attribute X_INTERFACE_PARAMETER : string;
   attribute X_INTERFACE_INFO of aclk_a : signal is "xilinx.com:signal:clock:1.0 aclk_a CLK";
   attribute X_INTERFACE_PARAMETER of aclk_a : signal is "ASSOCIATED_BUSIF m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi";
+  -- clk_core carries the card's other HBM masters (Task 9b): two clock pins, so neither
+  -- association can be inferred
+  attribute X_INTERFACE_INFO of clk_core : signal is "xilinx.com:signal:clock:1.0 clk_core CLK";
+  attribute X_INTERFACE_PARAMETER of clk_core : signal is "ASSOCIATED_BUSIF x_ld_axi:x_d_axi:x_bc0_axi:x_bc1_axi:x_ctl_axi:x_tok_axi";
   signal rst : std_logic;
+  signal s_obs : std_logic;
+  signal tg_obs : std_logic_vector(6-1 downto 0);
   signal start, cb_we, x_we : std_logic;
   signal n_rows, n_cols, out_shift, w_exp, x_exp, w_beats, s_beats : std_logic_vector(31 downto 0);
   signal out_mode : std_logic_vector(1 downto 0);
@@ -865,7 +1010,97 @@ begin
              cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
              x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
              y_we => y_we, y_data => y_data, y_exp => y_exp, done => done, err => err,
-             sat_event => sat, jobs => open, obs => led);
+             sat_event => sat, jobs => open, obs => s_obs);
+
+  -- the stub's observation and every traffic generator's, so none is trimmed
+  p_led : process(clk_core)
+    variable v : std_logic;
+  begin
+    if rising_edge(clk_core) then
+      v := s_obs;
+      for k in tg_obs'range loop v := v xor tg_obs(k); end loop;
+      led <= v;
+    end if;
+  end process;
+
+  tg_x_ld : entity work.a450_tg
+    generic map(LEN_W => 4, WR => true, SEED => 3)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => x_ld_axi_awvalid, awready => x_ld_axi_awready, awaddr => x_ld_axi_awaddr,
+             awlen => x_ld_axi_awlen, wvalid => x_ld_axi_wvalid, wready => x_ld_axi_wready,
+             wdata => x_ld_axi_wdata, wlast => x_ld_axi_wlast, bvalid => x_ld_axi_bvalid,
+             bready => x_ld_axi_bready, bresp => x_ld_axi_bresp,
+             arvalid => x_ld_axi_arvalid, arready => x_ld_axi_arready, araddr => x_ld_axi_araddr,
+             arlen => x_ld_axi_arlen, rvalid => x_ld_axi_rvalid, rready => x_ld_axi_rready,
+             rdata => x_ld_axi_rdata, rlast => x_ld_axi_rlast, rresp => x_ld_axi_rresp,
+             obs => tg_obs(0));
+  x_ld_axi_arsize <= "101"; x_ld_axi_arburst <= "01";
+  x_ld_axi_awid <= (others => '0'); x_ld_axi_arid <= (others => '0');
+  x_ld_axi_awsize <= "101"; x_ld_axi_awburst <= "01"; x_ld_axi_wstrb <= (others => '1');
+  tg_x_d : entity work.a450_tg
+    generic map(LEN_W => 4, WR => false, SEED => 20)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => x_d_axi_awvalid, awready => x_d_axi_awready, awaddr => x_d_axi_awaddr,
+             awlen => x_d_axi_awlen, wvalid => x_d_axi_wvalid, wready => x_d_axi_wready,
+             wdata => x_d_axi_wdata, wlast => x_d_axi_wlast, bvalid => x_d_axi_bvalid,
+             bready => x_d_axi_bready, bresp => x_d_axi_bresp,
+             arvalid => x_d_axi_arvalid, arready => x_d_axi_arready, araddr => x_d_axi_araddr,
+             arlen => x_d_axi_arlen, rvalid => x_d_axi_rvalid, rready => x_d_axi_rready,
+             rdata => x_d_axi_rdata, rlast => x_d_axi_rlast, rresp => x_d_axi_rresp,
+             obs => tg_obs(1));
+  x_d_axi_arsize <= "101"; x_d_axi_arburst <= "01";
+  x_d_axi_awid <= (others => '0'); x_d_axi_arid <= (others => '0');
+  x_d_axi_awsize <= "101"; x_d_axi_awburst <= "01"; x_d_axi_wstrb <= (others => '1');
+  tg_x_bc0 : entity work.a450_tg
+    generic map(LEN_W => 4, WR => true, SEED => 37)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => x_bc0_axi_awvalid, awready => x_bc0_axi_awready, awaddr => x_bc0_axi_awaddr,
+             awlen => x_bc0_axi_awlen, wvalid => x_bc0_axi_wvalid, wready => x_bc0_axi_wready,
+             wdata => x_bc0_axi_wdata, wlast => x_bc0_axi_wlast, bvalid => x_bc0_axi_bvalid,
+             bready => x_bc0_axi_bready, bresp => x_bc0_axi_bresp,
+             arvalid => x_bc0_axi_arvalid, arready => x_bc0_axi_arready, araddr => x_bc0_axi_araddr,
+             arlen => x_bc0_axi_arlen, rvalid => x_bc0_axi_rvalid, rready => x_bc0_axi_rready,
+             rdata => x_bc0_axi_rdata, rlast => x_bc0_axi_rlast, rresp => x_bc0_axi_rresp,
+             obs => tg_obs(2));
+  x_bc0_axi_arsize <= "101"; x_bc0_axi_arburst <= "01";
+  x_bc0_axi_awid <= (others => '0'); x_bc0_axi_arid <= (others => '0');
+  x_bc0_axi_awsize <= "101"; x_bc0_axi_awburst <= "01"; x_bc0_axi_wstrb <= (others => '1');
+  tg_x_bc1 : entity work.a450_tg
+    generic map(LEN_W => 4, WR => true, SEED => 54)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => x_bc1_axi_awvalid, awready => x_bc1_axi_awready, awaddr => x_bc1_axi_awaddr,
+             awlen => x_bc1_axi_awlen, wvalid => x_bc1_axi_wvalid, wready => x_bc1_axi_wready,
+             wdata => x_bc1_axi_wdata, wlast => x_bc1_axi_wlast, bvalid => x_bc1_axi_bvalid,
+             bready => x_bc1_axi_bready, bresp => x_bc1_axi_bresp,
+             arvalid => x_bc1_axi_arvalid, arready => x_bc1_axi_arready, araddr => x_bc1_axi_araddr,
+             arlen => x_bc1_axi_arlen, rvalid => x_bc1_axi_rvalid, rready => x_bc1_axi_rready,
+             rdata => x_bc1_axi_rdata, rlast => x_bc1_axi_rlast, rresp => x_bc1_axi_rresp,
+             obs => tg_obs(3));
+  x_bc1_axi_arsize <= "101"; x_bc1_axi_arburst <= "01";
+  x_bc1_axi_awid <= (others => '0'); x_bc1_axi_arid <= (others => '0');
+  x_bc1_axi_awsize <= "101"; x_bc1_axi_awburst <= "01"; x_bc1_axi_wstrb <= (others => '1');
+  tg_x_ctl : entity work.a450_tg
+    generic map(LEN_W => 8, WR => false, SEED => 71)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => open, awready => '0', awaddr => open, awlen => open,
+             wvalid => open, wready => '0', wdata => open, wlast => open,
+             bvalid => '0', bready => open, bresp => "00",
+             arvalid => x_ctl_axi_arvalid, arready => x_ctl_axi_arready, araddr => x_ctl_axi_araddr,
+             arlen => x_ctl_axi_arlen, rvalid => x_ctl_axi_rvalid, rready => x_ctl_axi_rready,
+             rdata => x_ctl_axi_rdata, rlast => x_ctl_axi_rlast, rresp => x_ctl_axi_rresp,
+             obs => tg_obs(4));
+  x_ctl_axi_arsize <= "101"; x_ctl_axi_arburst <= "01";
+  tg_x_tok : entity work.a450_tg
+    generic map(LEN_W => 8, WR => false, SEED => 88)
+    port map(clk => clk_core, rstn => core_rstn,
+             awvalid => open, awready => '0', awaddr => open, awlen => open,
+             wvalid => open, wready => '0', wdata => open, wlast => open,
+             bvalid => '0', bready => open, bresp => "00",
+             arvalid => x_tok_axi_arvalid, arready => x_tok_axi_arready, araddr => x_tok_axi_araddr,
+             arlen => x_tok_axi_arlen, rvalid => x_tok_axi_rvalid, rready => x_tok_axi_rready,
+             rdata => x_tok_axi_rdata, rlast => x_tok_axi_rlast, rresp => x_tok_axi_rresp,
+             obs => tg_obs(5));
+  x_tok_axi_arsize <= "101"; x_tok_axi_arburst <= "01";
 
   m00_axi_awvalid <= '0'; m00_axi_awaddr <= (others => '0'); m00_axi_awid <= (others => '0');
   m00_axi_awlen <= (others => '0'); m00_axi_awsize <= "101"; m00_axi_awburst <= "01";
