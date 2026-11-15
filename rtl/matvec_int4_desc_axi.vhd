@@ -81,6 +81,10 @@
 --                         counters (rtl/a_util_ctr.vhd): i in 0..NPORTS_W-1
 --                         is weight port i's R beats, NPORTS_W..NP_ALL-1 the
 --                         scale ports', and i = NP_ALL the job-cycle counter.
+--                         [31] R only, UTIL_NONE: 1 when the counters are not
+--                         built (A_TILED and A_CLK_SPLIT, a450 Task 9b); then
+--                         UTIL_DATA reads 0 with OKAY for every index and
+--                         UTIL_CLR does nothing.  0 on every other build.
 --   0x44 UTIL_DATA    R   hi = 0: counter i bits [31:0], and LATCHES its bits
 --                         [47:32]; hi = 1: the latched [47:32], zero-extended.
 --                         So sel=2i, read, sel=2i+1, read is one atomic
@@ -223,14 +227,16 @@ entity matvec_int4_desc_axi is
     -- (sim/tb_mv4i_tiled.vhd), the same ports, every register here unchanged, except
     -- that STARVED (0x3C) reads 0 (the tiled array has no single weight-word accept to
     -- watch) and BEATS (0x38) grows by nb per row-tile instead of by 1 per word: the
-    -- same tiles * nb at done.  The per-port UTIL counters are unaffected.
+    -- same tiles * nb at done.  The per-port UTIL counters are unaffected, except under
+    -- A_CLK_SPLIT, where they are not built (U_ON below; UTIL_SEL[31] reads 1).
     -- Under A_TILED, CB_STYLE is not read (every tile decodes through its own per-lane
     -- LUTRAM) and the A ports always run at one beat per cycle; FAST_POP still sets this
     -- file's own descriptor read master.
     A_TILED     : boolean := false;
     -- A_TILED only.  false: the tiles run on s_axi_aclk; m_aclk must then carry the
     -- same clock (the Jungle Cat card ties hbm_aclk to clk_core).  true: the tiles and
-    -- the A masters run on m_aclk (aclk_a, 450 MHz).
+    -- the A masters run on m_aclk (aclk_a, 450 MHz); the descriptor master runs on
+    -- s_axi_aclk (D_DUAL below), so the card crosses its port with a clock converter.
     A_CLK_SPLIT : boolean := false;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
@@ -279,6 +285,9 @@ entity matvec_int4_desc_axi is
     -- the flattened weight/scale array, so the integrator can route it
     -- somewhere else -- another HBM port, or a small BRAM -- without touching
     -- the weight path.  It is read-only and issues one burst chain per GO.
+    -- Its clock: m_aclk when DUAL_CLK, EXCEPT under A_TILED and A_CLK_SPLIT,
+    -- where it is s_axi_aclk (D_DUAL below; a450 Task 9b): the card puts its
+    -- HBM port behind an AXI clock converter instead.
     d_arvalid : out std_logic;
     d_arready : in  std_logic;
     d_araddr  : out std_logic_vector(ADDR_W-1 downto 0);
@@ -323,6 +332,24 @@ end entity;
 
 architecture rtl of matvec_int4_desc_axi is
   constant NP_ALL : positive := NPORTS_W + NPORTS_S;
+  -- a450 Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 4 and 5).
+  -- Under A_TILED and A_CLK_SPLIT the HBM side runs at 450 MHz on m_aclk, and two things
+  -- this file used to put on m_aclk are taken off it:
+  --   D_DUAL false: the descriptor fetch runs single-clock on s_axi_aclk.  Its FSM's AR
+  --     decode is 11 LUT levels (a logic-depth failure at 450 MHz), and its `run` decode
+  --     reached the DUAL_CLK synchroniser through a LUT (report_cdc CDC-10, open since
+  --     2026-08-29).  The block design puts the port behind an axi_clock_converter.
+  --   U_ON false: the utilisation counters are not built (27 x 48-bit counters fed from
+  --     27 RVALID pins across the die, a 450 MHz placement failure).  UTIL_SEL[31]
+  --     (UTIL_NONE) reads 1 and UTIL_DATA answers 0 with OKAY at once.
+  -- Every other configuration is unchanged.
+  constant SPLIT_ON : boolean := A_TILED and A_CLK_SPLIT;
+  constant D_DUAL   : boolean := DUAL_CLK and not SPLIT_ON;
+  constant U_ON     : boolean := not SPLIT_ON;
+  function util_none return std_logic is
+  begin
+    if U_ON then return '0'; else return '1'; end if;
+  end function;
   constant TILES  : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
   constant BYTES  : positive := AXI_DW / 8;
   constant WPB    : positive := AXI_DW / 64;          -- descriptor words / beat
@@ -736,7 +763,7 @@ begin
   -- discipline as a weight sub-region port; only the length differs.
   dfetch : entity work.axi_rd_port
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DESC_FIFO,
-                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => DUAL_CLK,
+                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => D_DUAL,
                 FAST_POP => FAST_POP)
     port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
              start => d_start,
@@ -1379,7 +1406,7 @@ begin
             when 13 => rdata_r <= std_logic_vector(c_cycles);
             when 14 => rdata_r <= std_logic_vector(c_beats);
             when 15 => rdata_r <= std_logic_vector(c_starve);
-            when 16 => rdata_r <= x"000000" & u_sel;
+            when 16 => rdata_r <= util_none & "000" & x"00000" & u_sel;
             when 17 =>
               if u_pend = '1' and u_ack_s(1) = u_req_t then
                 rdata_r <= u_rd_dat;
@@ -1478,7 +1505,7 @@ begin
     u_clr  <= clr_s(2) xor clr_s(1);
     u_ack_t_x <= u_ack_t;
 
-    gdc : if DUAL_CLK generate
+    gdc : if DUAL_CLK and U_ON generate
       usync : process(m_aclk)
       begin
         if rising_edge(m_aclk) then
@@ -1511,7 +1538,7 @@ begin
                  rd_en => u_rden, rd_data => u_rd_dat);
     end generate;
 
-    gsc : if not DUAL_CLK generate
+    gsc : if not DUAL_CLK and U_ON generate
       -- one clock: the window is S_WAIT itself, cycle for cycle
       usync : process(s_axi_aclk)
       begin
@@ -1543,6 +1570,14 @@ begin
                  rbeat => u_beat,
                  rd_idx => unsigned(u_sel_h(7 downto 1)), rd_hi => u_sel_h(0),
                  rd_en => u_rden, rd_data => u_rd_dat);
+    end generate;
+
+    -- NOT BUILT (A_TILED and A_CLK_SPLIT): the read handshake is answered from the core
+    -- domain, two flops after the request (through u_ack_s, as every other build), with
+    -- zero data; UTIL_SEL[31] says so.  Nothing crosses to m_aclk.
+    gnone : if not U_ON generate
+      u_ack_t <= u_req_t;
+      u_rd_dat <= (others => '0');
     end generate;
   end block;
 end architecture;

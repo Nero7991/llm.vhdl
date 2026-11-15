@@ -168,6 +168,10 @@ entity tb_matvec_fk33_desc is
     -- sim/tb_matvec_fk33_desc_tiled.vhd sets both (with DUAL, so the tiles run on mclk):
     -- the same 22 cases, the same element-exact comparison with ref/matvec_int4.c, the
     -- same register and UTIL checks, through the tiled array.
+    -- a450 Task 9b: under TILED and SPLIT the DUT's descriptor fetch is single-clock on
+    -- clk (so the descriptor slave below serves it on clk, and a check refuses any d-port
+    -- transition off a clk edge), and its UTIL counters are not built (so the UTIL
+    -- section checks UTIL_SEL[31] = 1 and UTIL_DATA = 0 OKAY instead, with mclk stopped).
     TILED   : boolean := false;
     SPLIT   : boolean := false
   );
@@ -553,6 +557,9 @@ architecture sim of tb_matvec_fk33_desc is
   type ucnt_arr is array (natural range <>) of integer;
   signal mon_rb : ucnt_arr(0 to NPW + NPS - 1) := (others => 0);
   signal mclk_run : boolean := true;
+  -- a450 Task 9b: the DUT's D_DUAL / U_ON, restated (rtl/matvec_int4_desc_axi.vhd)
+  constant D_CORE : boolean := TILED and SPLIT;
+  constant U_ON   : boolean := not (TILED and SPLIT);
   -- The counters have exactly ONE driver, the capture process.  The driver
   -- process asks for a clear with `cap_clr` rather than assigning them: two
   -- processes driving one unresolved signal does not merely misbehave, GHDL
@@ -704,13 +711,18 @@ begin
     variable a  : unsigned(ADDR_W-1 downto 0);
     variable n, idx : integer;
     variable b  : std_logic_vector(AXI_DW-1 downto 0);
+    -- the descriptor port's clock: clk under D_CORE, mclk otherwise
+    procedure wait_d is
+    begin
+      if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
+    end procedure;
   begin
     d_arready <= '0'; d_rvalid <= '0'; d_rlast <= '0';
     wait until aresetn = '1';
     loop
       d_arready <= '0';
       while d_arvalid = '0' or d_deaf = '1' loop
-        wait until rising_edge(mclk);
+        wait_d;
       end loop;
       a := unsigned(d_araddr);
       n := to_integer(unsigned(d_arlen)) + 1;
@@ -732,7 +744,7 @@ begin
                " runs outside the " & integer'image(DBEATS) &
                "-beat descriptor -- MISMATCH" severity failure;
 
-      d_arready <= '1'; wait until rising_edge(mclk); d_arready <= '0';
+      d_arready <= '1'; wait_d; d_arready <= '0';
       for i in 0 to n-1 loop
         b := (others => '0');
         for j in 0 to WPB-1 loop
@@ -744,13 +756,27 @@ begin
         d_rvalid <= '1';
         if i = n-1 then d_rlast <= '1'; else d_rlast <= '0'; end if;
         loop
-          wait until rising_edge(mclk);
+          wait_d;
           exit when d_rready = '1';
         end loop;
       end loop;
       d_rvalid <= '0'; d_rlast <= '0';
     end loop;
   end process;
+
+  -- THE DESCRIPTOR PORT'S CLOCK (a450 Task 9b).  Under D_CORE every transition of the
+  -- DUT's descriptor-port outputs must land on a rising edge of clk: a fetch still on
+  -- mclk (D_DUAL left true) moves them on mclk edges, two thirds of which are not clk
+  -- edges at ACLK_HALF_PS = 3000, and the slave above, now on clk, would hide that.
+  g_dclk : if D_CORE generate
+    dchk : process(d_arvalid, d_rready, d_araddr, d_arlen)
+    begin
+      if now > 0 ns and not (rising_edge(clk) or (clk = '1' and clk'last_event = 0 ns)) then
+        report "descriptor port moved off a clk edge at " & time'image(now) &
+               ": the fetch is not single-clock on clk (D_DUAL) MISMATCH" severity failure;
+      end if;
+    end process;
+  end generate;
 
   -- =====================================================================
   -- THE DRAIN PROBE.  Only elaborated under PROBE, so the two pre-existing
@@ -789,7 +815,7 @@ begin
       -- The FIRST descriptor fetch of the run, so both arms measure the same
       -- descriptor, and only that one: ARMED ONCE, then the process parks.
       loop
-        wait until rising_edge(mclk);
+        if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
         exit when d_arvalid = '1' and d_arready = '1';
       end loop;
       t_ar := now;
@@ -800,7 +826,7 @@ begin
       -- must land at the SAME nanosecond in both arms.  If it does not, the
       -- difference below is not the drain and the bench says so.
       while nb < DBEATS loop
-        wait until rising_edge(mclk);
+        if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
         if d_rvalid = '1' and d_rready = '1' then nb := nb + 1; end if;
       end loop;
       t_r := now;
@@ -1913,7 +1939,9 @@ begin
     --                 counter is in m_aclk cycles, so the core-time window
     --                 rescaled to m_aclk, within 2 cycles per job.
     -- Then UTIL_CLR must zero all of them.
+    -- a450 Task 9b: not built under TILED and SPLIT (U_ON false): the else arm below.
     u_nbad := 0; u_wsum := 0;
+    if U_ON then
     for i in 0 to NP_ALL loop
       awr(16#40#, std_logic_vector(to_unsigned(2*i, 32)));
       ard(16#40#, rd);
@@ -2075,7 +2103,55 @@ begin
                " not zero after UTIL_CLR MISMATCH" severity error;
       end if;
     end loop;
-    if u_nbad = 0 then
+    else
+      -- NOT BUILT: for every index, both halves, UTIL_SEL reads back the index with
+      -- [31] UTIL_NONE set, and UTIL_DATA answers 0 with OKAY; with mclk STOPPED, the
+      -- answer is still immediate (nothing crosses to mclk), never 0xDEADDEAD.
+      for i in 0 to NP_ALL loop
+        for h in 0 to 1 loop
+          awr(16#40#, std_logic_vector(to_unsigned(2*i + h, 32)));
+          ard(16#40#, rd);
+          if rd /= '1' & std_logic_vector(to_unsigned(2*i + h, 31)) then
+            u_nbad := u_nbad + 1;
+            report "UTIL_SEL (not built) read back " & to_hstring(rd) & " after writing " &
+                   integer'image(2*i + h) & ", want bit 31 set MISMATCH" severity error;
+          end if;
+          ard(16#44#, u_lo);
+          if u_lo /= x"00000000" or rresp /= "00" then
+            u_nbad := u_nbad + 1;
+            report "UTIL_DATA (not built) index " & integer'image(2*i + h) & " read " &
+                   to_hstring(u_lo) & " resp " & integer'image(to_integer(unsigned(rresp))) &
+                   ", want 0 OKAY MISMATCH" severity error;
+          end if;
+        end loop;
+      end loop;
+      awr(16#40#, std_logic_vector(to_unsigned(0, 32)));
+      mclk_run <= false;
+      for k in 0 to 31 loop wait until rising_edge(clk); end loop;
+      wait until rising_edge(clk);
+      araddr_l <= x"44"; arvalid_l <= '1'; rready_l <= '1';
+      u_to := true; u_n := 0;
+      loop
+        wait until rising_edge(clk);
+        if rvalid_l = '1' then u_lo := rdata_l; u_rr := rresp; u_to := false; exit; end if;
+        u_n := u_n + 1;
+        exit when u_n > 5000;
+      end loop;
+      arvalid_l <= '0'; rready_l <= '0';
+      mclk_run <= true;
+      for k in 0 to 63 loop wait until rising_edge(clk); end loop;
+      if u_to or u_n > 16 or u_rr /= "00" or u_lo /= x"00000000" then
+        u_nbad := u_nbad + 1;
+        report "UTIL_DATA (not built) with mclk stopped: answered " &
+               boolean'image(not u_to) & " after " & integer'image(u_n) &
+               " core cycles, want 0 OKAY within 16 MISMATCH" severity error;
+      end if;
+    end if;
+    if u_nbad = 0 and not U_ON then
+      report "UTIL counters NOT BUILT (A_TILED and A_CLK_SPLIT): UTIL_SEL[31] = 1 and " &
+             "UTIL_DATA = 0 OKAY for all " & integer'image(2 * (NP_ALL + 1)) &
+             " selections, and at once with mclk stopped" severity note;
+    elsif u_nbad = 0 then
       report "UTIL counters: " & integer'image(NP_ALL) & " ports match the " &
              "bench's R-beat count, weight sum = " & integer'image(NPW) &
              " * BEATS " & integer'image(u_beat_sum) & ", job cycles " &
