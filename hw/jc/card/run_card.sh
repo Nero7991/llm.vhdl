@@ -47,7 +47,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 
-USAGE="usage: $0 [--dry-run] [--allow-scratch-root] [--allow-llama-server] [--allow-other-part] [--clk-mhz N] [--impl default|congestion] <root> [part] [allow_neg]"
+USAGE="usage: $0 [--dry-run] [--allow-scratch-root] [--allow-llama-server] [--allow-other-part] [--clk-mhz N] [--impl default|congestion|explore] <root> [part] [allow_neg]"
 
 DRY_RUN=0
 ALLOW_SCRATCH_ROOT=0
@@ -59,8 +59,13 @@ ALLOW_OTHER_PART=0
 # a lower value explicitly until timing is fixed.
 CLK_CORE_MHZ=200
 # implementation strategy: default, or congestion (spread placement, aggressive route and
-# phys_opt; jccard7, 2026-10-08, failed 125 MHz on routing congestion)
-IMPL=default
+# phys_opt; jccard7, 2026-10-08, failed 125 MHz on routing congestion), or explore (the
+# a450 gate's recipe, hw/jc/a450/build_a450.tcl, which closed A at 450 MHz in run
+# a450_hbm_7b_r6).  JC_A_CLK_SPLIT=1 builds use explore and nothing else (a450 Task 9b:
+# AltSpreadLogic_high smeared A's tiles; docs/debugging/2026-11-15_a450-card-split-timing.md):
+# it is the default there, and any other --impl is refused.
+IMPL=
+IMPL_DIRECTIVES_EXPLORE="opt=ExploreWithRemap place=ExtraTimingOpt phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore"
 while true; do
   case "${1:-}" in
     --dry-run) DRY_RUN=1; shift ;;
@@ -76,7 +81,19 @@ if [ $# -lt 1 ]; then
   echo "$USAGE" >&2
   exit 2
 fi
-case "$IMPL" in default|congestion) ;; *) echo "JCCARD_FAIL --impl '$IMPL' must be default or congestion"; exit 2 ;; esac
+if [ "${JC_A_CLK_SPLIT:-0}" = 1 ]; then
+  case "$IMPL" in
+    ''|explore) IMPL=explore ;;
+    *) echo "JCCARD_FAIL --impl '$IMPL' with JC_A_CLK_SPLIT=1: split builds use explore only (the a450 gate's directives)"; exit 2 ;;
+  esac
+fi
+IMPL=${IMPL:-default}
+case "$IMPL" in default|congestion|explore) ;; *) echo "JCCARD_FAIL --impl '$IMPL' must be default, congestion or explore"; exit 2 ;; esac
+case "$IMPL" in
+  explore) IMPL_DIRECTIVES=$IMPL_DIRECTIVES_EXPLORE ;;
+  congestion) IMPL_DIRECTIVES="opt=ExploreWithRemap place=AltSpreadLogic_high phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore_if_negative" ;;
+  *) IMPL_DIRECTIVES="opt=Default place=Default phys_opt=Default route=Default" ;;
+esac
 if ! [[ "$CLK_CORE_MHZ" =~ ^[0-9]+$ ]] || [ "$CLK_CORE_MHZ" -lt 50 ] || [ "$CLK_CORE_MHZ" -gt 250 ]; then
   echo "JCCARD_FAIL --clk-mhz '$CLK_CORE_MHZ' must be an integer in 50..250" 
   exit 2
@@ -170,6 +187,12 @@ echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_
 echo "JCCARD_LINK_ENV JC_LINK_REFCLK=${JC_LINK_REFCLK:-(unset)} JC_LINK_RATE=${JC_LINK_RATE:-(unset)}"
 # the a450 tiled A (plan 2026-11-12 Tasks 8-9): generator inputs like the two above
 echo "JCCARD_A_ENV JC_A_TILED=${JC_A_TILED:-(unset)} JC_A_CLK_SPLIT=${JC_A_CLK_SPLIT:-(unset)}"
+echo "JCCARD_IMPL_DIRECTIVES impl=$IMPL $IMPL_DIRECTIVES"
+# a450 Task 9b: what build_card.tcl does under the split, stated before it runs (it prints
+# JCCARD_A450_PBLOCKS after placement and JCCARD_CDC_A450 after report_cdc)
+if [ "${JC_A_CLK_SPLIT:-0}" = 1 ]; then
+  echo "JCCARD_A450_PLAN floorplan=a450_pblocks(24 tiles)+a450_ip_pblocks(10 IP cells) verify=post_place(refuse) cdc=a450_cdc_rules+jccard_a450_rules(CDC-10 refused) uctr=not_built dfetch=clk_core+d_cdc"
+fi
 echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 
 # ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
@@ -233,6 +256,8 @@ else
     echo "jc_link_rate=${JC_LINK_RATE:-(unset)}"
     echo "jc_a_tiled=${JC_A_TILED:-(unset)}"
     echo "jc_a_clk_split=${JC_A_CLK_SPLIT:-(unset)}"
+    echo "impl=$IMPL"
+    echo "impl_directives=$IMPL_DIRECTIVES"
   } > "$ROOT/PROVENANCE.txt"
 fi
 

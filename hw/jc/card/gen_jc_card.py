@@ -320,11 +320,40 @@ def link_refclk(env=None):
 # at ACLK_A_MHZ on clk_out2, moves the engine's hbm_aclk and all 32 HBM AXI ports onto
 # it, and puts the four non-engine HBM masters (loader SAXI_00, hbm_sc SAXI_16, the B/C
 # grant SAXI_30/31) behind clock converters.  Both unset: the card as it is.
+# Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 5 and 7): under
+# the split A's descriptor fetch (eng/m27_axi, SAXI_29) runs on clk_core and crosses through
+# its own converter d_cdc; and every converter (and hbm_sc) reaches its HBM port through an
+# axi_register_slice on aclk_a (RS_CONFIG; hw/jc/a450/a450_bd.tcl builds the same chains for
+# the gate, and hw/jc/a450/test_a450.py pins the two CONFIG sets equal).  build_card.tcl
+# floorplans them beside their ports (hw/jc/a450/a450_pblocks.tcl a450_ip_chains).
 A_TILED_ENV = "JC_A_TILED"
 A_SPLIT_ENV = "JC_A_CLK_SPLIT"
 ACLK_A = "clk_wiz_a/clk_out1"
 ACLK_A_RSTN = "aclk_reset/peripheral_aresetn"
 ACLK_A_MHZ = 450
+# the register slice in front of each aclk_a-side converter's HBM port: every channel
+# fully registered (REG_* 1), AXI3 (the HBM's protocol)
+RS_CONFIG = (("PROTOCOL", "AXI3"), ("REG_AW", "1"), ("REG_AR", "1"), ("REG_W", "1"),
+             ("REG_R", "1"), ("REG_B", "1"))
+# A's descriptor master: the engine's last read master, on the last port of the map
+D_INTF = "m%02d_axi"
+D_CDC, D_RS = "d_cdc", "d_rs"
+
+
+def rs_lines(name, src, port):
+    """An axi_register_slice `name` on aclk_a from interface pin `src` to hbm/SAXI_<port>,
+    RS_CONFIG set and read back."""
+    cfg = " ".join("CONFIG.%s {%s}" % kv for kv in RS_CONFIG)
+    return [
+        "create_bd_cell -type ip -vlnv xilinx.com:ip:axi_register_slice:2.1 %s" % name,
+        "set_property -dict [list %s] [get_bd_cells %s]" % (cfg, name),
+        "foreach {k v} {%s} { jcc_want %s $k $v }" % (" ".join("%s %s" % kv for kv in RS_CONFIG), name),
+        _c(ACLK_A, "%s/aclk" % name),
+        _c(ACLK_A_RSTN, "%s/aresetn" % name),
+        "connect_bd_intf_net [get_bd_intf_pins %s] [get_bd_intf_pins %s/S_AXI]" % (src, name),
+        "connect_bd_intf_net [get_bd_intf_pins %s/M_AXI] [get_bd_intf_pins hbm/SAXI_%02d]"
+        % (name, port),
+    ]
 
 
 def _flag(env, name):
@@ -723,12 +752,11 @@ def loader_lines(env=None):
             "jcc_want ld_cdc PROTOCOL $_lp",
             "connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins ld_cdc/S_AXI]"
             % (LOADER_CELL, LOADER_INTF),
-            "connect_bd_intf_net [get_bd_intf_pins ld_cdc/M_AXI] [get_bd_intf_pins hbm/SAXI_00]",
             _c(CORE_CLK, "ld_cdc/s_axi_aclk"),
             _c(CORE_RSTN, "ld_cdc/s_axi_aresetn"),
             _c(ACLK_A, "ld_cdc/m_axi_aclk"),
             _c(ACLK_A_RSTN, "ld_cdc/m_axi_aresetn"),
-        ]
+        ] + rs_lines("ld_rs", "ld_cdc/M_AXI", 0)
     else:
         L.append("connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins hbm/SAXI_00]"
                  % (LOADER_CELL, LOADER_INTF))
@@ -754,15 +782,18 @@ def jtag_hbm_lines(env=None):
         % (2 if split else 1, HBM_SC_CELL),
         "jcc_want %s NUM_CLKS %d" % (HBM_SC_CELL, 2 if split else 1),
         "connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins %s/S00_AXI]" % HBM_SC_CELL,
+    ] + ([] if split else [
         "connect_bd_intf_net [get_bd_intf_pins %s/M00_AXI] [get_bd_intf_pins hbm/SAXI_16]" % HBM_SC_CELL,
+    ]) + [
         _c(CORE_CLK, "jtag_hbm/aclk"),
         _c(CORE_RSTN, "jtag_hbm/aresetn"),
         _c(CORE_CLK, "%s/aclk" % HBM_SC_CELL),
         _c(CORE_RSTN, "%s/aresetn" % HBM_SC_CELL),
     ] + ([
-        "# JC_A_CLK_SPLIT: M00 (to SAXI_16) is on aclk_a; the smartconnect crosses.",
+        "# JC_A_CLK_SPLIT: M00 (to SAXI_16) is on aclk_a; the smartconnect crosses, and a",
+        "# register slice on aclk_a stands between it and the HBM port (Task 9b).",
         _c(ACLK_A, "%s/aclk1" % HBM_SC_CELL),
-    ] if split else [])
+    ] + rs_lines("sc_rs", "%s/M00_AXI" % HBM_SC_CELL, 16) if split else [])
 
 
 def ctl_lines():
@@ -878,9 +909,61 @@ def eng_lines(P, env=None):
         "connect_bd_intf_net [get_bd_intf_pins axil2eng/M01_AXI] [get_bd_intf_pins %s/s_axix]" % P.ENG_CELL,
         "",
     ]
-    L += P._eng_hbm_lines(aclk, arstn)
+    hl = P._eng_hbm_lines(aclk, arstn)
+    if split:
+        L += d_split_assoc_lines(P)
+        hl = d_split_hbm_lines(P, hl)
+    L += hl
     L += ["# ---- end subsystem A ------------------------------------------------------", ""]
     return L
+
+
+def d_split_assoc_lines(P):
+    """JC_A_CLK_SPLIT: the descriptor master is on core_clk (rtl/matvec_int4_desc_axi.vhd
+    D_DUAL), so its interface moves from hbm_aclk's ASSOCIATED_BUSIF to core_clk's, read back
+    (the generic association lines above set and checked the one-domain lists first)."""
+    d = D_INTF % (P.ENG_NMAST - 1)
+    a_if = ":".join("m%02d_axi" % i for i in range(P.ENG_NMAST - 1))
+    c_if = "s_axi:s_axix:%s" % d
+    return [
+        "# JC_A_CLK_SPLIT (a450 Task 9b): A's descriptor fetch (%s) runs on core_clk and" % d,
+        "# crosses to aclk_a through %s, so its interface belongs to core_clk." % D_CDC,
+        "set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins %s/hbm_aclk]" % (a_if, P.ENG_CELL),
+        "set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins %s/core_clk]" % (c_if, P.ENG_CELL),
+        "foreach {pin want} [list %s/core_clk {%s} %s/hbm_aclk {%s}] {"
+        % (P.ENG_CELL, c_if, P.ENG_CELL, a_if),
+        "    set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]",
+        "    if {$got ne $want} { error \"JCCARD_BD FAIL: $pin ASSOCIATED_BUSIF is \\\"$got\\\", not \\\"$want\\\"\" }",
+        "    puts \"JCCARD_BD ASSOCIATED_BUSIF $pin = $got\"",
+        "}",
+    ]
+
+
+def d_split_hbm_lines(P, hl):
+    """JC_A_CLK_SPLIT: _eng_hbm_lines' direct eng/m27_axi -> hbm/SAXI_29 replaced by
+    m27 -> d_cdc (clk_core -> aclk_a) -> d_rs (aclk_a) -> SAXI_29.  Exactly one line moves;
+    the port's ACLK / ARESET_N stay on aclk_a / aclk_reset (the engine's hbm_aresetn net)."""
+    d = D_INTF % (P.ENG_NMAST - 1)
+    port = P.ENG_PORT_MAP[P.ENG_NMAST - 1]
+    direct = ("connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins hbm/SAXI_%02d]"
+              % (P.ENG_CELL, d, port))
+    if hl.count(direct) != 1:
+        sys.exit("ABORT: gen_pcieep._eng_hbm_lines no longer emits '%s' once" % direct)
+    chain = [
+        "# the descriptor fetch on clk_core (JC_A_CLK_SPLIT, a450 Task 9b): converter, then a",
+        "# register slice on aclk_a, then the port",
+        "create_bd_cell -type ip -vlnv xilinx.com:ip:axi_clock_converter:2.1 %s" % D_CDC,
+        "set _dp [get_property CONFIG.PROTOCOL [get_bd_intf_pins %s/%s]]" % (P.ENG_CELL, d),
+        "set_property CONFIG.PROTOCOL $_dp [get_bd_cells %s]" % D_CDC,
+        "jcc_want %s PROTOCOL $_dp" % D_CDC,
+        "connect_bd_intf_net [get_bd_intf_pins %s/%s] [get_bd_intf_pins %s/S_AXI]" % (P.ENG_CELL, d, D_CDC),
+        _c(CORE_CLK, "%s/s_axi_aclk" % D_CDC),
+        _c(CORE_RSTN, "%s/s_axi_aresetn" % D_CDC),
+        _c(ACLK_A, "%s/m_axi_aclk" % D_CDC),
+        _c(ACLK_A_RSTN, "%s/m_axi_aresetn" % D_CDC),
+    ] + rs_lines(D_RS, "%s/M_AXI" % D_CDC, port)
+    i = hl.index(direct)
+    return hl[:i] + chain + hl[i + 1:]
 
 
 def pool_split_lines(P):
@@ -899,15 +982,13 @@ def pool_split_lines(P):
             "jcc_want %s PROTOCOL AXI3" % cc,
             "connect_bd_intf_net [get_bd_intf_pins %s/m%d] [get_bd_intf_pins %s/S_AXI]"
             % (P.GRANT_CELL, i, cc),
-            "connect_bd_intf_net [get_bd_intf_pins %s/M_AXI] [get_bd_intf_pins hbm/SAXI_%02d]"
-            % (cc, port),
             _c(CORE_CLK, "%s/s_axi_aclk" % cc),
             _c(CORE_RSTN, "%s/s_axi_aresetn" % cc),
             _c(ACLK_A, "%s/m_axi_aclk" % cc),
             _c(ACLK_A_RSTN, "%s/m_axi_aresetn" % cc),
             _c(ACLK_A, "hbm/AXI_%02d_ACLK" % port),
             _c(ACLK_A_RSTN, "hbm/AXI_%02d_ARESET_N" % port),
-        ]
+        ] + rs_lines("bc_rs%d" % i, "%s/M_AXI" % cc, port)
     return L
 
 

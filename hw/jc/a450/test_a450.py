@@ -253,3 +253,88 @@ def test_overconstrain_flag():
     b = _code(_read("build_a450.tcl"))
     assert "set_clock_uncertainty -setup $extra -from $ca -to $ca" in b
     assert b.index("set_clock_uncertainty") < b.index("opt_design")
+
+
+# ---- Task 9b: the gate carries the split-on card's aclk_a-side IP ----------------------
+sys.path.insert(0, os.path.join(REPO, "hw", "jc", "card"))
+sys.path.insert(0, os.path.join(REPO, "hw", "jc", "link"))
+import gen_jc_card as G  # noqa: E402
+
+
+def test_gate_ip_is_the_cards():
+    """The gate's IP_CHAIN, register-slice CONFIG and smartconnect CONFIG are the card's
+    (gen_jc_card.py), and a450_ip_chains (the one list both builds floorplan) names
+    exactly those cells on those ports."""
+    bd = _read("a450_bd.tcl")
+    m = re.search(r"^set IP_CHAIN \{([^}]*)\}", bd, re.M)
+    toks = m.group(1).split()
+    gate = [(toks[i + 1], toks[i + 2], int(toks[i + 3])) for i in range(0, len(toks), 4)]
+    assert gate == [("ld_cdc", "ld_rs", 0), ("d_cdc", "d_rs", 29), ("bc_cdc0", "bc_rs0", 30),
+                    ("bc_cdc1", "bc_rs1", 31)]
+    assert re.search(r"^set SC_SAXI 16$", bd, re.M)
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"})
+    for cc, rs, port in gate + [("hbm_sc", "sc_rs", 16)]:
+        assert re.search(r"\[get_bd_intf_pins %s/M_AXI\] \[get_bd_intf_pins hbm/SAXI_%02d\]" % (rs, port), t)
+        assert re.search(r"\[get_bd_intf_pins %s/M(00)?_AXI\] \[get_bd_intf_pins %s/S_AXI\]" % (cc, rs), t)
+    cfg = re.search(r"proc a4_rs \{name\} \{.*?set_property -dict \[list ([^\]]*)\]", bd, re.S).group(1)
+    gate_rs = re.findall(r"CONFIG\.(\w+) \{(\w+)\}", cfg)
+    assert gate_rs == list(G.RS_CONFIG)
+    sc = re.search(r"CONFIG\.NUM_SI \{(\d)\} CONFIG\.NUM_MI \{(\d)\} CONFIG\.NUM_CLKS \{(\d)\}\] \[get_bd_cells hbm_sc\]", bd)
+    card_sc = re.search(r"CONFIG\.NUM_SI \{(\d)\} CONFIG\.NUM_MI \{(\d)\} CONFIG\.NUM_CLKS \{(\d)\}\] \[get_bd_cells hbm_sc\]", t)
+    assert sc and card_sc and sc.groups() == card_sc.groups() == ("3", "1", "2")
+    jt = r"CONFIG\.M_AXI_DATA_WIDTH \{64\} CONFIG\.M_AXI_ADDR_WIDTH \{64\}\] \[get_bd_cells jtag_hbm\]"
+    assert re.search(jt, bd) and re.search(jt, t)
+    pb = _read("a450_pblocks.tcl")
+    m = re.search(r"proc a450_ip_chains \{bd_re\} \{.*?foreach \{c n\} \{([^}]*)\}", pb, re.S)
+    lst = m.group(1).split()
+    named = sorted((lst[i], int(lst[i + 1])) for i in range(0, len(lst), 2))
+    want = sorted([(cc, p) for cc, _, p in gate] + [(rs, p) for _, rs, p in gate] +
+                  [("hbm_sc", 16), ("sc_rs", 16)])
+    assert named == want
+
+
+def test_gate_enables_all_32_ports_with_the_card_switch_clocks():
+    bd = _code(_read("a450_bd.tcl"))
+    assert "a4_want hbm USER_CLK_SEL_LIST0 AXI_00_ACLK" in bd
+    assert "a4_want hbm USER_CLK_SEL_LIST1 AXI_16_ACLK" in bd
+    assert "[llength $SAXI_ON] != 32" in bd
+    t = _read("a450_hbm_top.vhd")
+    for n in ("x_ld", "x_d", "x_bc0", "x_bc1", "x_ctl", "x_tok"):
+        assert re.search(r"\b%s_axi_arvalid\b" % n, t), n
+        assert re.search(r"tg_%s : entity work\.a450_tg" % n, t), n
+    assert re.search(r"tg_x_d : entity work\.a450_tg\n    generic map\(LEN_W => 4, WR => false", t)
+
+
+def test_gate_checks_the_floorplan_as_placed_before_routing():
+    b = _code(_read("build_a450.tcl"))
+    for seq in (b[b.index('if {$dirs eq "explore"}'):b.index("} else {", b.index('if {$dirs eq "explore"}'))],
+                b[b.index("} else {", b.index('if {$dirs eq "explore"}')):]):
+        i = [seq.index(s) for s in ("place_design", "a4_placed", "route_design")]
+        assert i == sorted(i), seq[:400]
+    assert "a450_ip_pblocks [a450_ip_chains {a450_i}]" in b
+    assert "[a450_cdc_ip_rules a450_i]" in b
+    assert "A450HBM_FAILING_ACLK" in b
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_cdc_ip_rules_name_only_the_ip_fifo_rows():
+    """a450_cdc_ip_rules on the split-on card's report: all 690 hbm_sc/dbg_hub rows matched
+    (MEASURED, jccard_a450s1b); near misses (a FIFO read register OUTSIDE hbm_sc, an hbm_sc
+    row into a non-FIFO register) refused."""
+    bd = "u_bd/jcc_i"
+    M = ("inst/m00_nodes/m00_r_node/inst/inst_mi_handler/gen_normal_area.inst_fifo_node_payld/"
+         "gen_xpm_memory_fifo.inst_fifo/gen_mem_rep[0].inst_xpm_memory/xpm_memory_base_inst")
+    ok = "%s/hbm_sc/%s/gen_wr_a.gen_word_narrow.mem_reg_0_31_0_13/RAMA/CLK" % (bd, M)
+    rd = "%s/hbm_sc/%s/gen_rd_b.gen_rd_b_synth_template.gen_rf_narrow_reg.doutb_reg_reg[3]/D" % (bd, M)
+    script = """
+source %s
+set r [a450_cdc_ip_rules %s]
+proc hit {s d} { foreach x $::r { lassign $x l sp dp; if {[regexp -- $sp $s] && [regexp -- $dp $d]} { return $l } }; return none }
+puts "A [hit {%s} {%s}]"
+puts "B [hit {%s} {%s}]"
+puts "C [hit {%s} {%s}]"
+""" % (os.path.join(HERE, "a450_cdc.tcl"), bd, ok, rd, ok, rd.replace("/hbm_sc/", "/ld_cdc/"),
+       ok, "%s/hbm_sc/inst/m00_nodes/foo_reg/D" % bd)
+    r = subprocess.run(["tclsh"], input=script, capture_output=True, text=True)
+    assert re.findall(r"^([ABC]) (\S+)$", r.stdout, re.M) == [("A", "hbm_sc_node_fifo"), ("B", "none"),
+                                                              ("C", "none")], r.stdout + r.stderr

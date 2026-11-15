@@ -25,6 +25,11 @@ broker serves ONE client at a time, so run this only while no run_prompt holds t
               UTIL_SEL only (a selector, it moves no data). On the JC card hbm_aclk and
               clk_core are one net (hw/jc/card/gen_jc_card.py), so job cycles are clk_core
               cycles and beats/jobcyc is the port's fraction of one 32-byte beat a cycle.
+              A split-on card (JC_A_TILED=1 JC_A_CLK_SPLIT=1, a450 Task 9b) does not build
+              the counters: UTIL_SEL bit 31 (UTIL_NONE) reads 1, and this prints
+              `JCUTIL_NONE die X seam_cycles_last_go N` and `JCUTIL_DONE` and exits 0,
+              reading no counter.  The cadence of such a card is measured from the seam's
+              cycles only (port_beats is not available on it).
   util-clear  writes UTIL_CLR (0x48): zeroes every counter. Counters ACCUMULATE across
               jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).
 
@@ -41,6 +46,7 @@ ENG_CAPS = ENG_CTL_BASE + 0x1C
 ENG_UTIL_SEL = ENG_CTL_BASE + 0x40
 ENG_UTIL_DATA = ENG_CTL_BASE + 0x44
 ENG_UTIL_CLR = ENG_CTL_BASE + 0x48
+UTIL_NONE = 1 << 31           # UTIL_SEL bit 31: counters not built (rtl/matvec_int4_desc_axi.vhd)
 ENG_ID_MAGIC = 0x4D563449     # "MV4I"
 UTIL_DEAD = 0xDEADDEAD
 SEAM_CYCLES = 0xE000 + 0x40   # server/fk33_seam.h FK33_SEAM_CYCLES (GO to done, core cycles)
@@ -155,6 +161,12 @@ def cmd_util(a):
             print("JCUTIL_FAIL die %s engine ID reads 0x%08x, not 0x%08x (\"MV4I\")"
                   % (a.die, ident, ENG_ID_MAGIC))
             return 1
+        if b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE:
+            cyc = b.rd32(a.die, SEAM_CYCLES)
+            print("JCUTIL_NONE die %s seam_cycles_last_go %d: the utilisation counters are not "
+                  "built on this card (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT)" % (a.die, cyc))
+            print("JCUTIL_DONE die %s" % a.die)
+            return 0
         npw, nps, ctr = read_util(b, a.die)
         cyc = b.rd32(a.die, SEAM_CYCLES)
     finally:

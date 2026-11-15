@@ -112,3 +112,42 @@ proc jccard_cdc_scan {txt dst_ok {refuse_ids {CDC-10}}} {
   }
   return [list $nsum $nrows $bad $named]
 }
+
+# ---- a450 Task 9b: the split-on card's report_cdc allowed list --------------------------
+# jccard_a450_rules <bd> <tc>: the card's own rows under JC_A_CLK_SPLIT beyond a450_cdc_rules
+# (hw/jc/a450/a450_cdc.tcl), as {label src_re dst_re}, ANCHORED regexps on the report's pin
+# names.  One today: the CDC-11 reset fan-out (docs/debugging/2026-11-15_a450-card-split-
+# timing.md, The 49 CDC rows): core_reset's peripheral_aresetn flop (or its replica) into
+# mv4i_tcore's ar1 synchroniser.  The diagnosis's other two fan-out destinations,
+# dfetch/g_dc.rst_s1 and gu.gdc.rst_s, do not exist under the split (the descriptor fetch is
+# single-clock and the utilisation counters are not built: rtl/matvec_int4_desc_axi.vhd
+# D_DUAL / U_ON), so no rule names them and a row into either is refused (a regression).
+proc jccard_a450_rules {bd tc} {
+  set b [a450_re_quote $bd]
+  set t [a450_re_quote $tc]
+  return [list [list core_reset_fanout_ar1 \
+    "^$b/core_reset/U0/ACTIVE_LOW_PR_OUT_DFF\\\[0\\\]\\.FDRE_PER_N(_replica(_\\d+)?)?/C\$" \
+    "^$t/ar1_reg/D\$"]]
+}
+
+# jccard_a450_cdc_split <rows> <rules> [refuse_ids]: the Critical rows jccard_cdc_scan found
+# at no named synchroniser (its `bad` list, whole report lines), read against the split-on
+# allowed list.  A row whose rule id is in refuse_ids (CDC-10: combinational logic before a
+# synchroniser) is refused BEFORE any rule is tried, so no rule can allow one.  Returns
+# {hits refused unknown}: a dict label -> count, and the refused and unmatched lines.
+proc jccard_a450_cdc_split {rows rules {refuse_ids {CDC-10}}} {
+  set hits [dict create]; set refused {}; set unknown {}
+  foreach l $rows {
+    set f [regexp -all -inline {\S+(?: \S+)*} [string trim $l]]
+    set id [lindex $f 1]
+    if {[lsearch -exact $refuse_ids $id] >= 0} { lappend refused $l; continue }
+    set src [lindex $f end-1]; set dst [lindex $f end]
+    set hit ""
+    foreach rule $rules {
+      lassign $rule lab sp dp
+      if {[regexp -- $sp $src] && [regexp -- $dp $dst]} { set hit $lab; break }
+    }
+    if {$hit eq ""} { lappend unknown $l } else { dict incr hits $hit }
+  }
+  return [list $hits $refused $unknown]
+}

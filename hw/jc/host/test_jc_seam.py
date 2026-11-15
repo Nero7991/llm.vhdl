@@ -82,6 +82,19 @@ def test_util_reads_every_counter_48_bits():
     assert len(fb.writes) == 56 and all(off == 0x12040 for off, _ in fb.writes)
 
 
+def test_util_reports_counters_not_built():
+    """a450 Task 9b: a split-on card has no counters; UTIL_SEL[31] says so.  The tool must
+    say "not built" and read no counter (one UTIL_DATA read on a built card's absent counter
+    would be a 0 that looks like an idle port), not print garbage ratios."""
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {i: 999 for i in range(28)})
+    p = tool("util", "--sock", fb.path, "--die", "A")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "JCUTIL_NONE die A seam_cycles_last_go 123456" in p.stdout
+    assert "JCUTIL_DONE die A" in p.stdout
+    assert " beats " not in p.stdout and "JCUTIL die A nports_w" not in p.stdout
+    assert fb.writes == []
+
+
 def test_util_refuses_a_dead_engine():
     fb = FakeBroker({**SEAM, 0x12014: 0xFFFFFFFF}, {})
     p = tool("util", "--sock", fb.path, "--die", "A")

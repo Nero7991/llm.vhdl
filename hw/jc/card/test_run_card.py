@@ -550,7 +550,9 @@ def test_build_card_congestion_strategy_directives():
                  "phys_opt_design -directive AggressiveExplore",
                  "route_design -directive AggressiveExplore"):
         assert line in t, line
-    assert re.search(r"if \{\$impl eq \"congestion\" && \$post_wns < 0\} \{\s*phys_opt_design -directive AggressiveExplore", t)
+    # a450 Task 9b: explore always runs the post-route phys_opt; congestion only when negative
+    assert re.search(r"if \{\$impl eq \"explore\" \|\| \(\$impl eq \"congestion\" && \$post_wns < 0\)\} \{"
+                     r"\s*phys_opt_design -directive AggressiveExplore", t)
 
 
 def test_build_card_lists_the_tiled_a_sources_and_its_cdc():
@@ -634,3 +636,45 @@ def test_a450_build_reads_every_tiled_file_as_vhdl2008():
     lists = _tcl_lists(t)
     assert set(_TILED) <= set(lists["RTL08"])
     assert re.search(r"foreach f \$RTL08 \{\n(?:  [^\n]*\n)*?  set_property file_type \{VHDL 2008\}", t)
+
+
+# ---- a450 Task 9b: split builds use the gate's explore directives ----------------------
+def _dry_env(root, env, flags=()):
+    e = dict(os.environ)
+    for k in ("JC_A_TILED", "JC_A_CLK_SPLIT"):
+        e.pop(k, None)
+    e.update(env)
+    args = ["bash", RUN_CARD, "--dry-run", "--allow-scratch-root", *flags, root]
+    return subprocess.run(args, cwd=REPO, capture_output=True, text=True, env=e)
+
+
+_EXPLORE = ("opt=ExploreWithRemap place=ExtraTimingOpt phys_opt=AggressiveExplore "
+            "route=AggressiveExplore post_route_phys_opt=AggressiveExplore")
+
+
+def test_split_dry_run_prints_explore_directives_and_the_a450_plan(tmp_path):
+    r = _dry_env(str(tmp_path / "root"), {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"^JCCARD_IMPL_DIRECTIVES impl=explore %s$" % _EXPLORE, r.stdout, re.M), r.stdout
+    assert re.search(r"^JCCARD_A450_PLAN floorplan=a450_pblocks\(24 tiles\)\+a450_ip_pblocks\(10 IP cells\) "
+                     r"verify=post_place\(refuse\) cdc=a450_cdc_rules\+jccard_a450_rules\(CDC-10 refused\) "
+                     r"uctr=not_built dfetch=clk_core\+d_cdc$", r.stdout, re.M), r.stdout
+    assert re.search(r"-impl explore -nonce ", r.stdout)
+    t = _run_card_text()
+    assert 'echo "impl_directives=$IMPL_DIRECTIVES"' in t and 'echo "impl=$IMPL"' in t
+
+
+def test_split_refuses_any_other_impl_and_split_off_keeps_default(tmp_path):
+    root = str(tmp_path / "root")
+    for impl in ("congestion", "default"):
+        r = _dry_env(root, {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"}, flags=("--impl", impl))
+        assert r.returncode != 0 and re.search(r"^JCCARD_FAIL --impl '%s' with JC_A_CLK_SPLIT=1" % impl,
+                                               r.stdout, re.M), (impl, r.stdout)
+    r = _dry_env(root, {"JC_A_TILED": "1"})
+    assert r.returncode == 0 and "-impl default -nonce" in r.stdout
+    assert "JCCARD_A450_PLAN" not in r.stdout
+    r = _dry_env(root, {}, flags=("--impl", "congestion"))
+    assert r.returncode == 0 and "-impl congestion -nonce" in r.stdout
+    b = _build_card_text()
+    assert 'if {$impl ni {default congestion explore}}' in b
+    assert "puts \"JCCARD_DIRECTIVES %s\"" % _EXPLORE in b

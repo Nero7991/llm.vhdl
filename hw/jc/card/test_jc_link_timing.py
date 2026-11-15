@@ -107,7 +107,7 @@ def test_post_route_audit_refuses_and_precedes_the_reports():
 def test_cb_data_replication_runs_after_every_placement_and_before_routing():
     code = _code(_read(BUILD_TCL))
     places = [m.start() for m in re.finditer(r"\n\s*place_design", code)]
-    assert len(places) == 2
+    assert len(places) == 3          # explore (a450 Task 9b), congestion, default
     for p in places:
         rep = code.index("jcc_cbdata_repl", p)
         route = code.index("route_design", p)

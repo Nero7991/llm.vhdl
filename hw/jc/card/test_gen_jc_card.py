@@ -673,8 +673,59 @@ def test_split_on_puts_hbm_and_engine_ports_on_aclk_a():
 def test_split_on_crosses_read_write_masters_with_converters():
     t = _render(_SPLIT)
     n = len(re.findall(r"create_bd_cell[^\n]*axi_clock_converter", t))
-    assert n == 3, "loader + two grant masters need a converter each, got %d" % n
+    assert n == 4, "loader + two grant masters + A's descriptor fetch (Task 9b) need a converter each, got %d" % n
     assert re.search(r"CONFIG\.NUM_CLKS \{2\}", t), "SAXI_16 smartconnect is not two-clock"
+
+
+# ---- a450 Task 9b: the descriptor fetch behind d_cdc, register slices on aclk_a ---------
+_CHAINS = [("loader/m_axi", "ld_cdc", "ld_rs", 0), ("eng/m27_axi", "d_cdc", "d_rs", 29),
+           ("bcgrant/m0", "bc_cdc0", "bc_rs0", 30), ("bcgrant/m1", "bc_cdc1", "bc_rs1", 31),
+           ("jtag_hbm/M_AXI", "hbm_sc", "sc_rs", 16)]
+
+
+def test_split_on_every_aclk_a_master_reaches_hbm_through_cdc_then_slice():
+    """Each non-tile master: source -> converter (or hbm_sc) -> register slice -> its SAXI,
+    with nothing else on the slice's or the port's interface, the slice on aclk_a."""
+    t = _render(_SPLIT)
+    pairs = _intf_nets(t)
+
+    def peer(ep):
+        got = [b if a == ep else a for a, b in pairs if ep in (a, b)]
+        assert len(got) == 1, (ep, got)
+        return got[0]
+    nets = _nets(t)
+    for src, cc, rs, port in _CHAINS:
+        assert peer("hbm/SAXI_%02d" % port) == "%s/M_AXI" % rs, port
+        assert peer("%s/S_AXI" % rs) == ("%s/M00_AXI" % cc if cc == "hbm_sc" else "%s/M_AXI" % cc)
+        if cc != "hbm_sc":
+            assert peer("%s/S_AXI" % cc) == src, cc
+            assert G.CORE_CLK in _net_of(nets, "%s/s_axi_aclk" % cc)
+            assert G.ACLK_A in _net_of(nets, "%s/m_axi_aclk" % cc)
+        assert G.ACLK_A in _net_of(nets, "%s/aclk" % rs), rs
+        assert G.ACLK_A_RSTN in _net_of(nets, "%s/aresetn" % rs), rs
+        assert re.search(r"axi_register_slice:2\.1 %s$" % rs, t, re.M), rs
+        for k, v in G.RS_CONFIG:
+            assert re.search(r"CONFIG\.%s \{%s\}[^\n]*\[get_bd_cells %s\]" % (k, v, rs), t), (rs, k)
+    assert peer("hbm_sc/S00_AXI") == "jtag_hbm/M_AXI"
+
+
+def test_split_on_descriptor_interface_belongs_to_core_clk():
+    """rtl/matvec_int4_desc_axi.vhd D_DUAL: under the split the descriptor master runs on
+    core_clk, so m27_axi moves to core_clk's ASSOCIATED_BUSIF (read back), and nothing
+    connects it straight to the HBM.  Split off, both are as before."""
+    on = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    a_if = ":".join("m%02d_axi" % i for i in range(27))
+    assert "set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix:m27_axi} [get_bd_pins eng/core_clk]" in on
+    assert "set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins eng/hbm_aclk]" % a_if in on
+    assert "list eng/core_clk {s_axi:s_axix:m27_axi} eng/hbm_aclk {%s}" % a_if in on
+    assert on.index("{s_axi:s_axix:m27_axi} [get_bd_pins eng/core_clk]") > on.index(
+        "set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]")
+    direct = "[get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]"
+    assert direct not in on
+    for env in ({}, {"JC_A_TILED": "1"}):
+        off = G.render_tcl(P, G.CLK_CORE_DEFAULT, env)
+        assert direct in off and "d_cdc" not in off and "axi_register_slice" not in off
+        assert "m27_axi} [get_bd_pins eng/core_clk]" not in off
 
 
 def test_split_off_default_render_is_unchanged_by_the_flags():

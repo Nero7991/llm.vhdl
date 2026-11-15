@@ -40,7 +40,7 @@ set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : 
 # already emitted the clk_wiz and HBM AXI frequencies from the same value.
 set clk_idx   [lsearch -exact $argv -clk_mhz]
 set clk_mhz   [expr {$clk_idx >= 0 ? [lindex $argv [expr {$clk_idx + 1}]] : 200}]
-# implementation strategy from run_card.sh --impl (default | congestion)
+# implementation strategy from run_card.sh --impl (default | congestion | explore)
 set impl_idx  [lsearch -exact $argv -impl]
 set impl      [expr {$impl_idx >= 0 ? [lindex $argv [expr {$impl_idx + 1}]] : "default"}]
 set TCK_P 37.037
@@ -63,7 +63,7 @@ puts "JCCARD_NONCE $nonce"
 puts "JCCARD_PART $part"
 if {![string is integer -strict $clk_mhz] || $clk_mhz < 50 || $clk_mhz > 250} { jcc_fail "-clk_mhz $clk_mhz is not an integer in 50..250" }
 puts "JCCARD_CLK_CORE_MHZ $clk_mhz"
-if {$impl ni {default congestion}} { jcc_fail "-impl $impl is not default or congestion" }
+if {$impl ni {default congestion explore}} { jcc_fail "-impl $impl is not default, congestion or explore" }
 puts "JCCARD_IMPL $impl"
 
 # BSCAN census, as a proc so it can be run twice (Task 9 fix round 1, CRITICAL C2):
@@ -458,11 +458,27 @@ if {[catch {
 
   # the a450 split (plan 2026-11-12 Task 9): only when the BD carries aclk_a's MMCM.
   # Every clk_core <-> aclk_a path is bounded datapath-only (hw/jc/a450/a450_cdc.tcl).
+  set ::a450_split 0
   if {[llength [get_cells -quiet -hierarchical -filter {NAME =~ "*/clk_wiz_a/*" && IS_PRIMITIVE == 1 && REF_NAME =~ "MMCM*"}]] > 0} {
     source $repo/hw/jc/a450/a450_cdc.tcl
     a450_cdc "*/eng/inst/eng/g_tiled.dut/g_split.u/back/go_r_reg/C" \
              "*/eng/inst/eng/g_tiled.dut/g_split.u/fast/dist/s_start_reg/C"
+    set ::a450_split 1
+    set ::a450_tc [regsub {/back/go_r_reg/C$} [get_pins -hierarchical -filter {NAME =~ */eng/inst/eng/g_tiled.dut/g_split.u/back/go_r_reg/C}] {}]
+    set ::a450_bd [regsub {/eng/inst/eng/g_tiled\.dut/g_split\.u$} $::a450_tc {}]
+    if {$::a450_bd eq $::a450_tc} { error "a450: block design instance not found above $::a450_tc" }
     puts "JCCARD_A450_SPLIT on"
+    # a450 Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 1 and 7):
+    # A's 24 tiles in their HBM ports' columns (the gate's own call), and the aclk_a-side
+    # IP (converters, register slices, hbm_sc) beside its ports; checked as PLACED below.
+    source $repo/hw/jc/a450/a450_pblocks.tcl
+    set npb [a450_pblocks {.*/g_split\.u/fast} "$::a450_bd/hbm/*" \
+             {1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 17 18 19 20 21 22 23 24 25}]
+    set nip [a450_ip_pblocks [a450_ip_chains [a450_re_quote $::a450_bd]]]
+    puts "JCCARD_A450_PBLOCKS requested column_pblocks $npb tiles [llength $::a450_pb_expect] ip $nip"
+    if {$npb < 2 || [llength $::a450_pb_expect] != 24 || $nip != 10} {
+      error "a450 floorplan: $npb column pblocks, [llength $::a450_pb_expect] tiles, $nip IP cells (want >= 2, 24, 10)"
+    }
   } else {
     puts "JCCARD_A450_SPLIT off"
   }
@@ -546,7 +562,15 @@ if {$_lr eq "gtg"} {
 # -impl congestion (jccard7, 2026-10-08): 125 MHz placed at WNS +0.513 but routed at -8.833,
 # 49k endpoints, one-LUT paths with ~16 ns of routing in u_arr and A's core: congestion
 # detours, not logic depth. Spread placement and aggressive route/phys_opt for that case.
-if {$impl eq "congestion"} {
+# a450 Task 9b: a split build uses the a450 gate's directives (run a450_hbm_7b_r6), never
+# AltSpreadLogic_high, which smeared A's tiles over up to 13 clock regions (fix 2)
+if {$::a450_split && $impl ne "explore"} { jcc_fail "JC_A_CLK_SPLIT build with -impl $impl: split builds use -impl explore" }
+switch -- $impl {
+  explore    { puts "JCCARD_DIRECTIVES opt=ExploreWithRemap place=ExtraTimingOpt phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore" }
+  congestion { puts "JCCARD_DIRECTIVES opt=ExploreWithRemap place=AltSpreadLogic_high phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore_if_negative" }
+  default    { puts "JCCARD_DIRECTIVES opt=Default place=Default phys_opt=Default route=Default" }
+}
+if {$impl in {congestion explore}} {
   opt_design -directive ExploreWithRemap
 } else {
   opt_design
@@ -592,7 +616,27 @@ proc jcc_gt_loc_check {} {
   }
   puts "JCCARD_GT_LOC [get_property LOC $gts]"
 }
-if {$impl eq "congestion"} {
+# the a450 floorplan as PLACED (fix 1): every HBM site assumption, every pblock non-empty,
+# every tile and IP cell placed, with >= A450PB_MIN_IN of its sites in its column (the
+# pblocks are soft: hw/jc/a450/a450_pblocks.tcl a450_pblocks_placed has the measurement);
+# refused before routing is paid for
+proc jcc_a450_placed {} {
+  if {![info exists ::a450_split] || !$::a450_split} { return }
+  set vb [a450_pblocks_verify]
+  lassign [a450_pblocks_placed] bad npb nt ni smin
+  set bad [concat $vb $bad]
+  puts "JCCARD_A450_PBLOCKS placed pblocks $npb tiles_inside $nt ip_inside $ni min_in_column [format %.3f $smin] failures [llength $bad]"
+  foreach b $bad { puts "JCCARD_A450_PBLOCKS_BAD $b" }
+  if {[llength $bad] > 0 || $nt != 24 || $ni != 10} { jcc_fail "a450 floorplan after placement: [llength $bad] failure(s), $nt/24 tiles, $ni/10 IP cells inside" }
+}
+if {$impl eq "explore"} {
+  place_design -directive ExtraTimingOpt
+  jcc_a450_placed
+  jcc_gt_loc_check
+  jcc_cbdata_repl
+  phys_opt_design -directive AggressiveExplore
+  route_design -directive AggressiveExplore
+} elseif {$impl eq "congestion"} {
   place_design -directive AltSpreadLogic_high
   jcc_gt_loc_check
   jcc_cbdata_repl
@@ -607,7 +651,7 @@ if {$impl eq "congestion"} {
 }
 set post_wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 puts "JCCARD_POST_ROUTE_WNS $post_wns"
-if {$impl eq "congestion" && $post_wns < 0} {
+if {$impl eq "explore" || ($impl eq "congestion" && $post_wns < 0)} {
   phys_opt_design -directive AggressiveExplore
   puts "JCCARD_POST_ROUTE_PHYSOPT_WNS [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]"
 }
@@ -682,6 +726,22 @@ foreach sy {s_tx_reg s_rx_reg s_pll_reg s_gtg_reg s_ovf_reg u_rst_s_reg u_pol_re
            txf/clr_a_s1_reg rxf/wp_g_s1_reg rxf/rp_g_s1_reg rxf/clr_r_s1_reg
            rxf/clr_a_s1_reg} { lappend CDC_DST_OK "${CORE_TOK}${sy}*" }
 lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown crit_named
+# a450 Task 9b (fix 6): under the split, the Critical rows at no named synchroniser are read
+# against the a450 gate's allowed list (a450_cdc_rules; the stub_* rules name the gate's job
+# stub, which the card does not have) plus the card's own (jccard_a450_rules); CDC-10 is
+# refused by id before any rule is tried.  What is left is unknown, as before.
+if {[info exists ::a450_split] && $::a450_split} {
+  set a4r [jccard_a450_rules $::a450_bd $::a450_tc]
+  foreach r [a450_cdc_rules $::a450_tc "<no stub on the card>"] {
+    if {![string match "stub_*" [lindex $r 0]]} { lappend a4r $r }
+  }
+  lassign [jccard_a450_cdc_split $crit_unknown $a4r] a4hits a4ref crit_unknown
+  foreach lab [lsort [dict keys $a4hits]] { puts "JCCARD_CDC_A450_RULE $lab [dict get $a4hits $lab]" }
+  foreach l $a4ref { puts "JCCARD_CDC_A450_REFUSED $l" }
+  set a4n 0; foreach lab [dict keys $a4hits] { incr a4n [dict get $a4hits $lab] }
+  puts "JCCARD_CDC_A450 allowed $a4n refused [llength $a4ref] unknown [llength $crit_unknown]"
+  if {[llength $a4ref] > 0} { jcc_fail "report_cdc: [llength $a4ref] critical crossing(s) of a refused kind (CDC-10) in the split-on design (JCCARD_CDC_A450_REFUSED)" }
+}
 foreach l $crit_unknown { puts "JCCARD_CDC_REPORT_UNKNOWN $l" }
 set crit_bad [llength $crit_unknown]
 set crit_nref 0
