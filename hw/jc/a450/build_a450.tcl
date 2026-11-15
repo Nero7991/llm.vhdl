@@ -102,8 +102,8 @@ puts "A450HBM_TCORE $tc STUB $stub"
 
 # the floorplan as placed (Task 9b): refused before routing is paid for
 proc a4_placed {} {
-  lassign [a450_pblocks_placed] bad npb nt ni
-  puts "A450HBM_PLACED pblocks $npb tiles_inside $nt ip_inside $ni failures [llength $bad]"
+  lassign [a450_pblocks_placed] bad npb nt ni smin
+  puts "A450HBM_PLACED pblocks $npb tiles_inside $nt ip_inside $ni min_in_column [format %.3f $smin] failures [llength $bad]"
   foreach b $bad { puts "A450HBM_PLACED_BAD $b" }
   if {[llength $bad] > 0} { a4_fail "placement outside the floorplan: [lindex $bad 0]" }
 }
