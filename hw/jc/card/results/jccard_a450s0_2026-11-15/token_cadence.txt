@@ -1,0 +1,2 @@
+JCTOKEN die A seam_cycles 28652554 a_jobcyc 8290309 port_beats 8192096 c_per_word 1.0120
+JCTOKEN die B seam_cycles 28604945 a_jobcyc 8616016 port_beats 8520192 c_per_word 1.0112
