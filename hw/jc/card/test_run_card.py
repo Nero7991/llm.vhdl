@@ -581,3 +581,56 @@ def test_dry_run_echoes_the_a450_generator_inputs(tmp_path):
     assert re.search(r"^JCCARD_A_ENV JC_A_TILED=1 JC_A_CLK_SPLIT=1$", r.stdout, re.M), r.stdout
     t = _run_card_text()
     assert "jc_a_tiled=" in t and "jc_a_clk_split=" in t
+
+
+# ---- every tiled-A file a Vivado script reads is VHDL 2008 (Task 8 review I1) ---------
+# rtl/mv_tile.vhd and rtl/mv_dist.vhd read their own `out` ports (legal in 2008, an error
+# in 93: GHDL --std=93c "port ... cannot be read"), and Vivado reads an added .vhd as 93
+# unless told otherwise.  A script that lists a tiled file must set VHDL 2008 on the list
+# that holds it AND read it back.
+_TILED = ["rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd", "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd",
+          "rtl/mv_xbcast.vhd", "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_rlink.vhd",
+          "rtl/mv_rchain.vhd", "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd", "rtl/mv_afast.vhd",
+          "rtl/mv_back.vhd", "rtl/mv4i_tcore.vhd", "rtl/mv4i_tiled.vhd"]
+
+
+def _tcl_lists(t):
+    return {m.group(1): m.group(2).split()
+            for m in re.finditer(r"^set (\w+) \{(.*?)\}", t, re.M | re.S)}
+
+
+def _card_tiled_2008_problems(t):
+    """build_card.tcl: each tiled file is in a list concatenated into VHDL2008, which is
+    set and read back."""
+    bad = []
+    lists = _tcl_lists(t)
+    m = re.search(r"^set VHDL2008 \[concat ([^\]]*)\]", t, re.M)
+    in2008 = set()
+    for name in (m.group(1).split() if m else []):
+        in2008 |= set(lists.get(name.lstrip("$"), []))
+    for f in _TILED:
+        if f not in in2008:
+            bad.append("%s is not in a VHDL2008 list" % f)
+    if not re.search(r"foreach f \$VHDL2008 \{\s*set_property FILE_TYPE \{VHDL 2008\}", t):
+        bad.append("no set_property FILE_TYPE {VHDL 2008} over $VHDL2008")
+    if not re.search(r"if \{\$t ne \"VHDL 2008\"\} \{ jcc_fail", t):
+        bad.append("no FILE_TYPE readback over $VHDL2008")
+    return bad
+
+
+def test_build_card_reads_every_tiled_file_as_vhdl2008():
+    with open(os.path.join(HERE, "build_card.tcl")) as f:
+        t = f.read()
+    assert _card_tiled_2008_problems(t) == []
+    # teeth: the same script with ENG_SRCS dropped from the 2008 list must be refused
+    mut = re.sub(r"(^set VHDL2008 \[concat [^\]]*)\$ENG_SRCS ", r"\1", t, flags=re.M)
+    assert mut != t
+    assert any("mv_tile.vhd" in p for p in _card_tiled_2008_problems(mut))
+
+
+def test_a450_build_reads_every_tiled_file_as_vhdl2008():
+    p = os.path.join(REPO, "hw", "jc", "a450", "build_a450.tcl")
+    t = open(p).read()
+    lists = _tcl_lists(t)
+    assert set(_TILED) <= set(lists["RTL08"])
+    assert re.search(r"foreach f \$RTL08 \{\n(?:  [^\n]*\n)*?  set_property file_type \{VHDL 2008\}", t)

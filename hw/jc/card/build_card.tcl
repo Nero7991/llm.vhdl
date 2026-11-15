@@ -153,8 +153,10 @@ add_files -norecurse $repo/rtl/jc_ctl_core.vhd
 add_files -norecurse $repo/hw/jc/ctl/rtl/jc_ctl_rx.vhd
 update_compile_order -fileset sources_1
 
-# -- subsystem A (gen_pcieep.ENG_SRCS, the engine's own RTL; VHDL-93 default, as the
-#    FK33 build leaves them). rtl/a_util_ctr.vhd is Task 1's addition: it must be
+# -- subsystem A (gen_pcieep.ENG_SRCS, the engine's own RTL). The FK33 build leaves these
+#    at VHDL-93; HERE every one is set to VHDL 2008 and read back (the VHDL2008 list
+#    below), which the tiled files need: rtl/mv_tile.vhd and rtl/mv_dist.vhd read their
+#    own out ports.  rtl/a_util_ctr.vhd is Task 1's addition: it must be
 #    here, or the engine elaborates against stale port counts.
 # The a450 tiled A (plan 2026-11-12, Task 8): matvec_int4_desc_axi instantiates
 # mv4i_tiled as a component under A_TILED, so its files are listed here; with A_TILED
