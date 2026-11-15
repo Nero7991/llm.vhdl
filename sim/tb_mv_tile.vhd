@@ -20,7 +20,9 @@
 -- after its PARAM flit at which the bench's own count of bursts the memory has accepted
 -- and not finished (`owe_b`, from the AXI handshakes, not from the DUT) reaches 2, the
 -- bench resets the tile (rst) and the memory together (hbm_rst; the model's reset drops
--- every queued and in-flight burst, as an HBM port reset does), then replays the whole
+-- every queued and in-flight burst: a MODEL CHOICE, since PG276 Table 5 leaves R after a
+-- mid-traffic port reset undocumented -- the port reset is pre-traffic only -- and
+-- dropping is the case that would hang A forever), then replays the whole
 -- case from its PARAM flit.  The replay must complete with the same values.  Without
 -- hbm_rst clearing rtl/mv_rdfsm.vhd's never-reset `owed`, the port waits in S_DRAIN for
 -- beats that will never come and the case times out (sim/mutants/mv_tile.json row H1).

@@ -212,3 +212,32 @@ before B/C); both were re-rated on the final RTL afterwards:
 
 Measured and REJECTED, added: **a one-stage-deeper tile/link reset as a failing case**
 (S3). It is safe by design; the failing depth is 5 (S5). Do not use S3 as a kill target.
+
+## CORRECTION (2026-11-15, Task 8 fix round 1)
+
+1. **Qualified: the premise of correction 2 above ("the HBM is not reset", so owed bursts
+   are still delivered after an A reset).** That still holds for an A reset alone. It says
+   nothing about the HBM AXI port reset, and Task 8 carry C1 then assumed that a port reset
+   "drops every burst in flight". **WITHDRAWN: that assumption.** PG276 v1.0 p.15, Table 5,
+   AXI_xx_ARESET_N row (local copy `/mnt/storage/docs/xilinx/pg276-axi-hbm-en-us-1.0.txt`):
+   "This reset port only needs to be used prior to the start of data traffic. Using it after
+   traffic has begun causes the AXI interface and the memory controller to become
+   out-of-sync. When the switch is enabled, the IP internally connects all of the
+   AXI_xx_ARESET_N pins together". So what R does after a mid-traffic port reset is
+   undocumented. It is neither "dropped" nor "delivered late" by any document.
+2. **What Task 8 built, stated correctly.** `hbm_rst` (rtl/mv_rdfsm.vhd, threaded from
+   mv4i_tiled's `hbm_aresetn`, on the card the net of the engine ports' ARESET_N) clears
+   `owed`. It is a guard against A waiting in S_DRAIN forever. It is NOT a recovery from a
+   mid-traffic port reset, which is outside the IP's contract. On the Jungle Cat card that
+   reset is a proc_sys_reset with ext_reset_in tied high, so it fires only on an MMCM lock
+   loss, a reprogram (or HBM re-initialisation) event. Clearing `owed` there returns it to
+   its configuration value, the same 0 a reprogram gives. The code is kept (Task 8 review
+   ruling). The comments in mv_rdfsm, mv4i_tiled, mv4i_tcore, matvec_int4_desc_axi and the
+   BD text emitted by gen_pcieep.py are corrected.
+3. **The benches' "memory drops every owed burst" is a model choice.** It is the case that
+   would hang A, not documented HBM behaviour (sim/tb_mv_tile.vhd, sim/tb_mv4i_tiled.vhd
+   HBM_RST).
+4. **Open, not determined:** R behaviour after AXI_xx_ARESET_N rises with reads outstanding.
+   Two ways to settle it: the HBM IP's simulation model under xsim with a port reset during
+   outstanding reads, or silicon with a BD change driving ext_reset_in. Either one only
+   characterises behaviour PG276 already calls out of contract.

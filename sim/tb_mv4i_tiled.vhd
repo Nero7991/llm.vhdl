@@ -56,7 +56,8 @@ entity tb_mv4i_tiled is
     -- a450 Task 8, carry C1 (row sim/tb_mv4i_tiled_hbmrst.vhd).  Runs ONLY jobs 14 and
     -- 15.  Job 14 holds R from its start as HOLD_OWED does, so every port has bursts owed
     -- at the mid-job reset; that reset is now also an HBM PORT reset: the new DUTs' memory
-    -- models reset (dropping every queued and held burst, as an HBM AXI port reset does)
+    -- models reset (dropping every queued and held burst: a model choice, PG276 Table 5
+    -- leaves R after a mid-traffic port reset undocumented)
     -- and both DUTs' hbm_aresetn goes low with rst.  Job 15 must then complete and match
     -- OLD.  Without hbm_aresetn reaching every port's owed count (rtl/mv4i_tiled.vhd ->
     -- mv4i_tcore's synchroniser -> mv_afast -> mv_tile / mv_dist -> mv_rdport ->

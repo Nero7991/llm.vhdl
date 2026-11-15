@@ -48,7 +48,9 @@
 -- AXI ports A's masters use, active low, from whatever domain the card drives it from.
 -- It reaches no state machine: inverted and synchronised into aclk_a (hb1, hb2, ASYNC_REG),
 -- it clears every port's owed-burst count (rtl/mv_rdfsm.vhd `owed`, which A's own rst
--- never clears) through mv_afast's mid registers.  Default '1': never in reset.
+-- never clears) through mv_afast's mid registers.  Default '1': never in reset.  A guard
+-- against a permanent hang after an out-of-contract port reset, not a recovery: see
+-- rtl/mv_rdfsm.vhd (PG276 Table 5).
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

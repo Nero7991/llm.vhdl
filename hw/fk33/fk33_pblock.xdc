@@ -1,8 +1,9 @@
 # FK33 floorplan -- keep the engine out of Tandem PCIe's reserved column.
 #
 # IMPLEMENTATION ONLY.  The build sets `used_in_synthesis false` on this file
-# and asserts that it took, because `bd_i/eng/inst/eng/dut/core` is a path in
-# the LINKED design and does not exist during synthesis.
+# and asserts that it took, because `bd_i/eng/inst/eng/g_core.dut/core` is a path in
+# the LINKED design and does not exist during synthesis.  (The Vivado message quoted
+# below names the path as it was before a450 Task 8; see PATH, below.)
 #
 # CORRECTION 2026-08-29 (TRACK BUILD-E2E,
 # docs/debugging/2026-08-29_build-e2e-project-run.md).  These four lines used
@@ -87,6 +88,12 @@
 #     error, most of them MUXF7/MUXF8, which Vivado places as indivisible
 #     shapes.  Do not rely on a pblock for anything that has to be exact.
 
+# PATH (a450 Task 8, 2026-11-15).  rtl/matvec_int4_desc_axi.vhd now builds its core in
+# an if-generate: `g_core.dut` (matvec_int4, A_TILED false, every build so far) or
+# `g_tiled.dut` (mv4i_tiled, A_TILED true; it has no `core` level, so the whole array
+# goes in).  Exactly one exists in any build; the old `dut/core` exists in none, and
+# matching nothing here is only a 12-180 warning, so build_fk33_pcieep.tcl refuses a
+# pb_core that holds no cells (FK33_PBLK ... cells).
 create_pblock pb_core
-add_cells_to_pblock [get_pblocks pb_core] [get_cells bd_i/eng/inst/eng/dut/core]
+add_cells_to_pblock [get_pblocks pb_core] [get_cells -quiet {bd_i/eng/inst/eng/g_core.dut/core bd_i/eng/inst/eng/g_tiled.dut}]
 resize_pblock [get_pblocks pb_core] -add {CLOCKREGION_X0Y0:CLOCKREGION_X6Y3}

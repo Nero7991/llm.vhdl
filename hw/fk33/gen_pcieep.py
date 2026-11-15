@@ -1516,9 +1516,12 @@ def _eng_hbm_lines(hbm_clk="xdma/axi_aclk", hbm_rstn="xdma/axi_aresetn"):
         a("connect_bd_net [get_bd_pins %s]%s [get_bd_pins hbm/AXI_%02d_ARESET_N]"
           % (hbm_rstn, " " * (w - len(hbm_rstn)), port))
     a("# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the")
-    a("# net of the 28 ports' ARESET_N above: a port reset drops every burst in flight,")
-    a("# and the tiled A (A_TILED) clears its owed-burst counts from it, which nothing")
-    a("# else does.  The array on the card today (A_TILED false) does not read it.")
+    a("# net of the 28 ports' ARESET_N above.  PG276 Table 5: that reset is pre-traffic")
+    a("# only; asserted mid-traffic the port and the controller go out of sync, and what")
+    a("# R does afterwards is undocumented.  The tiled A (A_TILED) clears its owed-burst")
+    a("# counts from it only so that it cannot hang forever after one; that is not a")
+    a("# recovery (a reprogram is).  The array on the card today (A_TILED false) does not")
+    a("# read it.")
     a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/hbm_aresetn]" % (hbm_rstn, ENG_CELL))
     return L
 
@@ -3507,6 +3510,15 @@ if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
     error "FK33_PBLK FAIL: pb_core range is '$pbr', not CLOCKREGION_X0Y0:CLOCKREGION_X6Y3."
 }
 puts "FK33_PBLK pb_core $pbr"
+# 3. pb_core HOLDS CELLS (a450 Task 8 review).  A range is a property of the pblock, not of
+#    its contents: an add_cells_to_pblock whose path matched nothing (the engine's core
+#    moved under a generate, matvec_int4_desc_axi's g_core) leaves pb_core with the right
+#    range and nothing in it, and Vivado says so only as a 12-180 warning.
+set pbn [llength [get_cells -quiet -of_objects [get_pblocks pb_core]]]
+if {$pbn == 0} {
+    error "FK33_PBLK FAIL: pb_core holds no cells. fk33_pblock.xdc's add_cells_to_pblock matched nothing, so the engine is unconstrained and the floorplan this build was measured with is not in effect."
+}
+puts "FK33_PBLK pb_core cells $pbn"
 report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
 puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt\""""
 
@@ -4352,7 +4364,7 @@ if {$otarm == 3} {
      f"set_property used_in_implementation true [get_files {PBLOCK_XDC_TCL}]\n"
      f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC_TCL}]]}} {{\n'
      '    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. '
-     'It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the '
+     'It addresses bd_i/eng/inst/eng/g_core.dut/core, a path that exists only in the '
      'LINKED design, so synthesis would read it, match nothing, leave an empty '
      'pb_core behind and say so only as a Vivado 12-180 warning."\n'
      "}\n"

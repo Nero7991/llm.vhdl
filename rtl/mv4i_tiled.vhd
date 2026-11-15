@@ -14,14 +14,18 @@
 -- an assigned clock is a delta late in simulation and the paths between the two would
 -- race (rtl/axi_rd_fsm.vhd's header records that trap).
 --
--- THE HBM AXI PORT RESET (a450 Task 8, carry C1).  `hbm_aresetn` is the ARESET_N of the
--- HBM ports the m_* masters read; mv4i_tcore synchronises it into the tile clock and it
--- clears the ports' owed-burst counts (rtl/mv_rdfsm.vhd).  PRECONDITION: the HBM AXI port
--- is reset only together with hbm_rst (this entity's hbm_aresetn low, synchronised); A's
--- own reset never clears owed.
--- After an A reset the ports therefore wait for every burst the memory still owes; after
--- a port reset, which drops them, they do not.  Left at its default '1' the count is
--- cleared by nothing, and a port reset with bursts in flight hangs every port in S_DRAIN.
+-- THE HBM AXI PORT RESET (a450 Task 8, carry C1; corrected in fix round 1, 2026-11-15).
+-- `hbm_aresetn` is the ARESET_N of the HBM ports the m_* masters read; mv4i_tcore
+-- synchronises it into the tile clock and it clears the ports' owed-burst counts
+-- (rtl/mv_rdfsm.vhd).  PRECONDITION: the HBM AXI port is reset only together with hbm_rst
+-- (this entity's hbm_aresetn low, synchronised) and with A's own reset held across it;
+-- A's own reset never clears owed.
+-- After an A reset the ports wait for every burst the memory still owes.  A port reset
+-- with reads outstanding is OUTSIDE the HBM IP's contract (PG276 Table 5: the port reset
+-- is pre-traffic only; what R does after it is undocumented); on the card it happens only
+-- on an MMCM lock loss, a reprogram event.  The clear does not make that safe or recover
+-- anything: it only keeps A from waiting in S_DRAIN forever, returning owed to the
+-- configuration value.  Left at the default '1' nothing clears the count.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;

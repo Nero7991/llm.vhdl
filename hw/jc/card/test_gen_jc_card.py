@@ -704,3 +704,17 @@ def test_split_on_hbm_switch_clock_ports_are_on_aclk_a():
     for s in (0, 16):
         assert G.ACLK_A in _net_of(nets, "hbm/AXI_%02d_ACLK" % s), s
         assert G.ACLK_A_RSTN in _net_of(nets, "hbm/AXI_%02d_ARESET_N" % s), s
+
+
+def test_hbm_aresetn_forwarded_engine_to_tiled_array():
+    """Task 8 review m5: the two hbm_aresetn links above mv4i_tiled have no bench (the
+    descriptor benches leave the port at '1'), so a dropped map line would survive every
+    row and leave the clear disconnected behind a default.  Pin both map lines."""
+    def code(p):
+        return "\n".join(l.split("--", 1)[0] for l in open(os.path.join(REPO, p)))
+    eng = code("hw/fk33/rtl/fk33_engine.vhd")
+    m = re.search(r"^\s*eng\s*:\s*entity work\.matvec_int4_desc_axi\b(.*?);", eng, re.M | re.S)
+    assert m and re.search(r"\bhbm_aresetn\s*=>\s*hbm_aresetn\b", m.group(1))
+    desc = code("rtl/matvec_int4_desc_axi.vhd")
+    g = re.search(r"^\s*g_tiled\s*:\s*if A_TILED generate(.*?)end generate", desc, re.M | re.S)
+    assert g and re.search(r"\bhbm_aresetn\s*=>\s*hbm_aresetn\b", g.group(1))

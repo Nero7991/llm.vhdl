@@ -242,8 +242,10 @@ entity matvec_int4_desc_axi is
     m_aclk        : in  std_logic := '0';
     -- THE HBM AXI PORT RESET (A_TILED only; a450 Task 8, carry C1): the ARESET_N of the
     -- HBM ports the m_* masters read, active low, asynchronous.  It clears the tiled
-    -- array's owed-burst counts, which nothing else clears; rtl/mv4i_tiled.vhd's header
-    -- states the precondition.  Default '1'.  Not read when A_TILED = false.
+    -- array's owed-burst counts, which nothing else clears, so that an (out-of-contract,
+    -- PG276 Table 5) port reset cannot hang A forever; it is not a recovery.
+    -- rtl/mv4i_tiled.vhd's header states the precondition.  Default '1'.  Not read when
+    -- A_TILED = false.
     hbm_aresetn   : in  std_logic := '1';
 
     -- The A-job index the SEQUENCER believes it is fetching, compared against

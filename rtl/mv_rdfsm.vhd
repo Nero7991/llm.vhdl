@@ -152,16 +152,29 @@ architecture rtl of mv_rdfsm is
   -- S_DRAIN waits for it, so a start after a reset first discards every owed beat
   -- (rready is '1' and run '0' outside S_RUN).  `beat`/`rlast` must therefore count beats
   -- during the reset too: rtl/mv_rdport.vhd's R register stage is not reset.
-  -- THE ONE THING THAT CLEARS IT (a450 Task 8, carry C1): `hbm_rst`, the HBM AXI port's
-  -- own reset, synchronised into this clock.  A port reset makes the memory drop every
-  -- burst it accepted (the Jungle Cat card resets the HBM ports from a proc_sys_reset on
-  -- an MMCM's lock, so a lock loss does it), so the beats `owed` waits for never come and,
-  -- uncleared, every port would wait in S_DRAIN forever.  While hbm_rst is '1' the
-  -- count restarts from 0 each edge and still counts that edge's handshake: the
-  -- synchronised reset falls a few edges after the port's, and an AR the memory accepts
-  -- in between is owed like any other.
-  -- PRECONDITION: the memory port is reset only together with hbm_rst; A's own reset
-  -- (`rst`) never clears owed.
+  -- THE ONE THING THAT CLEARS IT (a450 Task 8, carry C1; comment corrected in fix round 1,
+  -- 2026-11-15): `hbm_rst`, the HBM AXI port's own reset, synchronised into this clock.
+  -- WHAT IT IS NOT: a recovery.  PG276 (v1.0 p.15, Table 5, AXI_xx_ARESET_N) says the port
+  -- reset is for use before data traffic only, that asserting it after traffic has begun
+  -- puts the AXI interface and the memory controller out of sync, and (switch enabled)
+  -- that all AXI_xx_ARESET_N are tied together inside the IP.  What R does after ARESET_N
+  -- rises with reads outstanding is undocumented: neither "the bursts are dropped" nor
+  -- "they are delivered late" is a documented behaviour.  On the Jungle Cat card the port
+  -- reset is a proc_sys_reset whose ext_reset_in is tied high, so it fires only on an MMCM
+  -- lock loss, which is a reprogram (or an HBM re-initialisation) event.
+  -- WHAT IT IS: a guard against hanging forever.  `owed` survives every A reset by design,
+  -- so after a port reset it could wait in S_DRAIN for beats that never come.  Clearing it
+  -- on hbm_rst returns it to the configuration value, the same 0 a reprogram gives.
+  -- HELD FOR MORE THAN ONE EDGE (fix round 1, review m4): while hbm_rst is '1' the count
+  -- restarts from 0 on EVERY edge and then adds that edge's AR handshake, so a handshake on
+  -- any edge but the last one of the pulse is erased by the next edge; its rlast would then
+  -- drive the count to -1 (an assertion failure in simulation, a clamp to 0 in hardware,
+  -- and S_DRAIN would stop waiting for that burst).  Unreachable under the precondition
+  -- below, because A is in reset for the whole pulse and issues no AR (arv is reset).  It
+  -- becomes reachable if the port reset can come without A's reset: carry C4 (split on,
+  -- aclk_reset without A's rst) must close that before the split is built.
+  -- PRECONDITION: the memory port is reset only together with hbm_rst AND with A's own reset
+  -- held across it; A's own reset (`rst`) never clears owed.
   signal owed     : integer range 0 to MAXOUT := 0;
 begin
   owe : process(clk)
