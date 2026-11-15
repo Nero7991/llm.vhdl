@@ -168,6 +168,8 @@ echo "JCCARD_RUN root=$ROOT part=$PART clk_core_mhz=$CLK_CORE_MHZ mem_high=$MEM_
 # this environment and are stamped into jc_card_bd.tcl; build_card.tcl reads JC_LINK_REFCLK
 # from that stamp (systemd-run --user does not pass this environment on to Vivado).
 echo "JCCARD_LINK_ENV JC_LINK_REFCLK=${JC_LINK_REFCLK:-(unset)} JC_LINK_RATE=${JC_LINK_RATE:-(unset)}"
+# the a450 tiled A (plan 2026-11-12 Tasks 8-9): generator inputs like the two above
+echo "JCCARD_A_ENV JC_A_TILED=${JC_A_TILED:-(unset)} JC_A_CLK_SPLIT=${JC_A_CLK_SPLIT:-(unset)}"
 echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 
 # ---- fix round 2, CRITICAL: run() now ONLY PRINTS. The original version
@@ -229,6 +231,8 @@ else
     echo "nonce=$NONCE"
     echo "jc_link_refclk=${JC_LINK_REFCLK:-(unset)}"
     echo "jc_link_rate=${JC_LINK_RATE:-(unset)}"
+    echo "jc_a_tiled=${JC_A_TILED:-(unset)}"
+    echo "jc_a_clk_split=${JC_A_CLK_SPLIT:-(unset)}"
   } > "$ROOT/PROVENANCE.txt"
 fi
 

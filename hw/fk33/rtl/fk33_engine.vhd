@@ -113,6 +113,18 @@ entity fk33_engine is
     -- opt out on a host-driven build reads a port nothing drives.
     USE_XEXP_PORT : boolean := false;
 
+    -- THE a450 SUBSYSTEM A (docs/superpowers/specs/2026-11-12-a450-per-port-tiles-
+    -- design.md), forwarded to matvec_int4_desc_axi.  A_TILED false (the default) is
+    -- the array on the card today; true is rtl/mv4i_tiled.vhd, the same values bit
+    -- for bit.  A_CLK_SPLIT (A_TILED only): false runs the tiles on core_clk, and
+    -- the card must then drive hbm_aclk from the same clock (the Jungle Cat does);
+    -- true runs the tiles and all 28 masters on hbm_aclk (aclk_a).  Generics of THIS
+    -- entity for the reason FAST_POP gives below.  Declared ABOVE FAST_POP so that
+    -- FAST_POP stays the last generic: build12_levers_off.patch's hunk matches the
+    -- three lines after it.
+    A_TILED : boolean := false;
+    A_CLK_SPLIT : boolean := false;
+
     -- LEVER AIDLE, forwarded to matvec_int4_desc_axi -> matvec_int4 ->
     -- weight_streamer -> all 27 read ports, and to this engine's own
     -- descriptor read master.
@@ -145,6 +157,11 @@ entity fk33_engine is
     core_clk     : in  std_logic;
     core_aresetn : in  std_logic;
     hbm_aclk     : in  std_logic;
+    -- The ARESET_N of the HBM ports the read masters use: the block design puts
+    -- it on the same net as those ports' AXI_nn_ARESET_N (gen_pcieep.py
+    -- _eng_hbm_lines).  Read only under A_TILED, where it clears the tiled
+    -- array's owed-burst counts (rtl/mv4i_tiled.vhd; a450 Task 8, carry C1).
+    hbm_aresetn  : in  std_logic := '1';
 
     ------------------------------------------------------------------------
     -- THE THERMAL GUARD.  Active high, synchronous to core_clk, reset value
@@ -1354,6 +1371,8 @@ begin
       CHECK_JOB_INDEX => CHECK_JOB_INDEX,
       USE_XEXP_PORT => USE_XEXP_PORT,
       FAST_POP      => FAST_POP,
+      A_TILED       => A_TILED,
+      A_CLK_SPLIT   => A_CLK_SPLIT,
       DUAL_CLK      => true,
       C_S_AXI_DATA_WIDTH => 32,
       C_S_AXI_ADDR_WIDTH => 8
@@ -1363,6 +1382,7 @@ begin
       s_axi_aclk    => core_clk,
       s_axi_aresetn => core_aresetn,
       m_aclk        => hbm_aclk,
+      hbm_aresetn   => hbm_aresetn,
 
       s_axi_awaddr  => s_axi_awaddr(7 downto 0),
       s_axi_awprot  => s_axi_awprot,

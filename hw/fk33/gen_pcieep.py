@@ -1438,6 +1438,8 @@ def _eng_cell_lines():
     a("set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins %s/core_clk]" % ENG_CELL)
     a("set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins %s/core_clk]" % ENG_CELL)
     a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/core_aresetn]" % ENG_CELL)
+    a("set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins %s/hbm_aclk]" % ENG_CELL)
+    a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/hbm_aresetn]" % ENG_CELL)
     a("set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins %s/hbm_aclk]"
       % (":".join("m%02d_axi" % i for i in range(ENG_NMAST)), ENG_CELL))
     a("foreach {pin want} [list %s/core_clk {s_axi:s_axix} %s/hbm_aclk {%s}] {"
@@ -1513,6 +1515,11 @@ def _eng_hbm_lines(hbm_clk="xdma/axi_aclk", hbm_rstn="xdma/axi_aresetn"):
           % (hbm_clk, " " * (w - len(hbm_clk)), port))
         a("connect_bd_net [get_bd_pins %s]%s [get_bd_pins hbm/AXI_%02d_ARESET_N]"
           % (hbm_rstn, " " * (w - len(hbm_rstn)), port))
+    a("# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the")
+    a("# net of the 28 ports' ARESET_N above: a port reset drops every burst in flight,")
+    a("# and the tiled A (A_TILED) clears its owed-burst counts from it, which nothing")
+    a("# else does.  The array on the card today (A_TILED false) does not read it.")
+    a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/hbm_aresetn]" % (hbm_rstn, ENG_CELL))
     return L
 
 

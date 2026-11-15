@@ -1488,7 +1488,8 @@ SLOW_TBS="sim:tb_gdn_block sim:tb_gdn_block_vec sim:tb_gdn_emit_chain
           tb:tb_e2e tb:tb_engine tb:tb_engine_shared tb:tb_engine_dbg
           tb:tb_llama_engine_axi tb:tb_layer tb:tb_layer_fsm tb:tb_matmul
           tb:tb_weights_pkg
-          sim:tb_mv4i_tiled sim:tb_mv4i_tiled_hbmnr sim:tb_matvec_fk33_desc_tiled"
+          sim:tb_mv4i_tiled sim:tb_mv4i_tiled_hbmnr sim:tb_matvec_fk33_desc_tiled
+          sim:tb_mv4i_tiled_hbmrst"
 # NORMALISED to single-space separated, and this is load bearing.  SLOW_TBS is
 # written across several lines for readability, so the separator between the
 # last entry on one line and the first on the next is a NEWLINE.  A membership
@@ -2364,6 +2365,9 @@ tb_timeout() {   # <suite:name> -> seconds for its `ghdl -r`; never below --time
     sim:tb_mv4i_tiled)               [ "$t" -lt 3600 ] && t=3600 ;;
     # the same bench with the memory models not reset with A (a450 Task 7b fix round 1)
     sim:tb_mv4i_tiled_hbmnr)         [ "$t" -lt 3600 ] && t=3600 ;;
+    # jobs 14-15 only, with an HBM port reset (a450 Task 8, carry C1): MEASURED 2.5 min
+    # quiet including analysis; the margin is for a loaded gate
+    sim:tb_mv4i_tiled_hbmrst)        [ "$t" -lt 1800 ] && t=1800 ;;
     sim:tb_matvec_fk33_desc_tiled)   [ "$t" -lt 7200 ] && t=7200 ;;
   esac
   echo "$t"
@@ -2470,6 +2474,8 @@ tb_args() {   # extra `ghdl -r` arguments for $1
     sim:tb_matvec_fk33_desc) echo "--stop-time=200ms --stop-delta=1000000" ;;
     sim:tb_matvec_fk33_desc_dual) echo "--stop-time=200ms --stop-delta=1000000" ;;
     sim:tb_matvec_fk33_desc_xexp) echo "--stop-time=200ms --stop-delta=1000000" ;;
+    # The a450 tiled A behind the same descriptor plane (plan 2026-11-12 Task 8).
+    sim:tb_matvec_fk33_desc_tiled) echo "--stop-time=200ms --stop-delta=1000000" ;;
     # sim/run_matvec.sh stages 4 and 4b, first row of each sweep.
     sim:tb_act_mem)          echo "-gELEMS=544 -gBLK=32 -gLANES=4 --stop-time=500ms" ;;
     sim:tb_axi_rd_port)      echo "-gMAXOUT=2 -gDEPTH=64 -gSTALL=3 --stop-time=200ms" ;;
@@ -2733,7 +2739,8 @@ tb_trace_args() {   # <suite:name> -> `ref/matvec_int4 --trace <file>` argv
 tb_prereq() {   # <suite:name> -> a path that must be readable, or the row skips
   case "$1" in
     sim:tb_matvec_fk33|sim:tb_matvec_fk33_desc|\
-    sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp)
+    sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp|\
+    sim:tb_matvec_fk33_desc_tiled)
       echo "${MV4I_FK33_FILE:-/mnt/storage/llama-models/qwen35-9b-mv4i/blk.11.attn_k.weight.mv4i}" ;;
     *) : ;;
   esac
@@ -2755,7 +2762,8 @@ tb_pass_marker() {
     sim:tb_matvec_fk33)  echo 'bit-exact with ref/matvec_int4.c from the real .mv4i bytes up' ;;
     # Printed only after all 22 cases have been judged and the failure count
     # asserted to zero, so a truncated run is a NOVERDICT rather than a pass.
-    sim:tb_matvec_fk33_desc|sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp)
+    sim:tb_matvec_fk33_desc|sim:tb_matvec_fk33_desc_dual|sim:tb_matvec_fk33_desc_xexp|\
+    sim:tb_matvec_fk33_desc_tiled)
                          echo 'every checked mutation is refused' ;;
     sim:tb_hbm_tg)       echo 'recovers a known bandwidth at every port count' ;;
     # The tb/ suite states its verdict as "PASS:<unit>" almost everywhere and

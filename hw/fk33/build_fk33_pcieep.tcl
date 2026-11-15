@@ -1103,6 +1103,8 @@ puts "FK33_XEXP_PORT $_xe"
 set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins eng/core_clk]
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/core_aresetn]
+set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins eng/hbm_aclk]
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/hbm_aresetn]
 set_property CONFIG.ASSOCIATED_BUSIF {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi} [get_bd_pins eng/hbm_aclk]
 foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi}] {
     set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]
@@ -1242,6 +1244,11 @@ connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_28_ARESET_N]
 connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]
 connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
+# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the
+# net of the 28 ports' ARESET_N above: a port reset drops every burst in flight,
+# and the tiled A (A_TILED) clears its owed-burst counts from it, which nothing
+# else does.  The array on the card today (A_TILED false) does not read it.
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins eng/hbm_aresetn]
 # ---- end subsystem A ------------------------------------------------------
 
 # THE CORE CLOCK THIS BUILD ASKED FOR (FK33_ENG_CORE_MHZ).  Printed

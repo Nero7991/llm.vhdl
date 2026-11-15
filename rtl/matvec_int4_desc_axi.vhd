@@ -217,6 +217,21 @@ entity matvec_int4_desc_axi is
     -- (docs/2026-09-20_d-side-vector-traffic.md section 4.1).  true removes
     -- the bubble.  Values and their order are unchanged either way.
     FAST_POP    : boolean := false;
+    -- THE a450 SUBSYSTEM A (docs/superpowers/specs/2026-11-12-a450-per-port-tiles-
+    -- design.md).  false (the default) builds rtl/matvec_int4.vhd, the design on the
+    -- card.  true builds rtl/mv4i_tiled.vhd in its place: the same values bit for bit
+    -- (sim/tb_mv4i_tiled.vhd), the same ports, every register here unchanged, except
+    -- that STARVED (0x3C) reads 0 (the tiled array has no single weight-word accept to
+    -- watch) and BEATS (0x38) grows by nb per row-tile instead of by 1 per word: the
+    -- same tiles * nb at done.  The per-port UTIL counters are unaffected.
+    -- Under A_TILED, CB_STYLE is not read (every tile decodes through its own per-lane
+    -- LUTRAM) and the A ports always run at one beat per cycle; FAST_POP still sets this
+    -- file's own descriptor read master.
+    A_TILED     : boolean := false;
+    -- A_TILED only.  false: the tiles run on s_axi_aclk; m_aclk must then carry the
+    -- same clock (the Jungle Cat card ties hbm_aclk to clk_core).  true: the tiles and
+    -- the A masters run on m_aclk (aclk_a, 450 MHz).
+    A_CLK_SPLIT : boolean := false;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -225,6 +240,11 @@ entity matvec_int4_desc_axi is
     s_axi_aresetn : in  std_logic;
     -- HBM AXI clock.  Ignored when DUAL_CLK = false.
     m_aclk        : in  std_logic := '0';
+    -- THE HBM AXI PORT RESET (A_TILED only; a450 Task 8, carry C1): the ARESET_N of the
+    -- HBM ports the m_* masters read, active low, asynchronous.  It clears the tiled
+    -- array's owed-burst counts, which nothing else clears; rtl/mv4i_tiled.vhd's header
+    -- states the precondition.  Default '1'.  Not read when A_TILED = false.
+    hbm_aresetn   : in  std_logic := '1';
 
     -- The A-job index the SEQUENCER believes it is fetching, compared against
     -- the descriptor's own claim in v2 extension word 3.  Defaulted so that
@@ -611,6 +631,59 @@ architecture rtl of matvec_int4_desc_axi is
   signal base_bad  : std_logic;
   signal base_code : std_logic_vector(3 downto 0);
   signal base_info : std_logic_vector(15 downto 0);
+  -- rtl/mv4i_tiled.vhd as a COMPONENT, not `entity work.`: an entity reference makes
+  -- every analysis of this file need mv4i_tiled's twelve files first, and the scripts
+  -- that list this file's closure by hand (sim/mutate_mv4i_desc*.sh,
+  -- tools/verify_mv4i_desc.py, the OOC Tcl) would all break.  A component is bound at
+  -- elaboration, and only when A_TILED builds the branch.
+  component mv4i_tiled is
+    generic(
+      BLK, ROWS_IF, NPORTS_W, NPORTS_S, AXI_DW, ADDR_W, MAXCOLS, MAXROWS_BFP,
+      FIFO_DEPTH, MAXB, MAXOUT : positive;
+      A_CLK_SPLIT : boolean
+    );
+    port(
+      clk, rst  : in  std_logic;
+      aclk      : in  std_logic;
+      hbm_aresetn : in std_logic;
+      start     : in  std_logic;
+      n_rows, n_cols, out_shift, w_exp, x_exp : in std_logic_vector(31 downto 0);
+      out_mode  : in  std_logic_vector(1 downto 0);
+      w_base    : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
+      w_beats   : in  std_logic_vector(31 downto 0);
+      s_base    : in  std_logic_vector(NPORTS_S*ADDR_W-1 downto 0);
+      s_beats   : in  std_logic_vector(31 downto 0);
+      cb_we     : in  std_logic;
+      cb_addr   : in  std_logic_vector(3 downto 0);
+      cb_data   : in  std_logic_vector(7 downto 0);
+      x_we      : in  std_logic;
+      x_waddr   : in  std_logic_vector(15 downto 0);
+      x_wdata   : in  std_logic_vector(15 downto 0);
+      m_arvalid : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_arready : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_araddr  : out std_logic_vector((NPORTS_W+NPORTS_S)*ADDR_W-1 downto 0);
+      m_arlen   : out std_logic_vector((NPORTS_W+NPORTS_S)*8-1 downto 0);
+      m_arsize  : out std_logic_vector((NPORTS_W+NPORTS_S)*3-1 downto 0);
+      m_arburst : out std_logic_vector((NPORTS_W+NPORTS_S)*2-1 downto 0);
+      m_rvalid  : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_rready  : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_rdata   : in  std_logic_vector((NPORTS_W+NPORTS_S)*AXI_DW-1 downto 0);
+      m_rlast   : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      y_we      : out std_logic;
+      y_addr    : out std_logic_vector(15 downto 0);
+      y_data    : out std_logic_vector(ROWS_IF*64-1 downto 0);
+      y_mask    : out std_logic_vector(ROWS_IF-1 downto 0);
+      y_exp     : out std_logic_vector(31 downto 0);
+      done      : out std_logic;
+      err       : out std_logic;
+      sat_event : out std_logic;
+      dbg_rtile : out std_logic;
+      dbg_words : out std_logic_vector(31 downto 0)
+    );
+  end component;
+  -- what BEATS adds per dbg_wbeat: 1 weight word from matvec_int4, nb from mv4i_tiled
+  signal dbg_wn : unsigned(31 downto 0);
+  signal dbg_words_t : std_logic_vector(31 downto 0);
 begin
   -- ------------------------------------------------------- generic contract
   assert ADDR_W >= 32 and ADDR_W <= 64
@@ -718,30 +791,62 @@ begin
   end process;
 
   -- ----------------------------------------------------------------- core
-  dut : entity work.matvec_int4
-    generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
-                NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
-                FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
-                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => FAST_POP)
-    port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
-             start => core_start,
-             n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
-             w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
-             w_base => w_base, w_beats => v_wbeats,
-             s_base => s_base, s_beats => v_sbeats,
-             cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
-             x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
-             m_arvalid => m_arvalid, m_arready => m_arready,
-             m_araddr => m_araddr, m_arlen => m_arlen,
-             m_arsize => m_arsize, m_arburst => m_arburst,
-             m_rvalid => m_rvalid, m_rready => m_rready_i,
-             m_rdata => m_rdata, m_rlast => m_rlast,
-             y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
-             y_mask => y_mask_i, y_exp => v_yexp,
-             done => core_done, err => core_err, sat_event => core_sat,
-             dbg_wbeat => dbg_wbeat, dbg_wstarve => dbg_wstarve);
+  g_core : if not A_TILED generate
+    dbg_wn <= to_unsigned(1, 32);
+    dut : entity work.matvec_int4
+      generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
+                  NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                  MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
+                  FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
+                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => FAST_POP)
+      port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
+               start => core_start,
+               n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
+               w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
+               w_base => w_base, w_beats => v_wbeats,
+               s_base => s_base, s_beats => v_sbeats,
+               cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+               x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+               m_arvalid => m_arvalid, m_arready => m_arready,
+               m_araddr => m_araddr, m_arlen => m_arlen,
+               m_arsize => m_arsize, m_arburst => m_arburst,
+               m_rvalid => m_rvalid, m_rready => m_rready_i,
+               m_rdata => m_rdata, m_rlast => m_rlast,
+               y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
+               y_mask => y_mask_i, y_exp => v_yexp,
+               done => core_done, err => core_err, sat_event => core_sat,
+               dbg_wbeat => dbg_wbeat, dbg_wstarve => dbg_wstarve);
+  end generate;
+
+  g_tiled : if A_TILED generate
+    dut : mv4i_tiled
+      generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
+                  NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                  MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
+                  FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
+                  A_CLK_SPLIT => A_CLK_SPLIT)
+      port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
+               hbm_aresetn => hbm_aresetn,
+               start => core_start,
+               n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
+               w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
+               w_base => w_base, w_beats => v_wbeats,
+               s_base => s_base, s_beats => v_sbeats,
+               cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+               x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+               m_arvalid => m_arvalid, m_arready => m_arready,
+               m_araddr => m_araddr, m_arlen => m_arlen,
+               m_arsize => m_arsize, m_arburst => m_arburst,
+               m_rvalid => m_rvalid, m_rready => m_rready_i,
+               m_rdata => m_rdata, m_rlast => m_rlast,
+               y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
+               y_mask => y_mask_i, y_exp => v_yexp,
+               done => core_done, err => core_err, sat_event => core_sat,
+               dbg_rtile => dbg_wbeat, dbg_words => dbg_words_t);
+    dbg_wn      <= unsigned(dbg_words_t);
+    dbg_wstarve <= '0';
+  end generate;
 
   y_we    <= y_we_i;
   y_addr  <= y_addr_i;
@@ -1052,7 +1157,7 @@ begin
 
           when S_WAIT =>
             c_cycles <= c_cycles + 1;
-            if dbg_wbeat   = '1' then c_beats  <= c_beats + 1;  end if;
+            if dbg_wbeat   = '1' then c_beats  <= c_beats + dbg_wn; end if;
             if dbg_wstarve = '1' then c_starve <= c_starve + 1; end if;
             if core_err = '1' then
               err_code <= EC_CORE;

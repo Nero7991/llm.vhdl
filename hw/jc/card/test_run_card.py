@@ -551,3 +551,33 @@ def test_build_card_congestion_strategy_directives():
                  "route_design -directive AggressiveExplore"):
         assert line in t, line
     assert re.search(r"if \{\$impl eq \"congestion\" && \$post_wns < 0\} \{\s*phys_opt_design -directive AggressiveExplore", t)
+
+
+def test_build_card_lists_the_tiled_a_sources_and_its_cdc():
+    """a450 plan Task 8: every file of the tiled A closure is in ENG_SRCS (else the
+    A_TILED=1 elaboration finds no mv4i_tiled), and the split-on CDC is sourced."""
+    with open(os.path.join(HERE, "build_card.tcl")) as f:
+        t = f.read()
+    m = re.search(r"^set ENG_SRCS \{(.*?)^\}", t, re.M | re.S)
+    srcs = m.group(1).split()
+    want = ["rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd",
+            "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd", "rtl/mv_xbcast.vhd",
+            "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_rlink.vhd",
+            "rtl/mv_rchain.vhd", "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd",
+            "rtl/mv_afast.vhd", "rtl/mv_back.vhd", "rtl/mv4i_tcore.vhd",
+            "rtl/mv4i_tiled.vhd"]
+    for f in want:
+        assert f in srcs, f
+    assert srcs.index("rtl/mv4i_tiled.vhd") < srcs.index("rtl/matvec_int4_desc_axi.vhd")
+    assert "async_fifo.vhd" in t
+    assert re.search(r"^\s*source .*a450_cdc\.tcl", t, re.M)
+    assert "JCCARD_A450_SPLIT" in t
+
+
+def test_dry_run_echoes_the_a450_generator_inputs(tmp_path):
+    r = subprocess.run(["bash", RUN_CARD, "--dry-run", "--allow-scratch-root", str(tmp_path / "r")],
+                       cwd=REPO, capture_output=True, text=True,
+                       env=dict(os.environ, JC_A_TILED="1", JC_A_CLK_SPLIT="1"))
+    assert re.search(r"^JCCARD_A_ENV JC_A_TILED=1 JC_A_CLK_SPLIT=1$", r.stdout, re.M), r.stdout
+    t = _run_card_text()
+    assert "jc_a_tiled=" in t and "jc_a_clk_split=" in t

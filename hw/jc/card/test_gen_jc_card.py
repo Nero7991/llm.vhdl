@@ -627,3 +627,80 @@ def test_gtg_mmcm_has_a_site_and_a_dedicated_route():
                      r"\{NAME =~ \*gtgclk/\*u_mmcm\}\]$", xdc, re.M)
     assert re.search(r"^set_property CLOCK_DEDICATED_ROUTE BACKBONE \[get_nets -of_objects \[get_pins -hier "
                      r"-filter \{NAME =~ \*gtgclk/\*u_mmcm/CLKIN1\}\]\]$", xdc, re.M)
+
+
+# ---- A_TILED / A_CLK_SPLIT (a450 plan, Tasks 8 and 9) ---------------------------------
+_SPLIT = {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"}
+
+
+def _render(env):
+    return "\n".join(_code_lines(G.render_tcl(P, G.CLK_CORE_DEFAULT, env)))
+
+
+def test_a_flags_default_off_and_refusals():
+    assert not G.a_tiled({}) and not G.a_split({})
+    for bad in ("2", "yes", "true"):
+        with pytest.raises(SystemExit):
+            G.a_tiled({"JC_A_TILED": bad})
+    with pytest.raises(SystemExit):
+        G.a_split({"JC_A_CLK_SPLIT": "1"})         # split without tiled
+    names = {n for _, n, _ in G.stamp_inputs({})}
+    assert {"JC_A_TILED", "JC_A_CLK_SPLIT"} <= names
+
+
+def test_tiled_split_off_renders_today_s_clocking():
+    t = _render({"JC_A_TILED": "1"})
+    assert "clk_wiz_a" not in t and "axi_clock_converter" not in t
+    assert re.search(r"CONFIG\.A_TILED \{true\}", t)
+    assert re.search(r"CONFIG\.A_CLK_SPLIT \{false\}", t)
+
+
+def test_split_on_puts_hbm_and_engine_ports_on_aclk_a():
+    t = _render(_SPLIT)
+    assert "clk_wiz_a" in t and "aclk_reset" in t
+    assert "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {450.000}" in t
+    assert "CONFIG.USER_AXI_INPUT_CLK_FREQ {450}" in t
+    assert "CONFIG.USER_AXI_INPUT_CLK1_FREQ {450}" in t
+    assert re.search(r"CONFIG\.A_CLK_SPLIT \{true\}", t)
+    nets = _nets(t)
+    hbm_clk = _net_of(nets, "hbm/AXI_00_ACLK")
+    assert G.ACLK_A in hbm_clk, "SAXI_00 is not on aclk_a"
+    for s in list(range(1, 16)) + list(range(17, 32)):
+        assert G.ACLK_A in _net_of(nets, "hbm/AXI_%02d_ACLK" % s), s
+    assert "%s/hbm_aclk" % P.ENG_CELL in _net_of(nets, G.ACLK_A)
+
+
+def test_split_on_crosses_read_write_masters_with_converters():
+    t = _render(_SPLIT)
+    n = len(re.findall(r"create_bd_cell[^\n]*axi_clock_converter", t))
+    assert n == 3, "loader + two grant masters need a converter each, got %d" % n
+    assert re.search(r"CONFIG\.NUM_CLKS \{2\}", t), "SAXI_16 smartconnect is not two-clock"
+
+
+def test_split_off_default_render_is_unchanged_by_the_flags():
+    assert _render({}) == _render({"JC_A_TILED": "0", "JC_A_CLK_SPLIT": "0"})
+
+
+# ---- the HBM port reset into A (a450 Task 8, carry C1) --------------------------------
+# rtl/mv_rdfsm.vhd's never-reset `owed` count is cleared only by a synchronised copy of
+# the HBM AXI port reset; the engine's hbm_aresetn must be on the SAME net as the
+# ARESET_N of every HBM port its 28 masters use, in either clocking.
+def test_engine_hbm_aresetn_is_the_engine_ports_areset():
+    for env in ({}, {"JC_A_TILED": "1"}, _SPLIT):
+        nets = _nets(_render(env))
+        net = _net_of(nets, "%s/hbm_aresetn" % P.ENG_CELL)
+        for port in P.ENG_PORT_MAP:
+            assert "hbm/AXI_%02d_ARESET_N" % port in net, (env, port)
+
+
+def test_split_on_hbm_switch_clock_ports_are_on_aclk_a():
+    """Carry C3 (Task 7 finding): the HBM switch clock is taken from the ports named in
+    USER_CLK_SEL_LIST0/1 (AXI_00, AXI_16).  With the split on, both must be on aclk_a,
+    the clock every engine port runs on, not on clk_core."""
+    t = _render(_SPLIT)
+    assert re.search(r"CONFIG\.USER_CLK_SEL_LIST0 \{AXI_00_ACLK\} CONFIG\.USER_CLK_SEL_LIST1 "
+                     r"\{AXI_16_ACLK\}", t)
+    nets = _nets(t)
+    for s in (0, 16):
+        assert G.ACLK_A in _net_of(nets, "hbm/AXI_%02d_ACLK" % s), s
+        assert G.ACLK_A_RSTN in _net_of(nets, "hbm/AXI_%02d_ARESET_N" % s), s

@@ -156,10 +156,17 @@ update_compile_order -fileset sources_1
 # -- subsystem A (gen_pcieep.ENG_SRCS, the engine's own RTL; VHDL-93 default, as the
 #    FK33 build leaves them). rtl/a_util_ctr.vhd is Task 1's addition: it must be
 #    here, or the engine elaborates against stale port counts.
+# The a450 tiled A (plan 2026-11-12, Task 8): matvec_int4_desc_axi instantiates
+# mv4i_tiled as a component under A_TILED, so its files are listed here; with A_TILED
+# false Vivado never elaborates them.
 set ENG_SRCS {
   rtl/mv4i_arith_pkg.vhd rtl/matvec_int4_desc_pkg.vhd rtl/stream_fifo.vhd
   rtl/axi_rd_fsm.vhd rtl/axi_rd_port.vhd rtl/weight_streamer.vhd
   rtl/act_mem_striped.vhd rtl/matvec_core.vhd rtl/matvec_int4.vhd
+  rtl/mv_rdfsm.vhd rtl/mv_rdport.vhd
+  rtl/mv_lfifo.vhd rtl/mv_tile.vhd rtl/mv_xbcast.vhd rtl/act_mem_dp.vhd rtl/mv_dist.vhd
+  rtl/mv_rlink.vhd rtl/mv_rchain.vhd rtl/mv_rcross.vhd rtl/mv_tsync.vhd rtl/mv_afast.vhd
+  rtl/mv_back.vhd rtl/mv4i_tcore.vhd rtl/mv4i_tiled.vhd
   rtl/a_util_ctr.vhd rtl/matvec_int4_desc_axi.vhd
 }
 foreach f $ENG_SRCS { add_files -norecurse $repo/$f }
@@ -446,6 +453,17 @@ if {[catch {
   set lk_bad [jlk_cdc_audit $CORE_TOK $aclk_clk $clk_u $clk_i]
   puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
   if {$lk_bad != 0} { error "link cdc audit: $lk_bad unexpected crossing(s)" }
+
+  # the a450 split (plan 2026-11-12 Task 9): only when the BD carries aclk_a's MMCM.
+  # Every clk_core <-> aclk_a path is bounded datapath-only (hw/jc/a450/a450_cdc.tcl).
+  if {[llength [get_cells -quiet -hierarchical -filter {NAME =~ "*/clk_wiz_a/*" && IS_PRIMITIVE == 1 && REF_NAME =~ "MMCM*"}]] > 0} {
+    source $repo/hw/jc/a450/a450_cdc.tcl
+    a450_cdc "*/eng/inst/eng/g_tiled.dut/g_split.u/back/go_r_reg/C" \
+             "*/eng/inst/eng/g_tiled.dut/g_split.u/fast/dist/s_start_reg/C"
+    puts "JCCARD_A450_SPLIT on"
+  } else {
+    puts "JCCARD_A450_SPLIT off"
+  }
 
   # the GTG MMCM's site and dedicated route (jc_card.xdc; finding 3): read back, because a
   # filter that matches nothing in an XDC is a CRITICAL WARNING, not a stop.

@@ -162,7 +162,14 @@ entity tb_matvec_fk33_desc is
     -- this false on both and prints the marker itself only once BOTH have
     -- finished; otherwise one arm completing while the other hung would put
     -- the marker in the log and the row would pass on half a run.
-    MARK    : boolean := true
+    MARK    : boolean := true;
+    -- THE a450 SUBSYSTEM A, forwarded as matvec_int4_desc_axi's A_TILED / A_CLK_SPLIT.
+    -- Defaults false: every existing row of this architecture is unchanged.
+    -- sim/tb_matvec_fk33_desc_tiled.vhd sets both (with DUAL, so the tiles run on mclk):
+    -- the same 22 cases, the same element-exact comparison with ref/matvec_int4.c, the
+    -- same register and UTIL checks, through the tiled array.
+    TILED   : boolean := false;
+    SPLIT   : boolean := false
   );
   port(
     -- Unconnected when this entity is the simulation top, which is how
@@ -654,6 +661,7 @@ begin
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
                 USE_XEXP_PORT => XEXP_PORT,
                 DUAL_CLK => DUAL, CB_STYLE => CB_STYLE, FAST_POP => FASTP,
+                A_TILED => TILED, A_CLK_SPLIT => SPLIT,
                 C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => mclk,
