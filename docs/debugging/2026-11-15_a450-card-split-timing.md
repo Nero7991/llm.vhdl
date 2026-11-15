@@ -385,3 +385,26 @@ port moved off a clk edge`; the mutant `U_ON := true` reports `UTIL_SEL (not bui
 
 - The card itself: C's attention array and the other SLR0 tenants beside the floorplanned A.
 - Whether fix 3 (C into SLR1) is needed: no measurement either way.
+
+### CORRECTION 2026-11-15 (Task 9b fix round 1, review m4)
+
+WITHDRAWN: "the unfloorplanned card's typical tile was 0.11 to 0.33" (in the Measured and
+REJECTED entry of the section above).  MEASURED from diag9 `tile_regions.txt` with the same
+per-site clock-region share a450_pblocks_placed computes: jccard_a450s1b's tiles were 0.022 to
+1.000 in their port's column, 19 of 24 below 0.80, and 5 (tiles 0, 1, 3, 5, 9: 0.850, 0.899,
+0.896, 0.950, 1.000) above it.  So the 0.80 per-tile threshold does not separate a floorplanned
+tile from an unfloorplanned one near the HBM's left end; the build-level verdict (any failing
+tile refuses) does, and refuses that card on 19 tiles.  The share is a column test only (no Y
+distance).  Pinned by `hw/jc/a450/test_a450.py::test_placed_share_refuses_the_unfloorplanned_card_and_accepts_the_closing_runs`
+on `hw/jc/a450/testdata/placed_shares.txt` (jccard_a450s1b refused 19/24, r6 and 9b_r2 accepted
+24/24); a threshold-0.0 mutant accepts the card (RED).
+
+Also (review findings 2 and 6, recorded, not changed):
+- Fix 5 is covered AROUND d_cdc, not through it: GHDL runs the fetch single-clock against an
+  ideal slave on clk; latency, backpressure through the converter and the reset window
+  (aclk_reset asserts before core_reset, so d_cdc's m side is in reset while dfetch can still
+  issue) are covered only by Xilinx's IP and the routed timing.  OPEN.  d_cdc's two resets are
+  now pinned by test (`test_split_on_d_cdc_resets_are_the_engine_and_hbm_port_resets`, five
+  mutants refused): s side on eng/core_aresetn's net, m side on the HBM ports' ARESET_N net.
+- `core_reset_fanout_ar1` narrows nothing on the card: a450's `rst_ar1` accepts any source into
+  ar1/D; the backstop is a450_cdc's fan-in check (every rst source on clk_core).

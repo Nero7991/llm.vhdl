@@ -95,6 +95,16 @@ def test_util_reports_counters_not_built():
     assert fb.writes == []
 
 
+def test_util_clear_on_a_card_without_counters_writes_nothing():
+    """Task 9b fix round 1 (m3): util-clear on a split-on card says the counters are not
+    built, and writes no UTIL_CLR (a write that clears nothing must not print CLEARED)."""
+    fb = FakeBroker({**ENG, 0x12040: 0x80000000}, {})
+    p = tool("util-clear", "--sock", fb.path, "--die", "B")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "JCUTIL_NONE die B" in p.stdout and "JCUTIL_CLEARED" not in p.stdout
+    assert fb.writes == []
+
+
 def test_util_refuses_a_dead_engine():
     fb = FakeBroker({**SEAM, 0x12014: 0xFFFFFFFF}, {})
     p = tool("util", "--sock", fb.path, "--die", "A")

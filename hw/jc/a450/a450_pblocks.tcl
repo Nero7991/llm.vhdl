@@ -184,10 +184,15 @@ proc a450_pb_regions {c} {
 # run that closed 450 MHz): its pblocks read back IS_SOFT 1, and after phys_opt and route
 # 19 of its 24 tiles had sites in the neighbouring column (this proc on that checkpoint:
 # in_column 0.906 to 1.000, minimum tile 6; the cells outside are SRL16E and FDRE that
-# phys_opt moved), so "every primitive inside" would refuse the placement that met timing.  The failure this guards
-# against is the unfloorplanned card (jccard_a450s1b: a typical tile 11% to 33% in its
-# port's column, smeared over up to 13 regions).  Prints A450PB_PLACED lines (with each
-# item's in-column share); returns {failures npblocks ntiles_ok nip_ok min_share}.
+# phys_opt moved), so "every primitive inside" would refuse the placement that met timing.
+# The failure this guards against is the unfloorplanned card: jccard_a450s1b's tiles were
+# 0.022 to 1.000 in their port's column (diag9 tile_regions.txt, 19 of 24 below 0.80).  Per
+# tile the threshold does NOT separate floorplanned from unfloorplanned (5 of that card's
+# tiles, near the HBM's left end, pass); the BUILD-level verdict (any failing item refuses)
+# does.  The share is a clock-region-column test only: it says nothing about Y distance
+# inside the column.  test_a450.py pins all three runs (testdata/placed_shares.txt).
+# Prints A450PB_PLACED lines (with each item's in-column share); returns
+# {failures npblocks ntiles_ok nip_ok min_share}.
 set A450PB_MIN_IN 0.80
 proc a450_pblocks_placed {} {
   set bad {}

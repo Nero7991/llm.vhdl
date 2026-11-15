@@ -338,3 +338,47 @@ puts "C [hit {%s} {%s}]"
     r = subprocess.run(["tclsh"], input=script, capture_output=True, text=True)
     assert re.findall(r"^([ABC]) (\S+)$", r.stdout, re.M) == [("A", "hbm_sc_node_fifo"), ("B", "none"),
                                                               ("C", "none")], r.stdout + r.stderr
+
+
+# ---- Task 9b fix round 1 (review m5): teeth for the placed-floorplan share -------------
+SHARES = os.path.join(HERE, "testdata", "placed_shares.txt")
+
+
+def _placed(run):
+    """a450_pblocks_placed itself (a450_pblocks.tcl, sourced under tclsh) on one run's
+    per-tile region counts, with the Vivado queries stubbed: get_cells answers the exact
+    NAME it is asked for, a450_pb_regions answers from the fixture."""
+    script = """
+source %s
+proc get_pblocks {args} { return {} }
+proc get_cells {args} { regexp {NAME == "([^"]*)"} [lindex $args end] -> n; return [list $n] }
+set ::H [dict create]
+set ::a450_pb_expect {}
+set fh [open %s]
+foreach l [split [read $fh] "\\n"] {
+  if {[regexp {^%s (\\d+) (\\d+) \\{(.*)\\}$} $l -> p x h]} {
+    dict set ::H tile$p $h
+    lappend ::a450_pb_expect [list $p 0 {} {} tile$p $x]
+  }
+}
+close $fh
+proc a450_pb_regions {c} { set h [dict get $::H $c]; set n 0; dict for {r k} $h { incr n $k }; return [list $h $n 0] }
+lassign [a450_pblocks_placed] bad npb nt ni smin
+puts "RESULT [llength $::a450_pb_expect] bad [llength $bad] ok $nt min [format %%.3f $smin]"
+""" % (os.path.join(HERE, "a450_pblocks.tcl"), SHARES, run)
+    r = subprocess.run(["tclsh"], input=script, capture_output=True, text=True)
+    m = re.search(r"^RESULT (\d+) bad (\d+) ok (\d+) min (\S+)$", r.stdout, re.M)
+    assert m, r.stdout + r.stderr
+    return tuple(int(g) for g in m.groups()[:3]) + (float(m.group(4)),)
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_placed_share_refuses_the_unfloorplanned_card_and_accepts_the_closing_runs():
+    """MEASURED fixtures: jccard_a450s1b (no pblocks, AltSpreadLogic_high) has 19 of 24 tiles
+    under 0.80 (min 0.022) and is refused; a450_hbm_7b_r6 (closed 450 MHz) and
+    a450_hbm_9b_r2 (closed with the card's IP) pass all 24 (min 0.906, 0.910).  Per tile the
+    threshold does not separate the two (5 unfloorplanned tiles pass); the build-level verdict
+    (any failing tile refuses) does."""
+    assert _placed("jccard_a450s1b") == (24, 19, 5, 0.022)
+    assert _placed("r6") == (24, 0, 24, 0.906)
+    assert _placed("9b_r2") == (24, 0, 24, 0.910)

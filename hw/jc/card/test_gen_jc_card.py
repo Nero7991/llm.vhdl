@@ -852,3 +852,47 @@ def test_core_reset_comment_matches_each_render():
     on = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
     assert tied not in on
     assert "its ext_reset_in is aclk_reset's" in on
+
+
+# ---- a450 Task 9b fix round 1 (review I1): d_cdc's two resets -------------------------
+# A's descriptor fetch reaches SAXI_29 through d_cdc, so the STRAY-NEXTJOB guard's view of
+# that port (its ARESET_N) no longer covers the converter.  Pin both converter resets: the
+# s side (clk_core) on the engine's own core reset net, the m side (aclk_a) on the HBM
+# ports' ARESET_N net (the same net as eng/hbm_aresetn).
+def _d_cdc_reset_problems(text):
+    nets = _nets("\n".join(_code_lines(text)))
+    bad = []
+    s = _net_of(nets, "d_cdc/s_axi_aresetn")
+    m = _net_of(nets, "d_cdc/m_axi_aresetn")
+    if "%s/core_aresetn" % P.ENG_CELL not in s:
+        bad.append("d_cdc/s_axi_aresetn is not on eng/core_aresetn's net: %s" % sorted(s))
+    for ep in ("hbm/AXI_29_ARESET_N", "%s/hbm_aresetn" % P.ENG_CELL):
+        if ep not in m:
+            bad.append("d_cdc/m_axi_aresetn is not on %s's net: %s" % (ep, sorted(m)))
+    return bad
+
+
+_DCDC_S = "connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins d_cdc/s_axi_aresetn]"
+_DCDC_M = "connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins d_cdc/m_axi_aresetn]"
+_DCDC_MUTANTS = [
+    ("swap", lambda t: t.replace(_DCDC_S, "@S@").replace(_DCDC_M, _DCDC_S.replace("d_cdc/s_", "d_cdc/m_"))
+                        .replace("@S@", _DCDC_M.replace("d_cdc/m_", "d_cdc/s_"))),
+    ("s_reroot_one", lambda t: t.replace(_DCDC_S, "connect_bd_net [get_bd_pins one/dout] [get_bd_pins d_cdc/s_axi_aresetn]")),
+    ("s_reroot_aclk", lambda t: t.replace(_DCDC_S, _DCDC_S.replace("core_reset/", "aclk_reset/"))),
+    ("m_reroot_core", lambda t: t.replace(_DCDC_M, _DCDC_M.replace("aclk_reset/", "core_reset/"))),
+    ("m_reroot_one", lambda t: t.replace(_DCDC_M, "connect_bd_net [get_bd_pins one/dout] [get_bd_pins d_cdc/m_axi_aresetn]")),
+]
+
+
+def test_split_on_d_cdc_resets_are_the_engine_and_hbm_port_resets():
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert t.count(_DCDC_S) == 1 and t.count(_DCDC_M) == 1, "anchor moved: the mutants would test nothing"
+    assert _d_cdc_reset_problems(t) == []
+
+
+@pytest.mark.parametrize("name,mut", _DCDC_MUTANTS, ids=[m[0] for m in _DCDC_MUTANTS])
+def test_d_cdc_reset_check_refuses_mutants(name, mut):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    m = mut(t)
+    assert m != t, name
+    assert _d_cdc_reset_problems(m), name

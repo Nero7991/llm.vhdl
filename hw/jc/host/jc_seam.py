@@ -31,7 +31,8 @@ broker serves ONE client at a time, so run this only while no run_prompt holds t
               reading no counter.  The cadence of such a card is measured from the seam's
               cycles only (port_beats is not available on it).
   util-clear  writes UTIL_CLR (0x48): zeroes every counter. Counters ACCUMULATE across
-              jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).
+              jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).  On a
+              split-on card (UTIL_SEL[31] set) it writes nothing and prints JCUTIL_NONE.
 
 Drives the board through the broker: the main session or Oren runs it, never a subagent.
 """
@@ -195,6 +196,11 @@ def cmd_util(a):
 def cmd_util_clear(a):
     b = Broker(a.sock)
     try:
+        if b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE:
+            # a split-on card: UTIL_CLR would be a write that clears nothing
+            print("JCUTIL_NONE die %s: the utilisation counters are not built on this card "
+                  "(UTIL_SEL[31]); nothing to clear, nothing written" % a.die)
+            return 0
         b.wr32(a.die, ENG_UTIL_CLR, 1)
     finally:
         b.close()
