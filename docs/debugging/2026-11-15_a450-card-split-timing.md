@@ -271,3 +271,117 @@ routes in about 1/3 of a card build.
   clock converter in front of it.
 - The utilisation counters' proper split-on design (per-tile strobe, pipelined carry): not
   designed or measured here.
+
+## 2026-11-15 (Task 9b): fixes 1-7 implemented; the a450 gate with the card's aclk_a IP closes at 450 MHz
+
+### The question
+
+Task 9b brief: make the split-on card closable at 450 MHz with fixes 1-7 above (split off and
+the FK33 renders byte-identical), and prove it first on the a450 gate extended with the
+aclk_a-side IP the card has under the split (the four clock converters, register slices, the
+HBM smartconnect hbm_sc, the port-29 converter), on the card's HBM ports, routed with the
+explore directives.  Expected: routed aclk_a WNS >= 0, 0 failing endpoints, CDC list clean.
+
+### The answer
+
+MEASURED, run `a450_hbm_9b_r2` (HEAD b9ba8f30, xcvu35p-fsvh2104-2L-e, Vivado 2023.2,
+explore): `A450RUN_PASS 0.028`, `A450HBM_FAILING_ACLK 0`, WNS_CORE +0.253, WHS +0.009,
+report_cdc 1553 flagged rows, all on the allowed list.  Every converter, slice and the
+smartconnect closes with +0.12 ns or more (worst bc_cdc1 +0.122).  This is the gate, not the
+card: C, B, the loader, ctl and tok logic are absent (the masters are traffic generators), so
+the card's SLR0 co-tenants (Open question 1 above) are still unmeasured.
+
+### What was done (commits 7b982331, b9ba8f30, 37602cb3, a91e2fee)
+
+| fix | where | what |
+|---|---|---|
+| 1 | build_card.tcl | under the split, `a450_pblocks` (the gate's call, ports 1..15 17..25) and `a450_ip_pblocks`; after place, `a450_pblocks_verify` + `a450_pblocks_placed`, refused before routing (`JCCARD_A450_PBLOCKS`) |
+| 2 | build_card.tcl, run_card.sh | `-impl explore` (r6's directives), the default and the only choice with JC_A_CLK_SPLIT=1; `JCCARD_DIRECTIVES`, PROVENANCE `impl`/`impl_directives` |
+| 3 | not done | the gate has no C, so it cannot show SLR0 contention, and no placement-only card probe was run; left to the card build's own placement report |
+| 4 | matvec_int4_desc_axi.vhd | `U_ON` false under A_TILED and A_CLK_SPLIT: no counters; UTIL_SEL[31] (UTIL_NONE) reads 1, UTIL_DATA 0 OKAY; `jc_seam.py util` prints `JCUTIL_NONE ... seam_cycles_last_go N` |
+| 5 | matvec_int4_desc_axi.vhd, gen_jc_card.py | `D_DUAL` false: dfetch single-clock on clk_core; eng/m27_axi on core_clk's ASSOCIATED_BUSIF, through d_cdc + d_rs to SAXI_29 |
+| 6 | build_card.tcl, jccard_post.tcl | Critical rows at no named synchroniser read against a450_cdc_rules (less the gate stub's) + jccard_a450_rules (core_reset -> ar1); CDC-10 refused by id before any rule |
+| 7 | gen_jc_card.py, a450_pblocks.tcl | axi_register_slice (all channels REG 1, AXI3) on aclk_a between each converter / hbm_sc and its port; converter + slice in the port's column pblock (pb_a450_ip_x7 for 30/31) |
+
+Cadence under the split (Task 8 Step 11): port_beats is not available on a split-on card
+(no counters); the cadence is measured from the seam's cycles only.
+
+### Procedure
+
+1. Extend the gate: `hw/jc/a450/a450_tg.vhd` (an AXI3/AXI4 traffic generator whose read data
+   and responses are folded into `led`, so synthesis keeps both channels), six of them on
+   clk_core in `a450_hbm_top` (x_ld, x_d read-only, x_bc0/1, x_ctl, x_tok), the card's IP
+   chains in `a450_bd.tcl`, all 32 SAXI enabled with the card's switch clocks.  The CONFIG
+   sets are pinned equal to the card render by `test_a450.py::test_gate_ip_is_the_cards`.
+2. `run_a450.sh` (explore) under run_capped in the foreground of a background shell.
+3. When r1 refused its own placement (below), validate the placed-floorplan check on
+   r6's routed checkpoint before spending another run (probes under run_capped, 16G cap).
+
+### Evidence
+
+    a450_hbm_9b_r2 (build.log, run_a450.out in hw/jc/a450/results/a450_hbm_9b_r2/)
+    A450HBM_PLACED pblocks 8 tiles_inside 24 ip_inside 10 min_in_column 0.910 failures 0
+    INFO: [Place 30-746] Post Placement Timing Summary WNS=-0.383
+    INFO: [Route 35-20] Post Routing Timing Summary | WNS=0.028  | TNS=0.000  | WHS=0.009  | THS=0.000  |
+    A450HBM_WNS_ACLK 0.028 LEVELS 0 START .../fast/tree/r_x_reg[125]/C END .../fast/tree/m_x_reg[0][125]/D
+    A450HBM_WNS_CORE 0.253
+    A450HBM_FAILING_ACLK 0
+    A450HBM_IP ld_cdc +0.192  ld_rs +0.410  d_cdc +0.253  d_rs +0.360  bc_cdc0 +0.241  bc_rs0 +0.301
+               bc_cdc1 +0.122  bc_rs1 +0.243  hbm_sc +0.145  sc_rs +0.139   (REQ 2.222 each)
+    A450HBM_RSTAR1 SLACK 1.784   A450HBM_TOGS1 SLACK 1.443
+    A450HBM_UTIL LUT 116180 FF 140495 BRAM 155 DSP 1585      (r6: LUT 102287 FF 109810 BRAM 151)
+    A450HBM_CDC flagged_summary 1553 flagged_rows 1553 unlisted 0
+      (hbm_sc_node_fifo 682, dbg_hub_fifo 4, stub_base 459, stub_beats 200, job_cbk 128, ...)
+    A450RUN_PASS 0.028
+    samples: sampled_peak_current=21742964736 sampled_peak_swap=1392484352 sys_min_MemAvailable=2075115520
+
+The IP's worst paths are converter-internal (s_ready replica -> FIFO dout, 1 level) and the
+HBM ACLK -> slice payload CE paths, 0.12 to 0.41 ns positive; the diagnosis's -0.46..-0.94
+on the card were HBM ACLK -> converter FIFO paths with no slice and no pblock.
+
+Placed-floorplan check on r6's routed checkpoint (probe3, MEASURED): pblocks `IS_SOFT 1`; all
+24 tiles have no unplaced primitive; in_column 0.906 (tile 6) to 1.000; 19 of 24 tiles have
+some sites in the neighbouring column.  Teeth: the same proc with tile 0 assigned to column X3
+prints `in_column 0.000 ... BAD`.
+
+GHDL (tb_matvec_fk33_desc_tiled): GREEN `OVERALL PASS 1`, `23 cases run, 0
+failures`, `UTIL counters NOT BUILT ... for all 56 selections, and at once with mclk stopped`.
+RED: HEAD's RTL and the mutant `D_DUAL := DUAL_CLK` both stop at 41559 ns with `descriptor
+port moved off a clk edge`; the mutant `U_ON := true` reports `UTIL_SEL (not built) read back
+00000000 ... MISMATCH` and `UTIL_DATA ... read 00000480`.
+
+### Measured and REJECTED (do not retry)
+
+- **"Every primitive of a tile inside its pblock after placement" as the card's gate.** The
+  pblocks are soft: r6, the run that closed, has 19 of 24 tiles partly in the next column
+  (in_column down to 0.906 after route) and r2 has 0.910 at placement.  The check is a share,
+  >= 0.80 (`A450PB_MIN_IN`), with no unplaced primitive; the unfloorplanned card's typical
+  tile was 0.11 to 0.33.
+
+### Measurement traps hit
+
+- **a450_hbm_9b_r1 refused its own placement (my bug, ~25 min lost):** the first
+  `a450_pb_regions` found leaf cells with a NAME glob, which reads `g_t[0]` as a character
+  class, and filtered on `IS_PLACED`, which cells do not have (`get_cells -quiet` turns the
+  bad filter into an empty list, so the IP cells, with no bracket, also matched 0).  Fixed to
+  `current_instance` + `LOC`, items looked up by exact `NAME ==`, and validated on r6's
+  checkpoint before r2.
+- **The gate's memory peak is no longer r6's 11.4 GB:** r1 and r2 reached memory.peak 19.4
+  and 21.7 GB under the 24G cap (r2: 1.39 GB unit swap; the box's MemAvailable fell to 2.07 GB
+  with two GHDL benches beside it).  Budget the extended gate at about 22 GB.
+- **Post-placement WNS -0.383 (r1 and r2, identical)** routed to +0.028: placed WNS ranked
+  this run below r6 (-0.166 placed, +0.014 routed); not a result before route_design.
+
+### Deviations from the brief, stated
+
+- Fix 6 asked for "the three reset fan-out rules from the diagnosis".  Only the ar1 one is a
+  rule (`core_reset_fanout_ar1`; a450's `rst_ar1` matches it too).  The other two
+  destinations (`dfetch/g_dc.rst_s1`, `gu.gdc.rst_s`) do not exist under the split (fixes 4
+  and 5), and a rule nobody can match is not kept (a450_cdc.tcl policy); a row into either
+  is now unknown, i.e. refused, which is the regression signal.
+- The pblock check is a share, not "every tile inside" (Measured and REJECTED above).
+
+### Open, not yet answered
+
+- The card itself: C's attention array and the other SLR0 tenants beside the floorplanned A.
+- Whether fix 3 (C into SLR1) is needed: no measurement either way.
