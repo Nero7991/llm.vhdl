@@ -8,6 +8,8 @@
 # ordinary drift.  Reproduce this exact file with
 #     python3 hw/jc/card/gen_jc_card.py
 # inputs ((unset) means the generator's own default was taken):
+#     env  JC_A_CLK_SPLIT  = (unset)
+#     env  JC_A_TILED      = (unset)
 #     env  JC_CLK_CORE_MHZ = (unset)
 #     env  JC_LINK_RATE    = (unset)
 #     env  JC_LINK_REFCLK  = (unset)
@@ -204,6 +206,7 @@ jcc_want jtag_hbm M_AXI_ADDR_WIDTH 64
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 hbm_sc
 # S00 jtag_hbm, S01 the ctl read master, S02 tok/m_hbm (the embedding gather)
 set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells hbm_sc]
+jcc_want hbm_sc NUM_CLKS 1
 connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins hbm_sc/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins hbm_sc/M00_AXI] [get_bd_intf_pins hbm/SAXI_16]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins jtag_hbm/aclk]
@@ -320,6 +323,8 @@ puts "FK33_XEXP_PORT $_xe"
 set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins eng/core_clk]
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/core_aresetn]
+set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins eng/hbm_aclk]
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/hbm_aresetn]
 set_property CONFIG.ASSOCIATED_BUSIF {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi} [get_bd_pins eng/hbm_aclk]
 foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi}] {
     set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]
@@ -340,6 +345,11 @@ if {![string is false -strict $_fp]} {
     error "JCCARD_LEVER FAIL: eng FAST_POP is \"$_fp\", not false: the levers patch is not applied to fk33_engine.vhd"
 }
 puts "JCCARD_LEVER eng FAST_POP $_fp"
+
+# THE a450 SUBSYSTEM A (JC_A_TILED / JC_A_CLK_SPLIT), set and read back.
+set_property -dict [list CONFIG.A_TILED {false} CONFIG.A_CLK_SPLIT {false}] [get_bd_cells eng]
+jcc_want eng A_TILED false
+jcc_want eng A_CLK_SPLIT false
 
 # ON THIS BOARD core_clk AND hbm_aclk ARE THE SAME NET, clk_core.  The engine's
 # internal crossing (axi_rd_port's async FIFO) is still present and is crossed
@@ -451,6 +461,11 @@ connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_
 connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3]            [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
+# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the
+# net of the 28 ports' ARESET_N above: a port reset drops every burst in flight,
+# and the tiled A (A_TILED) clears its owed-burst counts from it, which nothing
+# else does.  The array on the card today (A_TILED false) does not read it.
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins eng/hbm_aresetn]
 # ---- end subsystem A ------------------------------------------------------
 
 

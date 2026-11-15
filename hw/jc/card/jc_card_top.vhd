@@ -7,6 +7,8 @@
 -- ordinary drift.  Reproduce this exact file with
 --     python3 hw/jc/card/gen_jc_card.py
 -- inputs ((unset) means the generator's own default was taken):
+--     env  JC_A_CLK_SPLIT  = (unset)
+--     env  JC_A_TILED      = (unset)
 --     env  JC_CLK_CORE_MHZ = (unset)
 --     env  JC_LINK_RATE    = (unset)
 --     env  JC_LINK_REFCLK  = (unset)
