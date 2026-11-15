@@ -181,3 +181,34 @@ before B/C); both were re-rated on the final RTL afterwards:
   mode_r replication (fanout 96).
 - Whether the same placement holds when the A pblocks share SLR0 with the card's other
   subsystems.
+
+## CORRECTION (2026-11-14, Task 7b fix round 1)
+
+1. **WITHDRAWN: "the reset alignment is exact, not slack"** (the Task 7b report, concern 2,
+   and the first version of rtl/mv_afast.vhd's RESET TREE header). mv_rcross's afull is a
+   register held '1' through wrst and for one edge after it, so link 0 cannot take a word
+   until two cycles after ar_ts falls. With D registers from ar2 to a tile/link reset (D = 2
+   as built), a one-cycle reset is safe for D <= L + 3. MEASURED with a new bench case (job 17:
+   a one-cycle reset in SAME two cycles after the first y beat, job 18 compared):
+   D = 3 (S3) and D = 4 (S4) survive; D = 5 (S5) is killed, MISMATCH job 18 DUT 2 beats 0
+   and 1. Before job 17 existed, S3 also survived.
+2. **New hazard found by the review, now closed: bursts owed across an A reset.** mv_rdfsm's
+   outst was cleared by rst while the HBM is not reset, so S_DRAIN saw nothing owed and beats
+   from before the reset could enter the next job's FIFO. Bench mode HOLD_OWED (the new
+   DUTs' memories reset only at power-on, R held from job 14's start until 20 cycles into
+   job 15): the unguarded RTL fails at 52.93 us on `rstage`. Trap: the first version held
+   R only from the reset, and the unguarded RTL PASSED it, because job 14 reads only 40
+   beats per port and all had landed in 300 cycles. Fix: `owed`, a burst count never reset,
+   and S_DRAIN waits for it. Mutant G1 (guard removed) is killed the same way.
+3. **"PASS 0.000 on the gate design" does not carry over to a small RTL change.** Gate run
+   r4 (fix-round RTL, default directives) is -0.146 / 1,697 endpoints on the same
+   tile-internal path classes run 2 met at 0.000. Run r5 (explore, aclk_a timed at 2.15 ns)
+   is +0.010 against 2.15, so +0.082 at 2.222 for that implementation (DERIVED). The
+   margin at 450 MHz is about 0.08 ns with explore directives; with the default directives
+   the result lands either side of zero.
+4. The rstage teeth row F1 (FIFO built at DEPTH/2) SURVIVES tb_mv_tile at DEPTH/2, /4 and /8:
+   that bench's 16-word memory never has two bursts in flight. It is killed in the
+   composed bench, where port 13's stalls fill the other tiles' FIFOs.
+
+Measured and REJECTED, added: **a one-stage-deeper tile/link reset as a failing case**
+(S3). It is safe by design; the failing depth is 5 (S5). Do not use S3 as a kill target.
