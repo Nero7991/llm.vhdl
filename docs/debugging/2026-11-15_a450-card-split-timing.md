@@ -115,8 +115,8 @@ Worst tile-internal paths, 0 logic levels:
       223  -1.107  1  A/fast/g_t[*].tile/c_reg[32]
       217  -0.594  1  ld_cdc/inst
       124  -1.230  1  eng/dfetch
-    (A = eng/inst/eng/g_tiled.dut/g_split.u; tiles sum 37,899 = 80.8%; A total incl. dist,
-     tree, chain ~42,900 = 91%; uctr 3.1%; IP converters/smartconnect 1,959 = 4.2%)
+    (A = eng/inst/eng/g_tiled.dut/g_split.u; endpoints inside a g_t[p].tile: 38,019 = 81.0%; A total incl. dist,
+     tree, chain 43,032 = 91.7%; uctr 3.1%; IP converters/smartconnect 1,959 = 4.2%)
     slack buckets: -1.3:44 -1.2:760 -1.1:1104 -1.0:1637 -0.9:1890 -0.8:2483 -0.7:2777
                    -0.6:3469 -0.5:3972 -0.4:4652 -0.3:5514 -0.2:6929 -0.1:7447 0.0:4233
     levels: 1:25764 0:11505 2:4136 5:2505 3:2114 4:650
@@ -126,8 +126,8 @@ Placement, not routing, set the WNS (build.log):
     INFO: [Place 30-746] Post Placement Timing Summary WNS=-1.862
     JCCARD_POST_ROUTE_WNS -1.290   JCCARD_POST_ROUTE_PHYSOPT_WNS -1.262
 
-What shares SLR0 (MEASURED): SLR0 LUT 60.2%, DSP 64.2% (1848), SLR1 DSP 6.2%. Every level-5
-congestion window names A tiles beside `card/inst/u/gcr.u_attn/u_arr` (55-66% of the window)
+What shares SLR0 (MEASURED): SLR0 LUT 60.2%, DSP 64.2% (1848), SLR1 DSP 6.2%. Three of the four
+router-initial level-5 congestion windows name A tiles beside `card/inst/u/gcr.u_attn` (u_arr 55-66% of two windows)
 and `gcr.gkvaxi.u_kv`.
 
 ### Class (a), gu.gdc.uctr (MEASURED)
@@ -211,7 +211,7 @@ counters nor dfetch.
 
 ### Effect (ESTIMATE)
 
-- Items 1-3 on the A clusters (~42,900 endpoints): back to the gate's regime, -0.15..+0.08.
+- Items 1-3 on the A clusters (43,032 endpoints): back to the gate's regime, -0.15..+0.08.
   Assumption: with each tile pinned to its column and C moved out, A sees the placement r4..r6
   saw (r4 default -0.146, r5/r6 explore +0.08/+0.014). The card's extra SLR0 tenants
   (loader, hbm_sc, bcgrant, kv axi) are the unmeasured difference.
