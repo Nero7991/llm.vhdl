@@ -113,7 +113,7 @@ row_top() {
   case "$1" in
     teeth|c_base|c_tree) echo attn_block;;
     swg_base|swg_w1|swg_w8) echo swiglu_mem;;
-    a_base|a_chkjob) echo matvec_int4_desc_axi;;
+    a_base|a_chkjob|a_tiled|a_tsplit) echo matvec_int4_desc_axi;;
     d_card|d_hostwin|d_adw|d_swgw1|d_swgw8|d_normanchor) echo fk33_llama_top;;
     *) return 1;;
   esac
@@ -132,6 +132,10 @@ row_gen() {
     swg_w8)   echo "N=$SWGN Q=12 LANES=8 WIDE_IO=true";;
     a_base)   echo "$AGEN CHECK_JOB_INDEX=false";;
     a_chkjob) echo "$AGEN CHECK_JOB_INDEX=true";;
+    # the a450 tiled A (plan 2026-11-12 Task 8): rtl/mv4i_tiled.vhd behind the descriptor
+    # plane, with the tiles on s_axi_aclk (the Task 8 card) and on m_aclk (Task 9)
+    a_tiled)  echo "$AGEN A_TILED=true A_CLK_SPLIT=false";;
+    a_tsplit) echo "$AGEN A_TILED=true A_CLK_SPLIT=true";;
     d_card)   echo "$DCARD";;
     d_hostwin) echo "$DCARD HOST_WINDOW=true";;
     d_adw)    echo "$DCARD A_DRAIN_WIDE=true";;
@@ -148,7 +152,7 @@ row_expect() {
   case "$1" in teeth) echo fail;; *) echo pass;; esac
 }
 
-ROWS="${EC_ROWS:-teeth c_base c_tree swg_base swg_w1 swg_w8 a_base a_chkjob d_card d_hostwin d_adw d_swgw1 d_swgw8 d_normanchor}"
+ROWS="${EC_ROWS:-teeth c_base c_tree swg_base swg_w1 swg_w8 a_base a_chkjob d_card d_hostwin d_adw d_swgw1 d_swgw8 d_normanchor a_tiled a_tsplit}"
 
 vivado_present() {
   local p e

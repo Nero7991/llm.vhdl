@@ -28,7 +28,7 @@
 -- before comparing it to a pb_core budget.
 --
 -- Instances, and the generics each carries:
---   a_eng    fk33_engine      866 ports, 863 exported   CB_STYLE="distributed"
+--   a_eng    fk33_engine      867 ports, 864 exported   CB_STYLE="distributed"
 --   b_gdn    gdn_block         65 ports,  63 exported   (defaults)
 --   c_attn   attn_block        70 ports,  68 exported   HEAD_DIM=256 LAYERS=8 N_KVH=4 N_QH=16
 --   d_fetch  seq_desc_fetch    51 ports,  49 exported   (defaults)
@@ -66,6 +66,7 @@ entity compose4_top is
     hbm_aclk     : in  std_logic;
 
 
+    a_eng_hbm_aresetn      : in    std_logic;
     a_eng_compute_halt     : in    std_logic;
     a_eng_s_axi_awvalid    : in    std_logic;
     a_eng_s_axi_awready    : out   std_logic;
@@ -1300,6 +1301,7 @@ begin
       core_clk => core_clk_i,
       core_aresetn => core_aresetn,
       hbm_aclk => hbm_aclk_i,
+      hbm_aresetn => a_eng_hbm_aresetn,
       compute_halt => a_eng_compute_halt,
       s_axi_awvalid => a_eng_s_axi_awvalid,
       s_axi_awready => a_eng_s_axi_awready,
