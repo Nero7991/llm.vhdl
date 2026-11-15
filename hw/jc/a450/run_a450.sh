@@ -1,17 +1,21 @@
 #!/usr/bin/env bash
 # hw/jc/a450/run_a450.sh -- run the a450 A+HBM timing design (build_a450.tcl) once, capped.
 #
-#   run_a450.sh [--dry-run] [--directives explore] [--overconstrain-ns <ns>] <root>
+#   run_a450.sh [--dry-run] [--directives explore|default] [--overconstrain-ns <ns>] <root>
 #
 # --overconstrain-ns <ns> (a450 Task 7b fix round 1): time aclk_a's setup paths as if its
 # period were <ns> (e.g. 2.15), by adding (2.222 - <ns>) of setup uncertainty on aclk_a ->
 # aclk_a.  A margin measurement, not the gate: the slack it prints is the slack against
 # <ns>.  The one-period CDC bounds and their read-back keep the real period.
 #
-# --directives explore (a450 Task 7b group E): opt_design -directive ExploreWithRemap,
-# place_design -directive ExtraTimingOpt, phys_opt_design -directive AggressiveExplore
-# (after place and again after route), route_design -directive AggressiveExplore.
-# Default (no flag): Vivado's default directives, as every run before Task 7b group E.
+# --directives explore (THE DEFAULT since Task 7b fix round 2): opt_design -directive
+# ExploreWithRemap, place_design -directive ExtraTimingOpt, phys_opt_design -directive
+# AggressiveExplore (after place and again after route), route_design -directive
+# AggressiveExplore.  --directives default: Vivado's default directives, as every run
+# before Task 7b group E.  Why explore is the default (MEASURED, same RTL, HEAD e0f86c57):
+# a450_hbm_7b_r4 with default directives routed aclk_a at -0.146 ns (1,697 failing
+# endpoints); a450_hbm_7b_r5 with explore met 2.15 ns at +0.010 (+0.082 at 2.222 DERIVED).
+# Default directives land either side of zero on this design (r2 0.000, r4 -0.146).
 #
 # <root> must be a fresh directory under /mnt/storage/fk33_builds/ (never /tmp).  The
 # TRACKED tree at HEAD is copied to <root>/src (git archive), so the run is reproducible
@@ -29,9 +33,9 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/../../.." && pwd)
 DRY=0
 if [ "${1:-}" = "--dry-run" ]; then DRY=1; shift; fi
-DIRS=default
+DIRS=explore
 if [ "${1:-}" = "--directives" ]; then
-  case "${2:-}" in explore) DIRS=explore ;; *) echo "A450RUN_FAIL --directives takes: explore"; exit 1 ;; esac
+  case "${2:-}" in explore|default) DIRS=$2 ;; *) echo "A450RUN_FAIL --directives takes: explore or default"; exit 1 ;; esac
   shift 2
 fi
 OC=none

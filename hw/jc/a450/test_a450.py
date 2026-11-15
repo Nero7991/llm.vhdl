@@ -216,16 +216,16 @@ def test_cdc_verdict_refuses_vacuous(tmp_path):
 
 
 def test_directives_flag():
-    """Task 7b group E: --directives explore reaches the build as -directives explore, the
-    default run says -directives default, anything else is refused; the build has both
+    """Task 7b group E, fix round 2: the default run says -directives explore,
+    --directives default selects Vivado's defaults, anything else is refused; the build has both
     implementation sequences and refuses an unknown value."""
     sh = os.path.join(HERE, "run_a450.sh")
     root = "/mnt/storage/fk33_builds/a450_test_dry_never"
     r = subprocess.run(["bash", sh, "--dry-run", root], capture_output=True, text=True)
-    assert r.returncode == 0 and "-directives default" in r.stdout, r.stdout
-    r = subprocess.run(["bash", sh, "--dry-run", "--directives", "explore", root],
-                       capture_output=True, text=True)
     assert r.returncode == 0 and "-directives explore" in r.stdout, r.stdout
+    r = subprocess.run(["bash", sh, "--dry-run", "--directives", "default", root],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "-directives default" in r.stdout, r.stdout
     r = subprocess.run(["bash", sh, "--dry-run", "--directives", "fast", root],
                        capture_output=True, text=True)
     assert r.returncode != 0 and re.search(r"^A450RUN_FAIL ", r.stdout, re.M), r.stdout
