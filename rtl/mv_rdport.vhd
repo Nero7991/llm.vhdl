@@ -57,6 +57,9 @@ entity mv_rdport is
   );
   port(
     clk, rst : in  std_logic;
+    -- the HBM AXI port reset, synchronous to clk, active high: forwarded to
+    -- rtl/mv_rdfsm.vhd, where it clears the owed-burst count (a450 Task 8, carry C1)
+    hbm_rst  : in  std_logic := '0';
 
     -- job.  base must be 4 KB aligned; n_beats is the whole sub-region.
     start    : in  std_logic;
@@ -196,7 +199,7 @@ begin
   fsm : entity work.mv_rdfsm
     generic map(ADDR_W => ADDR_W, BYTES => BYTES, DEPTH => DEPTH,
                 MAXB => MAXB, MAXOUT => MAXOUT)
-    port map(clk => clk, rst => rst, start => start_f,
+    port map(clk => clk, rst => rst, hbm_rst => hbm_rst, start => start_f,
              base => base, n_beats => n_beats,
              arvalid => arvalid_i, arready => arready,
              araddr => araddr, arlen => arlen_i,

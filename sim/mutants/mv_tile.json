@@ -34,6 +34,14 @@
     {"tag": "C2", "expect": "KILLED", "file": "rtl/mv_rdfsm.vhd",
      "why": "AR credit, in range: `free` gains one spare credit every cycle, saturated at DEPTH, so it never leaves 0..DEPTH while ARs go out past the FIFO's room; only mv_rdport's independent `credit` assertion (FIFO level plus beats in flight <= DEPTH) can see it",
      "old": "free <= free + dl;",
-     "new": "free <= minimum(DEPTH, free + 1 + dl);"}
+     "new": "free <= minimum(DEPTH, free + 1 + dl);"},
+    {"tag": "H1", "expect": "KILLED", "file": "rtl/mv_rdfsm.vhd",
+     "why": "a450 Task 8 carry C1: the HBM port reset does not clear the owed-burst count; the memory dropped the 2 bursts owed at case 24's HBM-port reset, so the replay's port waits in S_DRAIN for beats that never come (case 24 times out)",
+     "old": "if hbm_rst = '1' then o := 0; else o := owed; end if;",
+     "new": "o := owed;"},
+    {"tag": "H2", "expect": "KILLED", "file": "rtl/mv_tile.vhd",
+     "why": "a450 Task 8 carry C1, threading: mv_tile does not pass its registered hbm_rst to the weight port (left at the port default), the same hang as H1",
+     "old": "port map(clk => clk, rst => rst_l, hbm_rst => hbm_l, start => port_start,",
+     "new": "port map(clk => clk, rst => rst_l, start => port_start,"}
   ]
 }

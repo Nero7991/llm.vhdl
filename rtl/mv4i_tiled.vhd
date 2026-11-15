@@ -13,6 +13,15 @@
 -- The choice is a generate around ONE entity, never a clock assigned through a signal:
 -- an assigned clock is a delta late in simulation and the paths between the two would
 -- race (rtl/axi_rd_fsm.vhd's header records that trap).
+--
+-- THE HBM AXI PORT RESET (a450 Task 8, carry C1).  `hbm_aresetn` is the ARESET_N of the
+-- HBM ports the m_* masters read; mv4i_tcore synchronises it into the tile clock and it
+-- clears the ports' owed-burst counts (rtl/mv_rdfsm.vhd).  PRECONDITION: the HBM AXI port
+-- is reset only together with hbm_rst (this entity's hbm_aresetn low, synchronised); A's
+-- own reset never clears owed.
+-- After an A reset the ports therefore wait for every burst the memory still owes; after
+-- a port reset, which drops them, they do not.  Left at its default '1' the count is
+-- cleared by nothing, and a port reset with bursts in flight hangs every port in S_DRAIN.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -38,6 +47,8 @@ entity mv4i_tiled is
   port(
     clk, rst  : in  std_logic;
     aclk      : in  std_logic := '0';
+    -- the HBM AXI port reset, active low, asynchronous (see the header)
+    hbm_aresetn : in std_logic := '1';
     start     : in  std_logic;
     n_rows    : in  std_logic_vector(31 downto 0);
     n_cols    : in  std_logic_vector(31 downto 0);
@@ -89,7 +100,8 @@ begin
                   AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                   MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB,
                   MAXOUT => MAXOUT, XD => XD, G => G)
-      port map(clk => clk, rst => rst, aclk_a => aclk, start => start,
+      port map(clk => clk, rst => rst, aclk_a => aclk, hbm_aresetn => hbm_aresetn,
+               start => start,
                n_rows => n_rows, n_cols => n_cols, out_shift => out_shift, w_exp => w_exp,
                x_exp => x_exp, out_mode => out_mode, w_base => w_base, w_beats => w_beats,
                s_base => s_base, s_beats => s_beats, cb_we => cb_we, cb_addr => cb_addr,
@@ -107,7 +119,8 @@ begin
                   AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                   MAXROWS_BFP => MAXROWS_BFP, FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB,
                   MAXOUT => MAXOUT, XD => XD, G => G)
-      port map(clk => clk, rst => rst, aclk_a => clk, start => start,
+      port map(clk => clk, rst => rst, aclk_a => clk, hbm_aresetn => hbm_aresetn,
+               start => start,
                n_rows => n_rows, n_cols => n_cols, out_shift => out_shift, w_exp => w_exp,
                x_exp => x_exp, out_mode => out_mode, w_base => w_base, w_beats => w_beats,
                s_base => s_base, s_beats => s_beats, cb_we => cb_we, cb_addr => cb_addr,

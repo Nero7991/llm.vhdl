@@ -15,6 +15,16 @@
 -- CHECK_VALUES = false is the attribution control for the mutation rows
 -- (sim/mutants/mv_tile_attr.json): a value mutant must survive it, a dropped-valid mutant
 -- must not.
+--
+-- THE HBM PORT RESET (a450 Task 8, carry C1).  In case HBM_RST_CASE, at the first cycle
+-- after its PARAM flit at which the bench's own count of bursts the memory has accepted
+-- and not finished (`owe_b`, from the AXI handshakes, not from the DUT) reaches 2, the
+-- bench resets the tile (rst) and the memory together (hbm_rst; the model's reset drops
+-- every queued and in-flight burst, as an HBM port reset does), then replays the whole
+-- case from its PARAM flit.  The replay must complete with the same values.  Without
+-- hbm_rst clearing rtl/mv_rdfsm.vhd's never-reset `owed`, the port waits in S_DRAIN for
+-- beats that will never come and the case times out (sim/mutants/mv_tile.json row H1).
+-- The bench refuses to pass if the reset never happened.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -35,7 +45,9 @@ entity tb_mv_tile is
     -- false reproduces the normal bench exactly.  Exists only to demonstrate that
     -- mv_tile's job-serialisation assertion (rtl/mv_tile.vhd, process `serialize`) has
     -- teeth: sim/mutants/mv_tile.json row J1 flips this generic's default to true.
-    NO_DRAIN     : boolean  := false
+    NO_DRAIN     : boolean  := false;
+    -- the case the HBM-port reset is played in (see the header); -1 disables it
+    HBM_RST_CASE : integer  := 24
   );
 end entity;
 
@@ -66,13 +78,33 @@ architecture sim of tb_mv_tile is
   signal room : std_logic;
   signal r_v, r_rdy : std_logic := '0';
   signal r_d : std_logic_vector(96 downto 0);
+  -- the HBM port reset (see the header): the memory model resets on rst or hbm_rst
+  signal hbm_rst, mrst : std_logic := '0';
+  signal owe_b : natural := 0;
 begin
+  mrst <= rst or hbm_rst;
+
+  -- bursts the memory has accepted and not finished, from the AXI handshakes alone
+  oweb : process(clk)
+  begin
+    if rising_edge(clk) then
+      if mrst = '1' then
+        owe_b <= 0;
+      elsif arvalid = '1' and arready = '1' then
+        if rvalid = '1' and rready = '1' and rlast = '1' then null;
+        else owe_b <= owe_b + 1; end if;
+      elsif rvalid = '1' and rready = '1' and rlast = '1' then
+        owe_b <= owe_b - 1;
+      end if;
+    end if;
+  end process;
   clk <= not clk after TCK when not done_sim else '0';
 
   dut : entity work.mv_tile
     generic map(BLK => BLK, AXI_DW => 256, ADDR_W => 40, DEPTH => 64, MAXB => 16,
                 MAXOUT => 16, XD => XD, SLACK => SLACK, RD => 4)
-    port map(clk => clk, rst => rst, w_base => (others => '0'), w_beats => w_beats,
+    port map(clk => clk, rst => rst, hbm_rst => hbm_rst,
+             w_base => (others => '0'), w_beats => w_beats,
              arvalid => arvalid, arready => arready, araddr => araddr, arlen => arlen,
              arsize => arsize, arburst => arburst, rvalid => rvalid, rready => rready,
              rdata => rdata, rlast => rlast,
@@ -82,7 +114,7 @@ begin
 
   mem : entity work.axi_rd_mem_model
     generic map(AXI_DW => 256, ADDR_W => 40, NWORDS => MAXB, SEED => 7, GAPPCT => 25)
-    port map(clk => clk, rst => rst, arvalid => arvalid, arready => arready,
+    port map(clk => clk, rst => mrst, arvalid => arvalid, arready => arready,
              araddr => araddr, arlen => arlen, rvalid => rvalid, rready => rready,
              rdata => rdata, rlast => rlast,
              wr_en => wr_en, wr_addr => wr_addr, wr_data => wr_data);
@@ -122,6 +154,8 @@ begin
     variable nxt : fl_t;
     variable rng : unsigned(31 downto 0) := x"1234ABCD";
     variable sent, total : integer;
+    variable hr_armed, hr_now, hr_done : boolean := false;
+    variable hr_owed : natural := 0;
 
     procedure rnd is
     begin
@@ -218,9 +252,17 @@ begin
       assert tok(1 to 3) = "END" report "tb_mv_tile: expected END" severity failure;
       w_beats <= nt * nb;
 
-      -- play the flits; collect the results
-      total := 17 + nt*nb; sent := 0; nres := 0; waitc := 0;
+      -- play the flits; collect the results.  The outer loop runs the case a second
+      -- time only after the HBM-port reset (see the header).
+      hr_armed := cid = HBM_RST_CASE;
+      loop
+      total := 17 + nt*nb; sent := 0; nres := 0; waitc := 0; hr_now := false;
       while nres < nt and not (NO_DRAIN and sent >= total) loop
+        -- the HBM-port reset: once the PARAM flit is out and two bursts are owed
+        if hr_armed and sent > 0 and owe_b >= 2 then
+          hr_now := true;
+          exit;
+        end if;
         -- result side: the handshake happened at the edge we just passed
         rnd;
         -- send decision on the room seen LR cycles ago
@@ -265,6 +307,22 @@ begin
           & " timed out with " & integer'image(nres) & " of " & integer'image(nt)
           & " results" severity failure;
       end loop;
+      if hr_now then
+        hr_owed := owe_b;
+        f_v <= '0'; r_rdy <= '0';
+        rst <= '1'; hbm_rst <= '1';
+        for i in 1 to 8 loop tick; end loop;
+        rst <= '0'; hbm_rst <= '0';
+        for i in 0 to LF-1 loop fp(i).v := '0'; end loop;
+        rp := (others => '0');
+        for i in 1 to 4 loop tick; end loop;
+        report "tb_mv_tile: HBM port reset in case " & integer'image(cid) & " with "
+             & integer'image(hr_owed) & " bursts owed by the memory and "
+             & integer'image(nres) & " results taken; replaying the case" severity note;
+        hr_armed := false; hr_done := true;
+      end if;
+      exit when not hr_now;
+      end loop;
       f_v <= '0'; r_rdy <= '0';
       if not NO_DRAIN then
         -- flush the tree model; no stray result may follow
@@ -280,6 +338,9 @@ begin
       ncase := ncase + 1;
     end loop;
     assert ncase > 0 report "tb_mv_tile: no cases read" severity failure;
+    assert HBM_RST_CASE < 0 or hr_done
+      report "tb_mv_tile: the HBM-port reset case never ran (case " & integer'image(HBM_RST_CASE)
+           & " missing, or no two bursts were ever owed in it)" severity failure;
     assert fails = 0 report "tb_mv_tile: FAIL " & integer'image(fails) & " mismatches"
       severity failure;
     report "PASS: tb_mv_tile checks=" & integer'image(checks) & " cases="

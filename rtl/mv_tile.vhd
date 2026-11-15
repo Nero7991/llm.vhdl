@@ -79,6 +79,9 @@ entity mv_tile is
   );
   port(
     clk, rst : in  std_logic;
+    -- the HBM AXI port reset, synchronous to clk, active high (a450 Task 8, carry C1):
+    -- registered once here (hbm_l), then clears the weight port's owed-burst count
+    hbm_rst  : in  std_logic := '0';
     w_base   : in  std_logic_vector(ADDR_W-1 downto 0);
     w_beats  : in  integer;
     arvalid  : out std_logic;
@@ -209,10 +212,17 @@ architecture rtl of mv_tile is
   -- the tile-local reset register (see RESET in the header)
   signal rst_l : std_logic := '1';
   attribute dont_touch of rst_l : signal is "true";
+  -- hbm_rst registered once, as rst_l and for the same reason: a local net per tile
+  signal hbm_l : std_logic := '1';
+  attribute dont_touch of hbm_l : signal is "true";
 begin
   lrst : process(clk)
   begin
     if rising_edge(clk) then rst_l <= rst; end if;
+  end process;
+  lhbm : process(clk)
+  begin
+    if rising_edge(clk) then hbm_l <= hbm_rst; end if;
   end process;
   rst_o <= rst_l;
 
@@ -236,7 +246,7 @@ begin
   wport : entity work.mv_rdport
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH, MAXB => MAXB,
                 MAXOUT => MAXOUT, FAST_POP => true)
-    port map(clk => clk, rst => rst_l, start => port_start,
+    port map(clk => clk, rst => rst_l, hbm_rst => hbm_l, start => port_start,
              base => w_base, n_beats => w_beats,
              arvalid => arvalid, arready => arready, araddr => araddr, arlen => arlen,
              arsize => arsize, arburst => arburst,

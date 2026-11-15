@@ -46,6 +46,10 @@ entity mv_rdfsm is
   );
   port(
     clk, rst : in  std_logic;
+    -- THE HBM AXI PORT RESET (a450 Task 8, carry C1): active high, synchronous to clk.
+    -- It clears `owed` and nothing else; see `owed` for why.  Default '0' (inactive), so
+    -- an instance that does not connect it keeps the never-reset count of Task 7b.
+    hbm_rst  : in  std_logic := '0';
 
     -- job (single clock: no crossing)
     start    : in  std_logic;
@@ -148,13 +152,23 @@ architecture rtl of mv_rdfsm is
   -- S_DRAIN waits for it, so a start after a reset first discards every owed beat
   -- (rready is '1' and run '0' outside S_RUN).  `beat`/`rlast` must therefore count beats
   -- during the reset too: rtl/mv_rdport.vhd's R register stage is not reset.
+  -- THE ONE THING THAT CLEARS IT (a450 Task 8, carry C1): `hbm_rst`, the HBM AXI port's
+  -- own reset, synchronised into this clock.  A port reset makes the memory drop every
+  -- burst it accepted (the Jungle Cat card resets the HBM ports from a proc_sys_reset on
+  -- an MMCM's lock, so a lock loss does it), so the beats `owed` waits for never come and,
+  -- uncleared, every port would wait in S_DRAIN forever.  While hbm_rst is '1' the
+  -- count restarts from 0 each edge and still counts that edge's handshake: the
+  -- synchronised reset falls a few edges after the port's, and an AR the memory accepts
+  -- in between is owed like any other.
+  -- PRECONDITION: the memory port is reset only together with hbm_rst; A's own reset
+  -- (`rst`) never clears owed.
   signal owed     : integer range 0 to MAXOUT := 0;
 begin
   owe : process(clk)
     variable o : integer range -1 to MAXOUT + 1;
   begin
     if rising_edge(clk) then
-      o := owed;
+      if hbm_rst = '1' then o := 0; else o := owed; end if;
       if arv = '1' and arready = '1' then o := o + 1; end if;
       if beat = '1' and rlast = '1' then o := o - 1; end if;
       assert o >= 0 and o <= MAXOUT

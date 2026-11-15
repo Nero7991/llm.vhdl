@@ -44,6 +44,14 @@
       "why": "Task 7b fix round 1: S_DRAIN no longer waits for the bursts the memory still owes from before an A reset (owed); with the memory not reset and job 14's owed bursts arriving after job 15 reached S_RUN, those beats enter job 15's FIFOs (mismatch) or overrun them (rstage)",
       "old": "if arv = '0' and os = 0 and owed = 0 then",
       "new": "if arv = '0' and os = 0 then"
+    },
+    {
+      "tag": "G2",
+      "expect": "KILLED",
+      "file": "rtl/mv4i_tcore.vhd",
+      "why": "a450 Task 8 carry C1, polarity: the HBM-reset synchroniser does not invert hbm_aresetn, so at its default '1' (no port reset, as in this bench) owed is cleared on every edge and S_DRAIN no longer waits for the bursts job 14 left owed: G1's failure through the new input",
+      "old": "hb1 <= not hbm_aresetn; hb2 <= hb1;",
+      "new": "hb1 <= hbm_aresetn; hb2 <= hb1;"
     }
   ]
 }

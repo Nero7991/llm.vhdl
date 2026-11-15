@@ -99,6 +99,9 @@ entity mv_dist is
   );
   port(
     clk, rst  : in  std_logic;
+    -- the HBM AXI port reset, synchronous to clk, active high: clears the scale ports'
+    -- owed-burst counts (rtl/mv_rdfsm.vhd; a450 Task 8, carry C1)
+    hbm_rst   : in  std_logic := '0';
     go        : in  std_logic;
     -- a450 Task 4 review fix: range-constrained to the real maxima (see the header and
     -- the NB_MAX/NTL_MAX constants below), not left as unconstrained natural/integer.
@@ -203,7 +206,7 @@ begin
     sport : entity work.mv_rdport
       generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DEPTH, MAXB => MAXB,
                   MAXOUT => MAXOUT, FAST_POP => true)
-      port map(clk => clk, rst => rst, start => s_start,
+      port map(clk => clk, rst => rst, hbm_rst => hbm_rst, start => s_start,
                base => s_base((q+1)*ADDR_W-1 downto q*ADDR_W), n_beats => s_beats,
                arvalid => m_arvalid(q), arready => m_arready(q),
                araddr => m_araddr((q+1)*ADDR_W-1 downto q*ADDR_W),

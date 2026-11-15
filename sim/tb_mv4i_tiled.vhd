@@ -52,7 +52,18 @@ entity tb_mv4i_tiled is
     -- landed before the reset and nothing was owed (MEASURED: the unguarded RTL PASSED the
     -- first version of this mode).  Under the hold each port's credit fills (FIFO_DEPTH 64
     -- = 4 bursts of 16) and every one of those bursts is owed at the reset.
-    HOLD_OWED : boolean := false
+    HOLD_OWED : boolean := false;
+    -- a450 Task 8, carry C1 (row sim/tb_mv4i_tiled_hbmrst.vhd).  Runs ONLY jobs 14 and
+    -- 15.  Job 14 holds R from its start as HOLD_OWED does, so every port has bursts owed
+    -- at the mid-job reset; that reset is now also an HBM PORT reset: the new DUTs' memory
+    -- models reset (dropping every queued and held burst, as an HBM AXI port reset does)
+    -- and both DUTs' hbm_aresetn goes low with rst.  Job 15 must then complete and match
+    -- OLD.  Without hbm_aresetn reaching every port's owed count (rtl/mv4i_tiled.vhd ->
+    -- mv4i_tcore's synchroniser -> mv_afast -> mv_tile / mv_dist -> mv_rdport ->
+    -- mv_rdfsm) the ports wait in S_DRAIN for beats that never come and job 15 times out
+    -- (sim/mutants/mv4i_tiled_hbmrst.json).  The timeout is 5,000 clk cycles in this
+    -- mode (job 15 MEASURED 930) so a hung mutant dies quickly.
+    HBM_RST   : boolean := false
   );
 end entity;
 
@@ -114,8 +125,10 @@ architecture sim of tb_mv4i_tiled is
   signal clr_log : std_logic := '0';
   -- the new DUTs' memory reset and R hold (see HOLD_OWED)
   signal por, mrst, mhold : std_logic := '1';
+  -- the HBM AXI port reset of the new DUTs (see HBM_RST): active low, as the card's
+  signal hbm_aresetn : std_logic := '1';
 begin
-  mrst <= por;
+  mrst <= por or not hbm_aresetn;
   clk  <= not clk after 4 ns when not done_sim else '0';
   aclk <= not aclk after 1.111 ns when not done_sim else '0';
 
@@ -140,7 +153,8 @@ begin
       generic map(BLK => 32, ROWS_IF => RI, NPORTS_W => NW, NPORTS_S => NSP, AXI_DW => DW,
                   ADDR_W => AW, MAXCOLS => MAXC, MAXROWS_BFP => MAXR, FIFO_DEPTH => 64,
                   MAXB => 16, MAXOUT => 16, A_CLK_SPLIT => (d = 1))
-      port map(clk => clk, rst => rst, aclk => aclk, start => start, n_rows => n_rows,
+      port map(clk => clk, rst => rst, aclk => aclk, hbm_aresetn => hbm_aresetn,
+               start => start, n_rows => n_rows,
                n_cols => n_cols, out_shift => out_shift, w_exp => w_exp, x_exp => x_exp,
                out_mode => out_mode, w_base => wbase, w_beats => beats, s_base => sbase,
                s_beats => beats, cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
@@ -250,6 +264,7 @@ begin
     variable w : std_logic_vector(DW-1 downto 0);
     variable alldone : std_logic_vector(0 to ND-1);
     variable e0, s0, ex0 : std_logic_vector(31 downto 0);
+    variable tmo : natural := 400000;
     procedure rnd is
     begin
       rng := rng xor shift_left(rng, 13);
@@ -269,7 +284,13 @@ begin
     for i in 1 to 10 loop wait until rising_edge(clk); end loop;
     rst <= '0'; por <= '0'; mhold <= '0';
     for i in 1 to 10 loop wait until rising_edge(clk); end loop;
+    if HBM_RST then
+      assert JOBS(14).kind = 2 and JOBS(15).kind = 0
+        report "tb_mv4i_tiled: HBM_RST expects job 14 to be the mid-job reset" severity failure;
+      tmo := 5000;
+    end if;
     for j in JOBS'range loop
+      next when HBM_RST and j /= 14 and j /= 15;
       if JOBS(j).kind = 4 then
         rst <= '1';
         wait until rising_edge(clk);
@@ -361,15 +382,19 @@ begin
       end if;
       if JOBS(j).kind = 2 then
         -- reset in the middle of the job; nothing of it is compared, the next job is
-        if HOLD_OWED then
+        if HOLD_OWED or HBM_RST then
           mhold <= '1';
           for i in 1 to 100 loop wait until rising_edge(clk); end loop;
         else
           for i in 1 to 300 loop wait until rising_edge(clk); end loop;
         end if;
         rst <= '1';
+        if HBM_RST then
+          -- the HBM port reset with it: the models drop every owed burst
+          hbm_aresetn <= '0'; mhold <= '0';
+        end if;
         for i in 1 to 3 loop wait until rising_edge(clk); end loop;
-        rst <= '0';
+        rst <= '0'; hbm_aresetn <= '1';
         for i in 1 to 30 loop wait until rising_edge(clk); end loop;
         report "tb_mv4i_tiled: job " & integer'image(j) & " reset mid-job" severity note;
         next;
@@ -383,7 +408,7 @@ begin
           end if;
         end loop;
         cyc := cyc + 1;
-        assert cyc < 400000 report "tb_mv4i_tiled: job " & integer'image(j) & " timed out"
+        assert cyc < tmo report "tb_mv4i_tiled: job " & integer'image(j) & " timed out"
           severity failure;
       end loop;
       wait until rising_edge(clk);
@@ -415,7 +440,10 @@ begin
     assert fails = 0 report "tb_mv4i_tiled: FAIL " & integer'image(fails) severity failure;
     -- the wrapper row (HOLD_OWED) reports under its own name, so sim/mutate_rows.py and
     -- the gate read each row's own PASS line
-    if HOLD_OWED then
+    if HBM_RST then
+      assert checks > 0 report "tb_mv4i_tiled: HBM_RST compared nothing" severity failure;
+      report "PASS: tb_mv4i_tiled_hbmrst checks=" & integer'image(checks) severity note;
+    elsif HOLD_OWED then
       report "PASS: tb_mv4i_tiled_hbmnr checks=" & integer'image(checks) severity note;
     else
       report "PASS: tb_mv4i_tiled checks=" & integer'image(checks) severity note;

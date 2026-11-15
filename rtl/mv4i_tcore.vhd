@@ -43,6 +43,12 @@
 -- costs nothing: no result reaches the crossing within the few cycles of the hold, and
 -- the back end's own reset is plain rst, so start acceptance is unchanged.  Mutant X1
 -- restores rrst = rst.
+--
+-- THE HBM AXI PORT RESET (a450 Task 8, carry C1).  `hbm_aresetn` is the reset of the HBM
+-- AXI ports A's masters use, active low, from whatever domain the card drives it from.
+-- It reaches no state machine: inverted and synchronised into aclk_a (hb1, hb2, ASYNC_REG),
+-- it clears every port's owed-burst count (rtl/mv_rdfsm.vhd `owed`, which A's own rst
+-- never clears) through mv_afast's mid registers.  Default '1': never in reset.
 library ieee;
 use ieee.std_logic_1164.all;
 use ieee.numeric_std.all;
@@ -55,6 +61,7 @@ entity mv4i_tcore is
   );
   port(
     clk, rst, aclk_a, start : in std_logic;
+    hbm_aresetn : in std_logic := '1';
     n_rows, n_cols, out_shift, w_exp, x_exp : in std_logic_vector(31 downto 0);
     out_mode : in std_logic_vector(1 downto 0);
     w_base : in std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
@@ -99,6 +106,9 @@ architecture rtl of mv4i_tcore is
   attribute async_reg of ar3 : signal is "TRUE";
   attribute async_reg of wr1 : signal is "TRUE";
   attribute async_reg of wr2 : signal is "TRUE";
+  signal hb1, hb2 : std_logic := '1';
+  attribute async_reg of hb1 : signal is "TRUE";
+  attribute async_reg of hb2 : signal is "TRUE";
   signal i_rows, i_cols, i_osh, i_wexp, i_xexp, i_yexp, i_wb, i_sb : integer := 0;
   signal j_go, a_go : std_logic;
   signal j_nb, j_rows, j_lastv : natural;
@@ -127,6 +137,14 @@ begin
     if rising_edge(aclk_a) then
       ar1 <= rst; ar2 <= ar1; ar3 <= ar2;
       ar_ts <= ar2 or ar3;
+    end if;
+  end process;
+
+  -- the HBM port reset into aclk_a (see the header)
+  hbsync : process(aclk_a)
+  begin
+    if rising_edge(aclk_a) then
+      hb1 <= not hbm_aresetn; hb2 <= hb1;
     end if;
   end process;
 
@@ -171,7 +189,8 @@ begin
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W, NPORTS_S => NPORTS_S,
                 AXI_DW => AXI_DW, ADDR_W => ADDR_W, MAXCOLS => MAXCOLS,
                 FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT, XD => XD, G => G)
-    port map(clk => aclk_a, rst => ar2, go => a_go, j_nb => j_nb, j_rows => j_rows,
+    port map(clk => aclk_a, rst => ar2, hbm_rst => hb2, go => a_go, j_nb => j_nb,
+             j_rows => j_rows,
              j_lastv => j_lastv, j_os => j_os, j_mode => j_mode, j_cb => j_cb,
              w_base => w_base, w_beats => i_wb, s_base => s_base, s_beats => i_sb,
              x_rbaddr => xr_baddr, x_rdata => x_rdata,

@@ -73,6 +73,10 @@ entity mv_afast is
   );
   port(
     clk, rst  : in  std_logic;
+    -- the HBM AXI port reset, synchronous to clk, active high (a450 Task 8, carry C1):
+    -- registered here per tile group and for the distributor, as rst is, then clears
+    -- every port's owed-burst count (rtl/mv_rdfsm.vhd)
+    hbm_rst   : in  std_logic := '0';
     go        : in  std_logic;
     j_nb      : in  natural;
     j_rows    : in  natural;
@@ -129,17 +133,26 @@ architecture rtl of mv_afast is
   attribute dont_touch of rst_m : signal is "true";
   signal rst_d : std_logic := '1';          -- dist and tree
   attribute dont_touch of rst_d : signal is "true";
+  -- hbm_rst through the same shape of mid registers (latency is free: see mv_rdfsm's owed)
+  signal hbm_m : std_logic_vector(NRM-1 downto 0) := (others => '1');
+  attribute dont_touch of hbm_m : signal is "true";
+  signal hbm_d : std_logic := '1';
+  attribute dont_touch of hbm_d : signal is "true";
 begin
   rmid : process(clk)
   begin
-    if rising_edge(clk) then rst_m <= (others => rst); rst_d <= rst; end if;
+    if rising_edge(clk) then
+      rst_m <= (others => rst); rst_d <= rst;
+      hbm_m <= (others => hbm_rst); hbm_d <= hbm_rst;
+    end if;
   end process;
 
   dist : entity work.mv_dist
     generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_S => NPORTS_S, AXI_DW => AXI_DW,
                 ADDR_W => ADDR_W, DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
                 MAXCOLS => MAXCOLS)
-    port map(clk => clk, rst => rst_d, go => go, j_nb => j_nb, j_rows => j_rows,
+    port map(clk => clk, rst => rst_d, hbm_rst => hbm_d, go => go, j_nb => j_nb,
+             j_rows => j_rows,
              j_lastv => j_lastv, j_os => j_os, j_mode => j_mode, j_cb => j_cb,
              s_base => s_base, s_beats => s_beats, x_rbaddr => x_rbaddr, x_rdata => x_rdata,
              m_arvalid => m_arvalid(NT+NPORTS_S-1 downto NT),
@@ -166,7 +179,7 @@ begin
     tile : entity work.mv_tile
       generic map(BLK => BLK, AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => FIFO_DEPTH,
                   MAXB => MAXB, MAXOUT => MAXOUT, XD => XD, SLACK => SLACK, RD => 4)
-      port map(clk => clk, rst => rst_m(p / G),
+      port map(clk => clk, rst => rst_m(p / G), hbm_rst => hbm_m(p / G),
                w_base => w_base((p+1)*ADDR_W-1 downto p*ADDR_W), w_beats => w_beats,
                arvalid => m_arvalid(p), arready => m_arready(p),
                araddr => m_araddr((p+1)*ADDR_W-1 downto p*ADDR_W),
