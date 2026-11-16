@@ -19,7 +19,8 @@
 #   slices and smartconnect are the card's (hw/jc/card/gen_jc_card.py; test_a450.py pins
 #   them equal).
 # Every CONFIG this file sets is read back (a set_property on a name the object lacks is
-# silent).  Sentinels: A450BD_CFG lines, A450BD_DONE; failures are Tcl errors.
+# silent).  Sentinels: A450BD_CFG lines, A450BD_RESET (the reset tree's propagated polarity),
+# A450BD_DONE; failures are Tcl errors.
 create_bd_design a450
 
 proc a4_want {cell key want} {
@@ -76,12 +77,22 @@ set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] [get_bd_ce
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 core_reset
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 aclk_reset
 create_bd_cell -type ip -vlnv xilinx.com:ip:proc_sys_reset:5.0 apb_rst
-connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/dcm_locked]
+# THE RESET TREE: the split-on card's (hw/jc/card/gen_jc_card.py, a450 Task 9 fix; final
+# review I3; test_a450.py pins the connections equal).  aclk_reset takes BOTH locks through
+# lock_and, and core_reset DESCENDS from it: its ext_reset_in is aclk_reset's
+# peripheral_aresetn and its dcm_locked a constant 1.  So the gate times the card's rst ->
+# ar1 source and fan-out, not a sibling reset released on clk_wiz_0's lock alone.
+create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 lock_and
+set_property -dict [list CONFIG.C_SIZE {1} CONFIG.C_OPERATION {and}] [get_bd_cells lock_and]
+foreach {k v} {C_SIZE 1 C_OPERATION and} { a4_want lock_and $k $v }
+connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins lock_and/Op1]
+connect_bd_net [get_bd_pins clk_wiz_a/locked] [get_bd_pins lock_and/Op2]
+connect_bd_net [get_bd_pins lock_and/Res] [get_bd_pins aclk_reset/dcm_locked]
+connect_bd_net [get_bd_pins one/dout] [get_bd_pins aclk_reset/ext_reset_in]
+connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins core_reset/ext_reset_in]
+connect_bd_net [get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]
 connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins apb_rst/dcm_locked]
-connect_bd_net [get_bd_pins clk_wiz_a/locked] [get_bd_pins aclk_reset/dcm_locked]
-foreach r {core_reset aclk_reset apb_rst} {
-  connect_bd_net [get_bd_pins one/dout] [get_bd_pins $r/ext_reset_in]
-}
+connect_bd_net [get_bd_pins one/dout] [get_bd_pins apb_rst/ext_reset_in]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins core_reset/slowest_sync_clk]
 connect_bd_net [get_bd_pins clk_wiz_a/clk_out1] [get_bd_pins aclk_reset/slowest_sync_clk]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out1] [get_bd_pins apb_rst/slowest_sync_clk]
@@ -144,6 +155,9 @@ puts "A450BD ASSOCIATED_BUSIF top/aclk_a = 27 interfaces"
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins top/clk_core]
 connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins top/core_rstn]
 connect_bd_net [get_bd_pins clk_wiz_a/clk_out1] [get_bd_pins top/aclk_a]
+# the HBM ports' ARESET_N into A's owed-burst clear (mv4i_tiled hbm_aresetn), as the card
+# wires eng/hbm_aresetn (final review I3): live nets into mv_rdfsm, not constants
+connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins top/hbm_aresetn]
 for {set m 0} {$m < 27} {incr m} {
   set s [lindex $PORTMAP $m]
   connect_bd_intf_net [get_bd_intf_pins [format top/m%02d_axi $m]] [get_bd_intf_pins [format hbm/SAXI_%02d $s]]
@@ -221,5 +235,13 @@ puts "A450BD IP jtag_hbm,top/x_ctl_axi,top/x_tok_axi -> hbm_sc -> sc_rs -> SAXI_
 create_bd_port -dir O led
 connect_bd_net [get_bd_pins top/led] [get_bd_ports led]
 validate_bd_design
+# the reset tree's propagated polarity, read after validation as the card reads it
+# (gen_jc_card.reset_polarity_lines): C_EXT_RESET_HIGH is BD-propagated, and a 1 on
+# core_reset would invert A's reset against the HBM ports'
+foreach r {core_reset aclk_reset} {
+  set erh [get_property CONFIG.C_EXT_RESET_HIGH [get_bd_cells $r]]
+  if {$erh ne "0"} { error "A450BD_RESET FAIL $r CONFIG.C_EXT_RESET_HIGH is \"$erh\", not 0" }
+  puts "A450BD_RESET $r C_EXT_RESET_HIGH $erh"
+}
 save_bd_design
 puts "A450BD_DONE"

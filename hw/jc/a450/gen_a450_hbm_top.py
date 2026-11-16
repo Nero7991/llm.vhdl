@@ -184,6 +184,10 @@ entity a450_hbm_top is
     clk_core  : in  std_logic;
     core_rstn : in  std_logic;
     aclk_a    : in  std_logic;
+    -- the HBM ports' ARESET_N (aclk_reset's peripheral_aresetn), into mv4i_tiled's owed-
+    -- burst clear as on the card (final review I3).  No default, so an unconnected pin is
+    -- a BD 41-759 warning rather than a silent constant.
+    hbm_aresetn : in std_logic;
     led       : out std_logic;
 {PORTS}
   );
@@ -230,7 +234,8 @@ begin
     generic map(BLK => 32, ROWS_IF => 48, NPORTS_W => {NW}, NPORTS_S => {NS}, AXI_DW => {DW},
                 ADDR_W => {AW}, MAXCOLS => 17408, MAXROWS_BFP => 17408, FIFO_DEPTH => 512,
                 MAXB => 16, MAXOUT => 16, A_CLK_SPLIT => true)
-    port map(clk => clk_core, rst => rst, aclk => aclk_a, start => start,
+    port map(clk => clk_core, rst => rst, aclk => aclk_a, hbm_aresetn => hbm_aresetn,
+             start => start,
              n_rows => n_rows, n_cols => n_cols, out_shift => out_shift, w_exp => w_exp,
              x_exp => x_exp, out_mode => out_mode, w_base => w_base, w_beats => w_beats,
              s_base => s_base, s_beats => s_beats, cb_we => cb_we, cb_addr => cb_addr,

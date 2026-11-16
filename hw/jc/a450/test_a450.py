@@ -382,3 +382,152 @@ def test_placed_share_refuses_the_unfloorplanned_card_and_accepts_the_closing_ru
     assert _placed("jccard_a450s1b") == (24, 19, 5, 0.022)
     assert _placed("r6") == (24, 0, 24, 0.906)
     assert _placed("9b_r2") == (24, 0, 24, 0.910)
+
+
+# ---- final review I3: the gate's reset tree, hbm_aresetn and start read-back are the card's --
+_CONN = re.compile(r"connect_bd_net \[get_bd_pins (\S+)\]\s+\[get_bd_pins (\S+)\]")
+_RST_IN = ("core_reset", "aclk_reset", "apb_rst", "lock_and")
+
+
+def _reset_inputs(text):
+    """{input pin of a reset-tree cell: its driver}, from two-endpoint connect_bd_net lines."""
+    d = {}
+    for a, b in _CONN.findall(text):
+        if b.split("/")[0] in _RST_IN and b.split("/")[1] in (
+                "ext_reset_in", "dcm_locked", "slowest_sync_clk", "Op1", "Op2"):
+            assert b not in d, "two drivers for %s" % b
+            d[b] = a
+    return d
+
+
+def _split_render():
+    return G.render_tcl(P, G.CLK_CORE_DEFAULT, {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"})
+
+
+def test_gate_reset_tree_is_the_split_on_cards():
+    """Every input of core_reset, aclk_reset, apb_rst and lock_and has the same driver in the
+    gate as in the split-on card render (core_reset descends from aclk_reset, aclk_reset
+    takes both locks), and lock_and's CONFIG is the card's.  The old sibling tree fails
+    this (core_reset/ext_reset_in on one/dout, dcm_locked on clk_wiz_0/locked)."""
+    gate = _reset_inputs(_code(_read("a450_bd.tcl")))
+    card = _reset_inputs(_split_render())
+    assert gate == card
+    assert gate["core_reset/ext_reset_in"] == "aclk_reset/peripheral_aresetn"
+    assert gate["core_reset/dcm_locked"] == "one/dout"
+    assert gate["aclk_reset/dcm_locked"] == "lock_and/Res"
+    cfg = r"CONFIG\.C_SIZE \{1\} CONFIG\.C_OPERATION \{and\}\] \[get_bd_cells lock_and\]"
+    assert re.search(cfg, _read("a450_bd.tcl")) and re.search(cfg, _split_render())
+    # the propagated polarity is read back after validation, as the card does
+    bd = _code(_read("a450_bd.tcl"))
+    assert bd.index("validate_bd_design") < bd.index("C_EXT_RESET_HIGH") < bd.index("save_bd_design")
+
+
+def test_reset_tree_check_has_teeth():
+    """The attribution control: the pre-fix sibling tree, rebuilt from the gate's own text,
+    is refused by the comparison above."""
+    bd = _code(_read("a450_bd.tcl"))
+    old = bd.replace("[get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins core_reset/ext_reset_in]",
+                     "[get_bd_pins one/dout] [get_bd_pins core_reset/ext_reset_in]")
+    old = old.replace("[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]",
+                      "[get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/dcm_locked]")
+    assert old != bd
+    assert _reset_inputs(old) != _reset_inputs(_split_render())
+
+
+def test_gate_wires_hbm_aresetn_as_the_card_does():
+    """The card drives eng/hbm_aresetn from aclk_reset's peripheral_aresetn; the gate drives
+    top/hbm_aresetn from the same net, the top passes it to mv4i_tiled, and the top port
+    has no default (an unconnected module-reference input would be tied to zero silently)."""
+    card = dict((b, a) for a, b in _CONN.findall(_split_render()))
+    assert card["%s/hbm_aresetn" % P.ENG_CELL] == G.ACLK_A_RSTN
+    gate = dict((b, a) for a, b in _CONN.findall(_code(_read("a450_bd.tcl"))))
+    assert gate["top/hbm_aresetn"] == G.ACLK_A_RSTN
+    top = _read("a450_hbm_top.vhd")
+    assert re.search(r"^    hbm_aresetn : in std_logic;$", top, re.M)
+    assert re.search(r"a : entity work\.mv4i_tiled\b.*?hbm_aresetn => hbm_aresetn", top, re.S)
+
+
+def _readback(case):
+    """Run a450_start_readback against stubbed Vivado queries; case sets the two paths'
+    properties ({} for a path that is missing).  Returns (stdout lines, fails)."""
+    rst, tog = case
+    def props(p):
+        return " ".join("%s %s" % kv for kv in p.items())
+    script = r"""
+source %s
+set ::TC %s
+array set ::P_rst {%s}
+array set ::P_tog {%s}
+proc _objs {args} {
+  set out {}
+  set skip 0
+  foreach a $args {
+    if {$skip} { set skip 0; continue }
+    if {$a in {-filter -of_objects}} { set skip 1; continue }
+    if {[string match -* $a]} { continue }
+    lappend out $a
+  }
+  return [join $out]
+}
+proc get_pins {args} {
+  set n [_objs {*}$args]
+  if {$n in [list $::TC/ar1_reg/D $::TC/ar1_reg/C $::TC/gosync/s1_reg/D]} { return $n }
+  return {}
+}
+proc get_clocks {args} { return clk_a }
+proc get_cells {args} {
+  set n [_objs {*}$args]
+  if {$n in {rst_src} || $n eq "$::TC/gosync/tog_reg"} { return $n }
+  return {}
+}
+proc all_fanin {args} { return rst_src }
+proc get_timing_paths {args} {
+  set to [lindex $args [expr {[lsearch $args -to] + 1}]]
+  if {$to eq "$::TC/ar1_reg/D"} { return [expr {[array size ::P_rst] ? "P_rst" : ""}] }
+  return [expr {[array size ::P_tog] ? "P_tog" : ""}]
+}
+proc get_property {k o} {
+  if {$o eq "clk_a"} { return 2.222 }
+  return [set ::${o}($k)]
+}
+lassign [a450_start_readback $::TC] prst ptog pa sk fails
+puts "PATHS $prst $ptog PERIOD $pa SKEW $sk"
+foreach f $fails { puts "FAIL $f" }
+""" % (os.path.join(HERE, "a450_cdc.tcl"), TC, props(rst), props(tog))
+    r = subprocess.run(["tclsh"], input=script, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return r.stdout, re.findall(r"^FAIL (.*)$", r.stdout, re.M)
+
+
+@pytest.mark.skipif(not TCLSH, reason="tclsh not installed")
+def test_start_readback_refuses_on_the_gate_conditions():
+    """a450_start_readback, the proc both the gate and the split-on card call, against the
+    9b_r2 MEASURED values (pass) and one mutation per refusal."""
+    good_r = {"REQUIREMENT": 2.222, "SLACK": 1.784, "DATAPATH_DELAY": 0.463}
+    good_t = {"REQUIREMENT": 2.222, "SLACK": 1.443, "DATAPATH_DELAY": 0.804}
+    out, f = _readback((good_r, good_t))
+    assert f == [] and "PATHS P_rst P_tog PERIOD 2.222" in out, out
+    _, f = _readback((dict(good_r, REQUIREMENT=4.444), good_t))
+    assert len(f) == 1 and f[0].startswith("rst->ar1 requirement 4.444"), f
+    _, f = _readback((good_r, dict(good_t, SLACK=-0.01)))
+    assert len(f) == 1 and f[0].startswith("tog->s1 misses"), f
+    _, f = _readback((dict(good_r, DATAPATH_DELAY=0.1), dict(good_t, DATAPATH_DELAY=2.4)))
+    assert len(f) == 1 and "skew" in f[0], f
+    _, f = _readback((good_r, {}))
+    assert f == ["start-crossing reset paths: 1 rst->ar1, 0 tog->s1"], f
+
+
+def test_card_reads_back_the_start_paths_after_route_when_split():
+    """build_card.tcl calls the gate's proc on the routed design under ::a450_split, prints
+    ^JCCARD_A450_ lines and refuses through jcc_fail; the gate calls the same proc."""
+    with open(os.path.join(REPO, "hw", "jc", "card", "build_card.tcl")) as f:
+        b = _code(f.read())
+    i = b.index("lassign [a450_start_readback $::a450_tc]")
+    assert b.rindex("route_design") < i < b.index("report_route_status -file")
+    blk = b[b.rindex("if {[info exists ::a450_split] && $::a450_split} {", 0, i):b.index("report_route_status -file")]
+    for s in ('puts "JCCARD_A450_$a4_tag', 'puts "JCCARD_A450_RSTSKEW', 'puts "JCCARD_A450_START_FAIL',
+              'jcc_fail "a450 start-crossing read-back'):
+        assert s in blk, s
+    g = _code(_read("build_a450.tcl"))
+    assert "lassign [a450_start_readback $tc] prst ptog pa_ns rskew sfails" in g
+    assert "foreach f $sfails { a4_check_fail $f }" in g

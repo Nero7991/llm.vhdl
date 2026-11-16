@@ -186,25 +186,16 @@ foreach p [get_timing_paths -quiet -setup -max_paths 10 -nworst 1 -to $ca] {
 
 # the two start-crossing reset paths: bounded at one aclk_a period each (a450_cdc), read
 # back here by REQUIREMENT so a constraint that lost to the clock-wide 2-period bound
-# shows; their delay difference is the skew ar3's one edge of margin must cover
-set pa_ns [get_property PERIOD $ca]
-set ar1d [get_pins $tc/ar1_reg/D]
-set rsrc [get_cells [all_fanin -flat -startpoints_only -only_cells $ar1d] -filter {IS_SEQUENTIAL}]
-set prst [get_timing_paths -quiet -setup -max_paths 1 -from $rsrc -to $ar1d]
-set ptog [get_timing_paths -quiet -setup -max_paths 1 -from [get_cells $tc/gosync/tog_reg] -to [get_pins $tc/gosync/s1_reg/D]]
-if {[llength $prst] != 1 || [llength $ptog] != 1} {
-  a4_check_fail "start-crossing reset paths: [llength $prst] rst->ar1, [llength $ptog] tog->s1"
-} else {
+# shows; their delay difference is the skew ar3's one edge of margin must cover.  The
+# read-back and its refusals are a450_start_readback (a450_cdc.tcl), which the split-on
+# card runs too (build_card.tcl, final review I3).
+lassign [a450_start_readback $tc] prst ptog pa_ns rskew sfails
+if {$prst ne ""} {
   a4_path A450HBM_RSTAR1 $prst
   a4_path A450HBM_TOGS1 $ptog
-  foreach p [list $prst $ptog] nm {rst->ar1 tog->s1} {
-    if {abs([get_property REQUIREMENT $p] - $pa_ns) > 0.001} {
-      a4_check_fail "$nm requirement [get_property REQUIREMENT $p] is not one aclk_a period $pa_ns"
-    }
-    if {[get_property SLACK $p] < 0} { a4_check_fail "$nm misses its one-period bound" }
-  }
-  puts "A450HBM_RSTSKEW [expr {abs([get_property DATAPATH_DELAY $prst] - [get_property DATAPATH_DELAY $ptog])}] PERIOD $pa_ns"
+  puts "A450HBM_RSTSKEW $rskew PERIOD $pa_ns"
 }
+foreach f $sfails { a4_check_fail $f }
 
 # d_afull name-check (Task 5 review): a chain stage's registered afull (ua_r of link k-1)
 # is link k's d_afull, which selects dd_r (97 bits) and drives o_rdy into tile k.

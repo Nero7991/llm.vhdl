@@ -665,6 +665,21 @@ if {[catch {
 } err]} { jcc_fail "link exception audit: $err" }
 puts "JCCARD_LINK_EXC_AUDIT bad=$lk_exc"
 if {$lk_exc != 0} { jcc_fail "link cdc bounds not in force after route: $lk_exc failure(s) (JCLINK_EXC_* lines)" }
+# the split's two start-crossing reset paths (rst->ar1, tog->s1), read back on the routed
+# design exactly as the a450 gate reads them (a450_start_readback, hw/jc/a450/a450_cdc.tcl;
+# final review I3): each must carry its one-aclk_a-period bound (not the clock-wide two),
+# meet it, and their skew must stay under one period, which is the only thing that makes
+# ar3's one edge of margin real (rtl/mv4i_tcore.vhd RESETS).  Refused like the link bounds.
+if {[info exists ::a450_split] && $::a450_split} {
+  lassign [a450_start_readback $::a450_tc] a4_prst a4_ptog a4_pa a4_skew a4_sf
+  foreach a4_p [list $a4_prst $a4_ptog] a4_tag {RSTAR1 TOGS1} {
+    if {$a4_p eq ""} { continue }
+    puts "JCCARD_A450_$a4_tag SLACK [get_property SLACK $a4_p] REQ [get_property REQUIREMENT $a4_p] DELAY [get_property DATAPATH_DELAY $a4_p] LEVELS [get_property LOGIC_LEVELS $a4_p] START [get_property STARTPOINT_PIN $a4_p] END [get_property ENDPOINT_PIN $a4_p]"
+  }
+  if {$a4_prst ne ""} { puts "JCCARD_A450_RSTSKEW $a4_skew PERIOD $a4_pa" }
+  foreach a4_f $a4_sf { puts "JCCARD_A450_START_FAIL $a4_f" }
+  if {[llength $a4_sf] > 0} { jcc_fail "a450 start-crossing read-back: [llength $a4_sf] failure(s) (JCCARD_A450_START_FAIL lines)" }
+}
 
 set rp $bd/reports
 file mkdir $rp

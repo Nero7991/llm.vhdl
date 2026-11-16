@@ -69,6 +69,49 @@ proc a450_cdc {core_glob aclk_glob} {
   return [list $cc $ca]
 }
 
+# a450_start_readback <tcore>: the two start-crossing reset paths a450_cdc bounded, read
+# back on the ROUTED design.  Shared by build_a450.tcl (the gate) and build_card.tcl (the
+# split-on card; final review I3), so the card refuses on exactly the gate's conditions.
+# Returns {prst ptog period skew fails}: the one worst setup path rst->ar1 and tog->s1
+# ({} when there is not exactly one), aclk_a's period (the clock of ar1's C pin), the
+# DATAPATH_DELAY difference of the two, and the refusal reasons, each a string:
+#   - not exactly one path of each (the bounds or the cells are gone);
+#   - a REQUIREMENT other than one aclk_a period (the clock-wide 2-period bound won);
+#   - negative slack against that period;
+#   - a skew of one aclk_a period or more (ar3's one edge of margin, rtl/mv4i_tcore.vhd
+#     RESETS, holds only while the skew stays under one period).
+# The caller prints the paths with its own sentinel prefix and refuses on any reason.
+proc a450_start_readback {tc} {
+  set ar1d [get_pins -quiet $tc/ar1_reg/D]
+  set ca [get_clocks -quiet -of_objects [get_pins -quiet $tc/ar1_reg/C]]
+  if {[llength $ar1d] != 1 || [llength $ca] != 1} {
+    return [list {} {} 0 0 [list "ar1: [llength $ar1d] D pin(s), [llength $ca] clock(s) on its C pin, not one each"]]
+  }
+  set pa [get_property PERIOD $ca]
+  set rsrc [get_cells -quiet [all_fanin -quiet -flat -startpoints_only -only_cells $ar1d] \
+              -filter {IS_SEQUENTIAL}]
+  set togc [get_cells -quiet $tc/gosync/tog_reg]
+  set s1d [get_pins -quiet $tc/gosync/s1_reg/D]
+  set prst {}; set ptog {}
+  if {[llength $rsrc] >= 1} { set prst [get_timing_paths -quiet -setup -max_paths 1 -from $rsrc -to $ar1d] }
+  if {[llength $togc] == 1 && [llength $s1d] == 1} {
+    set ptog [get_timing_paths -quiet -setup -max_paths 1 -from $togc -to $s1d]
+  }
+  if {[llength $prst] != 1 || [llength $ptog] != 1} {
+    return [list {} {} $pa 0 [list "start-crossing reset paths: [llength $prst] rst->ar1, [llength $ptog] tog->s1"]]
+  }
+  set fails {}
+  foreach p [list $prst $ptog] nm {rst->ar1 tog->s1} {
+    if {abs([get_property REQUIREMENT $p] - $pa) > 0.001} {
+      lappend fails "$nm requirement [get_property REQUIREMENT $p] is not one aclk_a period $pa"
+    }
+    if {[get_property SLACK $p] < 0} { lappend fails "$nm misses its one-period bound (slack [get_property SLACK $p])" }
+  }
+  set skew [expr {abs([get_property DATAPATH_DELAY $prst] - [get_property DATAPATH_DELAY $ptog])}]
+  if {$skew >= $pa} { lappend fails "rst->ar1 / tog->s1 skew $skew is not under one aclk_a period $pa" }
+  return [list $prst $ptog $pa $skew $fails]
+}
+
 # a450_cdc_rules <tcore> <stub>: the report_cdc allowed list of the a450 design, as
 # {label src_re dst_re}: ANCHORED regular expressions on the report's pin names.  Every
 # crossing report_cdc flags Critical or Warning must match one; anything else fails the
