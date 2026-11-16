@@ -171,3 +171,32 @@ def test_status_and_halt():
     fb2 = FakeBroker({}, {}, halted="LoadAborted: DNA mismatch")
     p = tool("status", "--sock", fb2.path)
     assert p.returncode == 1 and p.stdout.startswith("JCSEAM_STATUS halted ")
+
+
+def _brk(regs, n):
+    fb = FakeBroker(regs, {})
+    r = subprocess.run([sys.executable, TOOL, "brk", "--sock", fb.path, "--die", "B", "--n", str(n)],
+                       capture_output=True, text=True)
+    return r, fb
+
+
+def test_brk_accepts_its_own_row_and_is_read_only():
+    regs = {0xE040: 9000, 0xE080: 8000, 0xE07C: 7, 0xE050: 8, 0x12034: 650, 0xE018: 1, 0xE01C: 0}
+    r, fb = _brk(regs, 7)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[0] == ("BRK die B n 7 cycles 9000 issue_cyc 8000 steps_iss 7 "
+                                        "tbl_len 8 eng_cyc 650 status 0x00000001 err_info 0x00000000")
+    assert "BRK_REJECT" not in r.stdout
+    assert fb.writes == []
+
+
+def test_brk_rejects_a_stale_or_failed_row():
+    # the seam still holds N=7's program, the driver asked for N=8 (a refused open): T3
+    regs = {0xE040: 9000, 0xE080: 8000, 0xE07C: 7, 0xE050: 8, 0x12034: 650, 0xE018: 1, 0xE01C: 0}
+    r, _ = _brk(regs, 8)
+    assert r.returncode == 3
+    assert "BRK_REJECT die B n 8 tbl_len 8 != n+1 9; steps_iss 7 != n 8" in r.stdout
+    # the GO errored part way (err set, fewer steps issued)
+    regs.update({0xE018: 5, 0xE07C: 3})
+    r, _ = _brk(regs, 7)
+    assert r.returncode == 3 and "steps_iss 3 != n 7" in r.stdout and "not done-without-err" in r.stdout

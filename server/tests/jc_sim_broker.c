@@ -6,6 +6,7 @@
  *                 [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]]
  *                 [--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]]
  *                  [--loop-fail DIE:POS:REASON] [--fail-wr DIE:OFF:NTH:MODE[:TIMES]]]
+ *                 [--shape 27b] [--step-model DIE:FILE]
  *
  * Serves the broker's JSON-lines protocol (the subset fk33_transport_jc.c
  * sends: rd32, wr32, wrn with "fix":true, rdn, memrd) on a Unix socket.  Each die
@@ -69,6 +70,25 @@
  * after it, with WindowUnknown, as --fail-rd does for reads: MODE `ran` applies the write
  * first (only the answer is lost), `lost` does not.  The log line ends FAILED ran|lost.
  *
+ * THE 27B SHAPE (--shape 27b, 2026-11-15).  The sim's default card is the 9B (n_embd 4096,
+ * 32 layers, 4096 positions); --shape 27b presents the JC 27B dies' CAPS instead (n_embd 5120,
+ * 64 layers, 16384 positions), so run_prompt can be dry-run with the real 27B manifests, the
+ * real mv4i embedding and a real 5120-mantissa --x-row file.
+ *
+ * THE STEP-COUNTER MODEL (--step-model DIE:FILE, 2026-11-15, for the per-step token breakdown
+ * sweep).  The sim's CYCLES is 1000 per GO and it has no STEPS_ISS / ISSUE_CYC and no engine
+ * map, so a sweep driver that gates on them cannot be dry-run against it.  FILE has one line
+ * per descriptor of the FULL token program, `D E`: D = the step's duration in cycles (issue to
+ * the next issue), E = the engine CYCLES window (0x12034) the step leaves if it is an A job, or
+ * -1.  After a clean GO (STATUS done, no err) with TBL_LEN T, N = T - 1 steps ran and DIE reads
+ *     CYCLES    = ISS0 + D[0] + ... + D[N-1] + TAIL
+ *     ISSUE_CYC = ISS0 + D[0] + ... + D[N-2]          (the issue of step N-1)
+ *     STEPS_ISS = N
+ *     0x12034   = E of the last A step below N, 0 if none
+ * with ISS0 = 40 and TAIL = 25 (constants a correct analysis recovers without being told).
+ * The rd32 log line is the usual one.  It is a model of the CONTRACT the sweep relies on
+ * (single-issue, additive steps), not of the card's timing.
+ *
  * Prints `JCSIMBROKER_READY <sock>` on stdout once listening.  Serves one
  * client at a time, keeps the dies' state across clients (a card does), and
  * exits on SIGTERM/SIGINT.  NO HARDWARE: no /dev, no coe.py, no BMC.
@@ -89,6 +109,12 @@
 #include "jc_sim_loop.h"
 
 #define MAX_DIES 4
+
+/* --step-model: per-die step durations and engine windows (see the header) */
+#define SM_ISS0 40ll
+#define SM_TAIL 25ll
+static long long *g_sm_d[MAX_DIES], *g_sm_e[MAX_DIES];
+static int g_sm_n[MAX_DIES];
 
 static fk33_transport *g_t[MAX_DIES];
 static jc_loop *g_loop[MAX_DIES];    /* --loop: a C model of tok_loop at 0x20000 per die */
@@ -155,6 +181,55 @@ static void send_all(int fd, const char *s, size_t n)
 
 static void reply(int fd, const char *s) { send_all(fd, s, strlen(s)); }
 
+/* --step-model: answer CYCLES, STEPS_ISS, ISSUE_CYC and engine 0x12034 for die d from the
+ * table, once a clean GO has run.  Returns 0 with *v set, or -1 to fall through to the sim. */
+static int step_model(int d, unsigned long long off, uint32_t *v)
+{
+    uint32_t st = 0, tl = 0;
+    long long acc = SM_ISS0, last_e = 0;
+    int n, k;
+    if (off != FK33_SEAM_BASE + FK33_SEAM_CYCLES && off != FK33_SEAM_BASE + FK33_SEAM_STEPS_ISS
+        && off != FK33_SEAM_BASE + FK33_SEAM_ISSUE_CYC && off != 0x12034ull)
+        return -1;
+    if (g_t[d]->reg_read32(g_t[d]->ctx, FK33_SEAM_BASE + FK33_SEAM_STATUS, &st)
+        || g_t[d]->reg_read32(g_t[d]->ctx, FK33_SEAM_BASE + FK33_SEAM_TBL_LEN, &tl))
+        return -1;
+    n = (int)tl - 1;
+    if (!(st & FK33_ST_DONE) || (st & FK33_ST_ERR) || n < 1 || n > g_sm_n[d]) {
+        if (off == 0x12034ull) { *v = 0; return 0; }
+        return -1;
+    }
+    for (k = 0; k < n - 1; k++) { acc += g_sm_d[d][k]; if (g_sm_e[d][k] >= 0) last_e = g_sm_e[d][k]; }
+    if (g_sm_e[d][n - 1] >= 0) last_e = g_sm_e[d][n - 1];
+    if (off == FK33_SEAM_BASE + FK33_SEAM_ISSUE_CYC) *v = (uint32_t)acc;
+    else if (off == FK33_SEAM_BASE + FK33_SEAM_CYCLES) *v = (uint32_t)(acc + g_sm_d[d][n - 1] + SM_TAIL);
+    else if (off == FK33_SEAM_BASE + FK33_SEAM_STEPS_ISS) *v = (uint32_t)n;
+    else *v = (uint32_t)last_e;
+    return 0;
+}
+
+static int load_step_model(const char *spec)
+{
+    char die[16], path[512];
+    FILE *f;
+    long long dd, ee;
+    int k, cap = 0;
+    if (sscanf(spec, "%15[^:]:%511s", die, path) != 2) return -1;
+    for (k = 0; k < g_ndies; k++) if (!strcmp(g_name[k], die)) break;
+    if (k == g_ndies || !(f = fopen(path, "r"))) return -1;
+    while (fscanf(f, "%lld %lld", &dd, &ee) == 2) {
+        if (g_sm_n[k] == cap) {
+            cap = cap ? 2 * cap : 1024;
+            g_sm_d[k] = (long long *)realloc(g_sm_d[k], (size_t)cap * sizeof(long long));
+            g_sm_e[k] = (long long *)realloc(g_sm_e[k], (size_t)cap * sizeof(long long));
+            if (!g_sm_d[k] || !g_sm_e[k]) { fclose(f); return -1; }
+        }
+        g_sm_d[k][g_sm_n[k]] = dd; g_sm_e[k][g_sm_n[k]] = ee; g_sm_n[k]++;
+    }
+    fclose(f);
+    return g_sm_n[k] ? 0 : -1;
+}
+
 static void handle(int fd, const char *line)
 {
     int d;
@@ -215,7 +290,8 @@ static void handle(int fd, const char *line)
             reply(fd, buf);
             return;
         }
-        rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
+        if (g_sm_d[d] && step_model(d, off, &v) == 0) rc = 0;
+        else rc = g_t[d]->reg_read32(g_t[d]->ctx, (uint32_t)off, &v);
         fprintf(g_log, "%s rd32 0x%llx 1\n", g_name[d], off);
         if (rc) { reply(fd, "{\"ok\":false,\"err\":\"AxiError: sim read\"}\n"); return; }
         if (g_trace) fprintf(g_trace, "R %s 0x%llx 0x%x\n", g_name[d], off, v);
@@ -343,11 +419,14 @@ int main(int argc, char **argv)
     unsigned long loop_drop = 0;
     char lf_die[16] = "";
     unsigned long lf_pos = 0, lf_reason = 0;
+    int shape27 = 0, n_sm = 0;
+    const char *sm_spec[MAX_DIES];
     if (argc < 3) {
         fprintf(stderr, "usage: jc_sim_broker <sock> <log> [--kv-maxpos N] [--dies A,B] "
                 "[--fail-rd DIE:OFF:NTH:MODE[:TIMES]] [--fail-rdn DIE:OFF:NTH:MODE:AT[:TIMES]] "
                 "[--trace FILE] [--loop [--loop-pair A,B [--loop-drop N]] "
-                "[--loop-fail DIE:POS:REASON] [--fail-wr DIE:OFF:NTH:MODE[:TIMES]]]\n");
+                "[--loop-fail DIE:POS:REASON] [--fail-wr DIE:OFF:NTH:MODE[:TIMES]]] "
+                "[--shape 27b] [--step-model DIE:FILE]\n");
         return 2;
     }
     sock = argv[1]; logp = argv[2];
@@ -408,6 +487,14 @@ int main(int argc, char **argv)
             }
             g_failw_ran = !strcmp(mode, "ran");
         }
+        else if (!strcmp(argv[i], "--shape")) {
+            if (strcmp(argv[i + 1], "27b")) { fprintf(stderr, "jc_sim_broker: --shape 27b\n"); return 2; }
+            shape27 = 1;
+        }
+        else if (!strcmp(argv[i], "--step-model")) {
+            if (n_sm >= MAX_DIES) { fprintf(stderr, "jc_sim_broker: too many --step-model\n"); return 2; }
+            sm_spec[n_sm++] = argv[i + 1];
+        }
         else { fprintf(stderr, "jc_sim_broker: unknown %s\n", argv[i]); return 2; }
     }
     {
@@ -420,12 +507,18 @@ int main(int argc, char **argv)
             fk33_sim_opts_default(&o);
             o.version = 2;
             o.kv_maxpos = (uint32_t)kv_maxpos;
+            if (shape27) { o.n_embd = 5120; o.n_layer = 64; o.max_ctx = 16384; }
             snprintf(g_name[g_ndies], sizeof g_name[0], "%s", tok);
             g_t[g_ndies] = fk33_transport_open_sim(&o);
             if (!g_t[g_ndies]) { fprintf(stderr, "jc_sim_broker: sim open failed\n"); return 1; }
             g_ndies++;
         }
     }
+    for (i = 0; i < n_sm; i++)
+        if (load_step_model(sm_spec[i])) {
+            fprintf(stderr, "jc_sim_broker: --step-model %s: want DIE:FILE of `D E` lines for a die in --dies\n", sm_spec[i]);
+            return 2;
+        }
     if ((loop_pair || loop_drop) && !loop_on) {
         fprintf(stderr, "jc_sim_broker: --loop-pair/--loop-drop need --loop\n"); return 2;
     }
@@ -437,7 +530,7 @@ int main(int argc, char **argv)
     }
     if (loop_on) {
         for (i = 0; i < g_ndies; i++) {
-            g_loop[i] = jc_loop_new(g_t[i], 4096);   /* fk33_sim.c:183 n_embd */
+            g_loop[i] = jc_loop_new(g_t[i], shape27 ? 5120 : 4096);   /* the sim's n_embd */
             if (!g_loop[i]) { fprintf(stderr, "jc_sim_broker: loop model alloc failed\n"); return 1; }
         }
         if (loop_pair) {
