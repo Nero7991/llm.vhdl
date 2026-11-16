@@ -120,8 +120,9 @@ proc jccard_cdc_scan {txt dst_ok {refuse_ids {CDC-10}}} {
 # timing.md, The 49 CDC rows): core_reset's peripheral_aresetn flop (or its replica) into
 # mv4i_tcore's ar1 synchroniser.  The diagnosis's other two fan-out destinations,
 # dfetch/g_dc.rst_s1 and gu.gdc.rst_s, do not exist under the split (the descriptor fetch is
-# single-clock and the utilisation counters are not built: rtl/matvec_int4_desc_axi.vhd
-# D_DUAL / U_ON), so no rule names them and a row into either is refused (a regression).
+# single-clock, and the utilisation counter block, only the job-cycle counter since the final
+# review's I1, runs on clk_core: rtl/matvec_int4_desc_axi.vhd D_DUAL / U_DUAL), so no rule
+# names them and a row into either is refused (a regression).
 proc jccard_a450_rules {bd tc} {
   set b [a450_re_quote $bd]
   set t [a450_re_quote $tc]

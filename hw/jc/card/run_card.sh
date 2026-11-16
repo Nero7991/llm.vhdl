@@ -191,7 +191,7 @@ echo "JCCARD_IMPL_DIRECTIVES impl=$IMPL $IMPL_DIRECTIVES"
 # a450 Task 9b: what build_card.tcl does under the split, stated before it runs (it prints
 # JCCARD_A450_PBLOCKS after placement and JCCARD_CDC_A450 after report_cdc)
 if [ "${JC_A_CLK_SPLIT:-0}" = 1 ]; then
-  echo "JCCARD_A450_PLAN floorplan=a450_pblocks(24 tiles)+a450_ip_pblocks(10 IP cells) verify=post_place(refuse) cdc=a450_cdc_rules+jccard_a450_rules(CDC-10 refused) uctr=not_built dfetch=clk_core+d_cdc"
+  echo "JCCARD_A450_PLAN floorplan=a450_pblocks(24 tiles)+a450_ip_pblocks(10 IP cells) verify=post_place(refuse) cdc=a450_cdc_rules+jccard_a450_rules(CDC-10 refused) uctr=job_cycles_only_on_clk_core dfetch=clk_core+d_cdc start_readback=a450_start_readback(refuse)"
 fi
 echo "JCCARD_MEMORY_BUDGET MemAvailable=$MEMAVAIL SwapFree=$SWAPFREE requested_cap=$MEM_HIGH swap_kill=$SWAP_KILL_BYTES run_capped=$RUN_CAPPED vivado=$VIVADO_BIN"
 

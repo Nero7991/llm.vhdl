@@ -4,7 +4,9 @@
 -- tb_matvec_fk33_desc_dual and _xexp are: regress keys a row by bench name and cannot run
 -- one bench twice.  The whole 22-case matrix, the element-exact comparison against
 -- ref/matvec_int4.c from the real .mv4i bytes, the register reads (BEATS = tiles * nb,
--- Y_EXP, the stale-done window) and the UTIL counters run through the tiled array.
+-- Y_EXP, the stale-done window) and the UTIL job-cycle counter run through the tiled
+-- array.  Under SPLIT the per-port beat counters are not built (UTIL_SEL[31]); the job-cycle
+-- counter is, on the core clock (a450 final review I1).
 -- The trace is mv_fk33_tr.txt, the same file the other three rows read.
 entity tb_matvec_fk33_desc_tiled is
 end entity;

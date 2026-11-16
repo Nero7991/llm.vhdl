@@ -3,7 +3,7 @@
 
     jc_seam.py status    --sock SOCK
     jc_seam.py seam      --sock SOCK --die A|B [--manifest M]
-    jc_seam.py util      --sock SOCK --die A|B
+    jc_seam.py util      --sock SOCK --die A|B [--tokens N] [--core-mhz F] [--aclk-mhz F]
     jc_seam.py util-clear --sock SOCK --die A|B
 
 A client of tools/jc/jc_broker.py's Unix socket (one JSON object per line each way). The
@@ -26,13 +26,22 @@ broker serves ONE client at a time, so run this only while no run_prompt holds t
               clk_core are one net (hw/jc/card/gen_jc_card.py), so job cycles are clk_core
               cycles and beats/jobcyc is the port's fraction of one 32-byte beat a cycle.
               A split-on card (JC_A_TILED=1 JC_A_CLK_SPLIT=1, a450 Task 9b) does not build
-              the counters: UTIL_SEL bit 31 (UTIL_NONE) reads 1, and this prints
-              `JCUTIL_NONE die X seam_cycles_last_go N` and `JCUTIL_DONE` and exits 0,
-              reading no counter.  The cadence of such a card is measured from the seam's
-              cycles only (port_beats is not available on it).
+              the per-port beat counters: UTIL_SEL bit 31 (UTIL_NONE) reads 1.  It does
+              build the job-cycle counter (a450 final review I1), counted in clk_core
+              cycles in A's job window, so this reads that one counter only and prints
+              `JCUTIL_SPLIT die X ... jobcyc_core N seam_cycles_last_go M` and
+              `JCUTIL_CADENCE die X ... aclk_c_per_word R DERIVED`, where
+              R = jobcyc_core * (aclk_mhz / core_mhz) / (port_beats_per_token * tokens).
+              port_beats_per_token is NOT measured on such a card: it is the unchanged 27B
+              layout's per-port beats per token (die A 8,192,096, die B 8,520,192; MEASURED
+              by the util counters on the split-off card, docs/debugging/
+              2026-11-15_a450-silicon.md), and --tokens (default 1) must be the number of
+              tokens run since the last util-clear.  --core-mhz (125) and --aclk-mhz (450)
+              must be the card's clk_core and aclk_a.  R includes the clk_core side of
+              every job (the start and result crossings).
   util-clear  writes UTIL_CLR (0x48): zeroes every counter. Counters ACCUMULATE across
               jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).  On a
-              split-on card (UTIL_SEL[31] set) it writes nothing and prints JCUTIL_NONE.
+              split-on card it clears the job-cycle counter (the only one built).
 
 Drives the board through the broker: the main session or Oren runs it, never a subagent.
 """
@@ -47,7 +56,11 @@ ENG_CAPS = ENG_CTL_BASE + 0x1C
 ENG_UTIL_SEL = ENG_CTL_BASE + 0x40
 ENG_UTIL_DATA = ENG_CTL_BASE + 0x44
 ENG_UTIL_CLR = ENG_CTL_BASE + 0x48
-UTIL_NONE = 1 << 31           # UTIL_SEL bit 31: counters not built (rtl/matvec_int4_desc_axi.vhd)
+UTIL_NONE = 1 << 31           # UTIL_SEL bit 31: per-port counters not built (rtl/matvec_int4_desc_axi.vhd)
+# A split-on card's per-port beats per token: the unchanged 27B layout's, MEASURED on the
+# split-off card (docs/debugging/2026-11-15_a450-silicon.md, JCTOKEN port_beats); not
+# measurable on a split-on card, whose per-port counters are not built.
+LAYOUT_PORT_BEATS = {"A": 8192096, "B": 8520192}
 ENG_ID_MAGIC = 0x4D563449     # "MV4I"
 UTIL_DEAD = 0xDEADDEAD
 SEAM_CYCLES = 0xE000 + 0x40   # server/fk33_seam.h FK33_SEAM_CYCLES (GO to done, core cycles)
@@ -154,7 +167,40 @@ def read_util(b, die):
     return npw, nps, out
 
 
+def util_split(b, a):
+    """A split-on card: read the job-cycle counter only (index NPORTS_W + NPORTS_S) and
+    derive A's aclk_a cadence from the layout's per-port beats."""
+    caps = b.rd32(a.die, ENG_CAPS)
+    npw, nps = caps & 0xFF, (caps >> 8) & 0xFF
+    i = npw + nps
+    b.wr32(a.die, ENG_UTIL_SEL, i << 1)
+    lo = b.rd32(a.die, ENG_UTIL_DATA)
+    b.wr32(a.die, ENG_UTIL_SEL, (i << 1) | 1)
+    hi = b.rd32(a.die, ENG_UTIL_DATA)
+    if UTIL_DEAD in (lo, hi):
+        raise BrokerError("job-cycle counter read 0xDEADDEAD: the counter did not answer")
+    jobcyc = ((hi & 0xFFFF) << 32) | lo
+    cyc = b.rd32(a.die, SEAM_CYCLES)
+    print("JCUTIL_SPLIT die %s nports_w %d nports_s %d jobcyc_core %d seam_cycles_last_go %d: "
+          "the per-port beat counters are not built (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT); "
+          "jobcyc_core is clk_core cycles in A's job window since the last util-clear"
+          % (a.die, npw, nps, jobcyc, cyc))
+    beats = LAYOUT_PORT_BEATS[a.die]
+    if jobcyc == 0:
+        print("JCUTIL_CADENCE die %s jobcyc_core 0: no A job ran since the last clear/reset" % a.die)
+    else:
+        r = jobcyc * (a.aclk_mhz / a.core_mhz) / (beats * a.tokens)
+        print("JCUTIL_CADENCE die %s aclk_c_per_word %.4f DERIVED = jobcyc_core %d * (%g / %g) / "
+              "(port_beats_per_token %d * tokens %d); port_beats_per_token is the unchanged 27B "
+              "layout's, not measured on this card" % (a.die, r, jobcyc, a.aclk_mhz, a.core_mhz,
+                                                      beats, a.tokens))
+    print("JCUTIL_DONE die %s" % a.die)
+    return 0
+
+
 def cmd_util(a):
+    if a.tokens < 1 or a.core_mhz <= 0 or a.aclk_mhz <= 0:
+        raise ValueError("--tokens must be >= 1 and both clocks > 0")
     b = Broker(a.sock)
     try:
         ident = b.rd32(a.die, ENG_ID)
@@ -163,11 +209,7 @@ def cmd_util(a):
                   % (a.die, ident, ENG_ID_MAGIC))
             return 1
         if b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE:
-            cyc = b.rd32(a.die, SEAM_CYCLES)
-            print("JCUTIL_NONE die %s seam_cycles_last_go %d: the utilisation counters are not "
-                  "built on this card (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT)" % (a.die, cyc))
-            print("JCUTIL_DONE die %s" % a.die)
-            return 0
+            return util_split(b, a)
         npw, nps, ctr = read_util(b, a.die)
         cyc = b.rd32(a.die, SEAM_CYCLES)
     finally:
@@ -196,15 +238,13 @@ def cmd_util(a):
 def cmd_util_clear(a):
     b = Broker(a.sock)
     try:
-        if b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE:
-            # a split-on card: UTIL_CLR would be a write that clears nothing
-            print("JCUTIL_NONE die %s: the utilisation counters are not built on this card "
-                  "(UTIL_SEL[31]); nothing to clear, nothing written" % a.die)
-            return 0
+        split = bool(b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE)
         b.wr32(a.die, ENG_UTIL_CLR, 1)
     finally:
         b.close()
-    print("JCUTIL_CLEARED die %s" % a.die)
+    # a split-on card builds the job-cycle counter only (a450 final review I1)
+    print("JCUTIL_CLEARED die %s%s" % (a.die, " (split: the job-cycle counter; the per-port "
+                                       "counters are not built)" if split else ""))
     return 0
 
 
@@ -219,6 +259,11 @@ def main(argv=None):
         p.add_argument("--die", required=True, choices=["A", "B"])
         if name == "seam":
             p.add_argument("--manifest", default=None)
+        if name == "util":
+            p.add_argument("--tokens", type=int, default=1,
+                           help="tokens run since the last util-clear (split-on cadence)")
+            p.add_argument("--core-mhz", type=float, default=125.0)
+            p.add_argument("--aclk-mhz", type=float, default=450.0)
         p.set_defaults(fn=fn)
     a = ap.parse_args(argv)
     try:

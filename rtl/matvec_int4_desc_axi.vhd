@@ -81,10 +81,14 @@
 --                         counters (rtl/a_util_ctr.vhd): i in 0..NPORTS_W-1
 --                         is weight port i's R beats, NPORTS_W..NP_ALL-1 the
 --                         scale ports', and i = NP_ALL the job-cycle counter.
---                         [31] R only, UTIL_NONE: 1 when the counters are not
---                         built (A_TILED and A_CLK_SPLIT, a450 Task 9b); then
---                         UTIL_DATA reads 0 with OKAY for every index and
---                         UTIL_CLR does nothing.  0 on every other build.
+--                         [31] R only, UTIL_NONE: 1 when the per-PORT beat
+--                         counters are not built (A_TILED and A_CLK_SPLIT, a450
+--                         Task 9b); then indices 0..NP_ALL-1 read 0 with OKAY,
+--                         and i = NP_ALL, the job-cycle counter, is still built
+--                         (a450 final review I1): it counts s_axi_aclk (core)
+--                         cycles in the CYCLES window, so it equals the sum of
+--                         every job's CYCLES exactly, and UTIL_CLR clears it.
+--                         0 on every other build.
 --   0x44 UTIL_DATA    R   hi = 0: counter i bits [31:0], and LATCHES its bits
 --                         [47:32]; hi = 1: the latched [47:32], zero-extended.
 --                         So sel=2i, read, sel=2i+1, read is one atomic
@@ -228,7 +232,8 @@ entity matvec_int4_desc_axi is
     -- that STARVED (0x3C) reads 0 (the tiled array has no single weight-word accept to
     -- watch) and BEATS (0x38) grows by nb per row-tile instead of by 1 per word: the
     -- same tiles * nb at done.  The per-port UTIL counters are unaffected, except under
-    -- A_CLK_SPLIT, where they are not built (U_ON below; UTIL_SEL[31] reads 1).
+    -- A_CLK_SPLIT, where they are not built (U_BEATS below; UTIL_SEL[31] reads 1) and the
+    -- job-cycle counter counts core cycles.
     -- Under A_TILED, CB_STYLE is not read (every tile decodes through its own per-lane
     -- LUTRAM) and the A ports always run at one beat per cycle; FAST_POP still sets this
     -- file's own descriptor read master.
@@ -237,6 +242,9 @@ entity matvec_int4_desc_axi is
     -- same clock (the Jungle Cat card ties hbm_aclk to clk_core).  true: the tiles and
     -- the A masters run on m_aclk (aclk_a, 450 MHz); the descriptor master runs on
     -- s_axi_aclk (D_DUAL below), so the card crosses its port with a clock converter.
+    -- true REQUIRES A_TILED and DUAL_CLK (SPLIT_NEEDS below refuses the build otherwise:
+    -- without A_TILED it would be ignored, without DUAL_CLK the tiles would be clocked by
+    -- m_aclk's default '0').
     A_CLK_SPLIT : boolean := false;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
@@ -339,16 +347,28 @@ architecture rtl of matvec_int4_desc_axi is
   --     decode is 11 LUT levels (a logic-depth failure at 450 MHz), and its `run` decode
   --     reached the DUAL_CLK synchroniser through a LUT (report_cdc CDC-10, open since
   --     2026-08-29).  The block design puts the port behind an axi_clock_converter.
-  --   U_ON false: the utilisation counters are not built (27 x 48-bit counters fed from
-  --     27 RVALID pins across the die, a 450 MHz placement failure).  UTIL_SEL[31]
-  --     (UTIL_NONE) reads 1 and UTIL_DATA answers 0 with OKAY at once.
+  --   U_BEATS false: the 27 per-port beat counters are not built (27 x 48-bit counters
+  --     fed from 27 RVALID pins across the die, a 450 MHz placement failure).  UTIL_SEL[31]
+  --     (UTIL_NONE) reads 1 and their indices read 0 with OKAY.  The JOB-CYCLE counter
+  --     stays (a450 final review I1: spec gate 3.3(2)'s cadence needs it), counted on
+  --     s_axi_aclk in S_WAIT like the one-clock build's, so nothing of it is on m_aclk.
   -- Every other configuration is unchanged.
   constant SPLIT_ON : boolean := A_TILED and A_CLK_SPLIT;
   constant D_DUAL   : boolean := DUAL_CLK and not SPLIT_ON;
-  constant U_ON     : boolean := not SPLIT_ON;
+  constant U_BEATS  : boolean := not SPLIT_ON;
+  -- the counter block's clock: m_aclk only when the beat counters are built on a two-clock
+  -- build; otherwise s_axi_aclk (one clock, or the split's core-clock job counter)
+  constant U_DUAL   : boolean := DUAL_CLK and U_BEATS;
+  -- THE SPLIT CONTRACT (a450 final review I2).  A_CLK_SPLIT needs A_TILED (it is a mode of
+  -- the tiled array, silently ignored otherwise) and DUAL_CLK (the tiles run on m_aclk,
+  -- which is '0' by default on a one-clock build).  0 when met, -1 otherwise, which no
+  -- natural holds: Vivado ignores `assert ... severity failure` in synthesis and stops on
+  -- this "bound check failure"; the assert in the body says why for GHDL.
+  constant SPLIT_NEEDS : natural :=
+    0 - boolean'pos(A_CLK_SPLIT and not (A_TILED and DUAL_CLK));
   function util_none return std_logic is
   begin
-    if U_ON then return '0'; else return '1'; end if;
+    if U_BEATS then return '0'; else return '1'; end if;
   end function;
   constant TILES  : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
   constant BYTES  : positive := AXI_DW / 8;
@@ -715,6 +735,9 @@ architecture rtl of matvec_int4_desc_axi is
   signal dbg_words_t : std_logic_vector(31 downto 0);
 begin
   -- ------------------------------------------------------- generic contract
+  assert not A_CLK_SPLIT or (A_TILED and DUAL_CLK)
+    report "matvec_int4_desc_axi: A_CLK_SPLIT needs A_TILED and DUAL_CLK (SPLIT_NEEDS)"
+    severity failure;
   assert ADDR_W >= 32 and ADDR_W <= 64
     report "matvec_int4_desc_axi: ADDR_W must be 32..64; DESC_PTR is a " &
            "32-bit LO/HI register pair and the descriptor's bases are 64-bit"
@@ -1461,6 +1484,13 @@ begin
   -- therefore counts m_aclk cycles and is NOT CYCLES; with one clock it
   -- equals the sum of every job's CYCLES exactly.
   --
+  -- UNDER A_TILED AND A_CLK_SPLIT (U_BEATS false; a450 final review I1) the beat
+  -- inputs are tied to zero, so the 27 beat counters are constants and trim away, and
+  -- the block runs on s_axi_aclk exactly as the one-clock arm (gsc): the job-cycle
+  -- counter equals the sum of every job's CYCLES in core cycles.  Its aclk_a cadence is
+  -- DERIVED by the reader (job cycles * f_aclk / f_core / words), and it includes the
+  -- clk_core side of each job (the start and result crossings), which is the point.
+  --
   -- THE CROSSING (DUAL_CLK).  The window crosses as a level: `u_job_r`, the
   -- REGISTERED S_WAIT decode, through two flops.  Its edges arrive one core
   -- cycle plus two m_aclk cycles late, which delays the window by the same
@@ -1499,13 +1529,13 @@ begin
     attribute ASYNC_REG of req_s : signal is "TRUE";
     attribute ASYNC_REG of clr_s : signal is "TRUE";
   begin
-    u_beat <= m_rvalid and m_rready_i;
+    u_beat <= (m_rvalid and m_rready_i) when U_BEATS else (others => '0');
     u_rden <= req_s(2) xor req_s(1);
     u_rst  <= rst_s(1);
     u_clr  <= clr_s(2) xor clr_s(1);
     u_ack_t_x <= u_ack_t;
 
-    gdc : if DUAL_CLK and U_ON generate
+    gdc : if U_DUAL generate
       usync : process(m_aclk)
       begin
         if rising_edge(m_aclk) then
@@ -1538,8 +1568,9 @@ begin
                  rd_en => u_rden, rd_data => u_rd_dat);
     end generate;
 
-    gsc : if not DUAL_CLK and U_ON generate
-      -- one clock: the window is S_WAIT itself, cycle for cycle
+    gsc : if not U_DUAL generate
+      -- one clock (or the split's core-clock job counter): the window is S_WAIT itself,
+      -- cycle for cycle
       usync : process(s_axi_aclk)
       begin
         if rising_edge(s_axi_aclk) then
@@ -1570,14 +1601,6 @@ begin
                  rbeat => u_beat,
                  rd_idx => unsigned(u_sel_h(7 downto 1)), rd_hi => u_sel_h(0),
                  rd_en => u_rden, rd_data => u_rd_dat);
-    end generate;
-
-    -- NOT BUILT (A_TILED and A_CLK_SPLIT): the read handshake is answered from the core
-    -- domain, two flops after the request (through u_ack_s, as every other build), with
-    -- zero data; UTIL_SEL[31] says so.  Nothing crosses to m_aclk.
-    gnone : if not U_ON generate
-      u_ack_t <= u_req_t;
-      u_rd_dat <= (others => '0');
     end generate;
   end block;
 end architecture;

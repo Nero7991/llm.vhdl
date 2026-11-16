@@ -188,3 +188,17 @@ contradicted the spec", R1-R10) supersedes these points. Each was forced by the 
 - **1.1: the 450 MHz clock.** `aclk_a` comes from a second MMCM (R7).
 - **Unchanged.** `stream_fifo` is not edited; the tiles use `mv_lfifo` (R10). Counters and
   rating rows: R8, R9.
+
+## 7. Amendment (2026-11-15, a450 final review I1): gate 3.3(2)'s cadence is in clk_core cycles
+
+Task 9b removed A's utilisation counters under the split (27 per-port 48-bit beat counters
+fed from 27 RVALIDs across the die did not place at 450 MHz), which left 3.3(2)'s cadence
+half unmeasurable. The final fix restores ONE counter, the job-cycle counter, counted in
+`clk_core` cycles in A's job window (the CYCLES window, `S_WAIT`), not in `aclk_a` cycles.
+The per-port beat counters stay out. So 3.3(2)'s `a_jobcyc` per word is now DERIVED, not
+read: `jobcyc_core * (f_aclk_a / f_core) / port_beats`, with `port_beats` the unchanged
+layout's per-port beats per token (8,192,096 die A, 8,520,192 die B; MEASURED on the
+split-off card). `hw/jc/host/jc_seam.py util` prints it as `JCUTIL_CADENCE ...
+aclk_c_per_word`. The figure includes the `clk_core` side of each job (the start and result
+crossings), so it is an upper bound on the tiles' own `aclk_a` cadence. The 1.05 threshold
+is unchanged. Not yet measured on silicon: it needs a card build of this tree.

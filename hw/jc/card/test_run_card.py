@@ -658,7 +658,8 @@ def test_split_dry_run_prints_explore_directives_and_the_a450_plan(tmp_path):
     assert re.search(r"^JCCARD_IMPL_DIRECTIVES impl=explore %s$" % _EXPLORE, r.stdout, re.M), r.stdout
     assert re.search(r"^JCCARD_A450_PLAN floorplan=a450_pblocks\(24 tiles\)\+a450_ip_pblocks\(10 IP cells\) "
                      r"verify=post_place\(refuse\) cdc=a450_cdc_rules\+jccard_a450_rules\(CDC-10 refused\) "
-                     r"uctr=not_built dfetch=clk_core\+d_cdc$", r.stdout, re.M), r.stdout
+                     r"uctr=job_cycles_only_on_clk_core dfetch=clk_core\+d_cdc "
+                     r"start_readback=a450_start_readback\(refuse\)$", r.stdout, re.M), r.stdout
     assert re.search(r"-impl explore -nonce ", r.stdout)
     t = _run_card_text()
     assert 'echo "impl_directives=$IMPL_DIRECTIVES"' in t and 'echo "impl=$IMPL"' in t

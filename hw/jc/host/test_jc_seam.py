@@ -82,27 +82,62 @@ def test_util_reads_every_counter_48_bits():
     assert len(fb.writes) == 56 and all(off == 0x12040 for off, _ in fb.writes)
 
 
-def test_util_reports_counters_not_built():
-    """a450 Task 9b: a split-on card has no counters; UTIL_SEL[31] says so.  The tool must
-    say "not built" and read no counter (one UTIL_DATA read on a built card's absent counter
-    would be a 0 that looks like an idle port), not print garbage ratios."""
-    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {i: 999 for i in range(28)})
-    p = tool("util", "--sock", fb.path, "--die", "A")
+def test_util_split_reads_the_job_counter_and_derives_the_cadence():
+    """a450 final review I1: a split-on card (UTIL_SEL[31] set) builds only the job-cycle
+    counter, in clk_core cycles.  The tool reads that one counter (index NPORTS_W+NPORTS_S,
+    48 bits), never a per-port index (a 0 there would look like an idle port), prints it
+    with seam_cycles, and derives aclk cycles per word from the layout's per-port beats."""
+    jobcyc = (1 << 32) + 2_000_000          # high half must be read and used
+    util = {i: 999 for i in range(27)}
+    util[27] = jobcyc
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, util)
+    p = tool("util", "--sock", fb.path, "--die", "A", "--tokens", "3")
     assert p.returncode == 0, p.stdout + p.stderr
-    assert "JCUTIL_NONE die A seam_cycles_last_go 123456" in p.stdout
-    assert "JCUTIL_DONE die A" in p.stdout
-    assert " beats " not in p.stdout and "JCUTIL die A nports_w" not in p.stdout
-    assert fb.writes == []
+    o = p.stdout
+    assert ("JCUTIL_SPLIT die A nports_w 24 nports_s 3 jobcyc_core %d seam_cycles_last_go 123456"
+            % jobcyc) in o
+    want = jobcyc * (450.0 / 125.0) / (8192096 * 3)
+    assert "JCUTIL_CADENCE die A aclk_c_per_word %.4f DERIVED" % want in o
+    assert "port_beats_per_token 8192096 * tokens 3" in o and "not measured" in o
+    assert "JCUTIL_DONE die A" in o
+    assert " beats 999" not in o and "JCUTIL die A nports_w" not in o
+    # selector writes for index 27 only, low then high; no UTIL_CLR
+    assert fb.writes == [(0x12040, 27 << 1), (0x12040, (27 << 1) | 1)]
 
 
-def test_util_clear_on_a_card_without_counters_writes_nothing():
-    """Task 9b fix round 1 (m3): util-clear on a split-on card says the counters are not
-    built, and writes no UTIL_CLR (a write that clears nothing must not print CLEARED)."""
+def test_util_split_die_b_uses_its_own_layout_beats_and_the_clock_flags():
+    util = {27: 9_000_000}
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, util)
+    p = tool("util", "--sock", fb.path, "--die", "B", "--core-mhz", "100", "--aclk-mhz", "400")
+    assert p.returncode == 0, p.stdout + p.stderr
+    want = 9_000_000 * (400.0 / 100.0) / 8520192
+    assert "JCUTIL_CADENCE die B aclk_c_per_word %.4f DERIVED" % want in p.stdout
+    assert "port_beats_per_token 8520192 * tokens 1" in p.stdout
+
+
+def test_util_split_with_no_job_says_so():
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 0})
+    p = tool("util", "--sock", fb.path, "--die", "A")
+    assert p.returncode == 0 and "JCUTIL_CADENCE die A jobcyc_core 0: no A job ran" in p.stdout
+
+
+def test_util_split_refuses_a_dead_counter_and_bad_tokens():
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 0xDEADDEAD})
+    p = tool("util", "--sock", fb.path, "--die", "A")
+    assert p.returncode == 2 and "JCSEAM_ERROR" in p.stdout and "DEADDEAD" in p.stdout
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 5})
+    p = tool("util", "--sock", fb.path, "--die", "A", "--tokens", "0")
+    assert p.returncode == 2 and "JCSEAM_ERROR" in p.stdout and fb.writes == []
+
+
+def test_util_clear_on_a_split_card_clears_the_job_counter():
+    """a450 final review I1: the split-on card now builds the job-cycle counter, so
+    util-clear writes UTIL_CLR there too and says what it cleared."""
     fb = FakeBroker({**ENG, 0x12040: 0x80000000}, {})
     p = tool("util-clear", "--sock", fb.path, "--die", "B")
     assert p.returncode == 0, p.stdout + p.stderr
-    assert "JCUTIL_NONE die B" in p.stdout and "JCUTIL_CLEARED" not in p.stdout
-    assert fb.writes == []
+    assert "JCUTIL_CLEARED die B (split: the job-cycle counter" in p.stdout
+    assert fb.writes == [(0x12048, 1)]
 
 
 def test_util_refuses_a_dead_engine():
