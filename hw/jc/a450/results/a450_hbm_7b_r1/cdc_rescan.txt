@@ -1,0 +1,13 @@
+# report_cdc of this run re-scanned with the stub_base rule fix (commit 92ca5d42), tclsh, 2026-11-14
+RESCAN flagged_summary 898 flagged_rows 898 unlisted 0
+RESCAN_RULE fifo_rp_gray 1
+RESCAN_RULE fifo_wp_gray 1
+RESCAN_RULE job_cbk 128
+RESCAN_RULE job_lastv_r 63
+RESCAN_RULE job_md_r 2
+RESCAN_RULE job_nb_r 10
+RESCAN_RULE job_os_r 5
+RESCAN_RULE job_rows_r 29
+RESCAN_RULE stub_base 459
+RESCAN_RULE stub_beats 200
+RESCAN_VERDICT_FAILS 0

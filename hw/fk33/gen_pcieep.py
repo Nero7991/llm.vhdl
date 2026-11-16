@@ -1438,6 +1438,8 @@ def _eng_cell_lines():
     a("set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins %s/core_clk]" % ENG_CELL)
     a("set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins %s/core_clk]" % ENG_CELL)
     a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/core_aresetn]" % ENG_CELL)
+    a("set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins %s/hbm_aclk]" % ENG_CELL)
+    a("set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins %s/hbm_aresetn]" % ENG_CELL)
     a("set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins %s/hbm_aclk]"
       % (":".join("m%02d_axi" % i for i in range(ENG_NMAST)), ENG_CELL))
     a("foreach {pin want} [list %s/core_clk {s_axi:s_axix} %s/hbm_aclk {%s}] {"
@@ -1455,6 +1457,24 @@ def _eng_cell_lines():
 def _eng_block():
     L = _eng_cell_lines()
     a = L.append
+    # THE a450 GENERICS ARE REFUSED ON THE FK33 (a450 final review I2).  fk33_engine's
+    # A_TILED needs hbm_aclk = core_clk (split off), and A_CLK_SPLIT the descriptor master
+    # m27 on core_clk behind an AXI clock converter (matvec_int4_desc_axi D_DUAL); this
+    # block design wires all 28 masters to xdma/axi_aclk, independent of core_clk, so it
+    # is neither.  Only hw/jc/card/gen_jc_card.py builds them (it does not call this
+    # function).  Nothing here sets them: the read-back refuses a VHDL default moved to
+    # true, which no generator diff would show in this file.
+    a("# THE a450 GENERICS (A_TILED, A_CLK_SPLIT) ARE REFUSED ON THIS BOARD: the tiled A")
+    a("# needs hbm_aclk = core_clk, or with the split the descriptor master on core_clk")
+    a("# behind a clock converter; this design has neither.  Read back, both must be false.")
+    a("foreach _g {A_TILED A_CLK_SPLIT} {")
+    a("    set _v [get_property CONFIG.$_g [get_bd_cells %s]]" % ENG_CELL)
+    a("    if {![string is false -strict $_v]} {")
+    a("        error \"FK33_A450 FAIL: %s $_g is \\\"$_v\\\", not false: the FK33 block design has no core-clock descriptor port and its hbm_aclk is not core_clk\"" % ENG_CELL)
+    a("    }")
+    a("    puts \"FK33_A450 %s $_g $_v\"" % ENG_CELL)
+    a("}")
+    a("")
     L.extend(_core_reset_lines())
     a("")
     if ENG_SPLIT:
@@ -1513,6 +1533,14 @@ def _eng_hbm_lines(hbm_clk="xdma/axi_aclk", hbm_rstn="xdma/axi_aresetn"):
           % (hbm_clk, " " * (w - len(hbm_clk)), port))
         a("connect_bd_net [get_bd_pins %s]%s [get_bd_pins hbm/AXI_%02d_ARESET_N]"
           % (hbm_rstn, " " * (w - len(hbm_rstn)), port))
+    a("# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the")
+    a("# net of the 28 ports' ARESET_N above.  PG276 Table 5: that reset is pre-traffic")
+    a("# only; asserted mid-traffic the port and the controller go out of sync, and what")
+    a("# R does afterwards is undocumented.  The tiled A (A_TILED) clears its owed-burst")
+    a("# counts from it only so that it cannot hang forever after one; that is not a")
+    a("# recovery (a reprogram is).  The array on the card today (A_TILED false) does not")
+    a("# read it.")
+    a("connect_bd_net [get_bd_pins %s] [get_bd_pins %s/hbm_aresetn]" % (hbm_rstn, ENG_CELL))
     return L
 
 
@@ -3500,6 +3528,15 @@ if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
     error "FK33_PBLK FAIL: pb_core range is '$pbr', not CLOCKREGION_X0Y0:CLOCKREGION_X6Y3."
 }
 puts "FK33_PBLK pb_core $pbr"
+# 3. pb_core HOLDS CELLS (a450 Task 8 review).  A range is a property of the pblock, not of
+#    its contents: an add_cells_to_pblock whose path matched nothing (the engine's core
+#    moved under a generate, matvec_int4_desc_axi's g_core) leaves pb_core with the right
+#    range and nothing in it, and Vivado says so only as a 12-180 warning.
+set pbn [llength [get_cells -quiet -of_objects [get_pblocks pb_core]]]
+if {$pbn == 0} {
+    error "FK33_PBLK FAIL: pb_core holds no cells. fk33_pblock.xdc's add_cells_to_pblock matched nothing, so the engine is unconstrained and the floorplan this build was measured with is not in effect."
+}
+puts "FK33_PBLK pb_core cells $pbn"
 report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
 puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt\""""
 
@@ -4345,7 +4382,7 @@ if {$otarm == 3} {
      f"set_property used_in_implementation true [get_files {PBLOCK_XDC_TCL}]\n"
      f'if {{[get_property used_in_synthesis [get_files {PBLOCK_XDC_TCL}]]}} {{\n'
      '    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. '
-     'It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the '
+     'It addresses bd_i/eng/inst/eng/g_core.dut/core, a path that exists only in the '
      'LINKED design, so synthesis would read it, match nothing, leave an empty '
      'pb_core behind and say so only as a Vivado 12-180 warning."\n'
      "}\n"
@@ -5601,6 +5638,54 @@ def _reset_abort(detail):
              "unreachable.\n\n%s\nWHAT CHANGED: %s\n" % (_RESET_WHY, detail))
 
 
+def _tcl_commands(text):
+    """The Tcl commands of `text`, one string each: lines split on `;`, comment
+    commands (a leading `#`, including the `;# ...` trailing form) dropped."""
+    out = []
+    for line in text.splitlines():
+        for cmd in line.split(";"):
+            c = cmd.strip()
+            if c and not c.startswith("#"):
+                out.append(c)
+    return out
+
+
+def _created_cells(text, cell):
+    """VLNV of every `create_bd_cell` command that names `cell`, braced or
+    quoted name included."""
+    out = []
+    for c in _tcl_commands(text):
+        tok = c.split()
+        if tok[0] != "create_bd_cell" or len(tok) < 2:
+            continue
+        if tok[-1].strip('{}"') != cell:
+            continue
+        vlnv = ""
+        if "-vlnv" in tok[:-1]:
+            vlnv = tok[tok.index("-vlnv") + 1].strip('{}"')
+        out.append(vlnv)
+    return out
+
+
+def _is_const_one(text, pin):
+    """True when `pin` is the dout of a cell created exactly once, as an
+    xlconstant, whose CONST_VAL is set exactly once, to {1}.
+
+    The same-name clause is the safety-bearing one: a cell created as an
+    xlconstant and then deleted and re-created as anything else under the
+    same name would otherwise pass (teeth rows T13-T15).  The CONST_VAL clause
+    is a liveness check (any true constant is STRAY-safe; a 0 would hold the
+    engine in reset forever) and sees only the single-line braced form."""
+    if not pin.endswith("/dout"):
+        return False
+    cell = pin.rsplit("/", 1)[0]
+    made = _created_cells(text, cell)
+    vals = re.findall(r"CONFIG\.CONST_VAL \{(\w+)\}[^\n]*\[get_bd_cells %s\]"
+                      % re.escape(cell), "\n".join(_tcl_commands(text)))
+    return (len(made) == 1 and re.match(r"xilinx\.com:ip:xlconstant:", made[0])
+            is not None and vals == ["1"])
+
+
 def check_reset_topology(text):
     """Refuse to emit a build whose reset tree re-opens STRAY-NEXTJOB.
 
@@ -5715,10 +5800,20 @@ def check_reset_topology(text):
     # happen without the slave's reset.  Re-root the MMCM on a free-running
     # clock with its own reset and the engine resets on an unlock that the
     # slave never sees.
+    #
+    # A CONSTANT 1 on dcm_locked is the other safe shape (the Jungle Cat's
+    # JC_A_CLK_SPLIT card, a450 Task 9 fix): it can never deassert, so it adds
+    # no reset event at all, the same argument as the undriven aux inputs
+    # above.  That card moves the core MMCM's lock onto the SLAVE reset's own
+    # dcm_locked instead, so an unlock still reaches the engine, as a
+    # descendant.  Only an xlconstant cell whose one CONST_VAL is 1 counts; a
+    # cell merely NAMED like one is still graded as an MMCM.
     lock = _bd_net_peers(text, "%s/dcm_locked" % cell)
     if len(lock) > 1:
         _reset_abort("%s/dcm_locked has %d drivers (%s)."
                      % (cell, len(lock), ", ".join(lock)))
+    if lock and _is_const_one(text, lock[0]):
+        lock = []
     if lock:
         mmcm = lock[0].rsplit("/", 1)[0]
         mrst = (_bd_net_peers(text, "%s/resetn" % mmcm)
@@ -5813,7 +5908,52 @@ _RESET_TEETH = [
      "order-independent and so must this scan be",
      "[get_bd_pins xdma/axi_aresetn]   [get_bd_pins core_reset/ext_reset_in]",
      "[get_bd_pins core_reset/ext_reset_in] [get_bd_pins xdma/axi_aresetn]"),
+
+    # dcm_locked on a constant (a450 Task 9 fix: the Jungle Cat split-on card's
+    # shape).  A 1 can never deassert, so it adds no reset event; anything that
+    # only LOOKS like a constant is still graded as an MMCM and refused.
+    ("T10", False, "SAFE: dcm_locked on an xlconstant whose CONST_VAL is 1",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t10_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 t10_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t10_one]"),
+
+    ("T11", True, "dcm_locked on an xlconstant whose CONST_VAL is not 1: not "
+     "the constant the exemption is for",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t11_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 t11_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {0} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t11_one]"),
+
+    ("T12", True, "dcm_locked on a dout of a cell that is NOT an xlconstant "
+     "(a gate named like one, CONST_VAL text and all)",
+     "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins t12_one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 t12_one\n"
+     "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+     "[get_bd_cells t12_one]"),
 ]
+# T13-T15: a real xlconstant, deleted and re-created as a gate under the SAME
+# name, in three spellings of the re-create.  Each is refused only by the
+# same-name clause of _is_const_one.
+_T1X_CONST = ("[get_bd_pins %s/dout] [get_bd_pins core_reset/dcm_locked]\n"
+              "create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 %s\n"
+              "set_property -dict [list CONFIG.CONST_VAL {1} CONFIG.CONST_WIDTH {1}] "
+              "[get_bd_cells %s]\n"
+              "delete_bd_objs [get_bd_cells %s]\n")
+for _tag, _name, _recreate, _how in (
+        ("T13", "t13_one", "t13_one", "plainly"),
+        ("T14", "t14_one", "t14_one ;# a trailing comment", "with a trailing ;# comment"),
+        ("T15", "t15_one", "{t15_one}", "with a braced name")):
+    _RESET_TEETH.append(
+        (_tag, True, "dcm_locked on an xlconstant deleted and re-created as a gate "
+         "under the same name, %s" % _how,
+         "[get_bd_pins clk_wiz_0/locked]   [get_bd_pins core_reset/dcm_locked]",
+         _T1X_CONST % (_name, _name, _name, _name)
+         + "create_bd_cell -type ip -vlnv xilinx.com:ip:util_vector_logic:2.0 "
+         + _recreate))
 # FK33_ENG_SPLIT_CLK: the engine's reset generator is `fast_reset`, emitted in
 # the same shapes as core_reset's lines, so the rows retarget by name.  With
 # the switch off ENG_RESET_CELL is "core_reset" and this is the identity.

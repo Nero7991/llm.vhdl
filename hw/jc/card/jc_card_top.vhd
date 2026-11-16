@@ -7,7 +7,11 @@
 -- ordinary drift.  Reproduce this exact file with
 --     python3 hw/jc/card/gen_jc_card.py
 -- inputs ((unset) means the generator's own default was taken):
+--     env  JC_A_CLK_SPLIT  = (unset)
+--     env  JC_A_TILED      = (unset)
 --     env  JC_CLK_CORE_MHZ = (unset)
+--     env  JC_LINK_RATE    = (unset)
+--     env  JC_LINK_REFCLK  = (unset)
 --
 -- The Jungle Cat 27B card's synthesis top: the block design `jcc` (through the
 -- wrapper make_wrapper writes, instantiated as a COMPONENT so the wrapper's
@@ -19,32 +23,44 @@ use ieee.std_logic_1164.all;
 
 entity jc_card_top is
   port(
-    sysclk_clk_p : in  std_logic;
-    sysclk_clk_n : in  std_logic;
-    fan_ctl      : out std_logic;
-    LED_A        : out std_logic;
-    LED_B        : out std_logic;
-    LED_C        : out std_logic;
-    LED_D        : out std_logic
+    sysclk_clk_p    : in  std_logic;
+    sysclk_clk_n    : in  std_logic;
+    fan_ctl         : out std_logic;
+    LED_A           : out std_logic;
+    LED_B           : out std_logic;
+    LED_C           : out std_logic;
+    LED_D           : out std_logic;
+    gt_tx_txp       : out std_logic_vector(0 downto 0);
+    gt_tx_txn       : out std_logic_vector(0 downto 0);
+    gt_rx_rxp       : in  std_logic_vector(0 downto 0);
+    gt_rx_rxn       : in  std_logic_vector(0 downto 0);
+    gt_refclk_clk_p : in  std_logic;
+    gt_refclk_clk_n : in  std_logic
   );
 end entity;
 
 architecture rtl of jc_card_top is
   component jcc_wrapper is
     port(
-      sysclk_clk_p : in  std_logic;
-      sysclk_clk_n : in  std_logic;
-      fan_ctl      : out std_logic;
-      LED_A        : out std_logic;
-      LED_B        : out std_logic;
-      LED_C        : out std_logic;
-      LED_D        : out std_logic;
-      ctl_tck      : in  std_logic;
-      ctl_sel      : in  std_logic;
-      ctl_capture  : in  std_logic;
-      ctl_shift    : in  std_logic;
-      ctl_tdi      : in  std_logic;
-      ctl_tdo      : out std_logic
+      sysclk_clk_p    : in  std_logic;
+      sysclk_clk_n    : in  std_logic;
+      fan_ctl         : out std_logic;
+      LED_A           : out std_logic;
+      LED_B           : out std_logic;
+      LED_C           : out std_logic;
+      LED_D           : out std_logic;
+      ctl_tck         : in  std_logic;
+      ctl_sel         : in  std_logic;
+      ctl_capture     : in  std_logic;
+      ctl_shift       : in  std_logic;
+      ctl_tdi         : in  std_logic;
+      ctl_tdo         : out std_logic;
+      gt_tx_txp       : out std_logic_vector(0 downto 0);
+      gt_tx_txn       : out std_logic_vector(0 downto 0);
+      gt_rx_rxp       : in  std_logic_vector(0 downto 0);
+      gt_rx_rxn       : in  std_logic_vector(0 downto 0);
+      gt_refclk_clk_p : in  std_logic;
+      gt_refclk_clk_n : in  std_logic
     );
   end component;
   signal ctl_tck, ctl_sel, ctl_capture, ctl_shift, ctl_tdi, ctl_tdo : std_logic;
@@ -70,5 +86,11 @@ begin
              ctl_capture => ctl_capture,
              ctl_shift => ctl_shift,
              ctl_tdi => ctl_tdi,
-             ctl_tdo => ctl_tdo);
+             ctl_tdo => ctl_tdo,
+             gt_tx_txp => gt_tx_txp,
+             gt_tx_txn => gt_tx_txn,
+             gt_rx_rxp => gt_rx_rxp,
+             gt_rx_rxn => gt_rx_rxn,
+             gt_refclk_clk_p => gt_refclk_clk_p,
+             gt_refclk_clk_n => gt_refclk_clk_n);
 end architecture;

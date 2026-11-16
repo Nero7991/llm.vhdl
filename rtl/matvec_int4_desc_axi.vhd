@@ -81,6 +81,14 @@
 --                         counters (rtl/a_util_ctr.vhd): i in 0..NPORTS_W-1
 --                         is weight port i's R beats, NPORTS_W..NP_ALL-1 the
 --                         scale ports', and i = NP_ALL the job-cycle counter.
+--                         [31] R only, UTIL_NONE: 1 when the per-PORT beat
+--                         counters are not built (A_TILED and A_CLK_SPLIT, a450
+--                         Task 9b); then indices 0..NP_ALL-1 read 0 with OKAY,
+--                         and i = NP_ALL, the job-cycle counter, is still built
+--                         (a450 final review I1): it counts s_axi_aclk (core)
+--                         cycles in the CYCLES window, so it equals the sum of
+--                         every job's CYCLES exactly, and UTIL_CLR clears it.
+--                         0 on every other build.
 --   0x44 UTIL_DATA    R   hi = 0: counter i bits [31:0], and LATCHES its bits
 --                         [47:32]; hi = 1: the latched [47:32], zero-extended.
 --                         So sel=2i, read, sel=2i+1, read is one atomic
@@ -217,6 +225,27 @@ entity matvec_int4_desc_axi is
     -- (docs/2026-09-20_d-side-vector-traffic.md section 4.1).  true removes
     -- the bubble.  Values and their order are unchanged either way.
     FAST_POP    : boolean := false;
+    -- THE a450 SUBSYSTEM A (docs/superpowers/specs/2026-11-12-a450-per-port-tiles-
+    -- design.md).  false (the default) builds rtl/matvec_int4.vhd, the design on the
+    -- card.  true builds rtl/mv4i_tiled.vhd in its place: the same values bit for bit
+    -- (sim/tb_mv4i_tiled.vhd), the same ports, every register here unchanged, except
+    -- that STARVED (0x3C) reads 0 (the tiled array has no single weight-word accept to
+    -- watch) and BEATS (0x38) grows by nb per row-tile instead of by 1 per word: the
+    -- same tiles * nb at done.  The per-port UTIL counters are unaffected, except under
+    -- A_CLK_SPLIT, where they are not built (U_BEATS below; UTIL_SEL[31] reads 1) and the
+    -- job-cycle counter counts core cycles.
+    -- Under A_TILED, CB_STYLE is not read (every tile decodes through its own per-lane
+    -- LUTRAM) and the A ports always run at one beat per cycle; FAST_POP still sets this
+    -- file's own descriptor read master.
+    A_TILED     : boolean := false;
+    -- A_TILED only.  false: the tiles run on s_axi_aclk; m_aclk must then carry the
+    -- same clock (the Jungle Cat card ties hbm_aclk to clk_core).  true: the tiles and
+    -- the A masters run on m_aclk (aclk_a, 450 MHz); the descriptor master runs on
+    -- s_axi_aclk (D_DUAL below), so the card crosses its port with a clock converter.
+    -- true REQUIRES A_TILED and DUAL_CLK (SPLIT_NEEDS below refuses the build otherwise:
+    -- without A_TILED it would be ignored, without DUAL_CLK the tiles would be clocked by
+    -- m_aclk's default '0').
+    A_CLK_SPLIT : boolean := false;
     C_S_AXI_DATA_WIDTH : integer := 32;
     C_S_AXI_ADDR_WIDTH : integer := 8
   );
@@ -225,6 +254,13 @@ entity matvec_int4_desc_axi is
     s_axi_aresetn : in  std_logic;
     -- HBM AXI clock.  Ignored when DUAL_CLK = false.
     m_aclk        : in  std_logic := '0';
+    -- THE HBM AXI PORT RESET (A_TILED only; a450 Task 8, carry C1): the ARESET_N of the
+    -- HBM ports the m_* masters read, active low, asynchronous.  It clears the tiled
+    -- array's owed-burst counts, which nothing else clears, so that an (out-of-contract,
+    -- PG276 Table 5) port reset cannot hang A forever; it is not a recovery.
+    -- rtl/mv4i_tiled.vhd's header states the precondition.  Default '1'.  Not read when
+    -- A_TILED = false.
+    hbm_aresetn   : in  std_logic := '1';
 
     -- The A-job index the SEQUENCER believes it is fetching, compared against
     -- the descriptor's own claim in v2 extension word 3.  Defaulted so that
@@ -257,6 +293,9 @@ entity matvec_int4_desc_axi is
     -- the flattened weight/scale array, so the integrator can route it
     -- somewhere else -- another HBM port, or a small BRAM -- without touching
     -- the weight path.  It is read-only and issues one burst chain per GO.
+    -- Its clock: m_aclk when DUAL_CLK, EXCEPT under A_TILED and A_CLK_SPLIT,
+    -- where it is s_axi_aclk (D_DUAL below; a450 Task 9b): the card puts its
+    -- HBM port behind an AXI clock converter instead.
     d_arvalid : out std_logic;
     d_arready : in  std_logic;
     d_araddr  : out std_logic_vector(ADDR_W-1 downto 0);
@@ -301,6 +340,36 @@ end entity;
 
 architecture rtl of matvec_int4_desc_axi is
   constant NP_ALL : positive := NPORTS_W + NPORTS_S;
+  -- a450 Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 4 and 5).
+  -- Under A_TILED and A_CLK_SPLIT the HBM side runs at 450 MHz on m_aclk, and two things
+  -- this file used to put on m_aclk are taken off it:
+  --   D_DUAL false: the descriptor fetch runs single-clock on s_axi_aclk.  Its FSM's AR
+  --     decode is 11 LUT levels (a logic-depth failure at 450 MHz), and its `run` decode
+  --     reached the DUAL_CLK synchroniser through a LUT (report_cdc CDC-10, open since
+  --     2026-08-29).  The block design puts the port behind an axi_clock_converter.
+  --   U_BEATS false: the 27 per-port beat counters are not built (27 x 48-bit counters
+  --     fed from 27 RVALID pins across the die, a 450 MHz placement failure).  UTIL_SEL[31]
+  --     (UTIL_NONE) reads 1 and their indices read 0 with OKAY.  The JOB-CYCLE counter
+  --     stays (a450 final review I1: spec gate 3.3(2)'s cadence needs it), counted on
+  --     s_axi_aclk in S_WAIT like the one-clock build's, so nothing of it is on m_aclk.
+  -- Every other configuration is unchanged.
+  constant SPLIT_ON : boolean := A_TILED and A_CLK_SPLIT;
+  constant D_DUAL   : boolean := DUAL_CLK and not SPLIT_ON;
+  constant U_BEATS  : boolean := not SPLIT_ON;
+  -- the counter block's clock: m_aclk only when the beat counters are built on a two-clock
+  -- build; otherwise s_axi_aclk (one clock, or the split's core-clock job counter)
+  constant U_DUAL   : boolean := DUAL_CLK and U_BEATS;
+  -- THE SPLIT CONTRACT (a450 final review I2).  A_CLK_SPLIT needs A_TILED (it is a mode of
+  -- the tiled array, silently ignored otherwise) and DUAL_CLK (the tiles run on m_aclk,
+  -- which is '0' by default on a one-clock build).  0 when met, -1 otherwise, which no
+  -- natural holds: Vivado ignores `assert ... severity failure` in synthesis and stops on
+  -- this "bound check failure"; the assert in the body says why for GHDL.
+  constant SPLIT_NEEDS : natural :=
+    0 - boolean'pos(A_CLK_SPLIT and not (A_TILED and DUAL_CLK));
+  function util_none return std_logic is
+  begin
+    if U_BEATS then return '0'; else return '1'; end if;
+  end function;
   constant TILES  : positive := (MAXROWS_BFP + ROWS_IF - 1) / ROWS_IF;
   constant BYTES  : positive := AXI_DW / 8;
   constant WPB    : positive := AXI_DW / 64;          -- descriptor words / beat
@@ -611,8 +680,64 @@ architecture rtl of matvec_int4_desc_axi is
   signal base_bad  : std_logic;
   signal base_code : std_logic_vector(3 downto 0);
   signal base_info : std_logic_vector(15 downto 0);
+  -- rtl/mv4i_tiled.vhd as a COMPONENT, not `entity work.`: an entity reference makes
+  -- every analysis of this file need mv4i_tiled's twelve files first, and the scripts
+  -- that list this file's closure by hand (sim/mutate_mv4i_desc*.sh,
+  -- tools/verify_mv4i_desc.py, the OOC Tcl) would all break.  A component is bound at
+  -- elaboration, and only when A_TILED builds the branch.
+  component mv4i_tiled is
+    generic(
+      BLK, ROWS_IF, NPORTS_W, NPORTS_S, AXI_DW, ADDR_W, MAXCOLS, MAXROWS_BFP,
+      FIFO_DEPTH, MAXB, MAXOUT : positive;
+      A_CLK_SPLIT : boolean
+    );
+    port(
+      clk, rst  : in  std_logic;
+      aclk      : in  std_logic;
+      hbm_aresetn : in std_logic;
+      start     : in  std_logic;
+      n_rows, n_cols, out_shift, w_exp, x_exp : in std_logic_vector(31 downto 0);
+      out_mode  : in  std_logic_vector(1 downto 0);
+      w_base    : in  std_logic_vector(NPORTS_W*ADDR_W-1 downto 0);
+      w_beats   : in  std_logic_vector(31 downto 0);
+      s_base    : in  std_logic_vector(NPORTS_S*ADDR_W-1 downto 0);
+      s_beats   : in  std_logic_vector(31 downto 0);
+      cb_we     : in  std_logic;
+      cb_addr   : in  std_logic_vector(3 downto 0);
+      cb_data   : in  std_logic_vector(7 downto 0);
+      x_we      : in  std_logic;
+      x_waddr   : in  std_logic_vector(15 downto 0);
+      x_wdata   : in  std_logic_vector(15 downto 0);
+      m_arvalid : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_arready : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_araddr  : out std_logic_vector((NPORTS_W+NPORTS_S)*ADDR_W-1 downto 0);
+      m_arlen   : out std_logic_vector((NPORTS_W+NPORTS_S)*8-1 downto 0);
+      m_arsize  : out std_logic_vector((NPORTS_W+NPORTS_S)*3-1 downto 0);
+      m_arburst : out std_logic_vector((NPORTS_W+NPORTS_S)*2-1 downto 0);
+      m_rvalid  : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_rready  : out std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      m_rdata   : in  std_logic_vector((NPORTS_W+NPORTS_S)*AXI_DW-1 downto 0);
+      m_rlast   : in  std_logic_vector(NPORTS_W+NPORTS_S-1 downto 0);
+      y_we      : out std_logic;
+      y_addr    : out std_logic_vector(15 downto 0);
+      y_data    : out std_logic_vector(ROWS_IF*64-1 downto 0);
+      y_mask    : out std_logic_vector(ROWS_IF-1 downto 0);
+      y_exp     : out std_logic_vector(31 downto 0);
+      done      : out std_logic;
+      err       : out std_logic;
+      sat_event : out std_logic;
+      dbg_rtile : out std_logic;
+      dbg_words : out std_logic_vector(31 downto 0)
+    );
+  end component;
+  -- what BEATS adds per dbg_wbeat: 1 weight word from matvec_int4, nb from mv4i_tiled
+  signal dbg_wn : unsigned(31 downto 0);
+  signal dbg_words_t : std_logic_vector(31 downto 0);
 begin
   -- ------------------------------------------------------- generic contract
+  assert not A_CLK_SPLIT or (A_TILED and DUAL_CLK)
+    report "matvec_int4_desc_axi: A_CLK_SPLIT needs A_TILED and DUAL_CLK (SPLIT_NEEDS)"
+    severity failure;
   assert ADDR_W >= 32 and ADDR_W <= 64
     report "matvec_int4_desc_axi: ADDR_W must be 32..64; DESC_PTR is a " &
            "32-bit LO/HI register pair and the descriptor's bases are 64-bit"
@@ -661,7 +786,7 @@ begin
   -- discipline as a weight sub-region port; only the length differs.
   dfetch : entity work.axi_rd_port
     generic map(AXI_DW => AXI_DW, ADDR_W => ADDR_W, DEPTH => DESC_FIFO,
-                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => DUAL_CLK,
+                MAXB => DESC_MAXB, MAXOUT => 2, DUAL_CLK => D_DUAL,
                 FAST_POP => FAST_POP)
     port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
              start => d_start,
@@ -718,30 +843,62 @@ begin
   end process;
 
   -- ----------------------------------------------------------------- core
-  dut : entity work.matvec_int4
-    generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
-                NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
-                MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
-                FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
-                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => FAST_POP)
-    port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
-             start => core_start,
-             n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
-             w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
-             w_base => w_base, w_beats => v_wbeats,
-             s_base => s_base, s_beats => v_sbeats,
-             cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
-             x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
-             m_arvalid => m_arvalid, m_arready => m_arready,
-             m_araddr => m_araddr, m_arlen => m_arlen,
-             m_arsize => m_arsize, m_arburst => m_arburst,
-             m_rvalid => m_rvalid, m_rready => m_rready_i,
-             m_rdata => m_rdata, m_rlast => m_rlast,
-             y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
-             y_mask => y_mask_i, y_exp => v_yexp,
-             done => core_done, err => core_err, sat_event => core_sat,
-             dbg_wbeat => dbg_wbeat, dbg_wstarve => dbg_wstarve);
+  g_core : if not A_TILED generate
+    dbg_wn <= to_unsigned(1, 32);
+    dut : entity work.matvec_int4
+      generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
+                  NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                  MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
+                  FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
+                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => FAST_POP)
+      port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
+               start => core_start,
+               n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
+               w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
+               w_base => w_base, w_beats => v_wbeats,
+               s_base => s_base, s_beats => v_sbeats,
+               cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+               x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+               m_arvalid => m_arvalid, m_arready => m_arready,
+               m_araddr => m_araddr, m_arlen => m_arlen,
+               m_arsize => m_arsize, m_arburst => m_arburst,
+               m_rvalid => m_rvalid, m_rready => m_rready_i,
+               m_rdata => m_rdata, m_rlast => m_rlast,
+               y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
+               y_mask => y_mask_i, y_exp => v_yexp,
+               done => core_done, err => core_err, sat_event => core_sat,
+               dbg_wbeat => dbg_wbeat, dbg_wstarve => dbg_wstarve);
+  end generate;
+
+  g_tiled : if A_TILED generate
+    dut : mv4i_tiled
+      generic map(BLK => BLK, ROWS_IF => ROWS_IF, NPORTS_W => NPORTS_W,
+                  NPORTS_S => NPORTS_S, AXI_DW => AXI_DW, ADDR_W => ADDR_W,
+                  MAXCOLS => MAXCOLS, MAXROWS_BFP => MAXROWS_BFP,
+                  FIFO_DEPTH => FIFO_DEPTH, MAXB => MAXB, MAXOUT => MAXOUT,
+                  A_CLK_SPLIT => A_CLK_SPLIT)
+      port map(clk => s_axi_aclk, rst => rst, aclk => m_aclk,
+               hbm_aresetn => hbm_aresetn,
+               start => core_start,
+               n_rows => v_rows, n_cols => v_cols, out_shift => v_osh,
+               w_exp => v_wexp, x_exp => v_xexp, out_mode => v_mode,
+               w_base => w_base, w_beats => v_wbeats,
+               s_base => s_base, s_beats => v_sbeats,
+               cb_we => cb_we, cb_addr => cb_addr, cb_data => cb_data,
+               x_we => x_we, x_waddr => x_waddr, x_wdata => x_wdata,
+               m_arvalid => m_arvalid, m_arready => m_arready,
+               m_araddr => m_araddr, m_arlen => m_arlen,
+               m_arsize => m_arsize, m_arburst => m_arburst,
+               m_rvalid => m_rvalid, m_rready => m_rready_i,
+               m_rdata => m_rdata, m_rlast => m_rlast,
+               y_we => y_we_i, y_addr => y_addr_i, y_data => y_data_i,
+               y_mask => y_mask_i, y_exp => v_yexp,
+               done => core_done, err => core_err, sat_event => core_sat,
+               dbg_rtile => dbg_wbeat, dbg_words => dbg_words_t);
+    dbg_wn      <= unsigned(dbg_words_t);
+    dbg_wstarve <= '0';
+  end generate;
 
   y_we    <= y_we_i;
   y_addr  <= y_addr_i;
@@ -1052,7 +1209,7 @@ begin
 
           when S_WAIT =>
             c_cycles <= c_cycles + 1;
-            if dbg_wbeat   = '1' then c_beats  <= c_beats + 1;  end if;
+            if dbg_wbeat   = '1' then c_beats  <= c_beats + dbg_wn; end if;
             if dbg_wstarve = '1' then c_starve <= c_starve + 1; end if;
             if core_err = '1' then
               err_code <= EC_CORE;
@@ -1272,7 +1429,7 @@ begin
             when 13 => rdata_r <= std_logic_vector(c_cycles);
             when 14 => rdata_r <= std_logic_vector(c_beats);
             when 15 => rdata_r <= std_logic_vector(c_starve);
-            when 16 => rdata_r <= x"000000" & u_sel;
+            when 16 => rdata_r <= util_none & "000" & x"00000" & u_sel;
             when 17 =>
               if u_pend = '1' and u_ack_s(1) = u_req_t then
                 rdata_r <= u_rd_dat;
@@ -1327,6 +1484,13 @@ begin
   -- therefore counts m_aclk cycles and is NOT CYCLES; with one clock it
   -- equals the sum of every job's CYCLES exactly.
   --
+  -- UNDER A_TILED AND A_CLK_SPLIT (U_BEATS false; a450 final review I1) the beat
+  -- inputs are tied to zero, so the 27 beat counters are constants and trim away, and
+  -- the block runs on s_axi_aclk exactly as the one-clock arm (gsc): the job-cycle
+  -- counter equals the sum of every job's CYCLES in core cycles.  Its aclk_a cadence is
+  -- DERIVED by the reader (job cycles * f_aclk / f_core / words), and it includes the
+  -- clk_core side of each job (the start and result crossings), which is the point.
+  --
   -- THE CROSSING (DUAL_CLK).  The window crosses as a level: `u_job_r`, the
   -- REGISTERED S_WAIT decode, through two flops.  Its edges arrive one core
   -- cycle plus two m_aclk cycles late, which delays the window by the same
@@ -1365,13 +1529,13 @@ begin
     attribute ASYNC_REG of req_s : signal is "TRUE";
     attribute ASYNC_REG of clr_s : signal is "TRUE";
   begin
-    u_beat <= m_rvalid and m_rready_i;
+    u_beat <= (m_rvalid and m_rready_i) when U_BEATS else (others => '0');
     u_rden <= req_s(2) xor req_s(1);
     u_rst  <= rst_s(1);
     u_clr  <= clr_s(2) xor clr_s(1);
     u_ack_t_x <= u_ack_t;
 
-    gdc : if DUAL_CLK generate
+    gdc : if U_DUAL generate
       usync : process(m_aclk)
       begin
         if rising_edge(m_aclk) then
@@ -1404,8 +1568,9 @@ begin
                  rd_en => u_rden, rd_data => u_rd_dat);
     end generate;
 
-    gsc : if not DUAL_CLK generate
-      -- one clock: the window is S_WAIT itself, cycle for cycle
+    gsc : if not U_DUAL generate
+      -- one clock (or the split's core-clock job counter): the window is S_WAIT itself,
+      -- cycle for cycle
       usync : process(s_axi_aclk)
       begin
         if rising_edge(s_axi_aclk) then

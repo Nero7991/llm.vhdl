@@ -331,17 +331,17 @@ echo "---- class C: the CORE's lever (matvec_int4_desc_axi:690) ---------------"
 
 mutate C1 rtl/matvec_int4_desc_axi.vhd \
 "THE CORE LOSES THE LEVER while the descriptor master keeps it.  The whole 27-port weight path reverts to the shipping cadence.  PREDICTED SURVIVOR and a REAL GAP, registered before the run: the probe window closes at the job's first weight AR, before one weight beat has moved, and the only window that reaches :690 is confounded by the weight slaves' stall LFSR (see the WEIGHT WINDOW note the bench prints).  POPPORT's bench proves weight_streamer HONOURS the lever; nothing proves matvec_int4_desc_axi FORWARDS it" \
-"                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => FAST_POP)" \
-"                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => false)"
+"                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => FAST_POP)" \
+"                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => false)"
 
 mutate C2 rtl/matvec_int4_desc_axi.vhd \
 "THE CORE IS WIRED ON: the 27 weight ports take the fast arm whatever the generic says.  C1's twin and the same PREDICTED SURVIVOR for the same reason" \
-"                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => FAST_POP)" \
-"                DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
-                FAST_POP => true)"
+"                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => FAST_POP)" \
+"                  DUAL_CLK => DUAL_CLK, CB_STYLE => CB_STYLE,
+                  FAST_POP => true)"
 
 echo "---- class A: the INTERMEDIATE forwarding site (axi_rd_port) ------------"
 

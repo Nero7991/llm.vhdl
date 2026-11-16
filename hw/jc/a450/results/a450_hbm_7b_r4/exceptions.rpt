@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+--------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version      : Vivado v.2023.2 (lin64) Build 4029153 Fri Oct 13 20:13:54 MDT 2023
+| Date              : Sat Nov 14 16:22:35 2026
+| Host              : Oren-Dell-Ubuntu running 64-bit Ubuntu 22.04.5 LTS
+| Command           : report_exceptions -file /mnt/storage/fk33_builds/a450_hbm_7b_r4/proj/exceptions.rpt
+| Design            : a450_wrapper
+| Device            : xcvu35p-fsvh2104
+| Speed File        : -2L  PRODUCTION 1.30 05-01-2022
+| Design State      : Routed
+| Temperature Grade : E
+--------------------------------------------------------------------------------------------------------------------------------------------------
+
+Exceptions Report
+
+Position  From                                                                              Through         To                                                                                Setup           Hold            Status                                      
+--------  --------------------------------------------------------------------------------  --------------  --------------------------------------------------------------------------------  --------------  --------------  --------------------------------------------
+7         *                                                                                 *               [get_ports led]                                                                   false           false           
+8         [get_clocks -quiet -of_objects [get_pins -quiet -hierarchical -filter {NAME =~ *  *               [get_clocks -quiet -of_objects [get_pins -quiet -hierarchical -filter {NAME =~ *  max_dpo=4.444   -               Partially overridden path by DPO 10 - DPO 11
+          /g_split.u/back/go_r_reg/C}]]                                                                     /g_split.u/fast/dist/s_start_reg/C}]]                                                                             
+9         [get_clocks -quiet -of_objects [get_pins -quiet -hierarchical -filter {NAME =~ *  *               [get_clocks -quiet -of_objects [get_pins -quiet -hierarchical -filter {NAME =~ *  max_dpo=2.222   -               
+          /g_split.u/fast/dist/s_start_reg/C}]]                                                             /g_split.u/back/go_r_reg/C}]]                                                                                     
+10        [get_cells -quiet [all_fanin -quiet -flat -startpoints_only -only_cells [get_pin  *               [get_pins -quiet -hierarchical -filter {NAME =~ a450_i/top/inst/a/g_split.u/ar1_  max_dpo=2.222   -               
+          s -quiet -hierarchical -filter {NAME =~ a450_i/top/inst/a/g_split.u/ar1_reg/D}]]                  reg/D}]                                                                                                           
+           -filter IS_SEQUENTIAL]                                                                                                                                                                                             
+11        [get_cells -quiet a450_i/top/inst/a/g_split.u/gosync/tog_reg]                     *               [get_pins -quiet -hierarchical -filter {NAME =~ a450_i/top/inst/a/g_split.u/gosy  max_dpo=2.222   -               
+                                                                                                            nc/s1_reg/D}]                                                                                                     
+

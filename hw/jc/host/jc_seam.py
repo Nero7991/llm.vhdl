@@ -3,8 +3,9 @@
 
     jc_seam.py status    --sock SOCK
     jc_seam.py seam      --sock SOCK --die A|B [--manifest M]
-    jc_seam.py util      --sock SOCK --die A|B
+    jc_seam.py util      --sock SOCK --die A|B [--tokens N] [--core-mhz F] [--aclk-mhz F]
     jc_seam.py util-clear --sock SOCK --die A|B
+    jc_seam.py brk       --sock SOCK --die A|B --n N
 
 A client of tools/jc/jc_broker.py's Unix socket (one JSON object per line each way). The
 broker serves ONE client at a time, so run this only while no run_prompt holds the socket.
@@ -25,8 +26,34 @@ broker serves ONE client at a time, so run this only while no run_prompt holds t
               UTIL_SEL only (a selector, it moves no data). On the JC card hbm_aclk and
               clk_core are one net (hw/jc/card/gen_jc_card.py), so job cycles are clk_core
               cycles and beats/jobcyc is the port's fraction of one 32-byte beat a cycle.
+              A split-on card (JC_A_TILED=1 JC_A_CLK_SPLIT=1, a450 Task 9b) does not build
+              the per-port beat counters: UTIL_SEL bit 31 (UTIL_NONE) reads 1.  It does
+              build the job-cycle counter (a450 final review I1), counted in clk_core
+              cycles in A's job window, so this reads that one counter only and prints
+              `JCUTIL_SPLIT die X ... jobcyc_core N seam_cycles_last_go M` and
+              `JCUTIL_CADENCE die X ... aclk_c_per_word R DERIVED`, where
+              R = jobcyc_core * (aclk_mhz / core_mhz) / (port_beats_per_token * tokens).
+              port_beats_per_token is NOT measured on such a card: it is the unchanged 27B
+              layout's per-port beats per token (die A 8,192,096, die B 8,520,192; MEASURED
+              by the util counters on the split-off card, docs/debugging/
+              2026-11-15_a450-silicon.md), and --tokens (default 1) must be the number of
+              tokens run since the last util-clear.  --core-mhz (125) and --aclk-mhz (450)
+              must be the card's clk_core and aclk_a.  R includes the clk_core side of
+              every job (the start and result crossings).
+  brk         one row of the per-step token breakdown sweep (truncated-program replay,
+              /mnt/storage/fk33_builds/breakdown_plan_2026-11-15.md): after ONE GO of a
+              token program cut after N steps (gen_layer_program.py --upto N --close-token),
+              reads seam CYCLES 0x40, TBL_LEN 0x50, STEPS_ISS 0x7C, ISSUE_CYC 0x80, STATUS
+              0x18, ERR_INFO 0x1C and the engine's last-A-job CYCLES window 0x12034. Prints
+                `BRK die D n N cycles C issue_cyc I steps_iss S tbl_len T eng_cyc E status X err_info Y`
+              and exits 0 when the row is this N's (TBL_LEN == N+1, STEPS_ISS == N, STATUS
+              done without err); otherwise prints `BRK_REJECT die D n N <why>` after it and
+              exits 3. The gate is what keeps a stale seam (a refused or failed open leaves
+              the previous program's numbers) from reading as a result. Seven reads, no
+              writes.
   util-clear  writes UTIL_CLR (0x48): zeroes every counter. Counters ACCUMULATE across
-              jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).
+              jobs until this or reset (rtl/matvec_int4_desc_axi.vhd, register map).  On a
+              split-on card it clears the job-cycle counter (the only one built).
 
 Drives the board through the broker: the main session or Oren runs it, never a subagent.
 """
@@ -41,9 +68,20 @@ ENG_CAPS = ENG_CTL_BASE + 0x1C
 ENG_UTIL_SEL = ENG_CTL_BASE + 0x40
 ENG_UTIL_DATA = ENG_CTL_BASE + 0x44
 ENG_UTIL_CLR = ENG_CTL_BASE + 0x48
+UTIL_NONE = 1 << 31           # UTIL_SEL bit 31: per-port counters not built (rtl/matvec_int4_desc_axi.vhd)
+# A split-on card's per-port beats per token: the unchanged 27B layout's, MEASURED on the
+# split-off card (docs/debugging/2026-11-15_a450-silicon.md, JCTOKEN port_beats); not
+# measurable on a split-on card, whose per-port counters are not built.
+LAYOUT_PORT_BEATS = {"A": 8192096, "B": 8520192}
 ENG_ID_MAGIC = 0x4D563449     # "MV4I"
 UTIL_DEAD = 0xDEADDEAD
 SEAM_CYCLES = 0xE000 + 0x40   # server/fk33_seam.h FK33_SEAM_CYCLES (GO to done, core cycles)
+SEAM_STATUS = 0xE000 + 0x18   # FK33_SEAM_STATUS: bit 0 done, bit 1 busy, bit 2 err
+SEAM_ERR_INFO = 0xE000 + 0x1C
+SEAM_TBL_LEN = 0xE000 + 0x50  # descriptors, END_TOKEN included
+SEAM_STEPS_ISS = 0xE000 + 0x7C  # job issues since GO; a clean token reads TBL_LEN - 1
+SEAM_ISSUE_CYC = 0xE000 + 0x80  # CYCLES at the most recent issue
+ENG_CYCLES = ENG_CTL_BASE + 0x34  # the last A job's S_WAIT window, clk_core, cleared per A GO
 IMGLOCK_BYTES = 512
 
 
@@ -59,7 +97,9 @@ class Broker:
         s.buf = b""
 
     def req(s, obj):
-        s.sock.sendall((json.dumps(obj) + "\n").encode())
+        # compact separators: fk33_transport_jc.c's form, which server/jc_sim_broker's parser
+        # expects (as tools/jc/jc_loop.py); the real broker parses either
+        s.sock.sendall((json.dumps(obj, separators=(",", ":")) + "\n").encode())
         while b"\n" not in s.buf:
             chunk = s.sock.recv(1 << 16)
             if not chunk:
@@ -147,7 +187,40 @@ def read_util(b, die):
     return npw, nps, out
 
 
+def util_split(b, a):
+    """A split-on card: read the job-cycle counter only (index NPORTS_W + NPORTS_S) and
+    derive A's aclk_a cadence from the layout's per-port beats."""
+    caps = b.rd32(a.die, ENG_CAPS)
+    npw, nps = caps & 0xFF, (caps >> 8) & 0xFF
+    i = npw + nps
+    b.wr32(a.die, ENG_UTIL_SEL, i << 1)
+    lo = b.rd32(a.die, ENG_UTIL_DATA)
+    b.wr32(a.die, ENG_UTIL_SEL, (i << 1) | 1)
+    hi = b.rd32(a.die, ENG_UTIL_DATA)
+    if UTIL_DEAD in (lo, hi):
+        raise BrokerError("job-cycle counter read 0xDEADDEAD: the counter did not answer")
+    jobcyc = ((hi & 0xFFFF) << 32) | lo
+    cyc = b.rd32(a.die, SEAM_CYCLES)
+    print("JCUTIL_SPLIT die %s nports_w %d nports_s %d jobcyc_core %d seam_cycles_last_go %d: "
+          "the per-port beat counters are not built (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT); "
+          "jobcyc_core is clk_core cycles in A's job window since the last util-clear"
+          % (a.die, npw, nps, jobcyc, cyc))
+    beats = LAYOUT_PORT_BEATS[a.die]
+    if jobcyc == 0:
+        print("JCUTIL_CADENCE die %s jobcyc_core 0: no A job ran since the last clear/reset" % a.die)
+    else:
+        r = jobcyc * (a.aclk_mhz / a.core_mhz) / (beats * a.tokens)
+        print("JCUTIL_CADENCE die %s aclk_c_per_word %.4f DERIVED = jobcyc_core %d * (%g / %g) / "
+              "(port_beats_per_token %d * tokens %d); port_beats_per_token is the unchanged 27B "
+              "layout's, not measured on this card" % (a.die, r, jobcyc, a.aclk_mhz, a.core_mhz,
+                                                      beats, a.tokens))
+    print("JCUTIL_DONE die %s" % a.die)
+    return 0
+
+
 def cmd_util(a):
+    if a.tokens < 1 or a.core_mhz <= 0 or a.aclk_mhz <= 0:
+        raise ValueError("--tokens must be >= 1 and both clocks > 0")
     b = Broker(a.sock)
     try:
         ident = b.rd32(a.die, ENG_ID)
@@ -155,6 +228,8 @@ def cmd_util(a):
             print("JCUTIL_FAIL die %s engine ID reads 0x%08x, not 0x%08x (\"MV4I\")"
                   % (a.die, ident, ENG_ID_MAGIC))
             return 1
+        if b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE:
+            return util_split(b, a)
         npw, nps, ctr = read_util(b, a.die)
         cyc = b.rd32(a.die, SEAM_CYCLES)
     finally:
@@ -183,10 +258,41 @@ def cmd_util(a):
 def cmd_util_clear(a):
     b = Broker(a.sock)
     try:
+        split = bool(b.rd32(a.die, ENG_UTIL_SEL) & UTIL_NONE)
         b.wr32(a.die, ENG_UTIL_CLR, 1)
     finally:
         b.close()
-    print("JCUTIL_CLEARED die %s" % a.die)
+    # a split-on card builds the job-cycle counter only (a450 final review I1)
+    print("JCUTIL_CLEARED die %s%s" % (a.die, " (split: the job-cycle counter; the per-port "
+                                       "counters are not built)" if split else ""))
+    return 0
+
+
+def cmd_brk(a):
+    b = Broker(a.sock)
+    try:
+        v = {k: b.rd32(a.die, o) for k, o in (
+            ("cycles", SEAM_CYCLES), ("issue_cyc", SEAM_ISSUE_CYC), ("steps_iss", SEAM_STEPS_ISS),
+            ("tbl_len", SEAM_TBL_LEN), ("eng_cyc", ENG_CYCLES), ("status", SEAM_STATUS),
+            ("err_info", SEAM_ERR_INFO))}
+    finally:
+        b.close()
+    print("BRK die %s n %d cycles %d issue_cyc %d steps_iss %d tbl_len %d eng_cyc %d "
+          "status 0x%08x err_info 0x%08x" % (a.die, a.n, v["cycles"], v["issue_cyc"],
+                                             v["steps_iss"], v["tbl_len"], v["eng_cyc"],
+                                             v["status"], v["err_info"]))
+    why = []
+    if v["tbl_len"] != a.n + 1:
+        why.append("tbl_len %d != n+1 %d" % (v["tbl_len"], a.n + 1))
+    if v["steps_iss"] != a.n:
+        why.append("steps_iss %d != n %d" % (v["steps_iss"], a.n))
+    if not v["status"] & 1 or v["status"] & 4:
+        why.append("status 0x%08x is not done-without-err" % v["status"])
+    if v["issue_cyc"] >= v["cycles"]:
+        why.append("issue_cyc %d >= cycles %d" % (v["issue_cyc"], v["cycles"]))
+    if why:
+        print("BRK_REJECT die %s n %d %s" % (a.die, a.n, "; ".join(why)))
+        return 3
     return 0
 
 
@@ -195,12 +301,21 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("status"); p.add_argument("--sock", required=True)
     p.set_defaults(fn=cmd_status)
-    for name, fn in (("seam", cmd_seam), ("util", cmd_util), ("util-clear", cmd_util_clear)):
+    for name, fn in (("seam", cmd_seam), ("util", cmd_util), ("util-clear", cmd_util_clear),
+                     ("brk", cmd_brk)):
         p = sub.add_parser(name)
         p.add_argument("--sock", required=True)
         p.add_argument("--die", required=True, choices=["A", "B"])
         if name == "seam":
             p.add_argument("--manifest", default=None)
+        if name == "brk":
+            p.add_argument("--n", type=int, required=True,
+                           help="steps kept before the END_TOKEN (the table has N+1 descriptors)")
+        if name == "util":
+            p.add_argument("--tokens", type=int, default=1,
+                           help="tokens run since the last util-clear (split-on cadence)")
+            p.add_argument("--core-mhz", type=float, default=125.0)
+            p.add_argument("--aclk-mhz", type=float, default=450.0)
         p.set_defaults(fn=fn)
     a = ap.parse_args(argv)
     try:

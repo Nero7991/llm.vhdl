@@ -8,7 +8,11 @@
 # ordinary drift.  Reproduce this exact file with
 #     python3 hw/jc/card/gen_jc_card.py
 # inputs ((unset) means the generator's own default was taken):
+#     env  JC_A_CLK_SPLIT  = (unset)
+#     env  JC_A_TILED      = (unset)
 #     env  JC_CLK_CORE_MHZ = (unset)
+#     env  JC_LINK_RATE    = (unset)
+#     env  JC_LINK_REFCLK  = (unset)
 #
 # The Jungle Cat (VU35P, no PCIe) block design `jcc` for the 27B inference card.
 # Read gen_jc_card.py's docstring for the map.  clk_core = clk_wiz_0/clk_out3 at
@@ -200,7 +204,9 @@ create_bd_cell -type ip -vlnv xilinx.com:ip:jtag_axi jtag_hbm
 set_property -dict [list CONFIG.M_AXI_DATA_WIDTH {64} CONFIG.M_AXI_ADDR_WIDTH {64}] [get_bd_cells jtag_hbm]
 jcc_want jtag_hbm M_AXI_ADDR_WIDTH 64
 create_bd_cell -type ip -vlnv xilinx.com:ip:smartconnect:1.0 hbm_sc
-set_property -dict [list CONFIG.NUM_SI {2} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells hbm_sc]
+# S00 jtag_hbm, S01 the ctl read master, S02 tok/m_hbm (the embedding gather)
+set_property -dict [list CONFIG.NUM_SI {3} CONFIG.NUM_MI {1} CONFIG.NUM_CLKS {1}] [get_bd_cells hbm_sc]
+jcc_want hbm_sc NUM_CLKS 1
 connect_bd_intf_net [get_bd_intf_pins jtag_hbm/M_AXI] [get_bd_intf_pins hbm_sc/S00_AXI]
 connect_bd_intf_net [get_bd_intf_pins hbm_sc/M00_AXI] [get_bd_intf_pins hbm/SAXI_16]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins jtag_hbm/aclk]
@@ -317,6 +323,8 @@ puts "FK33_XEXP_PORT $_xe"
 set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins eng/core_clk]
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/core_aresetn]
+set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins eng/hbm_aclk]
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/hbm_aresetn]
 set_property CONFIG.ASSOCIATED_BUSIF {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi} [get_bd_pins eng/hbm_aclk]
 foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi}] {
     set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]
@@ -337,6 +345,11 @@ if {![string is false -strict $_fp]} {
     error "JCCARD_LEVER FAIL: eng FAST_POP is \"$_fp\", not false: the levers patch is not applied to fk33_engine.vhd"
 }
 puts "JCCARD_LEVER eng FAST_POP $_fp"
+
+# THE a450 SUBSYSTEM A (JC_A_TILED / JC_A_CLK_SPLIT), set and read back.
+set_property -dict [list CONFIG.A_TILED {false} CONFIG.A_CLK_SPLIT {false}] [get_bd_cells eng]
+jcc_want eng A_TILED false
+jcc_want eng A_CLK_SPLIT false
 
 # ON THIS BOARD core_clk AND hbm_aclk ARE THE SAME NET, clk_core.  The engine's
 # internal crossing (axi_rd_port's async FIFO) is still present and is crossed
@@ -448,8 +461,257 @@ connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_
 connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3]            [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
+# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the
+# net of the 28 ports' ARESET_N above.  PG276 Table 5: that reset is pre-traffic
+# only; asserted mid-traffic the port and the controller go out of sync, and what
+# R does afterwards is undocumented.  The tiled A (A_TILED) clears its owed-burst
+# counts from it only so that it cannot hang forever after one; that is not a
+# recovery (a reprogram is).  The array on the card today (A_TILED false) does not
+# read it.
+connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins eng/hbm_aresetn]
 # ---- end subsystem A ------------------------------------------------------
 
+
+# ---- the token loop (jc_tok_top) and the die-to-die link (plan 2026-11-04) ---------
+source [file join $jcc_repo hw jc link aurora_cfg.tcl]
+# TXPOL_MASK is the lane table's TX polarity (lane 0 MEASURED 0, aurora_cfg.tcl).
+if {[jc_lane_txpol 1] ne "0"} {
+  error "JCCARD_BD FAIL: aurora_cfg.tcl lane TX polarity is [jc_lane_txpol 1], the card emits TXPOL_MASK 0"
+}
+create_bd_cell -type module -reference jc_tok_top tok
+set_property -dict [list CONFIG.N_EMBD {5120} CONFIG.NLANES {1} CONFIG.HAS_GATHER {true} CONFIG.TXPOL_MASK {0}] [get_bd_cells tok]
+foreach {k v} {N_EMBD 5120 NLANES 1 HAS_GATHER true TXPOL_MASK 0} { jcc_want tok $k $v }
+foreach i [get_bd_intf_pins -quiet tok/*] { puts "JCCARD_BD INTF tok [file tail $i]" }
+foreach i {s_host m_seam s_ctl m_hbm m_axis_tx s_axis_rx} {
+  if {[llength [get_bd_intf_pins -quiet tok/$i]] != 1} {
+    error "JCCARD_BD FAIL: no inferred interface tok/$i"
+  }
+}
+# The clock association is EXACT, not a superset: without rtl/jc_tok_top.vhd's
+# X_INTERFACE_PARAMETER attributes Vivado put all six interfaces on aclk (AXIS too) and
+# then refused the set (BD 41-737, read-only; MEASURED jcloop_bd1).
+set _ab [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins tok/aclk]]
+if {[lsort [split $_ab :]] ne [lsort [split {s_host:m_seam:s_ctl:m_hbm} :]]} {
+  error "JCCARD_BD FAIL: tok/aclk ASSOCIATED_BUSIF is \"$_ab\", not exactly s_host:m_seam:s_ctl:m_hbm"
+}
+puts "JCCARD_BD tok/aclk ASSOCIATED_BUSIF $_ab"
+set _ab [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins tok/user_clk]]
+if {[lsort [split $_ab :]] ne [lsort [split {m_axis_tx:s_axis_rx} :]]} {
+  error "JCCARD_BD FAIL: tok/user_clk ASSOCIATED_BUSIF is \"$_ab\", not exactly m_axis_tx:s_axis_rx"
+}
+puts "JCCARD_BD tok/user_clk ASSOCIATED_BUSIF $_ab"
+connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins tok/aclk]
+if {[get_property TYPE [get_bd_pins tok/arst]] eq "rst"
+    && [string toupper [get_property CONFIG.POLARITY [get_bd_pins tok/arst]]] ne "ACTIVE_HIGH"} {
+  set_property CONFIG.POLARITY ACTIVE_HIGH [get_bd_pins tok/arst]
+}
+connect_bd_net [get_bd_pins core_reset/peripheral_reset] [get_bd_pins tok/arst]
+connect_bd_intf_net [get_bd_intf_pins tok/m_hbm] [get_bd_intf_pins hbm_sc/S02_AXI]
+# the GTG clock (hw/jc/link/rtl/jc_gtg_clk.vhd): 156.25 MHz for the QPLL through the ECO,
+# and init_clk = 1250 / INIT_DIV MHz for the Aurora core (Task 5 ruling: init_clk is
+# this port, not sclk; C_INIT_CLK is set from the same jc_init_div by jc_aurora_config).
+create_bd_cell -type module -reference jc_gtg_clk gtgclk
+set_property CONFIG.INIT_DIV [jc_init_div 10.3125] [get_bd_cells gtgclk]
+jcc_want gtgclk INIT_DIV [jc_init_div 10.3125]
+# the module reference's output clocks carry no FREQ_HZ of their own (IP_Flow 19-4751,
+# MEASURED jcloop_bd1); stated here so the Aurora init_clk and tok/init_clk see the real rate
+# (sclk is not inferred as a clock interface and has no FREQ_HZ: BD 41-1411, jcloop_bd3)
+foreach {pin hz} [list init_clk [expr {1250000000 / [jc_init_div 10.3125]}] gtg_clk 156250000] {
+  set_property CONFIG.FREQ_HZ $hz [get_bd_pins gtgclk/$pin]
+  if {[get_property CONFIG.FREQ_HZ [get_bd_pins gtgclk/$pin]] != $hz} {
+    error "JCCARD_BD FAIL: gtgclk/$pin FREQ_HZ reads [get_property CONFIG.FREQ_HZ [get_bd_pins gtgclk/$pin]], not $hz"
+  }
+}
+connect_bd_net [get_bd_pins sysclk_buf/IBUF_OUT] [get_bd_pins gtgclk/sys_i]
+create_bd_cell -type ip -vlnv xilinx.com:ip:aurora_64b66b:12.0 aur
+set _acfg [jc_aurora_config 1 10.3125 card]
+set_property -dict $_acfg [get_bd_cells aur]
+# after the dict: the refclk choice depends on C_UCOLUMN_USED and C_START_QUAD
+jc_aurora_refclk [get_bd_cells aur]
+jc_aurora_check [get_bd_cells aur] $_acfg
+if {abs([get_property CONFIG.C_INIT_CLK [get_bd_cells aur]] - 1250.0 / [get_property CONFIG.INIT_DIV [get_bd_cells gtgclk]]) > 0.001} {
+  error "JCCARD_BD FAIL: aur C_INIT_CLK does not match gtgclk INIT_DIV"
+}
+foreach i [get_bd_intf_pins -quiet aur/*] { puts "JCCARD_BD INTF aur [file tail $i]" }
+make_bd_intf_pins_external [get_bd_intf_pins aur/GT_DIFF_REFCLK1]
+set_property name gt_refclk [get_bd_intf_ports GT_DIFF_REFCLK1_0]
+set_property CONFIG.FREQ_HZ 156250000 [get_bd_intf_ports gt_refclk]
+make_bd_intf_pins_external [get_bd_intf_pins aur/GT_SERIAL_TX]
+set_property name gt_tx [get_bd_intf_ports GT_SERIAL_TX_0]
+make_bd_intf_pins_external [get_bd_intf_pins aur/GT_SERIAL_RX]
+set_property name gt_rx [get_bd_intf_ports GT_SERIAL_RX_0]
+foreach p {gt_refclk gt_tx gt_rx} {
+  if {[llength [get_bd_intf_ports -quiet $p]] != 1} { error "JCCARD_BD FAIL: no BD interface port $p" }
+}
+connect_bd_intf_net [get_bd_intf_pins tok/m_axis_tx] [get_bd_intf_pins aur/USER_DATA_S_AXIS_TX]
+connect_bd_intf_net [get_bd_intf_pins aur/USER_DATA_M_AXIS_RX] [get_bd_intf_pins tok/s_axis_rx]
+connect_bd_net [get_bd_pins gtgclk/init_clk] [get_bd_pins aur/init_clk]
+connect_bd_net [get_bd_pins gtgclk/init_clk] [get_bd_pins tok/init_clk]
+connect_bd_net [get_bd_pins aur/user_clk_out] [get_bd_pins tok/user_clk]
+connect_bd_net [get_bd_pins aur/tx_channel_up] [get_bd_pins tok/tx_channel_up]
+connect_bd_net [get_bd_pins aur/rx_channel_up] [get_bd_pins tok/rx_channel_up]
+connect_bd_net [get_bd_pins aur/gt_pll_lock] [get_bd_pins tok/gt_pll_lock]
+connect_bd_net [get_bd_pins gtgclk/locked] [get_bd_pins tok/gtg_locked]
+# TX/RX_Simplex has tx_reset_pb and rx_reset_pb, no reset_pb (Task 5): one reset drives both
+connect_bd_net [get_bd_pins tok/aur_reset_pb] [get_bd_pins aur/tx_reset_pb]
+connect_bd_net [get_bd_pins tok/aur_reset_pb] [get_bd_pins aur/rx_reset_pb]
+connect_bd_net [get_bd_pins tok/aur_pma_init] [get_bd_pins aur/pma_init]
+connect_bd_net [get_bd_pins tok/aur_tx_polarity] [get_bd_pins aur/gt_txpolarity]
+# Every other Aurora input, tied from hw/jc/link/aurora_ties.py.  An IP input left
+# open takes component.xml's default, 0 for all of these, and validate_bd_design does
+# not warn: gt_txdiffctrl = 0 is the minimum TX swing (Task 5 trap).
+# The GT DRP AXI4-Lite slave (s_axi_*) exists only when drp_mode is not Disabled: the BD
+# cell defaults to Disabled (MEASURED 2026-11-11, aurprobe: no s_axi_* pins), where the
+# packaged IP of Task 5 refused Disabled.  Its ties are emitted for the other case.
+set _drp [get_property CONFIG.drp_mode [get_bd_cells aur]]
+puts "JCCARD_BD aur drp_mode $_drp"
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxcdrovrden_in
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxcdrovrden_in]
+connect_bd_net [get_bd_pins tie_gt_rxcdrovrden_in/dout] [get_bd_pins aur/gt_rxcdrovrden_in]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_power_down
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_power_down]
+connect_bd_net [get_bd_pins tie_power_down/dout] [get_bd_pins aur/power_down]
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_awaddr
+  set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_awaddr]
+  connect_bd_net [get_bd_pins tie_s_axi_awaddr/dout] [get_bd_pins aur/s_axi_awaddr]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_awaddr]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_awaddr exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_awvalid
+  set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_awvalid]
+  connect_bd_net [get_bd_pins tie_s_axi_awvalid/dout] [get_bd_pins aur/s_axi_awvalid]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_awvalid]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_awvalid exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_wdata
+  set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_wdata]
+  connect_bd_net [get_bd_pins tie_s_axi_wdata/dout] [get_bd_pins aur/s_axi_wdata]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_wdata]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_wdata exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_wstrb
+  set_property -dict [list CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_wstrb]
+  connect_bd_net [get_bd_pins tie_s_axi_wstrb/dout] [get_bd_pins aur/s_axi_wstrb]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_wstrb]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_wstrb exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_wvalid
+  set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_wvalid]
+  connect_bd_net [get_bd_pins tie_s_axi_wvalid/dout] [get_bd_pins aur/s_axi_wvalid]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_wvalid]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_wvalid exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_bready
+  set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x1}] [get_bd_cells tie_s_axi_bready]
+  connect_bd_net [get_bd_pins tie_s_axi_bready/dout] [get_bd_pins aur/s_axi_bready]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_bready]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_bready exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_araddr
+  set_property -dict [list CONFIG.CONST_WIDTH {32} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_araddr]
+  connect_bd_net [get_bd_pins tie_s_axi_araddr/dout] [get_bd_pins aur/s_axi_araddr]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_araddr]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_araddr exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_arvalid
+  set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_arvalid]
+  connect_bd_net [get_bd_pins tie_s_axi_arvalid/dout] [get_bd_pins aur/s_axi_arvalid]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_arvalid]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_arvalid exists with drp_mode Disabled"
+}
+if {$_drp ne "Disabled"} {
+  create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_s_axi_rready
+  set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_s_axi_rready]
+  connect_bd_net [get_bd_pins tie_s_axi_rready/dout] [get_bd_pins aur/s_axi_rready]
+} elseif {[llength [get_bd_pins -quiet aur/s_axi_rready]]} {
+  error "JCCARD_BD FAIL: aur/s_axi_rready exists with drp_mode Disabled"
+}
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_eyescanreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_eyescanreset]
+connect_bd_net [get_bd_pins tie_gt_eyescanreset/dout] [get_bd_pins aur/gt_eyescanreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_eyescantrigger
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_eyescantrigger]
+connect_bd_net [get_bd_pins tie_gt_eyescantrigger/dout] [get_bd_pins aur/gt_eyescantrigger]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxcdrhold
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxcdrhold]
+connect_bd_net [get_bd_pins tie_gt_rxcdrhold/dout] [get_bd_pins aur/gt_rxcdrhold]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxdfelpmreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxdfelpmreset]
+connect_bd_net [get_bd_pins tie_gt_rxdfelpmreset/dout] [get_bd_pins aur/gt_rxdfelpmreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxlpmen
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxlpmen]
+connect_bd_net [get_bd_pins tie_gt_rxlpmen/dout] [get_bd_pins aur/gt_rxlpmen]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxpmareset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxpmareset]
+connect_bd_net [get_bd_pins tie_gt_rxpmareset/dout] [get_bd_pins aur/gt_rxpmareset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxpcsreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxpcsreset]
+connect_bd_net [get_bd_pins tie_gt_rxpcsreset/dout] [get_bd_pins aur/gt_rxpcsreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxrate
+set_property -dict [list CONFIG.CONST_WIDTH {3} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxrate]
+connect_bd_net [get_bd_pins tie_gt_rxrate/dout] [get_bd_pins aur/gt_rxrate]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxbufreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxbufreset]
+connect_bd_net [get_bd_pins tie_gt_rxbufreset/dout] [get_bd_pins aur/gt_rxbufreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxprbssel
+set_property -dict [list CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxprbssel]
+connect_bd_net [get_bd_pins tie_gt_rxprbssel/dout] [get_bd_pins aur/gt_rxprbssel]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_rxprbscntreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_rxprbscntreset]
+connect_bd_net [get_bd_pins tie_gt_rxprbscntreset/dout] [get_bd_pins aur/gt_rxprbscntreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txpostcursor
+set_property -dict [list CONFIG.CONST_WIDTH {5} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txpostcursor]
+connect_bd_net [get_bd_pins tie_gt_txpostcursor/dout] [get_bd_pins aur/gt_txpostcursor]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txdiffctrl
+set_property -dict [list CONFIG.CONST_WIDTH {5} CONFIG.CONST_VAL {0x18}] [get_bd_cells tie_gt_txdiffctrl]
+connect_bd_net [get_bd_pins tie_gt_txdiffctrl/dout] [get_bd_pins aur/gt_txdiffctrl]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txprecursor
+set_property -dict [list CONFIG.CONST_WIDTH {5} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txprecursor]
+connect_bd_net [get_bd_pins tie_gt_txprecursor/dout] [get_bd_pins aur/gt_txprecursor]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txinhibit
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txinhibit]
+connect_bd_net [get_bd_pins tie_gt_txinhibit/dout] [get_bd_pins aur/gt_txinhibit]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txpmareset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txpmareset]
+connect_bd_net [get_bd_pins tie_gt_txpmareset/dout] [get_bd_pins aur/gt_txpmareset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txpcsreset
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txpcsreset]
+connect_bd_net [get_bd_pins tie_gt_txpcsreset/dout] [get_bd_pins aur/gt_txpcsreset]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txprbssel
+set_property -dict [list CONFIG.CONST_WIDTH {4} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txprbssel]
+connect_bd_net [get_bd_pins tie_gt_txprbssel/dout] [get_bd_pins aur/gt_txprbssel]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_txprbsforceerr
+set_property -dict [list CONFIG.CONST_WIDTH {1} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_txprbsforceerr]
+connect_bd_net [get_bd_pins tie_gt_txprbsforceerr/dout] [get_bd_pins aur/gt_txprbsforceerr]
+create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 tie_gt_pcsrsvdin
+set_property -dict [list CONFIG.CONST_WIDTH {16} CONFIG.CONST_VAL {0x0}] [get_bd_cells tie_gt_pcsrsvdin]
+connect_bd_net [get_bd_pins tie_gt_pcsrsvdin/dout] [get_bd_pins aur/gt_pcsrsvdin]
+# THE ORACLE FOR THE TIES: every input pin of the Aurora cell carries a net, except the
+# members of the three interfaces connected as interfaces (and those must be connected).
+foreach i {GT_DIFF_REFCLK1 GT_SERIAL_RX USER_DATA_S_AXIS_TX} {
+  if {[llength [get_bd_intf_nets -quiet -of_objects [get_bd_intf_pins aur/$i]]] != 1} {
+    error "JCCARD_BD FAIL: aur/$i is not connected"
+  }
+}
+set _open {}
+set _nin 0
+foreach p [get_bd_pins -of_objects [get_bd_cells aur] -filter {DIR == I}] {
+  incr _nin
+  set n [file tail $p]
+  if {[llength [get_bd_nets -quiet -of_objects $p]]} { continue }
+  if {$n in {gt_refclk1_p gt_refclk1_n rxp rxn s_axi_tx_tdata s_axi_tx_tkeep s_axi_tx_tlast s_axi_tx_tvalid}} { continue }
+  lappend _open $n
+}
+puts "JCCARD_BD aur inputs=$_nin open=[llength $_open] $_open"
+if {[llength $_open]} { error "JCCARD_BD FAIL: aur inputs with no net: $_open" }
 
 # ---- THE HOST SEAM (gen_pcieep.py) ----------------------------------------
 # rtl/fk33_seam.vhd, TRACK DSEAM.  Read the long note above SEAM_BLOCK in
@@ -466,7 +728,7 @@ puts "FK33_SEAM REGMAX=[get_property CONFIG.REGMAX [get_bd_cells fk33_seam_0]] H
 set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]
 set_property CONFIG.NUM_MI [expr {$n + 1}] [get_bd_cells axil2eng]
 connect_bd_intf_net [get_bd_intf_pins axil2eng/[format M%02d_AXI $n]] \
-                    [get_bd_intf_pins fk33_seam_0/s_axi]
+                    [get_bd_intf_pins tok/s_host]
 connect_bd_net [get_bd_pins clk_wiz_0/clk_out3] [get_bd_pins fk33_seam_0/clk]
 
 # THE RESET IS ACTIVE HIGH.  fk33_seam's `rst` is `if rst = '1'`, so it
@@ -530,6 +792,16 @@ foreach {g want} {CAPS_VOCAB 248320 CAPS_EMBD 5120 CAPS_LAYER 64 CAPS_CTX 16384 
     puts "FK33_SEAM $g = $v"
 }
 # ---- end host seam --------------------------------------------------------
+
+
+# the seam sits BEHIND the loop: tok/s_host took the seam's axil2eng MI above, and
+# tok/m_seam (jc_seam_mux: the host's path when the loop does not own the seam) is
+# the seam's only master.  tok/s_ctl (the loop's registers) is one more MI.
+connect_bd_intf_net [get_bd_intf_pins tok/m_seam] [get_bd_intf_pins fk33_seam_0/s_axi]
+set n [get_property CONFIG.NUM_MI [get_bd_cells axil2eng]]
+if {$n != 3} { error "JCCARD_BD FAIL: axil2eng NUM_MI is $n before tok/s_ctl, expected 3" }
+set_property CONFIG.NUM_MI 4 [get_bd_cells axil2eng]
+connect_bd_intf_net [get_bd_intf_pins axil2eng/M03_AXI] [get_bd_intf_pins tok/s_ctl]
 
 foreach {g want} {REGMAX 17408 HADDR_W 15} {
   set v [get_property CONFIG.$g [get_bd_cells fk33_seam_0]]
@@ -838,7 +1110,11 @@ puts "FK33_CARD card/a maps $_cseg"
 # unqualified assign_bd_address would try to give it 4K (BD 41-1075).
 assign_bd_address -offset 0x00012000 -range 4K -target_address_space [get_bd_addr_spaces ctl/m_axil] [get_bd_addr_segs {eng/s_axi/reg0}]
 assign_bd_address -offset 0x00013000 -range 4K -target_address_space [get_bd_addr_spaces ctl/m_axil] [get_bd_addr_segs {eng/s_axix/reg0}]
-assign_bd_address -offset 0x0000E000 -range 4K -target_address_space [get_bd_addr_spaces ctl/m_axil] [get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]
+assign_bd_address -offset 0x0000E000 -range 4K -target_address_space [get_bd_addr_spaces ctl/m_axil] [get_bd_addr_segs {tok/s_host/reg0}]
+# the seam is behind the loop: the host's 0xE000 window is tok/s_host, which
+# forwards to tok/m_seam -> fk33_seam_0/s_axi at 0 (plan 2026-11-04 Task 7)
+assign_bd_address -offset 0x00020000 -range 64K -target_address_space [get_bd_addr_spaces ctl/m_axil] [get_bd_addr_segs {tok/s_ctl/reg0}]
+assign_bd_address -offset 0x00000000 -range 4K -target_address_space [get_bd_addr_spaces tok/m_seam] [get_bd_addr_segs {fk33_seam_0/s_axi/reg0}]
 
 # EVERY engine master sees ALL 32 pseudo-channel segments, i.e. the whole 8 GiB.
 #
@@ -868,16 +1144,18 @@ foreach pair {{m00 1} {m01 2} {m02 3} {m03 4} {m04 5} {m05 6} {m06 7} {m07 8} {m
             [get_bd_addr_segs [format "hbm/SAXI_%02d/HBM_MEM%02d" $sx $s]]
     }
 }
-# The loader (SAXI_00), jtag_hbm and the ctl read master (SAXI_16 through hbm_sc):
-# every one sees all 32 pseudo-channel segments at their absolute addresses.
-foreach {sp sx} {loader/m_axi 00 jtag_hbm/Data 16 ctl/m_axi 16} {
+# The loader (SAXI_00), jtag_hbm, the ctl read master and the loop's gather (SAXI_16
+# through hbm_sc): every one sees all 32 pseudo-channel segments at their absolute
+# addresses.
+foreach {sp sx} {loader/m_axi 00 jtag_hbm/Data 16 ctl/m_axi 16 tok/m_hbm 16} {
   for {set s 0} {$s < 32} {incr s} {
     assign_bd_address -target_address_space [get_bd_addr_spaces $sp] \
       -offset [format 0x%X [expr {$s * 0x10000000}]] -range 256M \
       [get_bd_addr_segs [format "hbm/SAXI_%s/HBM_MEM%02d" $sx $s]]
   }
 }
-foreach {sp want} {loader/m_axi 32 jtag_hbm/Data 32 ctl/m_axi 32 ctl/m_axil 3} {
+# ctl/m_axil 4: engine control, activation writer, tok/s_host (the seam behind it), tok/s_ctl
+foreach {sp want} {loader/m_axi 32 jtag_hbm/Data 32 ctl/m_axi 32 ctl/m_axil 4 tok/m_hbm 32 tok/m_seam 1} {
   set n [llength [get_bd_addr_segs -quiet -of_objects [get_bd_addr_spaces $sp]]]
   if {$n != $want} { error "JCCARD_ADDR FAIL: $sp maps $n segments, not $want" }
   puts "JCCARD_ADDR $sp maps $n segments"
@@ -927,8 +1205,8 @@ if {[llength $fk33_uncon_bad] > 0} {
     error "FK33_UNCONNECTED FAIL: [llength $fk33_uncon_bad] module input pin(s) have no driver and no tie-off: $fk33_uncon_bad.  An unconnected input is ZERO.  Connect it or tie it off explicitly."
 }
 set _nmr [llength [get_bd_cells -hierarchical -quiet -filter {VLNV =~ "*:module_ref:*"}]]
-if {$_nmr != 6} {
-  error "JCCARD_BD FAIL: expected 6 module_ref cells, found $_nmr (the unconnected-pin check would be vacuous)"
+if {$_nmr != 8} {
+  error "JCCARD_BD FAIL: expected 8 module_ref cells, found $_nmr (the unconnected-pin check would be vacuous)"
 }
 puts "JCCARD_BD module_ref_cells=$_nmr"
 save_bd_design

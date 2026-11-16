@@ -162,7 +162,20 @@ entity tb_matvec_fk33_desc is
     -- this false on both and prints the marker itself only once BOTH have
     -- finished; otherwise one arm completing while the other hung would put
     -- the marker in the log and the row would pass on half a run.
-    MARK    : boolean := true
+    MARK    : boolean := true;
+    -- THE a450 SUBSYSTEM A, forwarded as matvec_int4_desc_axi's A_TILED / A_CLK_SPLIT.
+    -- Defaults false: every existing row of this architecture is unchanged.
+    -- sim/tb_matvec_fk33_desc_tiled.vhd sets both (with DUAL, so the tiles run on mclk):
+    -- the same 22 cases, the same element-exact comparison with ref/matvec_int4.c, the
+    -- same register and UTIL checks, through the tiled array.
+    -- a450 Task 9b: under TILED and SPLIT the DUT's descriptor fetch is single-clock on
+    -- clk (so the descriptor slave below serves it on clk, and a check refuses any d-port
+    -- transition off a clk edge), and its per-port UTIL beat counters are not built (so
+    -- the UTIL section checks UTIL_SEL[31] = 1 and 0 OKAY at those indices); the job-cycle
+    -- counter is (a450 final review I1), on clk, and must equal sum(CYCLES) exactly,
+    -- answer with mclk stopped and clear on UTIL_CLR.
+    TILED   : boolean := false;
+    SPLIT   : boolean := false
   );
   port(
     -- Unconnected when this entity is the simulation top, which is how
@@ -546,6 +559,14 @@ architecture sim of tb_matvec_fk33_desc is
   type ucnt_arr is array (natural range <>) of integer;
   signal mon_rb : ucnt_arr(0 to NPW + NPS - 1) := (others => 0);
   signal mclk_run : boolean := true;
+  -- a450 Task 9b: the DUT's D_DUAL / U_BEATS / U_DUAL, restated (rtl/matvec_int4_desc_axi.vhd)
+  constant D_CORE  : boolean := TILED and SPLIT;
+  constant U_BEATS : boolean := not (TILED and SPLIT);
+  constant U_DUAL  : boolean := DUAL and U_BEATS;
+  function util_built return std_logic is
+  begin
+    if U_BEATS then return '1'; else return '0'; end if;
+  end function;
   -- The counters have exactly ONE driver, the capture process.  The driver
   -- process asks for a clear with `cap_clr` rather than assigning them: two
   -- processes driving one unresolved signal does not merely misbehave, GHDL
@@ -654,6 +675,7 @@ begin
                 DESC_MAXB => 16, WDOG_LIMIT => 4096,
                 USE_XEXP_PORT => XEXP_PORT,
                 DUAL_CLK => DUAL, CB_STYLE => CB_STYLE, FAST_POP => FASTP,
+                A_TILED => TILED, A_CLK_SPLIT => SPLIT,
                 C_S_AXI_ADDR_WIDTH => 8)
     port map(
       s_axi_aclk => clk, s_axi_aresetn => aresetn, m_aclk => mclk,
@@ -696,13 +718,18 @@ begin
     variable a  : unsigned(ADDR_W-1 downto 0);
     variable n, idx : integer;
     variable b  : std_logic_vector(AXI_DW-1 downto 0);
+    -- the descriptor port's clock: clk under D_CORE, mclk otherwise
+    procedure wait_d is
+    begin
+      if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
+    end procedure;
   begin
     d_arready <= '0'; d_rvalid <= '0'; d_rlast <= '0';
     wait until aresetn = '1';
     loop
       d_arready <= '0';
       while d_arvalid = '0' or d_deaf = '1' loop
-        wait until rising_edge(mclk);
+        wait_d;
       end loop;
       a := unsigned(d_araddr);
       n := to_integer(unsigned(d_arlen)) + 1;
@@ -724,7 +751,7 @@ begin
                " runs outside the " & integer'image(DBEATS) &
                "-beat descriptor -- MISMATCH" severity failure;
 
-      d_arready <= '1'; wait until rising_edge(mclk); d_arready <= '0';
+      d_arready <= '1'; wait_d; d_arready <= '0';
       for i in 0 to n-1 loop
         b := (others => '0');
         for j in 0 to WPB-1 loop
@@ -736,13 +763,27 @@ begin
         d_rvalid <= '1';
         if i = n-1 then d_rlast <= '1'; else d_rlast <= '0'; end if;
         loop
-          wait until rising_edge(mclk);
+          wait_d;
           exit when d_rready = '1';
         end loop;
       end loop;
       d_rvalid <= '0'; d_rlast <= '0';
     end loop;
   end process;
+
+  -- THE DESCRIPTOR PORT'S CLOCK (a450 Task 9b).  Under D_CORE every transition of the
+  -- DUT's descriptor-port outputs must land on a rising edge of clk: a fetch still on
+  -- mclk (D_DUAL left true) moves them on mclk edges, two thirds of which are not clk
+  -- edges at ACLK_HALF_PS = 3000, and the slave above, now on clk, would hide that.
+  g_dclk : if D_CORE generate
+    dchk : process(d_arvalid, d_rready, d_araddr, d_arlen)
+    begin
+      if now > 0 ns and not (rising_edge(clk) or (clk = '1' and clk'last_event = 0 ns)) then
+        report "descriptor port moved off a clk edge at " & time'image(now) &
+               ": the fetch is not single-clock on clk (D_DUAL) MISMATCH" severity failure;
+      end if;
+    end process;
+  end generate;
 
   -- =====================================================================
   -- THE DRAIN PROBE.  Only elaborated under PROBE, so the two pre-existing
@@ -781,7 +822,7 @@ begin
       -- The FIRST descriptor fetch of the run, so both arms measure the same
       -- descriptor, and only that one: ARMED ONCE, then the process parks.
       loop
-        wait until rising_edge(mclk);
+        if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
         exit when d_arvalid = '1' and d_arready = '1';
       end loop;
       t_ar := now;
@@ -792,7 +833,7 @@ begin
       -- must land at the SAME nanosecond in both arms.  If it does not, the
       -- difference below is not the drain and the bench says so.
       while nb < DBEATS loop
-        wait until rising_edge(mclk);
+        if D_CORE then wait until rising_edge(clk); else wait until rising_edge(mclk); end if;
         if d_rvalid = '1' and d_rready = '1' then nb := nb + 1; end if;
       end loop;
       t_r := now;
@@ -1905,19 +1946,30 @@ begin
     --                 counter is in m_aclk cycles, so the core-time window
     --                 rescaled to m_aclk, within 2 cycles per job.
     -- Then UTIL_CLR must zero all of them.
+    -- a450 Task 9b: under TILED and SPLIT the per-port beat counters are not built
+    -- (U_BEATS false): UTIL_SEL[31] reads 1 and their indices read 0 with OKAY.  a450 final
+    -- review I1: the job-cycle counter IS built there, on clk, and must equal sum(CYCLES)
+    -- exactly, clear on UTIL_CLR, and answer with mclk stopped (nothing crosses to mclk).
     u_nbad := 0; u_wsum := 0;
     for i in 0 to NP_ALL loop
       awr(16#40#, std_logic_vector(to_unsigned(2*i, 32)));
       ard(16#40#, rd);
-      if to_integer(unsigned(rd)) /= 2*i then
+      if rd /= (not util_built) & std_logic_vector(to_unsigned(2*i, 31)) then
         u_nbad := u_nbad + 1;
-        report "UTIL_SEL read back " & integer'image(to_integer(unsigned(rd))) &
-               " after writing " & integer'image(2*i) & " MISMATCH"
-          severity error;
+        report "UTIL_SEL read back " & to_hstring(rd) & " after writing " &
+               integer'image(2*i) & ", want bit 31 = " & std_logic'image(not util_built) &
+               " MISMATCH" severity error;
       end if;
       ard(16#44#, u_lo);
+      u_rr := rresp;
       awr(16#40#, std_logic_vector(to_unsigned(2*i + 1, 32)));
       ard(16#44#, u_hi);
+      if u_rr /= "00" or rresp /= "00" then
+        u_nbad := u_nbad + 1;
+        report "UTIL_DATA index " & integer'image(i) & " answered resp " &
+               integer'image(to_integer(unsigned(u_rr))) & "/" &
+               integer'image(to_integer(unsigned(rresp))) & ", want OKAY MISMATCH" severity error;
+      end if;
       if u_hi /= x"00000000" or u_lo(31) = '1' then
         u_nbad := u_nbad + 1;
         report "UTIL counter " & integer'image(i) & " out of range: hi=" &
@@ -1929,25 +1981,30 @@ begin
       end if;
     end loop;
     for p in 0 to NP_ALL-1 loop
-      if u_v(p) /= mon_rb(p) then
+      if U_BEATS and u_v(p) /= mon_rb(p) then
         u_nbad := u_nbad + 1;
         report "UTIL port " & integer'image(p) & ": counter " &
                integer'image(u_v(p)) & " bench saw " &
                integer'image(mon_rb(p)) & " R beats MISMATCH" severity error;
+      elsif not U_BEATS and u_v(p) /= 0 then
+        u_nbad := u_nbad + 1;
+        report "UTIL port " & integer'image(p) & " (not built) read " &
+               integer'image(u_v(p)) & ", want 0 MISMATCH" severity error;
       end if;
       if p < NPW then u_wsum := u_wsum + u_v(p); end if;
     end loop;
-    if u_wsum /= NPW * u_beat_sum then
+    if U_BEATS and u_wsum /= NPW * u_beat_sum then
       u_nbad := u_nbad + 1;
       report "UTIL weight-port beat sum " & integer'image(u_wsum) &
              " /= NPORTS_W * sum(BEATS) = " & integer'image(NPW) & " * " &
              integer'image(u_beat_sum) & " MISMATCH" severity error;
     end if;
-    if not DUAL then
-      if u_v(NP_ALL) /= u_cyc_sum then
+    if not U_DUAL then
+      -- one clock, or the split's core-clock job counter: cycle-exact with CYCLES
+      if u_v(NP_ALL) /= u_cyc_sum or u_cyc_sum = 0 then
         u_nbad := u_nbad + 1;
         report "UTIL job cycles " & integer'image(u_v(NP_ALL)) &
-               " /= sum(CYCLES) " & integer'image(u_cyc_sum) & " MISMATCH"
+               " /= sum(CYCLES) " & integer'image(u_cyc_sum) & " (or no job ran) MISMATCH"
           severity error;
       end if;
     else
@@ -2010,7 +2067,7 @@ begin
     -- read must still answer, within the bench's bound, with SLVERR and
     -- 0xDEADDEAD, rather than hold arready low forever; and once the clock
     -- runs again the next read answers normally.
-    if DUAL then
+    if U_DUAL then
       awr(16#40#, std_logic_vector(to_unsigned(0, 32)));
       mclk_run <= false;
       for k in 0 to 31 loop wait until rising_edge(clk); end loop;
@@ -2054,6 +2111,33 @@ begin
       end if;
     end if;
 
+    if not U_BEATS then
+      -- SPLIT: with mclk STOPPED the job-cycle counter still answers at once with its
+      -- value and OKAY (it is on clk; nothing crosses to mclk), never 0xDEADDEAD
+      awr(16#40#, std_logic_vector(to_unsigned(2*NP_ALL, 32)));
+      mclk_run <= false;
+      for k in 0 to 31 loop wait until rising_edge(clk); end loop;
+      wait until rising_edge(clk);
+      araddr_l <= x"44"; arvalid_l <= '1'; rready_l <= '1';
+      u_to := true; u_n := 0;
+      loop
+        wait until rising_edge(clk);
+        if rvalid_l = '1' then u_lo := rdata_l; u_rr := rresp; u_to := false; exit; end if;
+        u_n := u_n + 1;
+        exit when u_n > 5000;
+      end loop;
+      arvalid_l <= '0'; rready_l <= '0';
+      mclk_run <= true;
+      for k in 0 to 63 loop wait until rising_edge(clk); end loop;
+      if u_to or u_n > 16 or u_rr /= "00" or to_integer(unsigned(u_lo)) /= u_v(NP_ALL) then
+        u_nbad := u_nbad + 1;
+        report "UTIL job cycles (split) with mclk stopped: answered " &
+               boolean'image(not u_to) & " after " & integer'image(u_n) & " core cycles, " &
+               "read " & to_hstring(u_lo) & ", want " & integer'image(u_v(NP_ALL)) &
+               " OKAY within 16 MISMATCH" severity error;
+      end if;
+    end if;
+
     awr(16#48#, x"00000001");                          -- UTIL_CLR
     for k in 0 to 15 loop wait until rising_edge(clk); end loop;
     for i in 0 to NP_ALL loop
@@ -2067,7 +2151,12 @@ begin
                " not zero after UTIL_CLR MISMATCH" severity error;
       end if;
     end loop;
-    if u_nbad = 0 then
+    if u_nbad = 0 and not U_BEATS then
+      report "UTIL split: UTIL_SEL[31] = 1, " & integer'image(NP_ALL) & " port indices read 0 " &
+             "OKAY, job cycles " & integer'image(u_v(NP_ALL)) & " = sum(CYCLES) " &
+             integer'image(u_cyc_sum) & " on clk, answered with mclk stopped, UTIL_CLR " &
+             "zeroes all " & integer'image(NP_ALL + 1) severity note;
+    elsif u_nbad = 0 then
       report "UTIL counters: " & integer'image(NP_ALL) & " ports match the " &
              "bench's R-beat count, weight sum = " & integer'image(NPW) &
              " * BEATS " & integer'image(u_beat_sum) & ", job cycles " &

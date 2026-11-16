@@ -1,0 +1,32 @@
+{
+  "tb": "tb_tok_loop",
+  "deps": ["sim/axil_bfm_pkg.vhd", "rtl/tok_loop_pkg.vhd", "sim/tok_loop_tb_pkg.vhd",
+           "rtl/tok_loop_regs.vhd", "rtl/tok_loop_axm.vhd", "rtl/tok_loop_fsm.vhd",
+           "sim/row_synth_src.vhd", "sim/seam_beh_model.vhd", "sim/seam_trace_chk.vhd",
+           "sim/tb_tok_loop.vhd"],
+  "vectors": ["sim/tok_loop_vec.txt"],
+  "stop_time": "2000ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "T1", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "no SEQ_RESET (spec 4)",
+     "old": "txn('1', SM_CTRL, tl_u32(CTRL_SEQ_RESET), F_RS1);",
+     "new": "fs <= F_RS1;"},
+    {"tag": "T2", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "prompt index off by one (spec 4)",
+     "old": "pr_addr <= p(11 downto 0); fs <= F_TOK1;",
+     "new": "pr_addr <= p(11 downto 0) + 1; fs <= F_TOK1;"},
+    {"tag": "T3", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "stop id not pushed, against run_prompt's ids file (spec 4)",
+     "old": "            if n_gen - cfg.out_ack >= OUT_DEPTH then",
+     "new": "            if is_stop(g) then stop(R_STOP_ID);\n            elsif n_gen - cfg.out_ack >= OUT_DEPTH then"},
+    {"tag": "T4", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "max_new off by one (spec 4)",
+     "old": "elsif n_gen >= maxn then stop(R_MAX_NEW);",
+     "new": "elsif n_gen > maxn then stop(R_MAX_NEW);"},
+    {"tag": "T5", "expect": "KILLED", "file": "rtl/tok_loop_fsm.vhd",
+     "why": "the row exponent is never written (X_EXP skipped)",
+     "old": "txn('1', SM_X_EXP, rs_exp, F_WS);",
+     "new": "fs <= F_WS;"}
+  ]
+}

@@ -131,3 +131,38 @@ def test_real_path_gates_on_anchored_sentinel():
     assert "grep -qE '^CTXTEST_PASS' \"$LOG\"" in src
     assert "grep -qE '^status .* err=1'" in src
     assert "/dev/xdma" not in src
+
+
+def test_loop_mode_runs_open_only_then_jc_loop(tmp_path):
+    """JC_LOOP=1 (plan 2026-11-04 Task 7): every run is run_prompt --open-only (the programs),
+    then tools/jc/jc_loop.py on the same dies, prompt and embedding with --stop -1; the
+    generated ids are jc_loop.py's, run_prompt's go to <tag>.open.ids."""
+    out_dir = str(tmp_path / "loop")
+    p = run(["pair", out_dir, "500", "--dry-run"], tmp_path, JC_LOOP="1",
+            JC_EMBED="/nonexistent/emb.mv4i")
+    assert p.returncode == 0, p.stdout + p.stderr
+    o = p.stdout
+    rps = rp_lines(o)
+    assert len(rps) == 4, rps
+    for l in rps:
+        assert "--open-only" in l and re.search(r"--ids-out \S*/\w+\.open\.ids", l), l
+    lps = [l for l in o.splitlines() if l.startswith("DRYRUN ") and "jc_loop.py" in l]
+    assert len(lps) == 4, lps
+    tags = [re.search(r"--ids-out \S*/(\w+)\.ids", l).group(1) for l in lps]
+    assert tags == ["input_r1", "input_r2", "output_r1", "output_r2"], lps
+    for l in lps:
+        assert "--sock %s" % SOCK in l and "--die A" in l and "--die2 B" in l, l
+        assert "--stop -1" in l and "--mv4i /nonexistent/emb.mv4i" in l, l
+        assert re.search(r"> \S*/\w+\.loop\.out 2> \S*/\w+\.loop\.err$", l), l
+    assert all("--max-new 1 " in l and "prompt_input.txt" in l for l in lps[:2])
+    assert all("--max-new 485 " in l and "prompt_output.txt" in l for l in lps[2:])
+    # each loop command follows its own run_prompt --open-only
+    lines = [l for l in o.splitlines() if l in rps or l in lps]
+    assert [("jc_loop.py" in l) for l in lines] == [False, True] * 4
+    assert not re.search(r"^(CTXTEST_|JCLOOP_)", o, re.M)
+
+
+def test_no_loop_mode_by_default(tmp_path):
+    p = run(["single", str(tmp_path / "s"), "64", "--dry-run"], tmp_path)
+    assert p.returncode == 0
+    assert "jc_loop.py" not in p.stdout and "--open-only" not in p.stdout

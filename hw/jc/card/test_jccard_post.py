@@ -27,6 +27,8 @@ BUS_LOADER = os.path.join(LOADER_FULL, "bus_skew.rpt")
 CDC_LOADER = os.path.join(LOADER_FULL, "cdc.rpt")
 BUS_CTL = os.path.join(DATA, "bus_skew_jcctl_ooc4.rpt")
 BUS_CARD_SYNTH = os.path.join(DATA, "bus_skew_jccard5_synth.rpt")
+# jccard_loop3's routed report_cdc (2026-11-11): two CDC-10 rows into tok's s_pll and s_tx
+CDC_LOOP3 = os.path.join(DATA, "cdc_jccard_loop3_routed.rpt")
 REV = os.environ.get("JCCARD_TEST_REV", "")
 
 
@@ -96,7 +98,7 @@ def _post_prelude(tmp_path):
 
 
 JCC_FAIL = 'proc jcc_fail {msg} { puts "JCCARD_FAIL $msg"; exit 1 }\n'
-CORES = 'set CORE_LOADER "*u_jc_core/"\nset CORE_CTL "*/jcc_i/ctl/inst/"\n'
+CORES = 'set CORE_LOADER "*u_jc_core/"\nset CORE_CTL "*/jcc_i/ctl/inst/"\nset CORE_TOK "*/jcc_i/tok/inst/"\n'
 
 
 # ---- WILL-FAIL 1: the halt_or output pin ---------------------------------------------
@@ -323,6 +325,50 @@ def test_report_cdc_critical_rows_are_judged_by_destination_only(tmp_path):
         assert not ok and "JCCARD_FAIL report_cdc" in r.stdout, name + ": " + r.stdout
 
 
+LOOP3_PLL = ("u_bd/jcc_i/aur/inst/jcc_aur_0_core_i/jcc_aur_0_wrapper_i/u_cdc_tx_fsm_resetdone_i/"
+             "s_level_out_d5_reg/C  u_bd/jcc_i/tok/inst/s_pll_reg[0]/D")
+LOOP3_TX = ("u_bd/jcc_i/aur/inst/jcc_aur_0_core_i/simplex_tx_global_logic_i/simplex_tx_channel_init_sm_i/"
+            "counter2_r_reg[1]/C  u_bd/jcc_i/tok/inst/s_tx_reg[0]/D")
+
+
+def _loop3_rows(cdc):
+    """The two CDC-10 detail lines of the real loop3 report, by their source/destination."""
+    rows = [l for l in cdc.split("\n") if "CDC-10  Critical" in l and not l.startswith("CDC-10")]
+    assert len(rows) == 2 and any(LOOP3_PLL in l for l in rows) and any(LOOP3_TX in l for l in rows), rows
+    return rows
+
+
+def test_report_cdc_refuses_loop3_cdc10_by_name(tmp_path):
+    """jccard_loop3's real report: both CDC-10 rows land on tok synchronisers the gate now
+    names, and the gate refuses them AS NAMED (not as unknown destinations)."""
+    bus, cdc = _read(BUS_LOADER), _read(CDC_LOOP3)
+    rows = _loop3_rows(cdc)
+    ok, r = _reports(tmp_path, bus, cdc)
+    assert not ok, r.stdout
+    assert "summary=2 rows=2 unknown=0 named=2 named_refused=2" in r.stdout, r.stdout
+    assert "JCCARD_FAIL report_cdc: 2 critical crossing(s) at a named synchroniser" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_NAMED REFUSED CDC-10 at */jcc_i/tok/inst/s_pll_reg*" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_NAMED REFUSED CDC-10 at */jcc_i/tok/inst/s_tx_reg*" in r.stdout, r.stdout
+    assert "JCCARD_CDC_REPORT_UNKNOWN" not in r.stdout, r.stdout
+    # the same two rows as another Critical rule at the same named synchronisers: allowed
+    # (so the refusal above is the CDC-10 rule, not the destination)
+    c1 = cdc.replace("CDC-10  Critical      2  Combinational", "CDC-1   Critical      2  Combinational", 1)
+    for l in rows:
+        c1 = c1.replace(l, l.replace("CDC-10  Critical", "CDC-1   Critical", 1), 1)
+    ok, r = _reports(tmp_path, bus, c1)
+    assert ok and "summary=2 rows=2 unknown=0 named=2 named_refused=0" in r.stdout, r.stdout
+    # the fixed state (no Critical rows): passes
+    c0 = cdc.replace("CDC-10  Critical      2  Combinational", "CDC-10  Critical      0  Combinational", 1)
+    for l in rows:
+        c0 = c0.replace(l + "\n", "", 1)
+    ok, r = _reports(tmp_path, bus, c0)
+    assert ok and "summary=0 rows=0 unknown=0 named=0 named_refused=0" in r.stdout, r.stdout
+    # teeth: a CDC-10 into a tok register that is NOT a named synchroniser is still unknown
+    cx = cdc.replace("tok/inst/s_tx_reg[0]/D", "tok/inst/u_txup_reg/D", 1)
+    ok, r = _reports(tmp_path, bus, cx)
+    assert not ok and "unknown=1 named=1 named_refused=1" in r.stdout, r.stdout
+
+
 # ---- PASS-WRONGLY 5: jctl_syncs in the card flow ---------------------------------------
 
 def test_jctl_syncs_runs_in_the_card_flow_before_opt_design():
@@ -406,3 +452,123 @@ def test_ctl_cdc_audit_runs_and_names_the_clear_ack(tmp_path):
 def test_core_ctl_is_anchored_on_the_bd_cell():
     code = "\n".join(_code_lines(_build()))
     assert re.search(r'^set CORE_CTL\s+"\*/jcc_i/ctl/inst/"\s*$', code, re.M)
+
+
+# ---- a450 Task 9b (fix 6): the split-on card's report_cdc allowed list ----------------
+# build_card.tcl's OWN split-on block, cut out by marker and run under tclsh against the
+# REAL Critical rows of the split-on card build jccard_a450s1b (before Task 9b's fixes):
+# the a450 gate's rules plus jccard_a450_rules must allow the 29 CDC-13 job_rows_r rows and
+# the core_reset -> ar1 fan-out, REFUSE the CDC-10 row by id, and leave every other row
+# (the 16 u_sel_h -> uctr rows, the two reset fan-outs into dfetch and the counters, which
+# the split no longer builds) unknown.
+CDC_S1B = os.path.join(DATA, "cdc_jccard_a450s1b_critical.rpt")
+A450_CDC = os.path.join(REPO, "hw", "jc", "a450", "a450_cdc.tcl")
+TC_CARD = "u_bd/jcc_i/eng/inst/eng/g_tiled.dut/g_split.u"
+SPLIT_START = "# a450 Task 9b (fix 6)"
+SPLIT_END = 'foreach l $crit_unknown { puts "JCCARD_CDC_REPORT_UNKNOWN $l" }'
+
+
+def _split_cdc_run(tmp_path, txt):
+    blk = _seg(_build(), SPLIT_START, SPLIT_END)
+    script = (_post_prelude(tmp_path) + "source {%s}\n" % A450_CDC +
+              'proc jcc_fail {msg} { puts "JCCARD_FAIL $msg" }\n'
+              "set ::a450_split 1\nset ::a450_bd u_bd/jcc_i\nset ::a450_tc %s\n" % _tcl_brace(TC_CARD) +
+              "set cdc_txt %s\n" % _tcl_file(tmp_path, txt) +
+              "lassign [jccard_cdc_scan $cdc_txt {}] crit_sum crit_rows crit_unknown crit_named\n" +
+              blk + "\n" + SPLIT_END + "\n")
+    r = _tclsh(script, tmp_path)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return r.stdout
+
+
+def _rule_counts(out):
+    return {m.group(1): int(m.group(2))
+            for m in re.finditer(r"^JCCARD_CDC_A450_RULE (\S+) (\d+)$", out, re.M)}
+
+
+def test_split_cdc_list_on_the_real_split_on_rows(tmp_path):
+    out = _split_cdc_run(tmp_path, _read(CDC_S1B))
+    assert re.search(r"^JCCARD_CDC_A450 allowed 30 refused 1 unknown 18$", out, re.M), out
+    assert _rule_counts(out) == {"job_rows_r": 29, "core_reset_fanout_ar1": 1}, out
+    ref = re.findall(r"^JCCARD_CDC_A450_REFUSED (.*)$", out, re.M)
+    assert len(ref) == 1 and "CDC-10" in ref[0] and "dfetch/g_dc.run_s1_reg/D" in ref[0]
+    unk = re.findall(r"^JCCARD_CDC_REPORT_UNKNOWN (.*)$", out, re.M)
+    assert len(unk) == 18
+    assert sum("gu.gdc.uctr/hi_q_reg" in u for u in unk) == 16
+    assert sum("dfetch/g_dc.rst_s1_reg/D" in u for u in unk) == 1
+    assert sum("gu.gdc.rst_s_reg[0]/D" in u for u in unk) == 1
+    assert re.search(r"^JCCARD_FAIL .*CDC-10", out, re.M)
+
+
+def _s1b_rows(pred):
+    """The real report with only the Critical detail rows `pred` keeps, the summary
+    recounted to match (jccard_cdc_scan refuses a summary/row mismatch)."""
+    lines = _read(CDC_S1B).splitlines()
+    rows = [l for l in lines if re.match(r"^\s*\d+\s+CDC-\d+\s+Critical\s", l) and pred(l)]
+    head = [l for l in lines if l.startswith(" Row  ID")]
+    cnt = {}
+    for l in rows:
+        i = l.split()[1]
+        cnt[i] = cnt.get(i, 0) + 1
+    summ = ["%-7s Critical  %5d  x" % (i, n) for i, n in sorted(cnt.items())]
+    return "\n".join(summ + head + rows) + "\n"
+
+
+def test_split_cdc_list_passes_the_post_fix_rows(tmp_path):
+    """What the split-on card keeps after fixes 4 and 5: only the job_rows_r rows and the
+    ar1 fan-out.  All allowed, nothing refused, nothing unknown, no failure."""
+    txt = _s1b_rows(lambda l: "rows_r_reg" in l or "g_split.u/ar1_reg/D" in l)
+    out = _split_cdc_run(tmp_path, txt)
+    assert re.search(r"^JCCARD_CDC_A450 allowed 30 refused 0 unknown 0$", out, re.M), out
+    assert "JCCARD_FAIL" not in out
+
+
+def test_split_cdc_list_refuses_cdc10_even_on_a_listed_pin_and_an_unknown_row(tmp_path):
+    """Teeth.  (1) The CDC-10 row moved onto ar1's D pin, a destination a rule allows: still
+    refused, by id.  Attribution control: the same row with refuse_ids empty is allowed by
+    a rule, so it is the id refusal, not a rule miss, that refuses it.  (2) A row no rule
+    names (a job register into a tile, the near-miss of job_rows_r) stays unknown."""
+    cdc10 = [l for l in _read(CDC_S1B).splitlines() if re.match(r"^\s*\d+\s+CDC-10\s", l)]
+    assert len(cdc10) == 1
+    moved = cdc10[0].replace("u_bd/jcc_i/eng/inst/eng/dfetch/g_dc.run_s1_reg/D",
+                             TC_CARD + "/ar1_reg/D")
+    assert moved != cdc10[0]
+    near = cdc10[0].replace(" CDC-10 ", " CDC-13 ").replace(
+        "u_bd/jcc_i/eng/inst/eng/dfetch/g_dc.fsm/st_reg[0]_replica_2/C", TC_CARD + "/back/rows_r_reg[3]/C").replace(
+        "u_bd/jcc_i/eng/inst/eng/dfetch/g_dc.run_s1_reg/D", TC_CARD + "/fast/g_t[3].tile/foo_reg/D")
+    txt = "CDC-10  Critical      1  x\nCDC-13  Critical      1  x\n%s\n%s\n" % (moved, near)
+    out = _split_cdc_run(tmp_path, txt)
+    assert re.search(r"^JCCARD_CDC_A450 allowed 0 refused 1 unknown 1$", out, re.M), out
+    assert re.search(r"^JCCARD_CDC_REPORT_UNKNOWN .*g_t\[3\]\.tile/foo_reg/D", out, re.M)
+    # the control: no id refusal -> the moved CDC-10 row matches a rule
+    ctl = (_post_prelude(tmp_path) + "source {%s}\n" % A450_CDC +
+           "set r [concat [jccard_a450_rules u_bd/jcc_i %s] [a450_cdc_rules %s x]]\n"
+           % (_tcl_brace(TC_CARD), _tcl_brace(TC_CARD)) +
+           "lassign [jccard_a450_cdc_split [list %s] $r {}] h f u\n" % _tcl_brace(moved) +
+           'puts "CTL [dict keys $h] [llength $f] [llength $u]"\n')
+    r = _tclsh(ctl, tmp_path)
+    assert re.search(r"^CTL (rst_ar1|core_reset_fanout_ar1) 0 0$", r.stdout, re.M), r.stdout + r.stderr
+
+
+def test_build_card_split_floorplan_directives_and_cdc_wiring():
+    """Static: under the split, build_card.tcl floorplans A with the gate's call and port
+    map, floorplans the 10 IP cells, checks the floorplan as placed before routing, refuses
+    any -impl but explore, and runs the split-on CDC list."""
+    import sys
+    sys.path.insert(0, os.path.join(REPO, "hw", "fk33"))
+    saved = sys.argv
+    sys.argv = ["gen_pcieep.py"]
+    import gen_pcieep as P
+    sys.argv = saved
+    code = "\n".join(_code_lines(_build()))
+    m = re.search(r"a450_pblocks \{\.\*/g_split\\\.u/fast\} \"\$::a450_bd/hbm/\*\" \\\s*\{([^}]*)\}", code)
+    assert m and [int(x) for x in m.group(1).split()] == list(P.ENG_PORT_MAP[:24])
+    assert "a450_ip_pblocks [a450_ip_chains [a450_re_quote $::a450_bd]]" in code
+    ex = _seg(code, 'if {$impl eq "explore"} {', "} elseif")
+    order = [ex.index(s) for s in ("place_design -directive ExtraTimingOpt", "jcc_a450_placed",
+                                   "route_design -directive AggressiveExplore")]
+    assert order == sorted(order), ex
+    assert "AltSpreadLogic_high" not in ex
+    assert re.search(r'if \{\$::a450_split && \$impl ne "explore"\} \{ jcc_fail', code)
+    assert "a450_pblocks_verify" in _seg(code, "proc jcc_a450_placed", "\n}")
+    assert re.search(r"^\s*lassign \[jccard_a450_cdc_split \$crit_unknown \$a4r\]", code, re.M)

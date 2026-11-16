@@ -550,4 +550,132 @@ def test_build_card_congestion_strategy_directives():
                  "phys_opt_design -directive AggressiveExplore",
                  "route_design -directive AggressiveExplore"):
         assert line in t, line
-    assert re.search(r"if \{\$impl eq \"congestion\" && \$post_wns < 0\} \{\s*phys_opt_design -directive AggressiveExplore", t)
+    # a450 Task 9b: explore always runs the post-route phys_opt; congestion only when negative
+    assert re.search(r"if \{\$impl eq \"explore\" \|\| \(\$impl eq \"congestion\" && \$post_wns < 0\)\} \{"
+                     r"\s*phys_opt_design -directive AggressiveExplore", t)
+
+
+def test_build_card_lists_the_tiled_a_sources_and_its_cdc():
+    """a450 plan Task 8: every file of the tiled A closure is in ENG_SRCS (else the
+    A_TILED=1 elaboration finds no mv4i_tiled), and the split-on CDC is sourced."""
+    with open(os.path.join(HERE, "build_card.tcl")) as f:
+        t = f.read()
+    m = re.search(r"^set ENG_SRCS \{(.*?)^\}", t, re.M | re.S)
+    srcs = m.group(1).split()
+    want = ["rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd",
+            "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd", "rtl/mv_xbcast.vhd",
+            "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_rlink.vhd",
+            "rtl/mv_rchain.vhd", "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd",
+            "rtl/mv_afast.vhd", "rtl/mv_back.vhd", "rtl/mv4i_tcore.vhd",
+            "rtl/mv4i_tiled.vhd"]
+    for f in want:
+        assert f in srcs, f
+    assert srcs.index("rtl/mv4i_tiled.vhd") < srcs.index("rtl/matvec_int4_desc_axi.vhd")
+    assert "async_fifo.vhd" in t
+    assert re.search(r"^\s*source .*a450_cdc\.tcl", t, re.M)
+    assert "JCCARD_A450_SPLIT" in t
+
+
+def test_dry_run_echoes_the_a450_generator_inputs(tmp_path):
+    r = subprocess.run(["bash", RUN_CARD, "--dry-run", "--allow-scratch-root", str(tmp_path / "r")],
+                       cwd=REPO, capture_output=True, text=True,
+                       env=dict(os.environ, JC_A_TILED="1", JC_A_CLK_SPLIT="1"))
+    assert re.search(r"^JCCARD_A_ENV JC_A_TILED=1 JC_A_CLK_SPLIT=1$", r.stdout, re.M), r.stdout
+    t = _run_card_text()
+    assert "jc_a_tiled=" in t and "jc_a_clk_split=" in t
+
+
+# ---- every tiled-A file a Vivado script reads is VHDL 2008 (Task 8 review I1) ---------
+# rtl/mv_tile.vhd and rtl/mv_dist.vhd read their own `out` ports (legal in 2008, an error
+# in 93: GHDL --std=93c "port ... cannot be read"), and Vivado reads an added .vhd as 93
+# unless told otherwise.  A script that lists a tiled file must set VHDL 2008 on the list
+# that holds it AND read it back.
+_TILED = ["rtl/mv_rdfsm.vhd", "rtl/mv_rdport.vhd", "rtl/mv_lfifo.vhd", "rtl/mv_tile.vhd",
+          "rtl/mv_xbcast.vhd", "rtl/act_mem_dp.vhd", "rtl/mv_dist.vhd", "rtl/mv_rlink.vhd",
+          "rtl/mv_rchain.vhd", "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd", "rtl/mv_afast.vhd",
+          "rtl/mv_back.vhd", "rtl/mv4i_tcore.vhd", "rtl/mv4i_tiled.vhd"]
+
+
+def _tcl_lists(t):
+    return {m.group(1): m.group(2).split()
+            for m in re.finditer(r"^set (\w+) \{(.*?)\}", t, re.M | re.S)}
+
+
+def _card_tiled_2008_problems(t):
+    """build_card.tcl: each tiled file is in a list concatenated into VHDL2008, which is
+    set and read back."""
+    bad = []
+    lists = _tcl_lists(t)
+    m = re.search(r"^set VHDL2008 \[concat ([^\]]*)\]", t, re.M)
+    in2008 = set()
+    for name in (m.group(1).split() if m else []):
+        in2008 |= set(lists.get(name.lstrip("$"), []))
+    for f in _TILED:
+        if f not in in2008:
+            bad.append("%s is not in a VHDL2008 list" % f)
+    if not re.search(r"foreach f \$VHDL2008 \{\s*set_property FILE_TYPE \{VHDL 2008\}", t):
+        bad.append("no set_property FILE_TYPE {VHDL 2008} over $VHDL2008")
+    if not re.search(r"if \{\$t ne \"VHDL 2008\"\} \{ jcc_fail", t):
+        bad.append("no FILE_TYPE readback over $VHDL2008")
+    return bad
+
+
+def test_build_card_reads_every_tiled_file_as_vhdl2008():
+    with open(os.path.join(HERE, "build_card.tcl")) as f:
+        t = f.read()
+    assert _card_tiled_2008_problems(t) == []
+    # teeth: the same script with ENG_SRCS dropped from the 2008 list must be refused
+    mut = re.sub(r"(^set VHDL2008 \[concat [^\]]*)\$ENG_SRCS ", r"\1", t, flags=re.M)
+    assert mut != t
+    assert any("mv_tile.vhd" in p for p in _card_tiled_2008_problems(mut))
+
+
+def test_a450_build_reads_every_tiled_file_as_vhdl2008():
+    p = os.path.join(REPO, "hw", "jc", "a450", "build_a450.tcl")
+    t = open(p).read()
+    lists = _tcl_lists(t)
+    assert set(_TILED) <= set(lists["RTL08"])
+    assert re.search(r"foreach f \$RTL08 \{\n(?:  [^\n]*\n)*?  set_property file_type \{VHDL 2008\}", t)
+
+
+# ---- a450 Task 9b: split builds use the gate's explore directives ----------------------
+def _dry_env(root, env, flags=()):
+    e = dict(os.environ)
+    for k in ("JC_A_TILED", "JC_A_CLK_SPLIT"):
+        e.pop(k, None)
+    e.update(env)
+    args = ["bash", RUN_CARD, "--dry-run", "--allow-scratch-root", *flags, root]
+    return subprocess.run(args, cwd=REPO, capture_output=True, text=True, env=e)
+
+
+_EXPLORE = ("opt=ExploreWithRemap place=ExtraTimingOpt phys_opt=AggressiveExplore "
+            "route=AggressiveExplore post_route_phys_opt=AggressiveExplore")
+
+
+def test_split_dry_run_prints_explore_directives_and_the_a450_plan(tmp_path):
+    r = _dry_env(str(tmp_path / "root"), {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"^JCCARD_IMPL_DIRECTIVES impl=explore %s$" % _EXPLORE, r.stdout, re.M), r.stdout
+    assert re.search(r"^JCCARD_A450_PLAN floorplan=a450_pblocks\(24 tiles\)\+a450_ip_pblocks\(10 IP cells\) "
+                     r"verify=post_place\(refuse\) cdc=a450_cdc_rules\+jccard_a450_rules\(CDC-10 refused\) "
+                     r"uctr=job_cycles_only_on_clk_core dfetch=clk_core\+d_cdc "
+                     r"start_readback=a450_start_readback\(refuse\)$", r.stdout, re.M), r.stdout
+    assert re.search(r"-impl explore -nonce ", r.stdout)
+    t = _run_card_text()
+    assert 'echo "impl_directives=$IMPL_DIRECTIVES"' in t and 'echo "impl=$IMPL"' in t
+
+
+def test_split_refuses_any_other_impl_and_split_off_keeps_default(tmp_path):
+    root = str(tmp_path / "root")
+    for impl in ("congestion", "default"):
+        r = _dry_env(root, {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"}, flags=("--impl", impl))
+        assert r.returncode != 0 and re.search(r"^JCCARD_FAIL --impl '%s' with JC_A_CLK_SPLIT=1" % impl,
+                                               r.stdout, re.M), (impl, r.stdout)
+    r = _dry_env(root, {"JC_A_TILED": "1"})
+    assert r.returncode == 0 and "-impl default -nonce" in r.stdout
+    assert "JCCARD_A450_PLAN" not in r.stdout
+    r = _dry_env(root, {}, flags=("--impl", "congestion"))
+    assert r.returncode == 0 and "-impl congestion -nonce" in r.stdout
+    b = _build_card_text()
+    assert 'if {$impl ni {default congestion explore}}' in b
+    assert "puts \"JCCARD_DIRECTIVES %s\"" % _EXPLORE in b

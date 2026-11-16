@@ -1,0 +1,89 @@
+{
+  "tb": "tb_mv4i_tiled_hbmrst",
+  "deps": [
+    "rtl/util_pkg.vhd",
+    "rtl/mv4i_arith_pkg.vhd",
+    "rtl/stream_fifo.vhd",
+    "rtl/async_fifo.vhd",
+    "rtl/axi_rd_fsm.vhd",
+    "rtl/axi_rd_port.vhd",
+    "rtl/weight_streamer.vhd",
+    "rtl/act_mem_striped.vhd",
+    "rtl/matvec_core.vhd",
+    "rtl/matvec_int4.vhd",
+    "rtl/mv_lfifo.vhd",
+    "rtl/mv_rdfsm.vhd",
+    "rtl/mv_rdport.vhd",
+    "rtl/mv_tile.vhd",
+    "rtl/mv_xbcast.vhd",
+    "rtl/act_mem_dp.vhd",
+    "rtl/mv_dist.vhd",
+    "rtl/mv_rlink.vhd",
+    "rtl/mv_rchain.vhd",
+    "rtl/mv_rcross.vhd",
+    "rtl/mv_tsync.vhd",
+    "rtl/mv_afast.vhd",
+    "rtl/mv_back.vhd",
+    "rtl/mv4i_tcore.vhd",
+    "rtl/mv4i_tiled.vhd",
+    "sim/axi_rd_mem_model.vhd",
+    "sim/tb_mv4i_tiled.vhd",
+    "sim/tb_mv4i_tiled_hbmrst.vhd"
+  ],
+  "stop_time": "1ms",
+  "timeout_s": 3600,
+  "rows": [
+    {
+      "tag": "Z0",
+      "expect": "PASS"
+    },
+    {
+      "tag": "T1",
+      "expect": "KILLED",
+      "file": "rtl/mv4i_tiled.vhd",
+      "why": "a450 Task 8 carry C1, threading: the SPLIT branch does not forward hbm_aresetn to mv4i_tcore (left at its default '1'); after job 14's HBM port reset the SPLIT DUT's ports wait for dropped bursts and job 15 times out",
+      "old": "port map(clk => clk, rst => rst, aclk_a => aclk, hbm_aresetn => hbm_aresetn,",
+      "new": "port map(clk => clk, rst => rst, aclk_a => aclk,"
+    },
+    {
+      "tag": "T2",
+      "expect": "KILLED",
+      "file": "rtl/mv4i_tiled.vhd",
+      "why": "threading: the SAME branch does not forward hbm_aresetn; the SAME DUT hangs at job 15",
+      "old": "port map(clk => clk, rst => rst, aclk_a => clk, hbm_aresetn => hbm_aresetn,",
+      "new": "port map(clk => clk, rst => rst, aclk_a => clk,"
+    },
+    {
+      "tag": "T3",
+      "expect": "KILLED",
+      "file": "rtl/mv4i_tcore.vhd",
+      "why": "threading: the synchronised HBM reset does not reach mv_afast (hbm_rst left at '0'); every port hangs at job 15",
+      "old": "port map(clk => aclk_a, rst => ar2, hbm_rst => hb2, go => a_go, j_nb => j_nb,",
+      "new": "port map(clk => aclk_a, rst => ar2, go => a_go, j_nb => j_nb,"
+    },
+    {
+      "tag": "T4",
+      "expect": "KILLED",
+      "file": "rtl/mv_afast.vhd",
+      "why": "threading: the 24 tiles (weight ports) do not get the HBM reset; their owed counts stay up and job 15 times out",
+      "old": "port map(clk => clk, rst => rst_m(p / G), hbm_rst => hbm_m(p / G),",
+      "new": "port map(clk => clk, rst => rst_m(p / G),"
+    },
+    {
+      "tag": "T5",
+      "expect": "KILLED",
+      "file": "rtl/mv_afast.vhd",
+      "why": "threading: the distributor (3 scale ports) does not get the HBM reset; the scale ports hang and job 15 times out",
+      "old": "port map(clk => clk, rst => rst_d, hbm_rst => hbm_d, go => go, j_nb => j_nb,",
+      "new": "port map(clk => clk, rst => rst_d, go => go, j_nb => j_nb,"
+    },
+    {
+      "tag": "T6",
+      "expect": "KILLED",
+      "file": "rtl/mv_dist.vhd",
+      "why": "threading: mv_dist does not pass the HBM reset to its scale ports",
+      "old": "port map(clk => clk, rst => rst, hbm_rst => hbm_rst, start => s_start,",
+      "new": "port map(clk => clk, rst => rst, start => s_start,"
+    }
+  ]
+}

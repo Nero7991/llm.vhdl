@@ -1,4 +1,70 @@
 {
+  "a450_afast": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "40",
+      "AXI_DW": "256",
+      "BLK": "32",
+      "FIFO_DEPTH": "512",
+      "G": "6",
+      "MAXB": "16",
+      "MAXCOLS": "17408",
+      "MAXOUT": "16",
+      "NPORTS_S": "3",
+      "NPORTS_W": "24",
+      "ROWS_IF": "48",
+      "XD": "32"
+    },
+    "levers": [],
+    "target_ns": 2.222,
+    "tier": "anchor",
+    "top": "mv_afast"
+  },
+  "a450_tile": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "40",
+      "AXI_DW": "256",
+      "BLK": "32",
+      "DEPTH": "512",
+      "MAXB": "16",
+      "MAXOUT": "16",
+      "RD": "4",
+      "SLACK": "12",
+      "XD": "32"
+    },
+    "levers": [],
+    "target_ns": 2.222,
+    "tier": "anchor",
+    "top": "mv_tile"
+  },
+  "a450_tile_2ns": {
+    "clocks": {
+      "clk": "*"
+    },
+    "extra_files": [],
+    "generics": {
+      "ADDR_W": "40",
+      "AXI_DW": "256",
+      "BLK": "32",
+      "DEPTH": "512",
+      "MAXB": "16",
+      "MAXOUT": "16",
+      "RD": "4",
+      "SLACK": "12",
+      "XD": "32"
+    },
+    "levers": [],
+    "target_ns": 2.0,
+    "tier": "anchor",
+    "top": "mv_tile"
+  },
   "a_engine": {
     "clocks": {
       "m_aclk": "*",

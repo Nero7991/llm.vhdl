@@ -1,0 +1,33 @@
+{
+  "tb": "tb_mv_rchain",
+  "deps": ["rtl/util_pkg.vhd", "rtl/async_fifo.vhd", "rtl/mv_rlink.vhd", "rtl/mv_rchain.vhd",
+           "rtl/mv_rcross.vhd", "rtl/mv_tsync.vhd", "sim/tb_mv_rchain.vhd"],
+  "stop_time": "1ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "R1", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "a stage passes one upstream word too many per row-tile; dies by deadlock (stage NT-1 waits forever for an upstream word that never comes), not by the bench's order comparator",
+     "old": "constant NPASS : natural := NT - 1 - K;",
+     "new": "constant NPASS : natural := NT - K;"},
+    {"tag": "R2", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "the stage's almost-full comes two words late; the stage FIFO overflows and dies on this file's own design assertion (mv_rlink: upstream word into a full stage FIFO), not on a GHDL range check",
+     "old": "if n >= 2 then ua_r <= '1'; else ua_r <= '0'; end if;",
+     "new": "if n >= 4 then ua_r <= '1'; else ua_r <= '0'; end if;"},
+    {"tag": "R3", "expect": "KILLED", "file": "rtl/mv_rcross.vhd",
+     "why": "the crossing's almost-full rises only past full (w_level carries OUT_MARGIN + 1 = 4 of conservatism, so a threshold of DEPTH alone is still safe and survives)",
+     "old": "elsif w_level >= DEPTH - 6 then af <= '1';",
+     "new": "elsif w_level >= DEPTH + 8 then af <= '1';"},
+    {"tag": "T1", "expect": "KILLED", "file": "rtl/mv_tsync.vhd",
+     "why": "the start pulse is the synchronised level, not its edge",
+     "old": "else s3 <= s2; d_pulse <= s2 xor s3;",
+     "new": "else s3 <= s2; d_pulse <= s2;"},
+    {"tag": "U1", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "stage 10 re-sends one upstream word per row-tile instead of advancing past it (the head pointer doesn't move so the same word leaves twice), caught by the bench's own order/completeness comparator (tb_mv_rchain.vhd:131-137), not by a timeout or an RTL assertion",
+     "old": "if take_up = '1' then\n        uh <= (uh + 1) mod 4; n := n - 1;\n      end if;",
+     "new": "if take_up = '1' and not (K = 10 and cnt = NPASS) then\n        uh <= (uh + 1) mod 4; n := n - 1;\n      end if;"},
+    {"tag": "D1", "expect": "KILLED", "file": "rtl/mv_rlink.vhd",
+     "why": "stage 10 passes one word fewer per row-tile than it should (NPASS reduced by 1 for K = 10 only), caught by the bench's own order/completeness comparator (tb_mv_rchain.vhd:131-137), not by a timeout or an RTL assertion",
+     "old": "constant NPASS : natural := NT - 1 - K;",
+     "new": "function npass_d1(kk, nn : natural) return natural is\n  begin\n    if kk = 10 then return nn - 2 - kk; else return nn - 1 - kk; end if;\n  end function;\n  constant NPASS : natural := npass_d1(K, NT);"}
+  ]
+}

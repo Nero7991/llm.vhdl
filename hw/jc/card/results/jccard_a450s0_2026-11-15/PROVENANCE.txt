@@ -1,0 +1,14 @@
+head=81d1f48b2c0c015de02bfd1e71ada06947292d29
+patch=/home/orencollaco/GitHub/llama.vhdl-a450/hw/fk33/results/card_build20_2026-09-24/build12_levers_off.patch
+patch_sha256=71d1a2f60338f89a52407f42dff052faea1c90381b3261092dd90bba0926f454
+part=xcvu35p-fsvh2104-2L-e
+clk_core_mhz=125
+nonce=jccard_1794732962_1113183
+jc_link_refclk=gtg
+jc_link_rate=10.3125
+jc_a_tiled=1
+jc_a_clk_split=(unset)
+jc_card_bd.tcl_sha256=8ac58e341978f977d6694749d6cce2ceeb35d81b00b8fa4d8819bfc65ab63aec
+jc_card.xdc_sha256=87a67dfc05c14d85fd77e07a9d1625e132f111b52ec4cccbb576af057ac352c8
+jc_card_top.vhd_sha256=d74982bd3d99ee931ab22cd0878dc916c4e1ead6f53f5b75e59592f67805ad13
+fk33_card.vhd_sha256=b7a0d1e82d422c4b6d3c85d1e1a8a7d5d46a52e80e9e08adc5910d2838fa5f72

@@ -88,21 +88,67 @@ proc jccard_bus_skew_parse {txt} {
 # report's own summary-table row, `CDC-1  Critical  <n>  ...`, which names no
 # synchroniser, so in practice it refused EVERY Critical crossing, named or not; the
 # Source-column hole was real for a detail row but masked by that.)
-# dst_ok: glob patterns a destination pin must match. Returns {nsum nrows bad}: the
-# Critical count the report's own summary table claims, the Critical detail rows parsed,
-# and the list of Critical rows whose destination matched nothing. The caller requires
-# nrows == nsum (a row the parse missed is a refusal) and bad empty.
-proc jccard_cdc_scan {txt dst_ok} {
-  set nsum 0; set nrows 0; set bad {}
+# dst_ok: glob patterns a destination pin must match. refuse_ids: the CDC rule IDs refused
+# even at a named synchroniser (default CDC-10, "Combinational logic detected before a
+# synchronizer": the synchroniser is right and its INPUT is wrong, a glitch it can capture;
+# MEASURED jccard_loop3, two of them into tok's s_pll/s_tx). Returns {nsum nrows bad named}:
+# the Critical count the report's own summary table claims, the Critical detail rows parsed,
+# the rows whose destination matched nothing, and the rows at a named synchroniser, each
+# {verdict id pattern row} with verdict "allowed" or "refused". The caller requires nrows ==
+# nsum (a row the parse missed is a refusal), bad empty and no "refused" entry in named.
+proc jccard_cdc_scan {txt dst_ok {refuse_ids {CDC-10}}} {
+  set nsum 0; set nrows 0; set bad {}; set named {}
   foreach l [split $txt "\n"] {
     if {[regexp {^(CDC-\d+)\s+Critical\s+(\d+)\s} $l -> id cnt]} { incr nsum $cnt; continue }
-    if {![regexp {^\s*\d+\s+CDC-\d+\s+Critical\s} $l]} { continue }
+    if {![regexp {^\s*\d+\s+(CDC-\d+)\s+Critical\s} $l -> id]} { continue }
     incr nrows
     set f [regexp -all -inline {\S+(?: \S+)*} [string trim $l]]
     set dst [lindex $f end]
-    set hit 0
-    foreach p $dst_ok { if {[string match $p $dst]} { set hit 1; break } }
-    if {!$hit} { lappend bad $l }
+    set hit ""
+    foreach p $dst_ok { if {[string match $p $dst]} { set hit $p; break } }
+    if {$hit eq ""} { lappend bad $l; continue }
+    set v [expr {[lsearch -exact $refuse_ids $id] >= 0 ? "refused" : "allowed"}]
+    lappend named [list $v $id $hit [string trim $l]]
   }
-  return [list $nsum $nrows $bad]
+  return [list $nsum $nrows $bad $named]
+}
+
+# ---- a450 Task 9b: the split-on card's report_cdc allowed list --------------------------
+# jccard_a450_rules <bd> <tc>: the card's own rows under JC_A_CLK_SPLIT beyond a450_cdc_rules
+# (hw/jc/a450/a450_cdc.tcl), as {label src_re dst_re}, ANCHORED regexps on the report's pin
+# names.  One today: the CDC-11 reset fan-out (docs/debugging/2026-11-15_a450-card-split-
+# timing.md, The 49 CDC rows): core_reset's peripheral_aresetn flop (or its replica) into
+# mv4i_tcore's ar1 synchroniser.  The diagnosis's other two fan-out destinations,
+# dfetch/g_dc.rst_s1 and gu.gdc.rst_s, do not exist under the split (the descriptor fetch is
+# single-clock, and the utilisation counter block, only the job-cycle counter since the final
+# review's I1, runs on clk_core: rtl/matvec_int4_desc_axi.vhd D_DUAL / U_DUAL), so no rule
+# names them and a row into either is refused (a regression).
+proc jccard_a450_rules {bd tc} {
+  set b [a450_re_quote $bd]
+  set t [a450_re_quote $tc]
+  return [list [list core_reset_fanout_ar1 \
+    "^$b/core_reset/U0/ACTIVE_LOW_PR_OUT_DFF\\\[0\\\]\\.FDRE_PER_N(_replica(_\\d+)?)?/C\$" \
+    "^$t/ar1_reg/D\$"]]
+}
+
+# jccard_a450_cdc_split <rows> <rules> [refuse_ids]: the Critical rows jccard_cdc_scan found
+# at no named synchroniser (its `bad` list, whole report lines), read against the split-on
+# allowed list.  A row whose rule id is in refuse_ids (CDC-10: combinational logic before a
+# synchroniser) is refused BEFORE any rule is tried, so no rule can allow one.  Returns
+# {hits refused unknown}: a dict label -> count, and the refused and unmatched lines.
+proc jccard_a450_cdc_split {rows rules {refuse_ids {CDC-10}}} {
+  set hits [dict create]; set refused {}; set unknown {}
+  foreach l $rows {
+    set f [regexp -all -inline {\S+(?: \S+)*} [string trim $l]]
+    set id [lindex $f 1]
+    if {[lsearch -exact $refuse_ids $id] >= 0} { lappend refused $l; continue }
+    set src [lindex $f end-1]; set dst [lindex $f end]
+    set hit ""
+    foreach rule $rules {
+      lassign $rule lab sp dp
+      if {[regexp -- $sp $src] && [regexp -- $dp $dst]} { set hit $lab; break }
+    }
+    if {$hit eq ""} { lappend unknown $l } else { dict incr hits $hit }
+  }
+  return [list $hits $refused $unknown]
 }

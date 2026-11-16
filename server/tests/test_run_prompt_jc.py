@@ -396,3 +396,26 @@ def test_x_row_single_row_still_works(work):
     p, _ = _xrow_run(work, "r1.txt", [1])
     assert p.returncode == 0, p.stdout + p.stderr
     assert re.search(r"^prefill +1 ids, pos 1, ", p.stdout, re.M), p.stdout
+
+
+def test_step_model_answers_the_breakdown_counters(work):
+    # jc_sim_broker --step-model (2026-11-15): after a clean GO with TBL_LEN T, the die reads
+    # the contract the breakdown sweep relies on (N = T-1 single-issue additive steps), and
+    # hw/jc/host/jc_seam.py brk accepts the row for N and refuses it for any other N
+    with open(os.path.join(work, "cost.txt"), "w") as f:
+        f.write("1000 700\n200 -1\n3000 2500\n50 -1\n")
+    b = Broker(work, extra=["--step-model", "A:" + os.path.join(work, "cost.txt")])
+    p = rp(work, "--jc", b.sock, "--jc-die", "A", "--prompt", "p.txt", "--v2", "--seq-reset",
+           "--dtbl", "a.dtbl", "--rel", "a.rel", "--manifest", MAN_A, "--max-new", "1", "--stop", "-1")
+    assert p.returncode == 0, p.stdout + p.stderr
+    seam = os.path.join(os.path.dirname(SERVER), "hw", "jc", "host", "jc_seam.py")
+    q = subprocess.run(["python3", seam, "brk", "--sock", b.sock, "--die", "A", "--n", "3"],
+                       capture_output=True, text=True, timeout=60)
+    r = subprocess.run(["python3", seam, "brk", "--sock", b.sock, "--die", "A", "--n", "2"],
+                       capture_output=True, text=True, timeout=60)
+    b.stop()
+    # a.dtbl has 4 descriptors: N = 3 steps, ISS0 40, TAIL 25
+    assert q.returncode == 0, q.stdout + q.stderr
+    assert q.stdout.startswith("BRK die A n 3 cycles %d issue_cyc %d steps_iss 3 tbl_len 4 eng_cyc 2500 "
+                               % (40 + 1000 + 200 + 3000 + 25, 40 + 1000 + 200)), q.stdout
+    assert r.returncode == 3 and "BRK_REJECT die A n 2 tbl_len 4 != n+1 3" in r.stdout, r.stdout

@@ -40,7 +40,7 @@ set nonce     [expr {$nonce_idx >= 0 ? [lindex $argv [expr {$nonce_idx + 1}]] : 
 # already emitted the clk_wiz and HBM AXI frequencies from the same value.
 set clk_idx   [lsearch -exact $argv -clk_mhz]
 set clk_mhz   [expr {$clk_idx >= 0 ? [lindex $argv [expr {$clk_idx + 1}]] : 200}]
-# implementation strategy from run_card.sh --impl (default | congestion)
+# implementation strategy from run_card.sh --impl (default | congestion | explore)
 set impl_idx  [lsearch -exact $argv -impl]
 set impl      [expr {$impl_idx >= 0 ? [lindex $argv [expr {$impl_idx + 1}]] : "default"}]
 set TCK_P 37.037
@@ -63,7 +63,7 @@ puts "JCCARD_NONCE $nonce"
 puts "JCCARD_PART $part"
 if {![string is integer -strict $clk_mhz] || $clk_mhz < 50 || $clk_mhz > 250} { jcc_fail "-clk_mhz $clk_mhz is not an integer in 50..250" }
 puts "JCCARD_CLK_CORE_MHZ $clk_mhz"
-if {$impl ni {default congestion}} { jcc_fail "-impl $impl is not default or congestion" }
+if {$impl ni {default congestion explore}} { jcc_fail "-impl $impl is not default, congestion or explore" }
 puts "JCCARD_IMPL $impl"
 
 # BSCAN census, as a proc so it can be run twice (Task 9 fix round 1, CRITICAL C2):
@@ -153,13 +153,22 @@ add_files -norecurse $repo/rtl/jc_ctl_core.vhd
 add_files -norecurse $repo/hw/jc/ctl/rtl/jc_ctl_rx.vhd
 update_compile_order -fileset sources_1
 
-# -- subsystem A (gen_pcieep.ENG_SRCS, the engine's own RTL; VHDL-93 default, as the
-#    FK33 build leaves them). rtl/a_util_ctr.vhd is Task 1's addition: it must be
+# -- subsystem A (gen_pcieep.ENG_SRCS, the engine's own RTL). The FK33 build leaves these
+#    at VHDL-93; HERE every one is set to VHDL 2008 and read back (the VHDL2008 list
+#    below), which the tiled files need: rtl/mv_tile.vhd and rtl/mv_dist.vhd read their
+#    own out ports.  rtl/a_util_ctr.vhd is Task 1's addition: it must be
 #    here, or the engine elaborates against stale port counts.
+# The a450 tiled A (plan 2026-11-12, Task 8): matvec_int4_desc_axi instantiates
+# mv4i_tiled as a component under A_TILED, so its files are listed here; with A_TILED
+# false Vivado never elaborates them.
 set ENG_SRCS {
   rtl/mv4i_arith_pkg.vhd rtl/matvec_int4_desc_pkg.vhd rtl/stream_fifo.vhd
   rtl/axi_rd_fsm.vhd rtl/axi_rd_port.vhd rtl/weight_streamer.vhd
   rtl/act_mem_striped.vhd rtl/matvec_core.vhd rtl/matvec_int4.vhd
+  rtl/mv_rdfsm.vhd rtl/mv_rdport.vhd
+  rtl/mv_lfifo.vhd rtl/mv_tile.vhd rtl/mv_xbcast.vhd rtl/act_mem_dp.vhd rtl/mv_dist.vhd
+  rtl/mv_rlink.vhd rtl/mv_rchain.vhd rtl/mv_rcross.vhd rtl/mv_tsync.vhd rtl/mv_afast.vhd
+  rtl/mv_back.vhd rtl/mv4i_tcore.vhd rtl/mv4i_tiled.vhd
   rtl/a_util_ctr.vhd rtl/matvec_int4_desc_axi.vhd
 }
 foreach f $ENG_SRCS { add_files -norecurse $repo/$f }
@@ -204,10 +213,25 @@ add_files -norecurse $repo/hw/fk33/rtl/fk33_bc_grant.vhd
 add_files -norecurse $repo/hw/fk33/rtl/fk33_card.vhd
 update_compile_order -fileset sources_1
 
+# -- the token loop and the die-to-die link (plan 2026-11-04 Task 7). tok_loop and what it
+#    instantiates are VHDL-2008; rtl/jc_loader_pkg.vhd, rtl/async_fifo.vhd and
+#    rtl/util_pkg.vhd are already in the project (the loader list). The two module-reference
+#    tops, rtl/jc_tok_top.vhd and hw/jc/link/rtl/jc_gtg_clk.vhd, are plain VHDL: a BD module
+#    reference refuses a VHDL-2008 top file (MEASURED Task 5, filemgmt 56-195).
+set LINK_2008 {
+  rtl/tok_loop_pkg.vhd rtl/tok_loop_regs.vhd rtl/tok_loop_axm.vhd rtl/tok_loop_fsm.vhd
+  rtl/jc_seam_mux.vhd rtl/embed_gather.vhd rtl/jc_link_pkg.vhd rtl/jc_link_tx.vhd
+  rtl/jc_link_rx.vhd rtl/tok_loop.vhd
+}
+foreach f $LINK_2008 { add_files -norecurse $repo/$f }
+set LINK_TOPS { rtl/jc_tok_top.vhd hw/jc/link/rtl/jc_gtg_clk.vhd }
+foreach f $LINK_TOPS { add_files -norecurse $repo/$f }
+update_compile_order -fileset sources_1
+
 # -- READ BACK every VHDL-2008 property (the FK33 lesson: a path that does not match
 #    leaves the file at VHDL-93 and the failure surfaces hundreds of lines later in a
 #    generated bd.v, naming neither the file nor the standard).
-set VHDL2008 [concat $LOADER_2008 $CTL_2008 $ENG_SRCS $CARD_2008]
+set VHDL2008 [concat $LOADER_2008 $CTL_2008 $ENG_SRCS $CARD_2008 $LINK_2008]
 # util_pkg.vhd and async_fifo.vhd are shared with ENG_SRCS at the FK33's own default
 # (VHDL-93 there); the loader's hard requirement for 2008 wins for this project, since
 # VHDL-2008 is a superset for the plain package/entity code in both files.
@@ -218,11 +242,46 @@ foreach f $VHDL2008 {
   set t [get_property FILE_TYPE [get_files -quiet $repo/$f]]
   if {$t ne "VHDL 2008"} { jcc_fail "source $f is FILE_TYPE \"$t\", not VHDL 2008" }
 }
-puts "JCCARD_SOURCES [llength $VHDL2008] at VHDL 2008, [expr {[llength $ENG_SRCS] + 6}] at the default"
+foreach f $LINK_TOPS {
+  set t [get_property FILE_TYPE [get_files -quiet $repo/$f]]
+  if {$t ne "VHDL"} { jcc_fail "source $f is FILE_TYPE \"$t\", not VHDL (a module-reference top)" }
+}
+puts "JCCARD_SOURCES [llength $VHDL2008] at VHDL 2008, [expr {[llength $ENG_SRCS] + 6 + [llength $LINK_TOPS]}] at the default"
 update_compile_order -fileset sources_1
 
 # ---- the block design ---------------------------------------------------------------
 if {[catch {source $here/jc_card_bd.tcl} err]} { jcc_fail "bd: $err" }
+# THE TOP'S COMPONENT MUST BE THE WRAPPER'S PORT LIST. jc_card_top.vhd declares jcc_wrapper
+# as a component with the ports gen_jc_card.py predicts (the GT interface ports' names are a
+# Vivado convention, <intf port>_<member>); read the wrapper make_wrapper writes and refuse
+# on any difference, here, before synthesis (plan 2026-11-04 Task 7).
+proc jcc_wrapper_ports {f} {
+  set fh [open $f]; set t [read $fh]; close $fh
+  set ps {}
+  foreach {- d n} [regexp -all -inline -line {^\s*(input|output)\s+(?:\[[^\]]*\]\s*)?(\w+)\s*[;,]?\s*$} $t] {
+    lappend ps [list $n [expr {$d eq "input" ? "in" : "out"}]]
+  }
+  return [lsort $ps]
+}
+proc jcc_component_ports {f} {
+  set fh [open $f]; set t [read $fh]; close $fh
+  if {![regexp {component\s+jcc_wrapper\s+is\s+port\s*\((.*?)\)\s*;\s*end\s+component} $t -> body]} {
+    jcc_fail "wrapper check: no jcc_wrapper component in $f"
+  }
+  set ps {}
+  foreach {- n d} [regexp -all -inline {(\w+)\s*:\s*(in|out)\s} $body] { lappend ps [list $n $d] }
+  return [lsort $ps]
+}
+set _wf [make_wrapper -files [get_files jcc.bd] -top -force]
+set _wp [jcc_wrapper_ports $_wf]
+set _cp [jcc_component_ports $here/jc_card_top.vhd]
+puts "JCCARD_WRAPPER_PORTS [llength $_wp] component=[llength $_cp] file=$_wf"
+if {$_wp ne $_cp} {
+  foreach p $_wp { if {[lsearch -exact $_cp $p] < 0} { puts "JCCARD_WRAPPER_ONLY $p" } }
+  foreach p $_cp { if {[lsearch -exact $_wp $p] < 0} { puts "JCCARD_COMPONENT_ONLY $p" } }
+  jcc_fail "wrapper ports differ from jc_card_top.vhd's jcc_wrapper component"
+}
+puts "JCCARD_WRAPPER_PORTS_OK"
 puts "JCCARD_BD_DONE"
 if {$bdonly} {
   foreach p [lsort [get_bd_pins -quiet hbm/*]] { puts "JCCARD_HBMPIN $p" }
@@ -269,7 +328,7 @@ open_run synth_1 -name synth_1
 
 # ---- the six module-reference cells: each input pin must carry a net (BD 41-759 is
 #      silent when the VHDL port has a default; every one of ours has none) ----------
-set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant}
+set EXPECT_CELLS {loader ctl eng fk33_seam_0 card bcgrant tok gtgclk}
 # constant BY DESIGN, per bit and polarity (jccard2 classification, 2026-10-07)
 source $repo/hw/jc/card/jccard_const_allow.tcl
 set total_nin 0; set total_bad {}; set total_allowed 0
@@ -347,6 +406,8 @@ puts "JCCARD_LEVERS_OK NWIDE=off SWEEP_PIPE=off SCORE_EARLY=off"
 # ---- clocks and CDC -----------------------------------------------------------------
 source $repo/hw/jc/loader/jc_loader_timing.tcl
 source $repo/hw/jc/ctl/jc_ctl_timing.tcl
+source $repo/hw/jc/link/jc_link_timing.tcl
+set CORE_TOK "*/jcc_i/tok/inst/"
 if {[catch {
   # sysclk, and clk_core (clk_wiz_0/clk_out3) through its own IP constraints: find
   # aclk from a register this build's own RTL clocks, and require 1000/clk_mhz ns:
@@ -380,6 +441,56 @@ if {[catch {
   # card's ctl is its own OOC synthesis, so ooc_ctl_core.tcl's JCCTL_SYNC_OK does not
   # transfer; this is the same call that flow makes, with the card's prefix.
   jctl_syncs $CORE_CTL
+
+  # the token loop's crossings (rtl/jc_tok_top.vhd; hw/jc/link/jc_link_timing.tcl): aclk,
+  # the Aurora user_clk, and init_clk (jc_gtg_clk's CLKOUT1), each found from a register
+  # the tok RTL clocks; the Aurora IP's own XDC defines user_clk, jc_gtg_clk's MMCM init_clk.
+  # Only the STRUCTURAL audit runs here. The bounds (jlk_cdc) are applied after the gtg ECO
+  # and opt_design, below: jccard_loop2 (2026-11-11, MEASURED) applied them here, the ECO
+  # re-derived the Aurora clocks as txoutclk_out[0]_1, every "-from user_clk" bound stopped
+  # applying (17 crossings timed as synchronous, WNS -2.306) and report_exceptions died on
+  # the dangling clock (Constraints 18-396).
+  set clk_u [jlk_clock_of_pin "${CORE_TOK}rxf/wp_g_reg*/C"]
+  set clk_i [jlk_clock_of_pin "${CORE_TOK}i_rpb_reg*/C"]
+  set lk_bad [jlk_cdc_audit $CORE_TOK $aclk_clk $clk_u $clk_i]
+  puts "JCCARD_LINK_CDC_UNEXPECTED $lk_bad"
+  if {$lk_bad != 0} { error "link cdc audit: $lk_bad unexpected crossing(s)" }
+
+  # the a450 split (plan 2026-11-12 Task 9): only when the BD carries aclk_a's MMCM.
+  # Every clk_core <-> aclk_a path is bounded datapath-only (hw/jc/a450/a450_cdc.tcl).
+  set ::a450_split 0
+  if {[llength [get_cells -quiet -hierarchical -filter {NAME =~ "*/clk_wiz_a/*" && IS_PRIMITIVE == 1 && REF_NAME =~ "MMCM*"}]] > 0} {
+    source $repo/hw/jc/a450/a450_cdc.tcl
+    a450_cdc "*/eng/inst/eng/g_tiled.dut/g_split.u/back/go_r_reg/C" \
+             "*/eng/inst/eng/g_tiled.dut/g_split.u/fast/dist/s_start_reg/C"
+    set ::a450_split 1
+    set ::a450_tc [regsub {/back/go_r_reg/C$} [get_pins -hierarchical -filter {NAME =~ */eng/inst/eng/g_tiled.dut/g_split.u/back/go_r_reg/C}] {}]
+    set ::a450_bd [regsub {/eng/inst/eng/g_tiled\.dut/g_split\.u$} $::a450_tc {}]
+    if {$::a450_bd eq $::a450_tc} { error "a450: block design instance not found above $::a450_tc" }
+    puts "JCCARD_A450_SPLIT on"
+    # a450 Task 9b (docs/debugging/2026-11-15_a450-card-split-timing.md, fixes 1 and 7):
+    # A's 24 tiles in their HBM ports' columns (the gate's own call), and the aclk_a-side
+    # IP (converters, register slices, hbm_sc) beside its ports; checked as PLACED below.
+    source $repo/hw/jc/a450/a450_pblocks.tcl
+    set npb [a450_pblocks {.*/g_split\.u/fast} "$::a450_bd/hbm/*" \
+             {1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 17 18 19 20 21 22 23 24 25}]
+    set nip [a450_ip_pblocks [a450_ip_chains [a450_re_quote $::a450_bd]]]
+    puts "JCCARD_A450_PBLOCKS requested column_pblocks $npb tiles [llength $::a450_pb_expect] ip $nip"
+    if {$npb < 2 || [llength $::a450_pb_expect] != 24 || $nip != 10} {
+      error "a450 floorplan: $npb column pblocks, [llength $::a450_pb_expect] tiles, $nip IP cells (want >= 2, 24, 10)"
+    }
+  } else {
+    puts "JCCARD_A450_SPLIT off"
+  }
+
+  # the GTG MMCM's site and dedicated route (jc_card.xdc; finding 3): read back, because a
+  # filter that matches nothing in an XDC is a CRITICAL WARNING, not a stop.
+  set gm [get_cells -quiet -hierarchical -filter {NAME =~ "*gtgclk/*u_mmcm" && IS_PRIMITIVE == 1}]
+  if {[llength $gm] != 1} { error "gtg mmcm: [llength $gm] cells match *gtgclk/*u_mmcm" }
+  set gn [get_nets -of_objects [get_pins $gm/CLKIN1]]
+  puts "JCCARD_GTG_MMCM $gm LOC=[get_property LOC $gm] CLKIN1_net=$gn CDR=[get_property CLOCK_DEDICATED_ROUTE $gn]"
+  if {[get_property LOC $gm] ne "MMCM_X0Y2"} { error "gtg mmcm LOC [get_property LOC $gm], not MMCM_X0Y2" }
+  if {[get_property CLOCK_DEDICATED_ROUTE $gn] ne "BACKBONE"} { error "gtg mmcm CLKIN1 net CLOCK_DEDICATED_ROUTE is not BACKBONE" }
 
   # CATTRIP -> compute_halt: RULED asynchronous (task-8 report concern 1; no 2-FF
   # synchroniser module exists for it, and adding one is outside this task's file
@@ -422,31 +533,153 @@ set cdc_bad [jctl_cdc_audit $CORE_CTL $aclk_clk [get_clocks tck_user3]]
 puts "JCCARD_CDC_UNEXPECTED $cdc_bad"
 if {$cdc_bad != 0} { jcc_fail "cdc audit: $cdc_bad unexpected ctl crossing(s)" }
 
+# the GTG refclk ECO (plan D11). The choice is READ FROM jc_card_bd.tcl's GENSTAMP
+# (gen_jc_card.py stamps JC_LINK_REFCLK; unset = gtg), not from this process's environment:
+# run_card.sh launches Vivado through systemd-run --user, which does not pass the caller's
+# environment. A JC_LINK_REFCLK that does reach this process must agree with the stamp.
+# gtg: the QPLL the core runs is moved to GTGREFCLK from jc_gtg_clk's 156.25 MHz BUFG. pin
+# (no ECO, the QPLL on the IP's nominal AK38/AK39, which the Jungle Cat board does NOT drive)
+# is refused here and in gen_jc_card.py (final ruling 2026-11-11): its link could never lock.
+set _bdt [open $here/jc_card_bd.tcl]; set _bdtxt [read $_bdt]; close $_bdt
+if {![regexp -line {^#\s+env\s+JC_LINK_REFCLK\s*=\s*(\S+)} $_bdtxt -> _stamped]} {
+  jcc_fail "jc_card_bd.tcl carries no JC_LINK_REFCLK GENSTAMP line"
+}
+set _lr [expr {$_stamped eq "(unset)" ? "gtg" : $_stamped}]
+if {$_lr ne "gtg"} { jcc_fail "jc_card_bd.tcl was generated with JC_LINK_REFCLK=$_stamped; only gtg is built (AK38/AK39 undriven)" }
+if {[info exists ::env(JC_LINK_REFCLK)] && $::env(JC_LINK_REFCLK) ne "" && $::env(JC_LINK_REFCLK) ne $_lr} {
+  jcc_fail "JC_LINK_REFCLK=$::env(JC_LINK_REFCLK) here, but jc_card_bd.tcl was generated with $_stamped"
+}
+puts "JCCARD_LINK_REFCLK $_lr (stamped $_stamped)"
+if {$_lr eq "gtg"} {
+  set _ac [get_cells -quiet -hierarchical -filter {NAME =~ "*/jcc_i/aur" && IS_PRIMITIVE == 0}]
+  if {[llength $_ac] != 1} { jcc_fail "gtg eco: [llength $_ac] cells match */jcc_i/aur" }
+  set _gp [get_pins -quiet -hierarchical -filter {NAME =~ "*gtgclk/*u_gbg/O"}]
+  if {[llength $_gp] != 1} { jcc_fail "gtg eco: [llength $_gp] pins match *gtgclk/*u_gbg/O" }
+  set ::JC_AUR_CELL [get_property NAME $_ac]
+  set ::JC_GTG_PIN [get_property NAME $_gp]
+  if {[catch {source $repo/hw/jc/link/eco_aurora_gtg.tcl} err]} { jcc_fail "gtg eco: $err" }
+}
 # -impl congestion (jccard7, 2026-10-08): 125 MHz placed at WNS +0.513 but routed at -8.833,
 # 49k endpoints, one-LUT paths with ~16 ns of routing in u_arr and A's core: congestion
 # detours, not logic depth. Spread placement and aggressive route/phys_opt for that case.
-if {$impl eq "congestion"} {
+# a450 Task 9b: a split build uses the a450 gate's directives (run a450_hbm_7b_r6), never
+# AltSpreadLogic_high, which smeared A's tiles over up to 13 clock regions (fix 2)
+if {$::a450_split && $impl ne "explore"} { jcc_fail "JC_A_CLK_SPLIT build with -impl $impl: split builds use -impl explore" }
+switch -- $impl {
+  explore    { puts "JCCARD_DIRECTIVES opt=ExploreWithRemap place=ExtraTimingOpt phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore" }
+  congestion { puts "JCCARD_DIRECTIVES opt=ExploreWithRemap place=AltSpreadLogic_high phys_opt=AggressiveExplore route=AggressiveExplore post_route_phys_opt=AggressiveExplore_if_negative" }
+  default    { puts "JCCARD_DIRECTIVES opt=Default place=Default phys_opt=Default route=Default" }
+}
+if {$impl in {congestion explore}} {
   opt_design -directive ExploreWithRemap
 } else {
   opt_design
 }
 jccard_bscan_check post_opt_design
-if {$impl eq "congestion"} {
+# the link CDC bounds, HERE: after the gtg ECO has re-derived the Aurora clocks and after
+# opt_design, with the clocks found again from the tok's own registers and the GT's TXOUTCLK
+# pin, and every bound anchored to pins and cells (jlk_src), so no later re-derivation can
+# orphan one. jlk_exc_audit refuses after route if they did not stay in force.
+if {[catch {
+  lassign [jlk_clocks $CORE_TOK] clk_u clk_i
+  set lk_n [jlk_cdc $CORE_TOK $aclk_clk $clk_u $clk_i]
+  puts "JCCARD_LINK_CDC_APPLIED post_opt_design bounds=$lk_n user=[get_property NAME $clk_u] init=[get_property NAME $clk_i]"
+} err]} { jcc_fail "link constraints: $err" }
+# cb_data / cb_addr (jccard_loop2 root cause 2, MEASURED): eng's codebook write command
+# registers each drive all 1536 cbw_d/cbw_a copies in matvec_core (one register per copy,
+# by design). Placement pressure from the link logic stretched cb_data_reg[3]'s net to an
+# 8.5 ns route (0 logic levels, -0.847 ns; the same RTL met +0.109 on jccard10). Fixed
+# card-side, not in the shared engine RTL: force-replicate the 12 drivers after placement
+# so each replica sits near its share of the loads. Refuses unless replicas appear.
+proc jcc_cbdata_repl {} {
+  set flt {(NAME =~ "*/eng/inst/eng/cb_data_reg*" || NAME =~ "*/eng/inst/eng/cb_addr_reg*") && REF_NAME =~ FD*}
+  set regs [get_cells -quiet -hierarchical -filter $flt]
+  set orig {}
+  foreach c $regs { if {[string first "_replica" [get_property NAME $c]] < 0} { lappend orig $c } }
+  if {[llength $orig] != 12} { jcc_fail "cb_data replication: [llength $orig] cb_data/cb_addr registers, expected 12 (8 + 4)" }
+  set nets [get_nets -of_objects [get_pins -of_objects $orig -filter {REF_PIN_NAME == Q}]]
+  set loads {}
+  foreach n $nets { lappend loads [llength [get_pins -leaf -of_objects $n -filter {DIRECTION == IN}]] }
+  set lmin [tcl::mathfunc::min {*}$loads]
+  set before [llength $regs]
+  phys_opt_design -force_replication_on_nets $nets
+  set after [llength [get_cells -quiet -hierarchical -filter $flt]]
+  if {$after <= $before} { jcc_fail "cb_data replication: no replica created (drivers $before -> $after)" }
+  puts "JCCARD_CBDATA_REPL nets=[llength $nets] loads=$lmin..[tcl::mathfunc::max {*}$loads] drivers=$before->$after"
+}
+# one GT channel, at the measured lane's site (spec 1b.2: die 0 X0Y0 TX -> die 1 X0Y0 RX),
+# checked right after placement, before routing is paid for
+proc jcc_gt_loc_check {} {
+  set gts [get_cells -hierarchical -filter {REF_NAME == GTYE4_CHANNEL}]
+  if {[llength $gts] != 1 || [get_property LOC $gts] ne "GTYE4_CHANNEL_X0Y0"} {
+    jcc_fail "GT placement: [llength $gts] channel(s) at [get_property LOC $gts], want one at GTYE4_CHANNEL_X0Y0"
+  }
+  puts "JCCARD_GT_LOC [get_property LOC $gts]"
+}
+# the a450 floorplan as PLACED (fix 1): every HBM site assumption, every pblock non-empty,
+# every tile and IP cell placed, with >= A450PB_MIN_IN of its sites in its column (the
+# pblocks are soft: hw/jc/a450/a450_pblocks.tcl a450_pblocks_placed has the measurement);
+# refused before routing is paid for
+proc jcc_a450_placed {} {
+  if {![info exists ::a450_split] || !$::a450_split} { return }
+  set vb [a450_pblocks_verify]
+  lassign [a450_pblocks_placed] bad npb nt ni smin
+  set bad [concat $vb $bad]
+  puts "JCCARD_A450_PBLOCKS placed pblocks $npb tiles_inside $nt ip_inside $ni min_in_column [format %.3f $smin] failures [llength $bad]"
+  foreach b $bad { puts "JCCARD_A450_PBLOCKS_BAD $b" }
+  if {[llength $bad] > 0 || $nt != 24 || $ni != 10} { jcc_fail "a450 floorplan after placement: [llength $bad] failure(s), $nt/24 tiles, $ni/10 IP cells inside" }
+}
+if {$impl eq "explore"} {
+  place_design -directive ExtraTimingOpt
+  jcc_a450_placed
+  jcc_gt_loc_check
+  jcc_cbdata_repl
+  phys_opt_design -directive AggressiveExplore
+  route_design -directive AggressiveExplore
+} elseif {$impl eq "congestion"} {
   place_design -directive AltSpreadLogic_high
+  jcc_gt_loc_check
+  jcc_cbdata_repl
   phys_opt_design -directive AggressiveExplore
   route_design -directive AggressiveExplore
 } else {
   place_design
+  jcc_gt_loc_check
+  jcc_cbdata_repl
   phys_opt_design
   route_design
 }
 set post_wns [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]
 puts "JCCARD_POST_ROUTE_WNS $post_wns"
-if {$impl eq "congestion" && $post_wns < 0} {
+if {$impl eq "explore" || ($impl eq "congestion" && $post_wns < 0)} {
   phys_opt_design -directive AggressiveExplore
   puts "JCCARD_POST_ROUTE_PHYSOPT_WNS [get_property SLACK [get_timing_paths -max_paths 1 -nworst 1 -setup]]"
 }
 write_checkpoint -force $bd/jc_card_routed.dcp
+# the link bounds must still be in force on the routed design (written first, so a refusal
+# leaves the checkpoint to read): every path user_clk/init_clk <-> aclk under a datapath-only
+# max delay, and no "(unsafe)" clock-interaction row between them.
+if {[catch {
+  lassign [jlk_clocks $CORE_TOK] clk_u clk_i
+  set lk_exc [jlk_exc_audit $aclk_clk $clk_u $clk_i]
+} err]} { jcc_fail "link exception audit: $err" }
+puts "JCCARD_LINK_EXC_AUDIT bad=$lk_exc"
+if {$lk_exc != 0} { jcc_fail "link cdc bounds not in force after route: $lk_exc failure(s) (JCLINK_EXC_* lines)" }
+# the split's two start-crossing reset paths (rst->ar1, tog->s1), read back on the routed
+# design exactly as the a450 gate reads them (a450_start_readback, hw/jc/a450/a450_cdc.tcl;
+# final review I3): each must carry its one-aclk_a-period bound (not the clock-wide two),
+# meet it, and their skew must stay under one period, which is the only thing that makes
+# ar3's one edge of margin real (rtl/mv4i_tcore.vhd RESETS).  Refused like the link bounds.
+if {[info exists ::a450_split] && $::a450_split} {
+  lassign [a450_start_readback $::a450_tc] a4_prst a4_ptog a4_pa a4_skew a4_sf
+  foreach a4_p [list $a4_prst $a4_ptog] a4_tag {RSTAR1 TOGS1} {
+    if {$a4_p eq ""} { continue }
+    puts "JCCARD_A450_$a4_tag SLACK [get_property SLACK $a4_p] REQ [get_property REQUIREMENT $a4_p] DELAY [get_property DATAPATH_DELAY $a4_p] LEVELS [get_property LOGIC_LEVELS $a4_p] START [get_property STARTPOINT_PIN $a4_p] END [get_property ENDPOINT_PIN $a4_p]"
+  }
+  if {$a4_prst ne ""} { puts "JCCARD_A450_RSTSKEW $a4_skew PERIOD $a4_pa" }
+  foreach a4_f $a4_sf { puts "JCCARD_A450_START_FAIL $a4_f" }
+  if {[llength $a4_sf] > 0} { jcc_fail "a450 start-crossing read-back: [llength $a4_sf] failure(s) (JCCARD_A450_START_FAIL lines)" }
+}
 
 set rp $bd/reports
 file mkdir $rp
@@ -458,8 +691,12 @@ report_clock_interaction -file $rp/clock_interaction.rpt
 report_clocks -file $rp/clocks.rpt
 report_cdc -details -file $rp/cdc.rpt
 report_cdc -file $rp/cdc_summary.rpt
-report_exceptions -file $rp/exceptions.rpt
-report_exceptions -ignored -file $rp/exceptions_ignored.rpt
+# a constraint left naming an object that no longer exists makes report_exceptions an ERROR
+# (jccard_loop2: Constraints 18-396, the pre-ECO "-from user_clk" bounds): a refusal, by name
+if {[catch {
+  report_exceptions -file $rp/exceptions.rpt
+  report_exceptions -ignored -file $rp/exceptions_ignored.rpt
+} err]} { jcc_fail "report_exceptions: $err" }
 report_bus_skew -file $rp/bus_skew.rpt
 report_methodology -file $rp/methodology.rpt
 report_drc -file $rp/drc.rpt
@@ -480,7 +717,8 @@ if {$bs_ids < 4 || $bs_rows != $bs_ids || $bs_neg > 0} {
 
 # report_cdc's own severity classification (fix round 2026-10-07, post-synth-audit.md
 # PASS-WRONGLY 6): a Critical row is allowed ONLY when its DESTINATION is the first stage
-# of a named synchroniser (the loader's and the ctl's, anchored on their own hierarchy).
+# of a named synchroniser (the loader's, the ctl's and the tok's, anchored on their own
+# hierarchy) AND its rule is not one refused everywhere (CDC-10; see jccard_cdc_scan).
 # The previous scan whitelisted a line when a known name appeared anywhere in it, so a
 # Critical crossing FROM a synchroniser register TO an unsynchronised one passed on its
 # Source column (masked in practice: the report's own summary row `CDC-1 Critical <n>`
@@ -494,12 +732,43 @@ foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg fifo/wp_g_s1_reg fifo/
            trst_s1_reg trip_s1_reg dnar/} { lappend CDC_DST_OK "${CORE_LOADER}${sy}*" }
 foreach sy {sync/st_r_reg sync/tgl_s1_reg sync/ack_s1_reg rak_s1_reg fifo/wp_g_s1_reg
            fifo/rp_g_s1_reg rram_reg} { lappend CDC_DST_OK "${CORE_CTL}${sy}*" }
-lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown
+# the token loop's synchroniser first stages (rtl/jc_tok_top.vhd, the list jlk_cdc_audit
+# names; 2026-11-11), anchored on the tok hierarchy so a crossing into one of them is
+# reported BY NAME. Naming one does not make every Critical at it pass: jccard_cdc_scan
+# refuses a CDC-10 (combinational logic before the synchroniser) wherever it lands.
+foreach sy {s_tx_reg s_rx_reg s_pll_reg s_gtg_reg s_ovf_reg u_rst_s_reg u_pol_reg
+           i_rpb_reg i_pma_reg i_lck_reg txf/wp_g_s1_reg txf/rp_g_s1_reg txf/clr_r_s1_reg
+           txf/clr_a_s1_reg rxf/wp_g_s1_reg rxf/rp_g_s1_reg rxf/clr_r_s1_reg
+           rxf/clr_a_s1_reg} { lappend CDC_DST_OK "${CORE_TOK}${sy}*" }
+lassign [jccard_cdc_scan $cdc_txt $CDC_DST_OK] crit_sum crit_rows crit_unknown crit_named
+# a450 Task 9b (fix 6): under the split, the Critical rows at no named synchroniser are read
+# against the a450 gate's allowed list (a450_cdc_rules; the stub_* rules name the gate's job
+# stub, which the card does not have) plus the card's own (jccard_a450_rules); CDC-10 is
+# refused by id before any rule is tried.  What is left is unknown, as before.
+if {[info exists ::a450_split] && $::a450_split} {
+  set a4r [jccard_a450_rules $::a450_bd $::a450_tc]
+  foreach r [a450_cdc_rules $::a450_tc "<no stub on the card>"] {
+    if {![string match "stub_*" [lindex $r 0]]} { lappend a4r $r }
+  }
+  lassign [jccard_a450_cdc_split $crit_unknown $a4r] a4hits a4ref crit_unknown
+  foreach lab [lsort [dict keys $a4hits]] { puts "JCCARD_CDC_A450_RULE $lab [dict get $a4hits $lab]" }
+  foreach l $a4ref { puts "JCCARD_CDC_A450_REFUSED $l" }
+  set a4n 0; foreach lab [dict keys $a4hits] { incr a4n [dict get $a4hits $lab] }
+  puts "JCCARD_CDC_A450 allowed $a4n refused [llength $a4ref] unknown [llength $crit_unknown]"
+  if {[llength $a4ref] > 0} { jcc_fail "report_cdc: [llength $a4ref] critical crossing(s) of a refused kind (CDC-10) in the split-on design (JCCARD_CDC_A450_REFUSED)" }
+}
 foreach l $crit_unknown { puts "JCCARD_CDC_REPORT_UNKNOWN $l" }
 set crit_bad [llength $crit_unknown]
-puts "JCCARD_CDC_REPORT_CRITICAL summary=$crit_sum rows=$crit_rows unknown=$crit_bad"
+set crit_nref 0
+foreach n $crit_named {
+  lassign $n v id pat row
+  if {$v eq "refused"} { incr crit_nref }
+  puts "JCCARD_CDC_REPORT_NAMED [string toupper $v] $id at $pat: $row"
+}
+puts "JCCARD_CDC_REPORT_CRITICAL summary=$crit_sum rows=$crit_rows unknown=$crit_bad named=[llength $crit_named] named_refused=$crit_nref"
 if {$crit_rows != $crit_sum} { jcc_fail "report_cdc: summary states $crit_sum critical, $crit_rows detail rows parsed" }
 if {$crit_bad > 0} { jcc_fail "report_cdc: $crit_bad critical crossing(s) whose destination is not a named synchroniser" }
+if {$crit_nref > 0} { jcc_fail "report_cdc: $crit_nref critical crossing(s) at a named synchroniser of a refused kind (JCCARD_CDC_REPORT_NAMED REFUSED)" }
 
 set rs [report_route_status -return_string]
 if {![regexp {routing errors[ .]*:\s*(\d+)} $rs -> nerr] || $nerr != 0} { jcc_fail "route status" }

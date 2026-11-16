@@ -2,11 +2,12 @@
 # Every GROUND/POWER input bit on the six module-reference cells that is constant BY
 # DESIGN. Evidence per entry: hw/jc/card/results/jccard2_netlist_const_2026-10-07.md.
 # Format: {<cell>/<port> <bit-lo> <bit-hi> <GROUND|POWER> "<reason>"}
-#   <cell> is the short BD cell name (loader ctl eng fk33_seam_0 card bcgrant).
+#   <cell> is the short BD cell name (loader ctl eng fk33_seam_0 card bcgrant tok gtgclk).
 #   A scalar port (pin name carries no [n]) is written with bit-lo = bit-hi = -1.
 # Any constant bit NOT covered here (other port, other bit, or the other polarity)
 # must still be refused. 729 bits total: 64 driver-constant, 655 unused, 10 dropped-resp;
-# plus 5 driver-constant bits seen first on jccard9 (2026-10-10, c_awaddr[4:0]).
+# plus 5 driver-constant bits seen first on jccard9 (2026-10-10, c_awaddr[4:0]);
+# plus 4 driver-constant bits on tok seen first on jccard_loop1 (2026-11-11, m_seam_bresp/rresp).
 set JCC_CONST_ALLOW {
   {bcgrant/b_awlen        0   3 POWER  "B state write burst awlen = MAXB-1 = 15 (gdn_state_axi.vhd:353)"}
   {bcgrant/b_awlen        4   7 GROUND "AXI3 awlen <= 15 (gdn_state_axi.vhd:353)"}
@@ -34,6 +35,8 @@ set JCC_CONST_ALLOW {
   {card/kv0_rresp         0   1 GROUND "DROPPED-RESPONSE: grant carries no rresp; C KV read error detection is blind"}
   {card/kv1_rresp         0   1 GROUND "DROPPED-RESPONSE: grant carries no rresp; C KV read error detection is blind"}
   {card/kv_bresp          0   1 GROUND "DROPPED-RESPONSE: grant carries no bresp; C KV write error detection is blind"}
+  {tok/m_seam_bresp       0   1 GROUND "fk33_seam's AXI-Lite slave answers every write OKAY: s_axi_bresp <= \"00\" (fk33_seam.vhd:763), wired tok/m_seam -> fk33_seam_0/s_axi (jc_card_bd.tcl:782); jc_seam_mux latches m_bresp (jc_seam_mux.vhd:167), so tok_loop_axm sees SLVERR only from its own timeout (\"11\", tok_loop_axm.vhd:84)"}
+  {tok/m_seam_rresp       0   1 GROUND "fk33_seam's AXI-Lite slave answers every read OKAY: s_axi_rresp <= \"00\" (fk33_seam.vhd:771), wired tok/m_seam -> fk33_seam_0/s_axi (jc_card_bd.tcl:782); jc_seam_mux latches m_rresp (jc_seam_mux.vhd:171), so tok_loop_axm sees SLVERR only from its own timeout (\"11\", tok_loop_axm.vhd:84)"}
 }
 
 # jcc_const_allowed <pin> <GROUND|POWER>: 1 if <pin> (a full hierarchical pin name

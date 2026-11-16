@@ -23,6 +23,7 @@ TCL = os.path.join(HERE, "jc_card_bd.tcl")
 XDC = os.path.join(HERE, "jc_card.xdc")
 TOP = os.path.join(HERE, "jc_card_top.vhd")
 LOADER_XDC = os.path.join(REPO, "hw", "jc", "loader", "jc_loader.xdc")
+sys.path.insert(0, os.path.join(REPO, "hw", "jc", "link"))
 
 
 def _import_clean(name, path):
@@ -335,7 +336,9 @@ def test_top_ports_match_xdc():
     xp = set()
     for s in xdc_ports:
         xp.update(s.split())
-    assert ports == xp, (ports, xp)
+    # the GT serial pins and the refclk's N leg are placed by the GT / IBUFDS_GTE4 site
+    gt_free = {n for n, _, _ in G.GT_TOP_PORTS if n != "gt_refclk_clk_p"}
+    assert ports - gt_free == xp, (ports, xp)
 
 
 # ---- GENSTAMP -----------------------------------------------------------------------
@@ -373,6 +376,15 @@ def _bd_ports(tcl_text):
     """{name: 'in'|'out'} for every BD external port the tcl creates."""
     ports = dict(SYSCLK_INTF_PORTS)
     assert "make_bd_intf_pins_external [get_bd_intf_pins sysclk_buf/CLK_IN_D]" in tcl_text
+    # the Aurora GT interfaces made external and renamed: <port>_<member> in the wrapper
+    # (the BD-only build reads the wrapper back against GT_TOP_PORTS, build_card.tcl)
+    for intf, port, members in (("GT_DIFF_REFCLK1", "gt_refclk", ("clk_p", "clk_n")),
+                                ("GT_SERIAL_TX", "gt_tx", ("txp", "txn")),
+                                ("GT_SERIAL_RX", "gt_rx", ("rxp", "rxn"))):
+        assert "make_bd_intf_pins_external [get_bd_intf_pins %s/%s]" % (G.AUR_CELL, intf) in tcl_text
+        assert "set_property name %s [get_bd_intf_ports %s_0]" % (port, intf) in tcl_text
+        for m in members:
+            ports["%s_%s" % (port, m)] = dict((n, d) for n, d, _ in G.GT_TOP_PORTS)["%s_%s" % (port, m)]
     for d, n in re.findall(r"^create_bd_port -dir ([IO]) (\w+)\s*$", tcl_text, re.M):
         assert n not in ports, "BD port %s created twice" % n
         ports[n] = "in" if d == "I" else "out"
@@ -482,3 +494,405 @@ def test_populate_reads_git_not_working_tree():
     assert got != _read(os.path.join(HERE, "gen_jc_card.py"))
     assert os.path.isfile(os.path.join(scratch, "sim", "check_bd_ports.py"))
     assert not os.path.exists(os.path.join(scratch, "hw", "fk33", "results"))
+
+
+# ---- the token loop and the link (plan 2026-11-04 Task 7) -------------------------------
+def test_link_cells(tcl):
+    for kind, ref, cell in (("module -reference", G.TOK_MODULE, G.TOK_CELL),
+                            ("module -reference", G.GTG_MODULE, G.GTG_CELL),
+                            ("ip -vlnv", G.AUR_VLNV, G.AUR_CELL)):
+        n = len(re.findall(r"^create_bd_cell -type %s %s %s$" % (kind, re.escape(ref), cell), tcl, re.M))
+        assert n == 1, (ref, cell, n)
+
+
+def test_seam_sits_behind_the_loop(tcl):
+    flat = [set(n) for n in _intf_nets(tcl)]
+    assert {"%s/m_seam" % G.TOK_CELL, "%s/s_axi" % P.SEAM_CELL} in flat
+    assert not any("%s/s_axi" % P.SEAM_CELL in n and any(e.startswith("axil2eng/") for e in n) for n in flat)
+    assert any("%s/s_host" % G.TOK_CELL in n and any(e.startswith("axil2eng/") for e in n) for n in flat)
+
+
+def test_loop_ctl_and_hbm_ports(tcl):
+    flat = [set(n) for n in _intf_nets(tcl)]
+    assert {"%s/m_hbm" % G.TOK_CELL, "%s/S02_AXI" % G.HBM_SC_CELL} in flat
+    assert {"%s/s_ctl" % G.TOK_CELL, "axil2eng/M%02d_AXI" % G.TOK_CTL_MI} in flat
+    assert re.search(r"CONFIG\.NUM_SI \{3\} CONFIG\.NUM_MI \{1\} CONFIG\.NUM_CLKS \{1\}\] \[get_bd_cells %s\]"
+                     % G.HBM_SC_CELL, tcl)
+    assert {"%s/m_axis_tx" % G.TOK_CELL, "%s/USER_DATA_S_AXIS_TX" % G.AUR_CELL} in flat
+    assert {"%s/USER_DATA_M_AXIS_RX" % G.AUR_CELL, "%s/s_axis_rx" % G.TOK_CELL} in flat
+
+
+def test_loop_address_map(tcl):
+    assert re.search(r"assign_bd_address -offset 0x0000E000 -range 4K .*\{%s/s_host/reg0\}" % G.TOK_CELL, tcl)
+    assert re.search(r"assign_bd_address -offset 0x00020000 -range 64K .*\{%s/s_ctl/reg0\}" % G.TOK_CELL, tcl)
+    assert re.search(r"get_bd_addr_spaces %s/m_seam\] \[get_bd_addr_segs \{%s/s_axi/reg0\}\]"
+                     % (G.TOK_CELL, P.SEAM_CELL), tcl)
+    assert "%s/m_hbm 16" % G.TOK_CELL in tcl
+    for sp, n in (("%s/%s" % (G.CTL_CELL, G.CTL_AXIL_INTF), 4), ("%s/m_hbm" % G.TOK_CELL, 32),
+                  ("%s/m_seam" % G.TOK_CELL, 1)):
+        assert "%s %d" % (sp, n) in tcl, (sp, n)
+
+
+def test_every_aurora_input_is_driven(tcl):
+    import aurora_ties as T
+    flat = _nets(tcl)
+    intf = {"s_axi_tx_tdata", "s_axi_tx_tkeep", "s_axi_tx_tlast", "s_axi_tx_tvalid",
+            "gt_refclk1_p", "gt_refclk1_n", "rxp", "rxn"}       # through BD interfaces
+    seen = 0
+    for name, d, w in G.aurora_core_ports():
+        if d != "in":
+            continue
+        seen += 1
+        if name in intf:
+            continue
+        net = _net_of(flat, "%s/%s" % (G.AUR_CELL, name))
+        if name in T.MAPPED:
+            assert len(net) >= 2, name          # a real net, from tok or gtgclk
+            continue
+        v = T.tie_value(name, w or 1, G.LINK_NLANES)
+        assert v is not None, name
+        cell = "tie_%s" % name
+        m = re.search(r"CONFIG.CONST_WIDTH \{%d\} CONFIG.CONST_VAL \{0x([0-9A-F]+)\}\] \[get_bd_cells %s\]"
+                      % (w or 1, cell), tcl)
+        assert m and int(m.group(1), 16) == int(v, 2), (name, v)
+        assert "%s/dout" % cell in net, name
+    assert seen > 30, seen
+
+
+def test_aurora_resets_and_init_clk(tcl):
+    """Task 5 rulings: TX/RX_Simplex has tx_reset_pb and rx_reset_pb, both from aur_reset_pb;
+    init_clk of the core and of tok's init domain is jc_gtg_clk's init_clk, not sclk."""
+    flat = _nets(tcl)
+    rpb = _net_of(flat, "%s/aur_reset_pb" % G.TOK_CELL)
+    assert {"%s/tx_reset_pb" % G.AUR_CELL, "%s/rx_reset_pb" % G.AUR_CELL} <= rpb
+    ic = _net_of(flat, "%s/init_clk" % G.GTG_CELL)
+    assert {"%s/init_clk" % G.AUR_CELL, "%s/init_clk" % G.TOK_CELL} <= ic
+    assert not _net_of(flat, "%s/sclk" % G.GTG_CELL) & {"%s/init_clk" % G.AUR_CELL}
+    assert "CONFIG.INIT_DIV [jc_init_div 10.3125]" in tcl
+
+
+def test_diffctrl_is_the_measured_swing(tcl):
+    m = re.search(r"CONFIG.CONST_VAL \{0x([0-9A-F]+)\}\] \[get_bd_cells tie_gt_txdiffctrl\]", tcl)
+    assert m and int(m.group(1), 16) == 0b11000
+
+
+def test_module_ref_count_includes_link(tcl):
+    assert "if {$_nmr != %d}" % G.N_MODULE_REFS in tcl and G.N_MODULE_REFS == 8
+
+
+def test_link_stamp_and_refusals():
+    assert G.link_refclk({}) == "gtg" and G.link_rate({}) == "10.3125"
+    with pytest.raises(SystemExit):
+        G.link_refclk({"JC_LINK_REFCLK": "mmcm"})
+    for bad in ("5.0", "1.25"):          # 1.25: Task 5 ruling, not wired into the card
+        with pytest.raises(SystemExit):
+            G.link_rate({"JC_LINK_RATE": bad})
+    with pytest.raises(SystemExit):
+        G.stamp_inputs({"JC_LINK_RATE": "1.25"})
+    names = {n for _, n, _ in G.stamp_inputs({})}
+    assert {"JC_LINK_REFCLK", "JC_LINK_RATE"} <= names
+
+
+def test_link_refclk_pin_is_refused_citing_the_undriven_pins(capsys):
+    """Final ruling 2026-11-11: AK38/AK39 (the IP's nominal MGTREFCLK0 of quad X0Y0) are not
+    driven on the Jungle Cat board, so a `pin` card's link could never lock. Refused, with the
+    pins named; the stamp path refuses it too."""
+    for env in ({"JC_LINK_REFCLK": "pin"},):
+        with pytest.raises(SystemExit) as e:
+            G.link_refclk(env)
+        msg = str(e.value)
+        assert "AK38" in msg and "AK39" in msg and "undriven" in msg, msg
+        with pytest.raises(SystemExit):
+            G.stamp_inputs(env)
+    assert G.link_refclk({"JC_LINK_REFCLK": "gtg"}) == "gtg"
+
+
+def test_gt_ports_in_top_and_refclk_pin():
+    top = _strip_vhdl_comments(_read(TOP))
+    for n, d, w in G.GT_TOP_PORTS:
+        want = r"%s\s*:\s*%s\s+std_logic%s" % (n, d, r"_vector\(0 downto 0\)" if w else r"\b")
+        assert len(re.findall(want, top)) == 2, n          # entity and component
+    xdc = _read(XDC)
+    assert G.refclk_pins() == ["AK38", "AK39"]
+    assert re.search(r"^set_property PACKAGE_PIN AK38 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
+    assert re.search(r"^create_clock -name gt_refclk -period 6.400 \[get_ports gt_refclk_clk_p\]$", xdc, re.M)
+
+
+def test_gtg_mmcm_has_a_site_and_a_dedicated_route():
+    """finding 3 with the Task 5 ruling's pattern: in a BD the module reference sits under
+    `inst`, so *gtgclk/u_mmcm matches nothing; *gtgclk/*u_mmcm matches one. BACKBONE on the
+    BUFG -> MMCM net (IBERT G's form)."""
+    xdc = _read(XDC)
+    assert re.search(r"^set_property LOC MMCM_X0Y2 \[get_cells -hier -filter "
+                     r"\{NAME =~ \*gtgclk/\*u_mmcm\}\]$", xdc, re.M)
+    assert re.search(r"^set_property CLOCK_DEDICATED_ROUTE BACKBONE \[get_nets -of_objects \[get_pins -hier "
+                     r"-filter \{NAME =~ \*gtgclk/\*u_mmcm/CLKIN1\}\]\]$", xdc, re.M)
+
+
+# ---- A_TILED / A_CLK_SPLIT (a450 plan, Tasks 8 and 9) ---------------------------------
+_SPLIT = {"JC_A_TILED": "1", "JC_A_CLK_SPLIT": "1"}
+
+
+def _render(env):
+    return "\n".join(_code_lines(G.render_tcl(P, G.CLK_CORE_DEFAULT, env)))
+
+
+def test_a_flags_default_off_and_refusals():
+    assert not G.a_tiled({}) and not G.a_split({})
+    for bad in ("2", "yes", "true"):
+        with pytest.raises(SystemExit):
+            G.a_tiled({"JC_A_TILED": bad})
+    with pytest.raises(SystemExit):
+        G.a_split({"JC_A_CLK_SPLIT": "1"})         # split without tiled
+    names = {n for _, n, _ in G.stamp_inputs({})}
+    assert {"JC_A_TILED", "JC_A_CLK_SPLIT"} <= names
+
+
+def test_tiled_split_off_renders_today_s_clocking():
+    t = _render({"JC_A_TILED": "1"})
+    assert "clk_wiz_a" not in t and "axi_clock_converter" not in t
+    assert re.search(r"CONFIG\.A_TILED \{true\}", t)
+    assert re.search(r"CONFIG\.A_CLK_SPLIT \{false\}", t)
+
+
+def test_split_on_puts_hbm_and_engine_ports_on_aclk_a():
+    t = _render(_SPLIT)
+    assert "clk_wiz_a" in t and "aclk_reset" in t
+    assert "CONFIG.CLKOUT1_REQUESTED_OUT_FREQ {450.000}" in t
+    assert "CONFIG.USER_AXI_INPUT_CLK_FREQ {450}" in t
+    assert "CONFIG.USER_AXI_INPUT_CLK1_FREQ {450}" in t
+    assert re.search(r"CONFIG\.A_CLK_SPLIT \{true\}", t)
+    nets = _nets(t)
+    hbm_clk = _net_of(nets, "hbm/AXI_00_ACLK")
+    assert G.ACLK_A in hbm_clk, "SAXI_00 is not on aclk_a"
+    for s in list(range(1, 16)) + list(range(17, 32)):
+        assert G.ACLK_A in _net_of(nets, "hbm/AXI_%02d_ACLK" % s), s
+    assert "%s/hbm_aclk" % P.ENG_CELL in _net_of(nets, G.ACLK_A)
+
+
+def test_split_on_crosses_read_write_masters_with_converters():
+    t = _render(_SPLIT)
+    n = len(re.findall(r"create_bd_cell[^\n]*axi_clock_converter", t))
+    assert n == 4, "loader + two grant masters + A's descriptor fetch (Task 9b) need a converter each, got %d" % n
+    assert re.search(r"CONFIG\.NUM_CLKS \{2\}", t), "SAXI_16 smartconnect is not two-clock"
+
+
+# ---- a450 Task 9b: the descriptor fetch behind d_cdc, register slices on aclk_a ---------
+_CHAINS = [("loader/m_axi", "ld_cdc", "ld_rs", 0), ("eng/m27_axi", "d_cdc", "d_rs", 29),
+           ("bcgrant/m0", "bc_cdc0", "bc_rs0", 30), ("bcgrant/m1", "bc_cdc1", "bc_rs1", 31),
+           ("jtag_hbm/M_AXI", "hbm_sc", "sc_rs", 16)]
+
+
+def test_split_on_every_aclk_a_master_reaches_hbm_through_cdc_then_slice():
+    """Each non-tile master: source -> converter (or hbm_sc) -> register slice -> its SAXI,
+    with nothing else on the slice's or the port's interface, the slice on aclk_a."""
+    t = _render(_SPLIT)
+    pairs = _intf_nets(t)
+
+    def peer(ep):
+        got = [b if a == ep else a for a, b in pairs if ep in (a, b)]
+        assert len(got) == 1, (ep, got)
+        return got[0]
+    nets = _nets(t)
+    for src, cc, rs, port in _CHAINS:
+        assert peer("hbm/SAXI_%02d" % port) == "%s/M_AXI" % rs, port
+        assert peer("%s/S_AXI" % rs) == ("%s/M00_AXI" % cc if cc == "hbm_sc" else "%s/M_AXI" % cc)
+        if cc != "hbm_sc":
+            assert peer("%s/S_AXI" % cc) == src, cc
+            assert G.CORE_CLK in _net_of(nets, "%s/s_axi_aclk" % cc)
+            assert G.ACLK_A in _net_of(nets, "%s/m_axi_aclk" % cc)
+        assert G.ACLK_A in _net_of(nets, "%s/aclk" % rs), rs
+        assert G.ACLK_A_RSTN in _net_of(nets, "%s/aresetn" % rs), rs
+        assert re.search(r"axi_register_slice:2\.1 %s$" % rs, t, re.M), rs
+        for k, v in G.RS_CONFIG:
+            assert re.search(r"CONFIG\.%s \{%s\}[^\n]*\[get_bd_cells %s\]" % (k, v, rs), t), (rs, k)
+    assert peer("hbm_sc/S00_AXI") == "jtag_hbm/M_AXI"
+
+
+def test_split_on_descriptor_interface_belongs_to_core_clk():
+    """rtl/matvec_int4_desc_axi.vhd D_DUAL: under the split the descriptor master runs on
+    core_clk, so m27_axi moves to core_clk's ASSOCIATED_BUSIF (read back), and nothing
+    connects it straight to the HBM.  Split off, both are as before."""
+    on = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    a_if = ":".join("m%02d_axi" % i for i in range(27))
+    assert "set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix:m27_axi} [get_bd_pins eng/core_clk]" in on
+    assert "set_property CONFIG.ASSOCIATED_BUSIF {%s} [get_bd_pins eng/hbm_aclk]" % a_if in on
+    assert "list eng/core_clk {s_axi:s_axix:m27_axi} eng/hbm_aclk {%s}" % a_if in on
+    assert on.index("{s_axi:s_axix:m27_axi} [get_bd_pins eng/core_clk]") > on.index(
+        "set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]")
+    direct = "[get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]"
+    assert direct not in on
+    for env in ({}, {"JC_A_TILED": "1"}):
+        off = G.render_tcl(P, G.CLK_CORE_DEFAULT, env)
+        assert direct in off and "d_cdc" not in off and "axi_register_slice" not in off
+        assert "m27_axi} [get_bd_pins eng/core_clk]" not in off
+
+
+def test_split_off_default_render_is_unchanged_by_the_flags():
+    assert _render({}) == _render({"JC_A_TILED": "0", "JC_A_CLK_SPLIT": "0"})
+
+
+# ---- the HBM port reset into A (a450 Task 8, carry C1) --------------------------------
+# rtl/mv_rdfsm.vhd's never-reset `owed` count is cleared only by a synchronised copy of
+# the HBM AXI port reset; the engine's hbm_aresetn must be on the SAME net as the
+# ARESET_N of every HBM port its 28 masters use, in either clocking.
+def test_engine_hbm_aresetn_is_the_engine_ports_areset():
+    for env in ({}, {"JC_A_TILED": "1"}, _SPLIT):
+        nets = _nets(_render(env))
+        net = _net_of(nets, "%s/hbm_aresetn" % P.ENG_CELL)
+        for port in P.ENG_PORT_MAP:
+            assert "hbm/AXI_%02d_ARESET_N" % port in net, (env, port)
+
+
+def test_split_on_hbm_switch_clock_ports_are_on_aclk_a():
+    """Carry C3 (Task 7 finding): the HBM switch clock is taken from the ports named in
+    USER_CLK_SEL_LIST0/1 (AXI_00, AXI_16).  With the split on, both must be on aclk_a,
+    the clock every engine port runs on, not on clk_core."""
+    t = _render(_SPLIT)
+    assert re.search(r"CONFIG\.USER_CLK_SEL_LIST0 \{AXI_00_ACLK\} CONFIG\.USER_CLK_SEL_LIST1 "
+                     r"\{AXI_16_ACLK\}", t)
+    nets = _nets(t)
+    for s in (0, 16):
+        assert G.ACLK_A in _net_of(nets, "hbm/AXI_%02d_ACLK" % s), s
+        assert G.ACLK_A_RSTN in _net_of(nets, "hbm/AXI_%02d_ARESET_N" % s), s
+
+
+def test_hbm_aresetn_forwarded_engine_to_tiled_array():
+    """Task 8 review m5: the two hbm_aresetn links above mv4i_tiled have no bench (the
+    descriptor benches leave the port at '1'), so a dropped map line would survive every
+    row and leave the clear disconnected behind a default.  Pin both map lines."""
+    def code(p):
+        return "\n".join(l.split("--", 1)[0] for l in open(os.path.join(REPO, p)))
+    eng = code("hw/fk33/rtl/fk33_engine.vhd")
+    m = re.search(r"^\s*eng\s*:\s*entity work\.matvec_int4_desc_axi\b(.*?);", eng, re.M | re.S)
+    assert m and re.search(r"\bhbm_aresetn\s*=>\s*hbm_aresetn\b", m.group(1))
+    desc = code("rtl/matvec_int4_desc_axi.vhd")
+    g = re.search(r"^\s*g_tiled\s*:\s*if A_TILED generate(.*?)end generate", desc, re.M | re.S)
+    assert g and re.search(r"\bhbm_aresetn\s*=>\s*hbm_aresetn\b", g.group(1))
+
+
+# ---- the STRAY-NEXTJOB reset guard on every render (a450 Task 9 fix) -------------------
+# generate_in_place runs gen_pcieep.check_reset_topology on the emitted text before it
+# writes anything.  Task 8 rendered the split-on BD in these tests but never ran that
+# guard on it, so the split-on build's refusal was first seen by the build.  Run it here
+# on the full render (comments included, as the generator does) for every clocking.
+_RENDERS = [({}, "default"), ({"JC_A_TILED": "1"}, "split_off"), (_SPLIT, "split_on")]
+
+
+@pytest.mark.parametrize("env", [e for e, _ in _RENDERS], ids=[n for _, n in _RENDERS])
+def test_reset_topology_guard_accepts_every_render(env, capsys):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, env)
+    P.check_reset_topology(t)          # SystemExit on a refusal
+    out = capsys.readouterr().out
+    assert re.search(r"^FK33_RESETGUARD %s/core_aresetn " % P.ENG_CELL, out, re.M), out
+
+
+# Teeth for the above on the split-on render: each mutation re-opens one way for the
+# engine's reset to assert while aclk_reset (every HBM port's ARESET_N) stays released.
+_SPLIT_RESET_MUTANTS = [
+    ("sibling_ext_reset",
+     "[get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins core_reset/ext_reset_in]",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/ext_reset_in]"),
+    ("core_lock_on_clk_wiz_0",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/dcm_locked]"),
+    ("aux_reset_driven",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]",
+     "[get_bd_pins one/dout] [get_bd_pins core_reset/dcm_locked]\n"
+     "connect_bd_net [get_bd_pins clk_wiz_0/locked] [get_bd_pins core_reset/aux_reset_in]"),
+]
+
+
+@pytest.mark.parametrize("name,old,new", _SPLIT_RESET_MUTANTS,
+                         ids=[m[0] for m in _SPLIT_RESET_MUTANTS])
+def test_reset_topology_guard_refuses_split_on_mutants(name, old, new, capsys):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert t.count(old) == 1, "anchor moved: this row would test nothing"
+    with pytest.raises(SystemExit):
+        P.check_reset_topology(t.replace(old, new))
+
+
+def test_split_on_slave_reset_waits_for_both_locks():
+    """The guard grades core_reset against aclk_reset but cannot see aclk_reset's own
+    inputs.  core_reset's dcm_locked is a constant on the split-on card, so clk_wiz_0's
+    lock reaches the core domain ONLY through aclk_reset: pin lock_and = both locks."""
+    t = _render(_SPLIT)
+    nets = _nets(t)
+    assert _net_of(nets, "aclk_reset/dcm_locked") == _net_of(nets, "lock_and/Res")
+    assert "clk_wiz_0/locked" in _net_of(nets, "lock_and/Op1")
+    assert "clk_wiz_a/locked" in _net_of(nets, "lock_and/Op2")
+    assert re.search(r"CONFIG\.C_SIZE \{1\} CONFIG\.C_OPERATION \{and\}\] "
+                     r"\[get_bd_cells lock_and\]", t)
+    assert G.ACLK_A_RSTN in _net_of(nets, "core_reset/ext_reset_in")
+    assert "lock_and" not in _render({"JC_A_TILED": "1"})
+
+
+def test_split_on_reads_back_ext_reset_polarity_after_validation():
+    """Fix round 1 (m4): C_EXT_RESET_HIGH is BD-propagated, so it is read back AFTER
+    validate_bd_design and refused unless 0, for core_reset and aclk_reset."""
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    code = "\n".join(_code_lines(t))
+    m = re.search(r"^foreach _rc \{core_reset aclk_reset\} \{\n"
+                  r"  set _erh \[get_property CONFIG\.C_EXT_RESET_HIGH \[get_bd_cells \$_rc\]\]\n"
+                  r"  if \{\$_erh ne \"0\"\} \{\n"
+                  r"    error \"JCCARD_RESET FAIL: [^\n]*\n"
+                  r"  \}\n"
+                  r"  puts \"JCCARD_RESET \$_rc C_EXT_RESET_HIGH \$_erh\"\n\}$", code, re.M)
+    assert m, "no polarity readback in the split-on render"
+    v = code.index("validate_bd_design -force")
+    assert v < m.start() < code.index("save_bd_design")
+    for env in ({}, {"JC_A_TILED": "1"}):
+        assert "C_EXT_RESET_HIGH" not in "\n".join(_code_lines(_render(env)))
+
+
+def test_core_reset_comment_matches_each_render():
+    """Fix round 1 (m5): the split-on render must not claim ext_reset_in is tied high."""
+    tied = "Its ext_reset_in is tied high"
+    assert tied in G.render_tcl(P, G.CLK_CORE_DEFAULT, {"JC_A_TILED": "1"})
+    on = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert tied not in on
+    assert "its ext_reset_in is aclk_reset's" in on
+
+
+# ---- a450 Task 9b fix round 1 (review I1): d_cdc's two resets -------------------------
+# A's descriptor fetch reaches SAXI_29 through d_cdc, so the STRAY-NEXTJOB guard's view of
+# that port (its ARESET_N) no longer covers the converter.  Pin both converter resets: the
+# s side (clk_core) on the engine's own core reset net, the m side (aclk_a) on the HBM
+# ports' ARESET_N net (the same net as eng/hbm_aresetn).
+def _d_cdc_reset_problems(text):
+    nets = _nets("\n".join(_code_lines(text)))
+    bad = []
+    s = _net_of(nets, "d_cdc/s_axi_aresetn")
+    m = _net_of(nets, "d_cdc/m_axi_aresetn")
+    if "%s/core_aresetn" % P.ENG_CELL not in s:
+        bad.append("d_cdc/s_axi_aresetn is not on eng/core_aresetn's net: %s" % sorted(s))
+    for ep in ("hbm/AXI_29_ARESET_N", "%s/hbm_aresetn" % P.ENG_CELL):
+        if ep not in m:
+            bad.append("d_cdc/m_axi_aresetn is not on %s's net: %s" % (ep, sorted(m)))
+    return bad
+
+
+_DCDC_S = "connect_bd_net [get_bd_pins core_reset/peripheral_aresetn] [get_bd_pins d_cdc/s_axi_aresetn]"
+_DCDC_M = "connect_bd_net [get_bd_pins aclk_reset/peripheral_aresetn] [get_bd_pins d_cdc/m_axi_aresetn]"
+_DCDC_MUTANTS = [
+    ("swap", lambda t: t.replace(_DCDC_S, "@S@").replace(_DCDC_M, _DCDC_S.replace("d_cdc/s_", "d_cdc/m_"))
+                        .replace("@S@", _DCDC_M.replace("d_cdc/m_", "d_cdc/s_"))),
+    ("s_reroot_one", lambda t: t.replace(_DCDC_S, "connect_bd_net [get_bd_pins one/dout] [get_bd_pins d_cdc/s_axi_aresetn]")),
+    ("s_reroot_aclk", lambda t: t.replace(_DCDC_S, _DCDC_S.replace("core_reset/", "aclk_reset/"))),
+    ("m_reroot_core", lambda t: t.replace(_DCDC_M, _DCDC_M.replace("aclk_reset/", "core_reset/"))),
+    ("m_reroot_one", lambda t: t.replace(_DCDC_M, "connect_bd_net [get_bd_pins one/dout] [get_bd_pins d_cdc/m_axi_aresetn]")),
+]
+
+
+def test_split_on_d_cdc_resets_are_the_engine_and_hbm_port_resets():
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    assert t.count(_DCDC_S) == 1 and t.count(_DCDC_M) == 1, "anchor moved: the mutants would test nothing"
+    assert _d_cdc_reset_problems(t) == []
+
+
+@pytest.mark.parametrize("name,mut", _DCDC_MUTANTS, ids=[m[0] for m in _DCDC_MUTANTS])
+def test_d_cdc_reset_check_refuses_mutants(name, mut):
+    t = G.render_tcl(P, G.CLK_CORE_DEFAULT, _SPLIT)
+    m = mut(t)
+    assert m != t, name
+    assert _d_cdc_reset_problems(m), name

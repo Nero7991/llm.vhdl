@@ -82,6 +82,64 @@ def test_util_reads_every_counter_48_bits():
     assert len(fb.writes) == 56 and all(off == 0x12040 for off, _ in fb.writes)
 
 
+def test_util_split_reads_the_job_counter_and_derives_the_cadence():
+    """a450 final review I1: a split-on card (UTIL_SEL[31] set) builds only the job-cycle
+    counter, in clk_core cycles.  The tool reads that one counter (index NPORTS_W+NPORTS_S,
+    48 bits), never a per-port index (a 0 there would look like an idle port), prints it
+    with seam_cycles, and derives aclk cycles per word from the layout's per-port beats."""
+    jobcyc = (1 << 32) + 2_000_000          # high half must be read and used
+    util = {i: 999 for i in range(27)}
+    util[27] = jobcyc
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, util)
+    p = tool("util", "--sock", fb.path, "--die", "A", "--tokens", "3")
+    assert p.returncode == 0, p.stdout + p.stderr
+    o = p.stdout
+    assert ("JCUTIL_SPLIT die A nports_w 24 nports_s 3 jobcyc_core %d seam_cycles_last_go 123456"
+            % jobcyc) in o
+    want = jobcyc * (450.0 / 125.0) / (8192096 * 3)
+    assert "JCUTIL_CADENCE die A aclk_c_per_word %.4f DERIVED" % want in o
+    assert "port_beats_per_token 8192096 * tokens 3" in o and "not measured" in o
+    assert "JCUTIL_DONE die A" in o
+    assert " beats 999" not in o and "JCUTIL die A nports_w" not in o
+    # selector writes for index 27 only, low then high; no UTIL_CLR
+    assert fb.writes == [(0x12040, 27 << 1), (0x12040, (27 << 1) | 1)]
+
+
+def test_util_split_die_b_uses_its_own_layout_beats_and_the_clock_flags():
+    util = {27: 9_000_000}
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, util)
+    p = tool("util", "--sock", fb.path, "--die", "B", "--core-mhz", "100", "--aclk-mhz", "400")
+    assert p.returncode == 0, p.stdout + p.stderr
+    want = 9_000_000 * (400.0 / 100.0) / 8520192
+    assert "JCUTIL_CADENCE die B aclk_c_per_word %.4f DERIVED" % want in p.stdout
+    assert "port_beats_per_token 8520192 * tokens 1" in p.stdout
+
+
+def test_util_split_with_no_job_says_so():
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 0})
+    p = tool("util", "--sock", fb.path, "--die", "A")
+    assert p.returncode == 0 and "JCUTIL_CADENCE die A jobcyc_core 0: no A job ran" in p.stdout
+
+
+def test_util_split_refuses_a_dead_counter_and_bad_tokens():
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 0xDEADDEAD})
+    p = tool("util", "--sock", fb.path, "--die", "A")
+    assert p.returncode == 2 and "JCSEAM_ERROR" in p.stdout and "DEADDEAD" in p.stdout
+    fb = FakeBroker({**SEAM, **ENG, 0x12040: 0x80000000}, {27: 5})
+    p = tool("util", "--sock", fb.path, "--die", "A", "--tokens", "0")
+    assert p.returncode == 2 and "JCSEAM_ERROR" in p.stdout and fb.writes == []
+
+
+def test_util_clear_on_a_split_card_clears_the_job_counter():
+    """a450 final review I1: the split-on card now builds the job-cycle counter, so
+    util-clear writes UTIL_CLR there too and says what it cleared."""
+    fb = FakeBroker({**ENG, 0x12040: 0x80000000}, {})
+    p = tool("util-clear", "--sock", fb.path, "--die", "B")
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert "JCUTIL_CLEARED die B (split: the job-cycle counter" in p.stdout
+    assert fb.writes == [(0x12048, 1)]
+
+
 def test_util_refuses_a_dead_engine():
     fb = FakeBroker({**SEAM, 0x12014: 0xFFFFFFFF}, {})
     p = tool("util", "--sock", fb.path, "--die", "A")
@@ -113,3 +171,32 @@ def test_status_and_halt():
     fb2 = FakeBroker({}, {}, halted="LoadAborted: DNA mismatch")
     p = tool("status", "--sock", fb2.path)
     assert p.returncode == 1 and p.stdout.startswith("JCSEAM_STATUS halted ")
+
+
+def _brk(regs, n):
+    fb = FakeBroker(regs, {})
+    r = subprocess.run([sys.executable, TOOL, "brk", "--sock", fb.path, "--die", "B", "--n", str(n)],
+                       capture_output=True, text=True)
+    return r, fb
+
+
+def test_brk_accepts_its_own_row_and_is_read_only():
+    regs = {0xE040: 9000, 0xE080: 8000, 0xE07C: 7, 0xE050: 8, 0x12034: 650, 0xE018: 1, 0xE01C: 0}
+    r, fb = _brk(regs, 7)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.splitlines()[0] == ("BRK die B n 7 cycles 9000 issue_cyc 8000 steps_iss 7 "
+                                        "tbl_len 8 eng_cyc 650 status 0x00000001 err_info 0x00000000")
+    assert "BRK_REJECT" not in r.stdout
+    assert fb.writes == []
+
+
+def test_brk_rejects_a_stale_or_failed_row():
+    # the seam still holds N=7's program, the driver asked for N=8 (a refused open): T3
+    regs = {0xE040: 9000, 0xE080: 8000, 0xE07C: 7, 0xE050: 8, 0x12034: 650, 0xE018: 1, 0xE01C: 0}
+    r, _ = _brk(regs, 8)
+    assert r.returncode == 3
+    assert "BRK_REJECT die B n 8 tbl_len 8 != n+1 9; steps_iss 7 != n 8" in r.stdout
+    # the GO errored part way (err set, fewer steps issued)
+    regs.update({0xE018: 5, 0xE07C: 3})
+    r, _ = _brk(regs, 7)
+    assert r.returncode == 3 and "steps_iss 3 != n 7" in r.stdout and "not done-without-err" in r.stdout

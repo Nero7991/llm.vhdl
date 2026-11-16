@@ -1103,6 +1103,8 @@ puts "FK33_XEXP_PORT $_xe"
 set_property CONFIG.ASSOCIATED_BUSIF {s_axi:s_axix} [get_bd_pins eng/core_clk]
 set_property CONFIG.ASSOCIATED_RESET {core_aresetn} [get_bd_pins eng/core_clk]
 set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/core_aresetn]
+set_property CONFIG.ASSOCIATED_RESET {hbm_aresetn} [get_bd_pins eng/hbm_aclk]
+set_property CONFIG.POLARITY ACTIVE_LOW [get_bd_pins eng/hbm_aresetn]
 set_property CONFIG.ASSOCIATED_BUSIF {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi} [get_bd_pins eng/hbm_aclk]
 foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_axi:m02_axi:m03_axi:m04_axi:m05_axi:m06_axi:m07_axi:m08_axi:m09_axi:m10_axi:m11_axi:m12_axi:m13_axi:m14_axi:m15_axi:m16_axi:m17_axi:m18_axi:m19_axi:m20_axi:m21_axi:m22_axi:m23_axi:m24_axi:m25_axi:m26_axi:m27_axi}] {
     set got [get_property CONFIG.ASSOCIATED_BUSIF [get_bd_pins $pin]]
@@ -1110,6 +1112,17 @@ foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_a
         error "FK33_ENG FAIL: $pin ASSOCIATED_BUSIF is \"$got\", not \"$want\". Every AXI interface would default to 100 MHz."
     }
     puts "FK33_ENG ASSOCIATED_BUSIF $pin = $got"
+}
+
+# THE a450 GENERICS (A_TILED, A_CLK_SPLIT) ARE REFUSED ON THIS BOARD: the tiled A
+# needs hbm_aclk = core_clk, or with the split the descriptor master on core_clk
+# behind a clock converter; this design has neither.  Read back, both must be false.
+foreach _g {A_TILED A_CLK_SPLIT} {
+    set _v [get_property CONFIG.$_g [get_bd_cells eng]]
+    if {![string is false -strict $_v]} {
+        error "FK33_A450 FAIL: eng $_g is \"$_v\", not false: the FK33 block design has no core-clock descriptor port and its hbm_aclk is not core_clk"
+    }
+    puts "FK33_A450 eng $_g $_v"
 }
 
 # THE CORE CLOCK.  A third MMCM output rather than a reuse of clk_out2:
@@ -1242,6 +1255,14 @@ connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_28_ARESET_N]
 connect_bd_intf_net [get_bd_intf_pins eng/m27_axi] [get_bd_intf_pins hbm/SAXI_29]
 connect_bd_net [get_bd_pins xdma/axi_aclk]    [get_bd_pins hbm/AXI_29_ACLK]
 connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins hbm/AXI_29_ARESET_N]
+# THE SAME RESET INTO THE ENGINE (a450 Task 8, carry C1).  hbm_aresetn is on the
+# net of the 28 ports' ARESET_N above.  PG276 Table 5: that reset is pre-traffic
+# only; asserted mid-traffic the port and the controller go out of sync, and what
+# R does afterwards is undocumented.  The tiled A (A_TILED) clears its owed-burst
+# counts from it only so that it cannot hang forever after one; that is not a
+# recovery (a reprogram is).  The array on the card today (A_TILED false) does not
+# read it.
+connect_bd_net [get_bd_pins xdma/axi_aresetn] [get_bd_pins eng/hbm_aresetn]
 # ---- end subsystem A ------------------------------------------------------
 
 # THE CORE CLOCK THIS BUILD ASKED FOR (FK33_ENG_CORE_MHZ).  Printed
@@ -1910,7 +1931,7 @@ add_files -fileset constrs_1 -norecurse $tgRoot/hw/fk33/fk33_pblock.xdc
 set_property used_in_synthesis false [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]
 set_property used_in_implementation true [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]
 if {[get_property used_in_synthesis [get_files $tgRoot/hw/fk33/fk33_pblock.xdc]]} {
-    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses bd_i/eng/inst/eng/dut/core, a path that exists only in the LINKED design, so synthesis would read it, match nothing, leave an empty pb_core behind and say so only as a Vivado 12-180 warning."
+    error "FK33_PBLK FAIL: fk33_pblock.xdc is still used_in_synthesis. It addresses bd_i/eng/inst/eng/g_core.dut/core, a path that exists only in the LINKED design, so synthesis would read it, match nothing, leave an empty pb_core behind and say so only as a Vivado 12-180 warning."
 }
 puts "FK33_PBLK fk33_pblock.xdc added, implementation only"
 
@@ -2648,6 +2669,15 @@ if {$pbr ne "CLOCKREGION_X0Y0:CLOCKREGION_X6Y3"} {
     error "FK33_PBLK FAIL: pb_core range is '$pbr', not CLOCKREGION_X0Y0:CLOCKREGION_X6Y3."
 }
 puts "FK33_PBLK pb_core $pbr"
+# 3. pb_core HOLDS CELLS (a450 Task 8 review).  A range is a property of the pblock, not of
+#    its contents: an add_cells_to_pblock whose path matched nothing (the engine's core
+#    moved under a generate, matvec_int4_desc_axi's g_core) leaves pb_core with the right
+#    range and nothing in it, and Vivado says so only as a 12-180 warning.
+set pbn [llength [get_cells -quiet -of_objects [get_pblocks pb_core]]]
+if {$pbn == 0} {
+    error "FK33_PBLK FAIL: pb_core holds no cells. fk33_pblock.xdc's add_cells_to_pblock matched nothing, so the engine is unconstrained and the floorplan this build was measured with is not in effect."
+}
+puts "FK33_PBLK pb_core cells $pbn"
 report_utilization -pblocks [get_pblocks pb_core] -file fk33_pcieep_pblock_util.rpt
 puts "FK33_PBLK pblock utilization -> fk33_pcieep_pblock_util.rpt"
 report_utilization -file fk33_pcieep_util.rpt

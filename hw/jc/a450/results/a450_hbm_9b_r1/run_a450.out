@@ -1,0 +1,13 @@
+A450RUN_BUDGET MemAvailable=22976749568 min_avail=15032385536 cap=24G swap_kill=8589934592 nonce=a450hbm_1794767146_2717445 directives=explore overconstrain=none
+Running as unit: a450hbm_1794767146_2717445.service
+unit=a450hbm_1794767146_2717445.service cgroup=/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/a450hbm_1794767146_2717445.service requested_cap=24G swap_kill=8589934592
+readback MemoryHigh=25769803776
+readback memory.high=25769803776
+Finished with result: exit-code
+Main processes terminated with: code=exited/status=1
+Service runtime: 22min 25.824s
+CPU time consumed: 49min 8.810s
+sampled_peak_current=19382505472 sampled_peak_swap=3888992256 last_memory.peak=19382870016 sys_min_MemAvailable=3856347136 sys_min_SwapFree=36160745472
+RC=1
+A450RUN_FAIL A450HBM_FAIL placement outside the floorplan: tile 0: placed 0 unplaced 0 outside {}
+EXIT 1

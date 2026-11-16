@@ -1,0 +1,25 @@
+{
+  "tb": "tb_jc_seam_mux",
+  "deps": ["sim/axil_bfm_pkg.vhd", "sim/axil_slave_model.vhd", "rtl/jc_seam_mux.vhd",
+           "sim/tb_jc_seam_mux.vhd"],
+  "stop_time": "20ms",
+  "rows": [
+    {"tag": "Z0", "expect": "PASS"},
+    {"tag": "M1", "expect": "KILLED", "file": "rtl/jc_seam_mux.vhd",
+     "why": "a host write while the loop owns reaches the seam",
+     "old": "refuse := (hw_go = '1' and own = '1') or (lw_go = '1' and own = '0');",
+     "new": "refuse := (lw_go = '1' and own = '0');"},
+    {"tag": "M2", "expect": "KILLED", "file": "rtl/jc_seam_mux.vhd",
+     "why": "ownership changes with a transaction in flight",
+     "old": "        case st is\n          when S_IDLE =>\n            own <= loop_own;",
+     "new": "        own <= loop_own;\n        case st is\n          when S_IDLE =>"},
+    {"tag": "M3", "expect": "KILLED", "file": "rtl/jc_seam_mux.vhd",
+     "why": "a refused write answers OKAY",
+     "old": "resp_r <= \"10\"; st <= S_SB;",
+     "new": "resp_r <= \"00\"; st <= S_SB;"},
+    {"tag": "M4", "expect": "KILLED", "file": "rtl/jc_seam_mux.vhd",
+     "why": "the seam's read response is dropped",
+     "old": "rd_r <= m_rdata; resp_r <= m_rresp;",
+     "new": "rd_r <= m_rdata; resp_r <= \"00\";"}
+  ]
+}

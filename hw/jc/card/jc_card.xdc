@@ -23,6 +23,19 @@ set_property IOSTANDARD LVCMOS18 [get_ports {fan_ctl LED_A LED_B LED_C LED_D}]
 set_false_path -to [get_ports {fan_ctl LED_A LED_B LED_C LED_D}]
 set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
 
+# the Aurora core's nominal refclk (plan 2026-11-04 Task 7; Task 5 ruling): MGTREFCLK0 of
+# quad X0Y0, AK38/AK39, the only refclk the IP offers for lane X0Y0. UNDRIVEN on the
+# Jungle Cat board: with JC_LINK_REFCLK=gtg the ECO (hw/jc/link/eco_aurora_gtg.tcl) moves
+# the running QPLL to GTGREFCLK, and this pin only gives the IBUFDS_GTE4 a legal site.
+set_property PACKAGE_PIN AK38 [get_ports gt_refclk_clk_p]
+create_clock -name gt_refclk -period 6.400 [get_ports gt_refclk_clk_p]
+# the GTG MMCM (hw/jc/link/rtl/jc_gtg_clk.vhd, cell gtgclk/inst/u_mmcm in the BD): IBERT G
+# needed an explicit site and a dedicated route for the BUFG -> MMCM net (finding 3).
+# The BACKBONE property goes on the NET (IBERT G's form; on the pin it reads back on the
+# pin but not on the net, Task 5 eco_check). build_card.tcl reads both back.
+set_property LOC MMCM_X0Y2 [get_cells -hier -filter {NAME =~ *gtgclk/*u_mmcm}]
+set_property CLOCK_DEDICATED_ROUTE BACKBONE [get_nets -of_objects [get_pins -hier -filter {NAME =~ *gtgclk/*u_mmcm/CLKIN1}]]
+
 # GENSTAMP -- the out-of-band inputs that produced THIS file, and
 # the only record of them.  This generator's output DEPENDS on the
 # values below: regenerating with different ones changes the
@@ -30,4 +43,8 @@ set_property BITSTREAM.GENERAL.COMPRESS TRUE [current_design]
 # ordinary drift.  Reproduce this exact file with
 #     python3 hw/jc/card/gen_jc_card.py
 # inputs ((unset) means the generator's own default was taken):
+#     env  JC_A_CLK_SPLIT  = (unset)
+#     env  JC_A_TILED      = (unset)
 #     env  JC_CLK_CORE_MHZ = (unset)
+#     env  JC_LINK_RATE    = (unset)
+#     env  JC_LINK_REFCLK  = (unset)
