@@ -227,11 +227,11 @@ debugging notes. In flight:
 - **Subsystem A at 450 MHz.** A is rebuilt as 24 per-port tiles in its own clock
   domain with the HBM AXI ports. 450 MHz is the HBM's own port rate, 3.6x
   today's 125 MHz. Values stay bit-exact with today's A. The rest of the engine
-  scales after it. A tile routes at 484 MHz on the VU35P, and the composed A with
-  the HBM closes at 450 MHz (MEASURED, routed). On the card at today's 125 MHz the
-  tiled A gives the same tokens and passes the 500-token context test, and cuts
-  A from 1.51 to 1.01 cycles per weight word (pair 1.91 to 2.18 tok/s, DERIVED).
-  The card build with A on its own 450 MHz clock is next. Spec and plan:
+  scales after it. The full card now runs A at 450 MHz on both dies (routed WNS
+  +0.008 ns): same tokens, 500-token context test passes, and the token drops
+  from 32.7M to 22.9M core cycles per die (pair 1.91 to 2.74 tok/s, DERIVED).
+  A is now about 11% of the token; B, C and the rest on the 125 MHz core, and
+  the dies taking turns, are what is left. Spec and plan:
   `docs/superpowers/specs/2026-11-12-a450-per-port-tiles-design.md` (branch `a450`).
 - **9B on silicon:** running across two FK33s as a pipeline split.
   See `docs/PLAN_TO_FIRST_INFERENCE.md` and the two-card pipeline spec.
