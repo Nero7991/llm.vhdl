@@ -1,0 +1,4 @@
+JCUTIL_NONE die A seam_cycles_last_go 22913148: the utilisation counters are not built on this card (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT)
+JCUTIL_DONE die A
+JCUTIL_NONE die B seam_cycles_last_go 22634813: the utilisation counters are not built on this card (UTIL_SEL[31]; A_TILED and A_CLK_SPLIT)
+JCUTIL_DONE die B
