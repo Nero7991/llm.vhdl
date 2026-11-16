@@ -1114,6 +1114,17 @@ foreach {pin want} [list eng/core_clk {s_axi:s_axix} eng/hbm_aclk {m00_axi:m01_a
     puts "FK33_ENG ASSOCIATED_BUSIF $pin = $got"
 }
 
+# THE a450 GENERICS (A_TILED, A_CLK_SPLIT) ARE REFUSED ON THIS BOARD: the tiled A
+# needs hbm_aclk = core_clk, or with the split the descriptor master on core_clk
+# behind a clock converter; this design has neither.  Read back, both must be false.
+foreach _g {A_TILED A_CLK_SPLIT} {
+    set _v [get_property CONFIG.$_g [get_bd_cells eng]]
+    if {![string is false -strict $_v]} {
+        error "FK33_A450 FAIL: eng $_g is \"$_v\", not false: the FK33 block design has no core-clock descriptor port and its hbm_aclk is not core_clk"
+    }
+    puts "FK33_A450 eng $_g $_v"
+}
+
 # THE CORE CLOCK.  A third MMCM output rather than a reuse of clk_out2:
 # clk_out2 is HBM_REF_CLK_0/1, and sharing the HBM reference clock net with
 # a fabric datapath clock would tie two unrelated requirements together for

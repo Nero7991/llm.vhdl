@@ -21,6 +21,8 @@
 --   hbm_aclk   the HBM AXI clock, driving all 28 read masters.  The
 --              crossing between the two lives inside rtl/axi_rd_port.vhd's
 --              per-port async FIFO, which is what DUAL_CLK = true selects.
+--              EXCEPT under A_TILED and A_CLK_SPLIT (the generics below): there
+--              the descriptor master m27 runs on core_clk, not hbm_aclk.
 --
 -- The duty identity is `duty = f_core / f_hbm` exactly, because 27 x
 -- 256 bits is the 864 B the array consumes every core cycle, and each
@@ -116,12 +118,17 @@ entity fk33_engine is
     -- THE a450 SUBSYSTEM A (docs/superpowers/specs/2026-11-12-a450-per-port-tiles-
     -- design.md), forwarded to matvec_int4_desc_axi.  A_TILED false (the default) is
     -- the array on the card today; true is rtl/mv4i_tiled.vhd, the same values bit
-    -- for bit.  A_CLK_SPLIT (A_TILED only): false runs the tiles on core_clk, and
-    -- the card must then drive hbm_aclk from the same clock (the Jungle Cat does);
-    -- true runs the tiles and all 28 masters on hbm_aclk (aclk_a).  Generics of THIS
-    -- entity for the reason FAST_POP gives below.  Declared ABOVE FAST_POP so that
-    -- FAST_POP stays the last generic: build12_levers_off.patch's hunk matches the
-    -- three lines after it.
+    -- for bit.  A_CLK_SPLIT (A_TILED only; matvec_int4_desc_axi refuses it otherwise):
+    -- false runs the tiles on core_clk, and the card must then drive hbm_aclk from
+    -- the same clock (the Jungle Cat does); true runs the tiles and the 27 weight and
+    -- scale masters on hbm_aclk (aclk_a) and the DESCRIPTOR master m27 on core_clk
+    -- (matvec_int4_desc_axi D_DUAL), so its HBM port needs an AXI clock converter and
+    -- m27_axi's ASSOCIATED_BUSIF moves to core_clk.  Only hw/jc/card/gen_jc_card.py
+    -- builds that.  The FK33 block design (gen_pcieep.py) has neither the converter nor
+    -- hbm_aclk = core_clk, so it refuses both generics at BD time (FK33_A450 FAIL).
+    -- Generics of THIS entity for the reason FAST_POP gives below.  Declared ABOVE
+    -- FAST_POP so that FAST_POP stays the last generic: build12_levers_off.patch's
+    -- hunk matches the three lines after it.
     A_TILED : boolean := false;
     A_CLK_SPLIT : boolean := false;
 

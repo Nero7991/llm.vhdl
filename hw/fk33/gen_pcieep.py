@@ -1457,6 +1457,24 @@ def _eng_cell_lines():
 def _eng_block():
     L = _eng_cell_lines()
     a = L.append
+    # THE a450 GENERICS ARE REFUSED ON THE FK33 (a450 final review I2).  fk33_engine's
+    # A_TILED needs hbm_aclk = core_clk (split off), and A_CLK_SPLIT the descriptor master
+    # m27 on core_clk behind an AXI clock converter (matvec_int4_desc_axi D_DUAL); this
+    # block design wires all 28 masters to xdma/axi_aclk, independent of core_clk, so it
+    # is neither.  Only hw/jc/card/gen_jc_card.py builds them (it does not call this
+    # function).  Nothing here sets them: the read-back refuses a VHDL default moved to
+    # true, which no generator diff would show in this file.
+    a("# THE a450 GENERICS (A_TILED, A_CLK_SPLIT) ARE REFUSED ON THIS BOARD: the tiled A")
+    a("# needs hbm_aclk = core_clk, or with the split the descriptor master on core_clk")
+    a("# behind a clock converter; this design has neither.  Read back, both must be false.")
+    a("foreach _g {A_TILED A_CLK_SPLIT} {")
+    a("    set _v [get_property CONFIG.$_g [get_bd_cells %s]]" % ENG_CELL)
+    a("    if {![string is false -strict $_v]} {")
+    a("        error \"FK33_A450 FAIL: %s $_g is \\\"$_v\\\", not false: the FK33 block design has no core-clock descriptor port and its hbm_aclk is not core_clk\"" % ENG_CELL)
+    a("    }")
+    a("    puts \"FK33_A450 %s $_g $_v\"" % ENG_CELL)
+    a("}")
+    a("")
     L.extend(_core_reset_lines())
     a("")
     if ENG_SPLIT:
